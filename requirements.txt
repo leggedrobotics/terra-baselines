@@ -1,0 +1,12 @@
+evosax
+optax
+dotmap
+tqdm
+numpy
+matplotlib
+pyyaml
+tensorflow_probability
+notebook
+seaborn
+wandb
+jax-resnet
