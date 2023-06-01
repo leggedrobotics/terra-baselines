@@ -525,8 +525,7 @@ def update(
         avg_metrics_dict["value_pred"] += np.asarray(value_pred)
         avg_metrics_dict["target"] += np.asarray(target_val)
         avg_metrics_dict["gae"] += np.asarray(gae_val)
-        avg_metrics_dict["non_cum_avg_rewards"] += np.asarray(rewards.mean())
-        avg_metrics_dict["dones % @last step"] += np.asarray(100 * dones[-1].mean())
+        avg_metrics_dict["avg dones %"] += np.asarray(100 * dones.mean())
         avg_metrics_dict["max_reward"] += np.asarray(rewards.max())
         avg_metrics_dict["min_reward"] += np.asarray(rewards.min())
 
