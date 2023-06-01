@@ -26,7 +26,8 @@ class Curriculum:
         ]
 
         # Compute the minimum number of embedding length for the one-hot features
-        self.num_embeddings_agent_min = max([max([v["map_width"], v["map_height"]]) for v in self.curriculum_dicts.values()])
+        self.num_embeddings_agent_min = max([max([el["map_width"], el["map_height"]]) for el in self.curriculum_dicts])
+        print(f"{self.num_embeddings_agent_min=}")
 
     def evaluate_progress(self, metrics_dict: dict[str, Any]) -> int:
         """
