@@ -36,7 +36,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             model = SimplifiedCategoricalNet()
         elif config.network_name == "SimplifiedDecoupledCategoricalNet":
             num_embeddings_agent = jnp.max(jnp.array(
-                [env.env_cfg.action_map.height,
+                [
+                 config.num_embeddings_agent_min,
+                 env.env_cfg.action_map.height,
                  env.env_cfg.action_map.width,
                  env.env_cfg.agent.angles_cabin,
                  env.env_cfg.agent.angles_base,

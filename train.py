@@ -38,6 +38,7 @@ def main(config, mle_log, log_ext=""):
     
     curriculum = Curriculum()
     env = curriculum.start_curriculum()
+    config.num_embeddings_agent_min = curriculum.get_num_embeddings_agent_min()
     model, params = get_model_ready(rng_init, config, env)
     del rng_init
 

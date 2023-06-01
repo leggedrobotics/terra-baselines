@@ -7,7 +7,7 @@ class Curriculum:
     def __init__(self) -> None:
         self.prev_curriculum = 0
 
-        self.curriculum_dict = [
+        self.curriculum_dicts = [
             {
                 "map_width": 20,  # in meters
                 "map_height": 20,  # in meters
@@ -24,6 +24,9 @@ class Curriculum:
                 "max_steps_in_episode": 500,
             },
         ]
+
+        # Compute the minimum number of embedding length for the one-hot features
+        self.num_embeddings_agent_min = max([max([v["map_width"], v["map_height"]]) for v in self.curriculum_dicts.values()])
 
     def evaluate_progress(self, metrics_dict: dict[str, Any]) -> int:
         """
@@ -81,7 +84,10 @@ class Curriculum:
         pass
 
     def _get_curriculum(self, idx: int):
-        return self.curriculum_dict[idx]
+        return self.curriculum_dicts[idx]
 
     def _get_curriculum_len(self,) -> int:
-        return len(self.curriculum_dict)
+        return len(self.curriculum_dicts)
+
+    def get_num_embeddings_agent_min(self,) -> int:
+        return self.num_embeddings_agent_min
