@@ -22,7 +22,7 @@ if __name__ == "__main__":
         "-pkl",
         "--pkl_file",
         type=str,
-        default="agents/Terra/eval-remote/eval_9999.pkl",
+        default="agents/Terra/eval/eval_17.pkl",
     )
     parser.add_argument(
         "-steps",

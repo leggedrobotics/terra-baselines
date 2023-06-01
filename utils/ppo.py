@@ -18,6 +18,7 @@ import tqdm
 # import gymnax
 from terra.env import TerraEnvBatch
 from utils.helpers import append_to_pkl_object
+from utils.curriculum import Curriculum
 
 
 class BatchManager:
@@ -27,36 +28,29 @@ class BatchManager:
         gae_lambda: float,
         n_steps: int,
         num_envs: int,
-        action_size,
-        observation_shapes,
-        num_actions
     ):
         self.num_envs = num_envs
-        self.action_size = action_size
         self.buffer_size = num_envs * n_steps
         self.num_envs = num_envs
         self.n_steps = n_steps
         self.discount = discount
         self.gae_lambda = gae_lambda
-        self.num_actions = num_actions
-
-        self.observation_shapes = observation_shapes
-        self.reset()
-
-    @partial(jax.jit, static_argnums=0)
-    def reset(self):
+    
+    # TODO jit
+    # @partial(jax.jit, static_argnums=0)
+    def reset(self, action_size, observation_shapes, num_actions):
         return {
             "states": {
                 key: jnp.empty(
                 (self.n_steps, self.num_envs, *value)
                 )
-                for key, value in self.observation_shapes.items()
+                for key, value in observation_shapes.items()
             },
             "action_mask": jnp.empty(
-                (self.n_steps, self.num_envs, self.num_actions),
+                (self.n_steps, self.num_envs, num_actions),
             ),
             "actions": jnp.empty(
-                (self.n_steps, self.num_envs, *self.action_size),
+                (self.n_steps, self.num_envs, *action_size),
             ),
             "rewards": jnp.empty(
                 (self.n_steps, self.num_envs), dtype=jnp.float32
@@ -141,6 +135,12 @@ class RolloutManager(object):
         # self.apply_fn = model.apply
         self.select_action = self.select_action_ppo
 
+    def __eq__(self, __o: object) -> bool:
+        return isinstance(__o, RolloutManager) and self.env == __o.env
+
+    def __hash__(self) -> int:
+        return hash((RolloutManager, self.env))
+
     @partial(jax.jit, static_argnums=0)
     def select_action_ppo(
         self,
@@ -163,6 +163,9 @@ class RolloutManager(object):
 
     def batch_step(self, states, actions):
         return self.env.step(states, actions)
+    
+    def update_env(self, env: TerraEnvBatch):
+        self.env = env
     
     @partial(jax.jit, static_argnums=(0, 3, 6))
     def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save):
@@ -232,7 +235,7 @@ def policy(
     return value, pi
 
 
-def train_ppo(rng, config, model, params, mle_log, env):
+def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     if config["wandb"]:
         import wandb
@@ -258,15 +261,13 @@ def train_ppo(rng, config, model, params, mle_log, env):
     )
     # Setup the rollout manager -> Collects data in vmapped-fashion over envs
     rollout_manager = RolloutManager(env)
+    num_actions = env.batch_cfg.action_type.get_num_actions()
 
     batch_manager = BatchManager(
         discount=config.gamma,
         gae_lambda=config.gae_lambda,
         n_steps=config.n_steps + 1,
         num_envs=config.num_train_envs,
-        action_size=rollout_manager.env.actions_size,
-        observation_shapes=rollout_manager.env.observation_shapes,
-        num_actions=rollout_manager.env.batch_cfg.action_type.get_num_actions()
     )
 
     @jax.jit
@@ -291,16 +292,20 @@ def train_ppo(rng, config, model, params, mle_log, env):
         )
         return train_state, next_obs, next_state, batch, new_key, infos["action_mask"]
 
-    batch = batch_manager.reset()
+    batch = batch_manager.reset(
+        action_size=rollout_manager.env.actions_size,
+        observation_shapes=rollout_manager.env.observation_shapes,
+        num_actions=num_actions
+    )
 
     rng, rng_step, rng_reset, rng_eval, rng_update = jax.random.split(rng, 5)
     state, obs = rollout_manager.batch_reset(
-        jax.random.split(rng_reset, config.num_train_envs)  # TODO seeds not keys
+        jax.random.split(rng_reset, config.num_train_envs)
     )
 
     total_steps = 0
     log_steps, log_return = [], []
-    action_mask_init = jnp.ones((env.batch_cfg.action_type.get_num_actions(),), dtype=jnp.bool_)
+    action_mask_init = jnp.ones((num_actions,), dtype=jnp.bool_)
     action_mask = action_mask_init.copy()[None].repeat(config.num_train_envs, 0)
     t = tqdm.tqdm(range(1, num_total_epochs + 1), desc="PPO", leave=True)
     for step in t:
@@ -312,6 +317,7 @@ def train_ppo(rng, config, model, params, mle_log, env):
             action_mask,
             rng_step,
         )
+        jax.debug.print("obs.action_map={x}", x=obs["action_map"].shape)
         total_steps += config.num_train_envs
         if step % (config.n_steps + 1) == 0:
             metric_dict, train_state, rng_update = update(
@@ -328,7 +334,24 @@ def train_ppo(rng, config, model, params, mle_log, env):
             )
             if config["wandb"]:
                 wandb.log({**metric_dict})
-            batch = batch_manager.reset()
+            
+            # Curriculum
+            curriculum_progress, change_curriculum = curriculum.evaluate_progress(metric_dict)
+            if change_curriculum:
+                new_env = curriculum.apply_curriculum(curriculum_progress)
+                rollout_manager.update_env(new_env)
+                rng, rng_reset = jax.random.split(rng)
+                state, obs = rollout_manager.batch_reset(
+                    jax.random.split(rng_reset, config.num_train_envs)
+                )
+                # jax.debug.print("obs.action_map={x}", x=obs["action_map"].shape)
+
+            batch = batch_manager.reset(
+                action_size=rollout_manager.env.actions_size,
+                observation_shapes=rollout_manager.env.observation_shapes,
+                num_actions=num_actions
+            )
+
 
         if (step + 1) % config.evaluate_every_epochs == 0:
             rng, rng_eval = jax.random.split(rng)

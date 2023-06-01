@@ -7,9 +7,9 @@ Partially from https://github.com/RobertTLange/gymnax-blines
 import jax
 from utils.models import get_model_ready
 from utils.helpers import load_config, save_pkl_object
-from terra.env import TerraEnvBatch
 from time import gmtime
 from time import strftime
+from utils.curriculum import Curriculum
 
 def _init_wandb(run_name, config):
     import wandb
@@ -35,7 +35,9 @@ def main(config, mle_log, log_ext=""):
     rng = jax.random.PRNGKey(config.seed_model)
     # Setup the model architecture
     rng, rng_init = jax.random.split(rng)
-    env = TerraEnvBatch()
+    
+    curriculum = Curriculum()
+    env = curriculum.start_curriculum()
     model, params = get_model_ready(rng_init, config, env)
     del rng_init
 
@@ -49,7 +51,7 @@ def main(config, mle_log, log_ext=""):
 
     # Log and store the results.
     log_steps, log_return, network_ckpt = train_fn(
-        rng, config, model, params, mle_log, env
+        rng, config, model, params, mle_log, env, curriculum
     )
 
     data_to_store = {
