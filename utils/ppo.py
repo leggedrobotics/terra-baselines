@@ -317,7 +317,6 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             action_mask,
             rng_step,
         )
-        jax.debug.print("obs.action_map={x}", x=obs["action_map"].shape)
         total_steps += config.num_train_envs
         if step % (config.n_steps + 1) == 0:
             metric_dict, train_state, rng_update = update(
@@ -332,25 +331,25 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 config.critic_coeff,
                 rng_update,
             )
-            if config["wandb"]:
-                wandb.log({**metric_dict})
             
             # Curriculum
-            curriculum_progress, change_curriculum = curriculum.evaluate_progress(metric_dict)
+            curriculum_dof, change_curriculum = curriculum.evaluate_progress(metric_dict)
             if change_curriculum:
-                new_env = curriculum.apply_curriculum(curriculum_progress)
+                new_env = curriculum.apply_curriculum(curriculum_dof)
                 rollout_manager.update_env(new_env)
                 rng, rng_reset = jax.random.split(rng)
                 state, obs = rollout_manager.batch_reset(
                     jax.random.split(rng_reset, config.num_train_envs)
                 )
-                # jax.debug.print("obs.action_map={x}", x=obs["action_map"].shape)
 
             batch = batch_manager.reset(
                 action_size=rollout_manager.env.actions_size,
                 observation_shapes=rollout_manager.env.observation_shapes,
                 num_actions=num_actions
             )
+
+            if config["wandb"]:
+                wandb.log({**metric_dict, "curriculum_dof": curriculum_dof})
 
 
         if (step + 1) % config.evaluate_every_epochs == 0:

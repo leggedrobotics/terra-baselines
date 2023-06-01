@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig, MapDims
 
@@ -7,13 +7,38 @@ class Curriculum:
     def __init__(self) -> None:
         self.prev_curriculum = 0
 
+        self.curriculum_dict = [
+            {
+                "map_width": 20,  # in meters
+                "map_height": 20,  # in meters
+                "max_steps_in_episode": 100,
+            },
+            {
+                "map_width": 40,  # in meters
+                "map_height": 40,  # in meters
+                "max_steps_in_episode": 250,
+            },
+            {
+                "map_width": 60,  # in meters
+                "map_height": 60,  # in meters
+                "max_steps_in_episode": 500,
+            },
+        ]
+
     def evaluate_progress(self, metrics_dict: dict[str, Any]) -> int:
         """
         Goes from the training metrics to a DoF (degrees of freedom) value,
         considering the current DoF.
         """
-        change_curriculum = self.prev_curriculum != 1
-        return 1, change_curriculum
+        value_loss = metrics_dict["value_loss"]
+        target = metrics_dict["target"]
+        if (value_loss < 0.2) and (target > 0) and (self.prev_curriculum < self._get_curriculum_len() - 1):
+            dof = self.prev_curriculum + 1
+            change_curriculum = True
+        else:
+            dof = self.prev_curriculum
+            change_curriculum = False
+        return dof, change_curriculum
     
     def start_curriculum(self):
         return self.apply_curriculum(
@@ -34,7 +59,10 @@ class Curriculum:
             width_m=map_width,
             height_m=map_height
         )
-        env_cfg = EnvConfig.from_map_dims(map_dims)
+        env_cfg = EnvConfig.parametrized(
+            map_dims=map_dims,
+            max_steps_in_episode=curriculum["max_steps_in_episode"]
+            )
 
         env = TerraEnvBatch(env_cfg=env_cfg)
         return env
@@ -53,20 +81,7 @@ class Curriculum:
         pass
 
     def _get_curriculum(self, idx: int):
-        """
-        Defines the curriculum to follow during training.
-        """
-        curriculum = [
-            {
-                "map_width": 10,  # in meters
-                "map_height": 10,  # in meters
-                # "map_params": MapParamsSquareSingleTile()
-            },
-            {
-                "map_width": 20,  # in meters
-                "map_height": 20,  # in meters
-                # "map_params": MapParamsSquareSingleTile()
-            },
-        ]
+        return self.curriculum_dict[idx]
 
-        return curriculum[idx]
+    def _get_curriculum_len(self,) -> int:
+        return len(self.curriculum_dict)
