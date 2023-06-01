@@ -36,7 +36,8 @@ class Curriculum:
         """
         value_loss = metrics_dict["value_loss"]
         target = metrics_dict["target"]
-        if (value_loss < 0.2) and (target > 0) and (self.prev_curriculum < self._get_curriculum_len() - 1):
+        # TODO config
+        if (value_loss / target < 0.06) and (target > 0) and (self.prev_curriculum < self._get_curriculum_len() - 1):
             dof = self.prev_curriculum + 1
             change_curriculum = True
         else:
