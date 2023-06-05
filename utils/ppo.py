@@ -19,6 +19,7 @@ import tqdm
 from terra.env import TerraEnvBatch
 from utils.helpers import append_to_pkl_object
 from utils.curriculum import Curriculum
+from tensorflow_probability.substrates import jax as tfp
 
 
 class BatchManager:
@@ -168,7 +169,7 @@ class RolloutManager(object):
         # Prepare policy input from Terra State
         obs = obs_to_model_input(obs)
 
-        value, pi = policy_deterministic(train_state.apply_fn, train_state.params, obs, action_mask)
+        value, action = policy_deterministic(train_state.apply_fn, train_state.params, obs, action_mask)
         return action, value[:, 0]
 
     def batch_reset(self, keys):
@@ -257,7 +258,7 @@ def policy_deterministic(
     action_mask: Array
 ):
     value, logits_pi = apply_fn(params, obs, action_mask)
-    return value, np.argmax(logits_pi)
+    return value, np.argmax(logits_pi, axis=-1)
 
 def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
@@ -454,7 +455,8 @@ def loss_actor_and_critic(
     entropy_coeff: float,
 ) -> jnp.ndarray:
 
-    value_pred, pi = apply_fn(params_model, obs, action_mask)
+    value_pred, logits_pi = apply_fn(params_model, obs, action_mask)
+    pi = tfp.distributions.Categorical(logits=logits_pi)
     value_pred = value_pred[:, 0]
 
     # TODO: Figure out why training without 0 breaks categorical model

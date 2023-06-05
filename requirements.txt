@@ -10,3 +10,6 @@ notebook
 seaborn
 wandb
 jax-resnet
+opencv-python
+shapely
+scikit-image
