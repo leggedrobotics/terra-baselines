@@ -474,8 +474,8 @@ class SimplifiedDecoupledCategoricalNet(nn.Module):
         # jax.debug.print("action_mask={x}", x=action_mask)
         # jax.debug.print("xpi={x}", x=xpi)
         
-        pi = tfp.distributions.Categorical(logits=xpi)
-        return v, pi
+        # Note: returning logits xpi, not distribution pi!
+        return v, xpi
 
 
 # class CategoricalSeparateMLP(nn.Module):

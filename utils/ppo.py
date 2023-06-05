@@ -134,6 +134,7 @@ class RolloutManager(object):
         self.env: TerraEnvBatch = env
         # self.apply_fn = model.apply
         self.select_action = self.select_action_ppo
+        self.select_action_deterministic = self.select_action_ppo_deterministic
 
     def __eq__(self, __o: object) -> bool:
         return isinstance(__o, RolloutManager) and self.env == __o.env
@@ -156,6 +157,19 @@ class RolloutManager(object):
         action = pi.sample(seed=rng)
         log_prob = pi.log_prob(action)
         return action, log_prob, value[:, 0]
+    
+    @partial(jax.jit, static_argnums=0)
+    def select_action_ppo_deterministic(
+        self,
+        train_state: TrainState,
+        obs: jnp.ndarray,
+        action_mask: Array,
+    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.random.PRNGKey]:
+        # Prepare policy input from Terra State
+        obs = obs_to_model_input(obs)
+
+        value, pi = policy_deterministic(train_state.apply_fn, train_state.params, obs, action_mask)
+        return action, value[:, 0]
 
     def batch_reset(self, keys):
         seeds = jnp.array([k[0] for k in keys])  # TODO is it valid?
@@ -178,7 +192,7 @@ class RolloutManager(object):
             """lax.scan compatible step transition in jax env."""
             obs, state, train_state, rng, cum_reward, valid_mask, done, action_mask = state_input
             rng, rng_step, rng_net = jax.random.split(rng, 3)
-            action, _, _ = self.select_action(train_state, obs, action_mask, rng_net)
+            action, _ = self.select_action_deterministic(train_state, obs, action_mask)
             jax.debug.print("bicount action = {x}", x=jnp.bincount(action, length=9))
             next_s, (next_o, reward, done, infos) = self.batch_step(
                 state,
@@ -231,9 +245,19 @@ def policy(
     obs: jnp.ndarray,
     action_mask: Array
 ):
-    value, pi = apply_fn(params, obs, action_mask)
+    value, logits_pi = apply_fn(params, obs, action_mask)
+    pi = tfp.distributions.Categorical(logits=logits_pi)
     return value, pi
 
+@partial(jax.jit, static_argnums=0)
+def policy_deterministic(
+    apply_fn: Callable[..., Any],
+    params: flax.core.frozen_dict.FrozenDict,
+    obs: jnp.ndarray,
+    action_mask: Array
+):
+    value, logits_pi = apply_fn(params, obs, action_mask)
+    return value, np.argmax(logits_pi)
 
 def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
