@@ -11,17 +11,17 @@ class Curriculum:
             {
                 "map_width": 20,  # in meters
                 "map_height": 20,  # in meters
-                "max_steps_in_episode": 100,
+                "max_steps_in_episode": 150,
             },
             {
                 "map_width": 40,  # in meters
                 "map_height": 40,  # in meters
-                "max_steps_in_episode": 250,
+                "max_steps_in_episode": 300,
             },
             {
                 "map_width": 60,  # in meters
                 "map_height": 60,  # in meters
-                "max_steps_in_episode": 500,
+                "max_steps_in_episode": 600,
             },
         ]
 
