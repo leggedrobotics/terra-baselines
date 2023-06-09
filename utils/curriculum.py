@@ -15,7 +15,7 @@ class Curriculum:
 
                 "n_clusters": 3,
                 "n_tiles_per_cluster" : 3,
-                "kernel_size_initial_sampling": (4, 4),
+                "kernel_size_initial_sampling": 4,
             },
             {
                 "map_width": 40,  # in meters
@@ -24,7 +24,7 @@ class Curriculum:
 
                 "n_clusters": 4,
                 "n_tiles_per_cluster" : 6,
-                "kernel_size_initial_sampling": (6, 6),
+                "kernel_size_initial_sampling": 6,
             },
             {
                 "map_width": 60,  # in meters
@@ -33,7 +33,7 @@ class Curriculum:
 
                 "n_clusters": 5,
                 "n_tiles_per_cluster" : 10,
-                "kernel_size_initial_sampling": (10, 10),
+                "kernel_size_initial_sampling": 10,
             },
         ]
 
