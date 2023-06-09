@@ -12,16 +12,28 @@ class Curriculum:
                 "map_width": 20,  # in meters
                 "map_height": 20,  # in meters
                 "max_steps_in_episode": 150,
+
+                "n_clusters": 3,
+                "n_tiles_per_cluster" : 3,
+                "kernel_size_initial_sampling": (4, 4),
             },
             {
                 "map_width": 40,  # in meters
                 "map_height": 40,  # in meters
                 "max_steps_in_episode": 300,
+
+                "n_clusters": 4,
+                "n_tiles_per_cluster" : 6,
+                "kernel_size_initial_sampling": (6, 6),
             },
             {
                 "map_width": 60,  # in meters
                 "map_height": 60,  # in meters
                 "max_steps_in_episode": 600,
+
+                "n_clusters": 5,
+                "n_tiles_per_cluster" : 10,
+                "kernel_size_initial_sampling": (10, 10),
             },
         ]
 
@@ -66,7 +78,10 @@ class Curriculum:
         )
         env_cfg = EnvConfig.parametrized(
             map_dims=map_dims,
-            max_steps_in_episode=curriculum["max_steps_in_episode"]
+            max_steps_in_episode=curriculum["max_steps_in_episode"],
+            n_clusters=curriculum["n_clusters"],
+            n_tiles_per_cluster=curriculum["n_tiles_per_cluster"],
+            kernel_size_initial_sampling=curriculum["kernel_size_initial_sampling"]
             )
 
         env = TerraEnvBatch(env_cfg=env_cfg)
