@@ -20,6 +20,7 @@ from terra.env import TerraEnvBatch
 from utils.helpers import append_to_pkl_object
 from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
+from terra.maps_buffer import MapsBuffer
 
 
 class BatchManager:
@@ -130,12 +131,14 @@ class BatchManager:
 
 
 class RolloutManager(object):
-    def __init__(self, env, model = None):
+    def __init__(self, env, maps_buffer: MapsBuffer, n_envs: int, model = None):
         # Setup functionalities for vectorized batch rollout
         self.env: TerraEnvBatch = env
         # self.apply_fn = model.apply
         self.select_action = self.select_action_ppo
         self.select_action_deterministic = self.select_action_ppo_deterministic
+        self.maps_buffer = maps_buffer
+        self.n_envs = n_envs
 
     def __eq__(self, __o: object) -> bool:
         return isinstance(__o, RolloutManager) and self.env == __o.env
@@ -171,13 +174,22 @@ class RolloutManager(object):
 
         value, action = policy_deterministic(train_state.apply_fn, train_state.params, obs, action_mask)
         return action, value[:, 0]
+    
+    def shuffle_maps(self):
+        self.maps_buffer = self.maps_buffer.shuffle()
 
-    def batch_reset(self, keys):
-        seeds = jnp.array([k[0] for k in keys])  # TODO is it valid?
-        return self.env.reset(seeds)
+    # @partial(jax.jit, static_argnums=(2,))
+    def batch_reset(self, keys, n_envs: int | None = None):
+        seeds = jnp.array([k[0] for k in keys])
+        n_envs = self.n_envs if n_envs is None else n_envs 
+        maps = self.maps_buffer.sample(n_envs)
+        return self.env.reset(seeds, maps)
 
-    def batch_step(self, states, actions):
-        return self.env.step(states, actions)
+    # @partial(jax.jit, static_argnums=(2,))
+    def batch_step(self, states, actions, n_envs: int | None = None):
+        n_envs = self.n_envs if n_envs is None else n_envs 
+        maps = self.maps_buffer.sample(n_envs)
+        return self.env.step(states, actions, maps)
     
     def update_env(self, env: TerraEnvBatch):
         self.env = env
@@ -187,7 +199,7 @@ class RolloutManager(object):
         """Rollout an episode with lax.scan."""
         # Reset the environment
         rng_reset, rng_episode = jax.random.split(rng_input)
-        state, obs = self.batch_reset(jax.random.split(rng_reset, num_envs))
+        state, obs = self.batch_reset(jax.random.split(rng_reset, num_envs), num_envs)
 
         def policy_step(state_input, _):
             """lax.scan compatible step transition in jax env."""
@@ -198,6 +210,7 @@ class RolloutManager(object):
             next_s, (next_o, reward, done, infos) = self.batch_step(
                 state,
                 wrap_action(action.squeeze(), self.env.batch_cfg.action_type),
+                num_envs,
             )
             action_mask = infos["action_mask"]
             new_cum_reward = cum_reward + reward * valid_mask
@@ -260,7 +273,7 @@ def policy_deterministic(
     value, logits_pi = apply_fn(params, obs, action_mask)
     return value, np.argmax(logits_pi, axis=-1)
 
-def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum):
+def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, maps_buffer: MapsBuffer):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     if config["wandb"]:
         import wandb
@@ -285,7 +298,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         tx=tx,
     )
     # Setup the rollout manager -> Collects data in vmapped-fashion over envs
-    rollout_manager = RolloutManager(env)
+    rollout_manager = RolloutManager(env, maps_buffer, config.num_train_envs)
     num_actions = env.batch_cfg.action_type.get_num_actions()
 
     batch_manager = BatchManager(
@@ -342,6 +355,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             action_mask,
             rng_step,
         )
+        rollout_manager.shuffle_maps()
         total_steps += config.num_train_envs
         if step % (config.n_steps + 1) == 0:
             metric_dict, train_state, rng_update = update(

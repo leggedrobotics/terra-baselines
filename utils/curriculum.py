@@ -4,37 +4,41 @@ from terra.config import EnvConfig, MapDims
 
 class Curriculum:
 
-    def __init__(self) -> None:
+    def __init__(self, rl_config) -> None:
         self.prev_curriculum = 0
+        self.rl_config = rl_config
 
         self.curriculum_dicts = [
-            {
-                "map_width": 20,  # in meters
-                "map_height": 20,  # in meters
-                "max_steps_in_episode": 150,
+            # {
+            #     "map_width": 20,  # in meters
+            #     "map_height": 20,  # in meters
+            #     "max_steps_in_episode": 150,
 
-                "n_clusters": 3,
-                "n_tiles_per_cluster" : 3,
-                "kernel_size_initial_sampling": 4,
-            },
+            #     # Placeholders
+            #     "n_clusters": 3,
+            #     "n_tiles_per_cluster" : 3,
+            #     "kernel_size_initial_sampling": 4,
+            # },
             {
                 "map_width": 40,  # in meters
                 "map_height": 40,  # in meters
                 "max_steps_in_episode": 300,
 
+                # Placeholders
                 "n_clusters": 4,
                 "n_tiles_per_cluster" : 6,
                 "kernel_size_initial_sampling": 6,
             },
-            {
-                "map_width": 60,  # in meters
-                "map_height": 60,  # in meters
-                "max_steps_in_episode": 600,
+            # {
+            #     "map_width": 60,  # in meters
+            #     "map_height": 60,  # in meters
+            #     "max_steps_in_episode": 600,
 
-                "n_clusters": 5,
-                "n_tiles_per_cluster" : 10,
-                "kernel_size_initial_sampling": 10,
-            },
+            #     # Placeholders
+            #     "n_clusters": 5,
+            #     "n_tiles_per_cluster" : 10,
+            #     "kernel_size_initial_sampling": 10,
+            # },
         ]
 
         # Compute the minimum number of embedding length for the one-hot features
