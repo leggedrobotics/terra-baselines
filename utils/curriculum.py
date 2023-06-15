@@ -22,7 +22,7 @@ class Curriculum:
             {
                 "map_width": 40,  # in meters
                 "map_height": 40,  # in meters
-                "max_steps_in_episode": 300,
+                "max_steps_in_episode": 600,
 
                 # Placeholders
                 "n_clusters": 4,
