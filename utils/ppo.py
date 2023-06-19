@@ -20,7 +20,6 @@ from terra.env import TerraEnvBatch
 from utils.helpers import append_to_pkl_object
 from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
-from terra.maps_buffer import MapsBuffer
 
 
 class BatchManager:
@@ -137,7 +136,6 @@ class RolloutManager(object):
         # self.apply_fn = model.apply
         self.select_action = self.select_action_ppo
         self.select_action_deterministic = self.select_action_ppo_deterministic
-        # self.maps_buffer = maps_buffer
         self.n_envs = n_envs
 
     def __eq__(self, __o: object) -> bool:
@@ -174,46 +172,40 @@ class RolloutManager(object):
 
         value, action = policy_deterministic(train_state.apply_fn, train_state.params, obs, action_mask)
         return action, value[:, 0]
-    
-    # def shuffle_maps(self):
-    #     self.maps_buffer = self.maps_buffer.shuffle()
 
-    # @partial(jax.jit, static_argnums=(2,))
-    def batch_reset(self, keys, maps_buffer: MapsBuffer, n_envs: int | None = None):
+    # @partial(jax.jit, static_argnums=(0,))
+    def batch_reset(self, keys, env_cfgs):
         seeds = jnp.array([k[0] for k in keys])
-        n_envs = self.n_envs if n_envs is None else n_envs 
-        maps = maps_buffer.sample(n_envs)
-        return self.env.reset(seeds, maps)
+        # seeds_maps_buffer = jnp.array([k[1] for k in keys])
+        # maps_buffer_keys = jax.vmap(partial(jax.random.PRNGKey))(seeds_maps_buffer)
+        # maps_buffer_keys = jax.vmap(partial(jax.random.split, num=1))(maps_buffer_keys)
+        jax.debug.print("seeds={x}", x=seeds.shape)
+        jax.debug.print("env_cfgs={x}", x=env_cfgs)
+        return self.env.reset(seeds, env_cfgs)
 
-    # @partial(jax.jit, static_argnums=(2,))
-    def batch_step(self, states, actions, maps_buffer: MapsBuffer, n_envs: int | None = None):
-        n_envs = self.n_envs if n_envs is None else n_envs 
-        maps = maps_buffer.sample(n_envs)
-        return self.env.step(states, actions, maps)
-    
-    def update_env(self, env: TerraEnvBatch):
-        self.env = env
-    
+    @partial(jax.jit, static_argnums=(0,))
+    def batch_step(self, states, actions, env_cfgs, maps_buffer_keys):
+        # maps_buffer_keys = jax.vmap(partial(jax.random.split, num=1))(maps_buffer_keys)
+        return self.env.step(states, actions, env_cfgs, maps_buffer_keys)
+        
     @partial(jax.jit, static_argnums=(0, 3, 6))
-    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, maps_buffer: MapsBuffer):
+    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs):
         """Rollout an episode with lax.scan."""
         # Reset the environment
         rng_reset, rng_episode = jax.random.split(rng_input)
-        maps_buffer = maps_buffer.shuffle()
-        state, obs = self.batch_reset(jax.random.split(rng_reset, num_envs), maps_buffer, num_envs)
+        state, obs, maps_buffer_keys = self.batch_reset(jax.random.split(rng_reset, num_envs), env_cfgs)
 
         def policy_step(state_input, _):
             """lax.scan compatible step transition in jax env."""
-            obs, state, train_state, rng, cum_reward, valid_mask, done, action_mask, maps_buffer = state_input
+            obs, state, train_state, rng, cum_reward, valid_mask, done, action_mask, maps_buffer_keys = state_input
             rng, rng_step, rng_net = jax.random.split(rng, 3)
             action, _ = self.select_action_deterministic(train_state, obs, action_mask)
             jax.debug.print("bicount action = {x}", x=jnp.bincount(action, length=9))
-            maps_buffer = maps_buffer.shuffle()
-            next_s, (next_o, reward, done, infos) = self.batch_step(
+            next_s, (next_o, reward, done, infos), maps_buffer_keys = self.batch_step(
                 state,
                 wrap_action(action.squeeze(), self.env.batch_cfg.action_type),
-                maps_buffer,
-                num_envs,
+                env_cfgs,
+                maps_buffer_keys
             )
             action_mask = infos["action_mask"]
             new_cum_reward = cum_reward + reward * valid_mask
@@ -227,7 +219,7 @@ class RolloutManager(object):
                 new_valid_mask,
                 done,
                 action_mask,
-                maps_buffer
+                maps_buffer_keys
             ], [{k: v[:n_evals_save] for k, v in obs.items()}]
             return carry, y
 
@@ -243,14 +235,15 @@ class RolloutManager(object):
                 jnp.array(num_envs * [1.0]),  # valid mask
                 jnp.array(num_envs * [False]),  # dones
                 action_mask_init[None].repeat(num_envs, 0),
-                maps_buffer
+                maps_buffer_keys
             ],
             (),
-            self.env.env_cfg.max_steps_in_episode,
+            # self.env.env_cfg.max_steps_in_episode,
+            100, # TODO get from every single env_cfg -> test all the N possible curriculum dofs at the same time and always
         )
 
-        cum_return = carry_out[-5].squeeze()
-        dones = carry_out[-3].squeeze()
+        cum_return = carry_out[4].squeeze()
+        dones = carry_out[6].squeeze()
 
         # Append sample to pkl file
         jax.experimental.io_callback(append_to_pkl_object, None, scan_out[0], step)
@@ -278,7 +271,7 @@ def policy_deterministic(
     value, logits_pi = apply_fn(params, obs, action_mask)
     return value, np.argmax(logits_pi, axis=-1)
 
-def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, maps_buffer: MapsBuffer):
+def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     if config["wandb"]:
         import wandb
@@ -321,7 +314,8 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         batch,
         action_mask: Array,
         rng: jax.random.PRNGKey,
-        maps_buffer: MapsBuffer
+        env_cfgs,
+        maps_buffer_keys: jax.random.PRNGKey,
     ):
         new_key, key_step = jax.random.split(rng)
         action, log_pi, value = rollout_manager.select_action(
@@ -330,12 +324,12 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         action = wrap_action(action, rollout_manager.env.batch_cfg.action_type)
         # print(action.shape)
         
-        maps_buffer = maps_buffer.shuffle()
-        next_state, (next_obs, reward, done, infos) = rollout_manager.batch_step(state, action, maps_buffer)
+        # maps_buffer_keys = jax.vmap(partial(jax.random.split, num=1))(maps_buffer_keys)
+        next_state, (next_obs, reward, done, infos), maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys)
         batch = batch_manager.append(
             batch, obs, action.action, reward, done, log_pi, value, infos["action_mask"]
         )
-        return train_state, next_obs, next_state, batch, new_key, infos["action_mask"]
+        return train_state, next_obs, next_state, batch, new_key, infos["action_mask"], maps_buffer_keys
 
     batch = batch_manager.reset(
         action_size=rollout_manager.env.actions_size,
@@ -344,9 +338,9 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     )
 
     rng, rng_step, rng_reset, rng_eval, rng_update = jax.random.split(rng, 5)
-    maps_buffer = maps_buffer.shuffle()
-    state, obs = rollout_manager.batch_reset(
-        jax.random.split(rng_reset, config.num_train_envs), maps_buffer
+    env_cfgs = curriculum.get_cfgs_init()
+    state, obs, maps_buffer_keys = rollout_manager.batch_reset(
+        jax.random.split(rng_reset, config.num_train_envs), env_cfgs
     )
 
     total_steps = 0
@@ -355,16 +349,16 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     action_mask = action_mask_init.copy()[None].repeat(config.num_train_envs, 0)
     t = tqdm.tqdm(range(1, num_total_epochs + 1), desc="PPO", leave=True)
     for step in t:
-        train_state, obs, state, batch, rng_step, action_mask = get_transition(
+        train_state, obs, state, batch, rng_step, action_mask, maps_buffer_keys = get_transition(
             train_state,
             obs,
             state,
             batch,
             action_mask,
             rng_step,
-            maps_buffer
+            env_cfgs,
+            maps_buffer_keys
         )
-        maps_buffer = maps_buffer.shuffle()
         total_steps += config.num_train_envs
         if step % (config.n_steps + 1) == 0:
             metric_dict, train_state, rng_update = update(
@@ -380,16 +374,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 rng_update,
             )
             
-            # Curriculum
-            curriculum_dof, change_curriculum = curriculum.evaluate_progress(metric_dict)
-            if change_curriculum:
-                new_env = curriculum.apply_curriculum(curriculum_dof)
-                rollout_manager.update_env(new_env)
-                rng, rng_reset = jax.random.split(rng)
-                maps_buffer = maps_buffer.shuffle()
-                state, obs = rollout_manager.batch_reset(
-                    jax.random.split(rng_reset, config.num_train_envs), maps_buffer
-                )
+            env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict)
 
             batch = batch_manager.reset(
                 action_size=rollout_manager.env.actions_size,
@@ -398,11 +383,12 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             )
 
             if config["wandb"]:
-                wandb.log({**metric_dict, "curriculum_dof": curriculum_dof})
+                wandb.log({**metric_dict, **dofs_count_dict})
 
 
         if (step + 1) % config.evaluate_every_epochs == 0:
             rng, rng_eval = jax.random.split(rng)
+            env_cfgs_eval, _ = curriculum.get_cfgs_eval(None) # TODO implement properly
             rewards, dones = rollout_manager.batch_evaluate(
                 rng_eval,
                 train_state,
@@ -410,7 +396,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 step,
                 action_mask_init,
                 config.n_evals_save,
-                maps_buffer
+                env_cfgs_eval
             )
             log_steps.append(total_steps)
             log_return.append(rewards)
@@ -493,7 +479,8 @@ def loss_actor_and_critic(
     )
     value_losses = jnp.square(value_pred - target)
     value_losses_clipped = jnp.square(value_pred_clipped - target)
-    value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+    value_losses_individual = 0.5 * jnp.maximum(value_losses, value_losses_clipped)
+    value_loss = value_losses_individual.mean()
 
     ratio = jnp.exp(log_prob - log_pi_old)
     gae_mean = gae.mean()
@@ -516,6 +503,8 @@ def loss_actor_and_critic(
         value_pred.mean(),
         target.mean(),
         gae_mean,
+        value_losses_individual,
+        target
     )
 
 
@@ -567,6 +556,8 @@ def update(
             value_pred,
             target_val,
             gae_val,
+            value_losses_individual,
+            targets
         ) = total_loss
 
         avg_metrics_dict["total_loss"] += np.asarray(total_loss)
@@ -576,12 +567,16 @@ def update(
         avg_metrics_dict["value_pred"] += np.asarray(value_pred)
         avg_metrics_dict["target"] += np.asarray(target_val)
         avg_metrics_dict["gae"] += np.asarray(gae_val)
-        avg_metrics_dict["avg dones %"] += np.asarray(100 * dones.mean())
         avg_metrics_dict["max_reward"] += np.asarray(rewards.max())
         avg_metrics_dict["min_reward"] += np.asarray(rewards.min())
 
     for k, v in avg_metrics_dict.items():
         avg_metrics_dict[k] = v / (epoch_ppo)
+
+    # Elements independent from epoch
+    avg_metrics_dict["avg dones %"] += np.asarray(100 * dones.mean())
+    avg_metrics_dict["value_losses_individual"] += np.asarray(value_losses_individual)
+    avg_metrics_dict["targets_individual"] += np.asarray(targets)
 
     return avg_metrics_dict, train_state, rng
 
@@ -620,4 +615,6 @@ def update_epoch(
             entropy_coeff=entropy_coeff,
         )
         train_state = train_state.apply_gradients(grads=grads)
+
+    # Note: the total_loss returned is w.r.t. the last minibatch only
     return train_state, total_loss

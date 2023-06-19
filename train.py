@@ -10,7 +10,7 @@ from utils.helpers import load_config, save_pkl_object
 from time import gmtime
 from time import strftime
 from utils.curriculum import Curriculum
-from terra.utils import init_maps_buffer
+from terra.env import TerraEnvBatch
 
 def _init_wandb(run_name, config):
     import wandb
@@ -38,7 +38,7 @@ def main(config, mle_log, log_ext=""):
     rng, rng_init, rng_maps_buffer = jax.random.split(rng, 3)
     
     curriculum = Curriculum(rl_config=config)
-    env = curriculum.start_curriculum()
+    env = env = TerraEnvBatch()
     config.num_embeddings_agent_min = curriculum.get_num_embeddings_agent_min()
     model, params = get_model_ready(rng_init, config, env)
     del rng_init
@@ -52,9 +52,8 @@ def main(config, mle_log, log_ext=""):
         raise ValueError("Unknown train_type.")
 
     # Log and store the results.
-    maps_buffer = init_maps_buffer(rng_maps_buffer, env.env_cfg)
     log_steps, log_return, network_ckpt = train_fn(
-        rng, config, model, params, mle_log, env, curriculum, maps_buffer
+        rng, config, model, params, mle_log, env, curriculum
     )
 
     data_to_store = {

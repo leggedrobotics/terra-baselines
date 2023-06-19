@@ -1,11 +1,14 @@
+import jax
+from jax import Array
 from typing import Any
-from terra.env import TerraEnvBatch
-from terra.config import EnvConfig, MapDims
+from terra.config import EnvConfig
+import numpy as np
 
 class Curriculum:
 
     def __init__(self, rl_config) -> None:
-        self.prev_curriculum = 0
+        self.dofs = np.zeros((rl_config.num_train_envs,), dtype=np.int8)
+        self.dofs_eval = np.zeros((rl_config.num_test_rollouts,), dtype=np.int8)
         self.rl_config = rl_config
 
         self.curriculum_dicts = [
@@ -23,74 +26,89 @@ class Curriculum:
                 "map_width": 40,  # in meters
                 "map_height": 40,  # in meters
                 "max_steps_in_episode": 600,
-
-                # Placeholders
-                "n_clusters": 4,
-                "n_tiles_per_cluster" : 6,
-                "kernel_size_initial_sampling": 6,
             },
-            # {
-            #     "map_width": 60,  # in meters
-            #     "map_height": 60,  # in meters
-            #     "max_steps_in_episode": 600,
-
-            #     # Placeholders
-            #     "n_clusters": 5,
-            #     "n_tiles_per_cluster" : 10,
-            #     "kernel_size_initial_sampling": 10,
-            # },
+            {
+                "map_width": 60,  # in meters
+                "map_height": 60,  # in meters
+                "max_steps_in_episode": 600,
+            },
         ]
+
+        self.curriculum_len = len(self.curriculum_dicts)
 
         # Compute the minimum number of embedding length for the one-hot features
         self.num_embeddings_agent_min = max([max([el["map_width"], el["map_height"]]) for el in self.curriculum_dicts])
         print(f"{self.num_embeddings_agent_min=}")
 
-    def evaluate_progress(self, metrics_dict: dict[str, Any]) -> int:
+    def _evaluate_progress(self, metrics_dict: dict[str, Any]) -> int:
         """
         Goes from the training metrics to a DoF (degrees of freedom) value,
         considering the current DoF.
         """
-        value_loss = metrics_dict["value_loss"]
-        target = metrics_dict["target"]
-        # TODO config
-        if (value_loss / target < 0.13) and (target > 0) and (self.prev_curriculum < self._get_curriculum_len() - 1):
-            dof = self.prev_curriculum + 1
-            change_curriculum = True
-        else:
-            dof = self.prev_curriculum
-            change_curriculum = False
-        return dof, change_curriculum
+        # value_losses_individual = metrics_dict["value_losses_individual"]
+        # targets_individual = metrics_dict["targets_individual"]
+        # print(f"{value_losses_individual.shape=}")
+        # print(f"{targets_individual.shape=}")
+
+        # increase_dof = (value_losses_individual / targets_individual < 0.13) * (targets_individual > 0)  # TODO config
+
+        # dofs = self.dofs + increase_dof.astype(np.int8)
+        # self.dofs = [dof for dof in dofs if (dof < self.curriculum_len - 1) else 0]  # TODO else random, not 0
+
+        self.dofs = [1 for _ in range(len(self.dofs))]
+        self.dofs_eval = [1 for _ in range(len(self.dofs_eval))]
     
-    def start_curriculum(self):
-        return self.apply_curriculum(
-            curriculum_progress=0,
-        )
+    def get_cfgs(self, metrics_dict: dict[str, Any]):
+        self._evaluate_progress(metrics_dict)
+        
+        map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs]
+        map_heights = [self.curriculum_dicts[dof]["map_height"] for dof in self.dofs]
+        max_steps_in_episodes = [self.curriculum_dicts[dof]["max_steps_in_episode"] for dof in self.dofs]
 
-    def apply_curriculum(self, curriculum_progress: int):
-        print(f"\n~~~ Curriculum change to idx --> {curriculum_progress} ~~~\n")
-
-        self.prev_curriculum = curriculum_progress
-        curriculum = self._get_curriculum(curriculum_progress)
-
-        map_width = curriculum["map_width"]
-        map_height = curriculum["map_height"]
-        print(f"{map_width=}")
-        print(f"{map_height=}")
-        map_dims = MapDims(
-            width_m=map_width,
-            height_m=map_height
-        )
-        env_cfg = EnvConfig.parametrized(
-            map_dims=map_dims,
-            max_steps_in_episode=curriculum["max_steps_in_episode"],
-            n_clusters=curriculum["n_clusters"],
-            n_tiles_per_cluster=curriculum["n_tiles_per_cluster"],
-            kernel_size_initial_sampling=curriculum["kernel_size_initial_sampling"]
+        env_cfgs = jax.vmap(EnvConfig.parametrized)(
+            np.array(map_widths),
+            np.array(map_heights),
+            np.array(max_steps_in_episodes)
             )
+        
+        dof_counts = [sum(1 for dof in self.dofs if dof == j) for j in range(self.curriculum_len)]
+        dofs_count_dict = {
+            f"curriculum dof count {dof}": count
+            for dof, count in zip(range(self.curriculum_len), dof_counts)
+        }
+        return env_cfgs, dofs_count_dict
 
-        env = TerraEnvBatch(env_cfg=env_cfg)
-        return env
+    def get_cfgs_init(self,):
+        map_widths = [self.curriculum_dicts[0]["map_width"] for _ in self.dofs]
+        map_heights = [self.curriculum_dicts[0]["map_height"] for _ in self.dofs]
+        max_steps_in_episodes = [self.curriculum_dicts[0]["max_steps_in_episode"] for _ in self.dofs]
 
+        env_cfgs = jax.vmap(EnvConfig.parametrized)(
+            np.array(map_widths),
+            np.array(map_heights),
+            np.array(max_steps_in_episodes)
+            )
+        return env_cfgs
+    
+    def get_cfgs_eval(self, metrics_dict: dict[str, Any]):
+        self._evaluate_progress(metrics_dict)
+        
+        map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs_eval]
+        map_heights = [self.curriculum_dicts[dof]["map_height"] for dof in self.dofs_eval]
+        max_steps_in_episodes = [self.curriculum_dicts[dof]["max_steps_in_episode"] for dof in self.dofs_eval]
+
+        env_cfgs = jax.vmap(EnvConfig.parametrized)(
+            np.array(map_widths),
+            np.array(map_heights),
+            np.array(max_steps_in_episodes)
+            )
+        
+        dof_counts = [sum(1 for dof in self.dofs_eval if dof == j) for j in range(self.curriculum_len)]
+        dofs_count_dict = {
+            f"curriculum dof count {dof}": count
+            for dof, count in zip(range(self.curriculum_len), dof_counts)
+        }
+        return env_cfgs, dofs_count_dict
 
     def _increase_task_complexity(self,):
         pass
@@ -106,9 +124,6 @@ class Curriculum:
 
     def _get_curriculum(self, idx: int):
         return self.curriculum_dicts[idx]
-
-    def _get_curriculum_len(self,) -> int:
-        return len(self.curriculum_dicts)
 
     def get_num_embeddings_agent_min(self,) -> int:
         return self.num_embeddings_agent_min

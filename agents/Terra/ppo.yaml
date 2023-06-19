@@ -1,7 +1,7 @@
 train_config:
   train_type: "PPO"
-  num_train_steps: 200000000
-  evaluate_every_epochs: 1000
+  num_train_steps: 1000000000
+  evaluate_every_epochs: 20
 
   env_name: "Terra"
   env_kwargs: {}
@@ -11,10 +11,10 @@ train_config:
   use_action_masking: False
   mask_out_arm_extension: False
 
-  num_train_envs: 1000  # Number of parallel env workers
+  num_train_envs: 20  # Number of parallel env workers
   epoch_ppo: 5  # "Number of PPO epochs on a single batch"
   n_steps: 64 # "GAE n-steps"
-  n_minibatch: 8 # "Number of PPO minibatches"
+  n_minibatch: 16 # "Number of PPO minibatches"
   lr_begin: 1e-04  # Start PPO learning rate
   lr_end: 1e-04 #  End PPO learning rate
   lr_warmup: 0.05 # Prop epochs until warmup is completed 

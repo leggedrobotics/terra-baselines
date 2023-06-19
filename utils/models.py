@@ -38,10 +38,10 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             num_embeddings_agent = jnp.max(jnp.array(
                 [
                  config.num_embeddings_agent_min,
-                 env.env_cfg.action_map.height,
-                 env.env_cfg.action_map.width,
-                 env.env_cfg.agent.angles_cabin,
-                 env.env_cfg.agent.angles_base,
+                 env.batch_cfg.maps.max_height,
+                 env.batch_cfg.maps.max_width,
+                 env.batch_cfg.agent.angles_cabin,
+                 env.batch_cfg.agent.angles_base,
                  ], dtype=jnp.int16)
                 ).item()
             jax.debug.print("num_embeddings_agent = {x}", x=num_embeddings_agent)
@@ -75,12 +75,12 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         obs_shape_cumsum = sum([reduce(lambda x, y: x*y, value) for value in env.observation_shapes.values()])
         params = model.init(rng, jnp.zeros((obs_shape_cumsum,)), rng=rng)
     elif config.network_name in ("CategoricalNet", "SimplifiedCategoricalNet", "SimplifiedDecoupledCategoricalNet"):
-        map_width = env.env_cfg.action_map.width
-        map_height = env.env_cfg.action_map.height
+        map_width = env.batch_cfg.maps.max_width
+        map_height = env.batch_cfg.maps.max_height
         obs = [
             jnp.zeros((5, 6,)),
-            jnp.zeros((5, env.env_cfg.agent.angles_cabin, env.env_cfg.agent.max_arm_extension + 1)),
-            jnp.zeros((5, env.env_cfg.agent.angles_cabin, env.env_cfg.agent.max_arm_extension + 1)),
+            jnp.zeros((5, env.batch_cfg.agent.angles_cabin, env.batch_cfg.agent.max_arm_extension + 1)),
+            jnp.zeros((5, env.batch_cfg.agent.angles_cabin, env.batch_cfg.agent.max_arm_extension + 1)),
             jnp.zeros((5, map_width, map_height)),
             jnp.zeros((5, map_width, map_height)),
             jnp.zeros((5, map_width, map_height)),
