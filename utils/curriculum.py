@@ -8,20 +8,14 @@ class Curriculum:
 
     def __init__(self, rl_config) -> None:
         self.dofs = np.zeros((rl_config.num_train_envs,), dtype=np.int8)
-        self.dofs_eval = np.zeros((rl_config.num_test_rollouts,), dtype=np.int8)
         self.rl_config = rl_config
 
         self.curriculum_dicts = [
-            # {
-            #     "map_width": 20,  # in meters
-            #     "map_height": 20,  # in meters
-            #     "max_steps_in_episode": 150,
-
-            #     # Placeholders
-            #     "n_clusters": 3,
-            #     "n_tiles_per_cluster" : 3,
-            #     "kernel_size_initial_sampling": 4,
-            # },
+            {
+                "map_width": 20,  # in meters
+                "map_height": 20,  # in meters
+                "max_steps_in_episode": 400,
+            },
             {
                 "map_width": 40,  # in meters
                 "map_height": 40,  # in meters
@@ -30,11 +24,19 @@ class Curriculum:
             {
                 "map_width": 60,  # in meters
                 "map_height": 60,  # in meters
-                "max_steps_in_episode": 600,
+                "max_steps_in_episode": 800,
             },
         ]
 
         self.curriculum_len = len(self.curriculum_dicts)
+
+        # Get even eval dofs
+        n_eval_each = rl_config.num_test_rollouts // self.curriculum_len
+        n_mod = rl_config.num_test_rollouts % self.curriculum_len
+        eval_dofs =  [i for _ in range(n_eval_each) for i in range(self.curriculum_len)]
+        last = eval_dofs[-1]
+        eval_dofs += [last for _ in range(n_mod)]
+        self.dofs_eval = np.array(eval_dofs, dtype=np.int8)
 
         # Compute the minimum number of embedding length for the one-hot features
         self.num_embeddings_agent_min = max([max([el["map_width"], el["map_height"]]) for el in self.curriculum_dicts])
@@ -45,18 +47,33 @@ class Curriculum:
         Goes from the training metrics to a DoF (degrees of freedom) value,
         considering the current DoF.
         """
-        # value_losses_individual = metrics_dict["value_losses_individual"]
-        # targets_individual = metrics_dict["targets_individual"]
-        # print(f"{value_losses_individual.shape=}")
-        # print(f"{targets_individual.shape=}")
+
+        values_individual = metrics_dict["values_individual"]
+        targets_individual = metrics_dict["targets_individual"]
+        value_losses_individual = np.square(values_individual - targets_individual)
 
         # increase_dof = (value_losses_individual / targets_individual < 0.13) * (targets_individual > 0)  # TODO config
+        increase_dof = (value_losses_individual / targets_individual < 0.2) * (targets_individual > 0)  # TODO config
 
-        # dofs = self.dofs + increase_dof.astype(np.int8)
-        # self.dofs = [dof for dof in dofs if (dof < self.curriculum_len - 1) else 0]  # TODO else random, not 0
-
-        self.dofs = [1 for _ in range(len(self.dofs))]
-        self.dofs_eval = [1 for _ in range(len(self.dofs_eval))]
+        dofs = self.dofs + increase_dof.astype(np.int8)
+        dofs = np.where(dofs < self.curriculum_len, dofs, np.random.randint(0, self.curriculum_len))
+        self.dofs = dofs
+    
+    def _get_dofs_count_dict(self,):
+        dof_counts = [sum(1 for dof in self.dofs if dof == j) for j in range(self.curriculum_len)]
+        dofs_count_dict = {
+            f"curriculum dof count {dof}": count
+            for dof, count in zip(range(self.curriculum_len), dof_counts)
+        }
+        return dofs_count_dict
+    
+    def _get_dofs_count_dict_eval(self,):
+        dof_counts = [sum(1 for dof in self.dofs_eval if dof == j) for j in range(self.curriculum_len)]
+        dofs_count_dict = {
+            f"curriculum dof count {dof}": count
+            for dof, count in zip(range(self.curriculum_len), dof_counts)
+        }
+        return dofs_count_dict
     
     def get_cfgs(self, metrics_dict: dict[str, Any]):
         self._evaluate_progress(metrics_dict)
@@ -71,11 +88,7 @@ class Curriculum:
             np.array(max_steps_in_episodes)
             )
         
-        dof_counts = [sum(1 for dof in self.dofs if dof == j) for j in range(self.curriculum_len)]
-        dofs_count_dict = {
-            f"curriculum dof count {dof}": count
-            for dof, count in zip(range(self.curriculum_len), dof_counts)
-        }
+        dofs_count_dict = self._get_dofs_count_dict()
         return env_cfgs, dofs_count_dict
 
     def get_cfgs_init(self,):
@@ -88,11 +101,10 @@ class Curriculum:
             np.array(map_heights),
             np.array(max_steps_in_episodes)
             )
-        return env_cfgs
+        dofs_count_dict = self._get_dofs_count_dict()
+        return env_cfgs, dofs_count_dict
     
-    def get_cfgs_eval(self, metrics_dict: dict[str, Any]):
-        self._evaluate_progress(metrics_dict)
-        
+    def get_cfgs_eval(self,):
         map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs_eval]
         map_heights = [self.curriculum_dicts[dof]["map_height"] for dof in self.dofs_eval]
         max_steps_in_episodes = [self.curriculum_dicts[dof]["max_steps_in_episode"] for dof in self.dofs_eval]
@@ -103,11 +115,8 @@ class Curriculum:
             np.array(max_steps_in_episodes)
             )
         
-        dof_counts = [sum(1 for dof in self.dofs_eval if dof == j) for j in range(self.curriculum_len)]
-        dofs_count_dict = {
-            f"curriculum dof count {dof}": count
-            for dof, count in zip(range(self.curriculum_len), dof_counts)
-        }
+        dofs_count_dict = self._get_dofs_count_dict_eval()
+        
         return env_cfgs, dofs_count_dict
 
     def _increase_task_complexity(self,):

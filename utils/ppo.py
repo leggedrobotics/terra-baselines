@@ -179,8 +179,8 @@ class RolloutManager(object):
         # seeds_maps_buffer = jnp.array([k[1] for k in keys])
         # maps_buffer_keys = jax.vmap(partial(jax.random.PRNGKey))(seeds_maps_buffer)
         # maps_buffer_keys = jax.vmap(partial(jax.random.split, num=1))(maps_buffer_keys)
-        jax.debug.print("seeds={x}", x=seeds.shape)
-        jax.debug.print("env_cfgs={x}", x=env_cfgs)
+        # jax.debug.print("seeds={x}", x=seeds.shape)
+        # jax.debug.print("env_cfgs={x}", x=env_cfgs)
         return self.env.reset(seeds, env_cfgs)
 
     @partial(jax.jit, static_argnums=(0,))
@@ -189,7 +189,7 @@ class RolloutManager(object):
         return self.env.step(states, actions, env_cfgs, maps_buffer_keys)
         
     @partial(jax.jit, static_argnums=(0, 3, 6))
-    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs):
+    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, num_steps_test_rollouts):
         """Rollout an episode with lax.scan."""
         # Reset the environment
         rng_reset, rng_episode = jax.random.split(rng_input)
@@ -238,8 +238,7 @@ class RolloutManager(object):
                 maps_buffer_keys
             ],
             (),
-            # self.env.env_cfg.max_steps_in_episode,
-            100, # TODO get from every single env_cfg -> test all the N possible curriculum dofs at the same time and always
+            600, #num_steps_test_rollouts,
         )
 
         cum_return = carry_out[4].squeeze()
@@ -338,7 +337,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     )
 
     rng, rng_step, rng_reset, rng_eval, rng_update = jax.random.split(rng, 5)
-    env_cfgs = curriculum.get_cfgs_init()
+    env_cfgs, dofs_count_dict = curriculum.get_cfgs_init()
     state, obs, maps_buffer_keys = rollout_manager.batch_reset(
         jax.random.split(rng_reset, config.num_train_envs), env_cfgs
     )
@@ -373,6 +372,9 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 config.critic_coeff,
                 rng_update,
             )
+
+            if config["wandb"]:
+                wandb.log({**metric_dict, **dofs_count_dict})
             
             env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict)
 
@@ -382,13 +384,10 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 num_actions=num_actions
             )
 
-            if config["wandb"]:
-                wandb.log({**metric_dict, **dofs_count_dict})
-
 
         if (step + 1) % config.evaluate_every_epochs == 0:
             rng, rng_eval = jax.random.split(rng)
-            env_cfgs_eval, _ = curriculum.get_cfgs_eval(None) # TODO implement properly
+            env_cfgs_eval, dofs_count_dict_eval = curriculum.get_cfgs_eval()
             rewards, dones = rollout_manager.batch_evaluate(
                 rng_eval,
                 train_state,
@@ -396,7 +395,8 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 step,
                 action_mask_init,
                 config.n_evals_save,
-                env_cfgs_eval
+                env_cfgs_eval,
+                config.num_steps_test_rollouts
             )
             log_steps.append(total_steps)
             log_return.append(rewards)
@@ -503,8 +503,6 @@ def loss_actor_and_critic(
         value_pred.mean(),
         target.mean(),
         gae_mean,
-        value_losses_individual,
-        target
     )
 
 
@@ -556,8 +554,6 @@ def update(
             value_pred,
             target_val,
             gae_val,
-            value_losses_individual,
-            targets
         ) = total_loss
 
         avg_metrics_dict["total_loss"] += np.asarray(total_loss)
@@ -573,10 +569,9 @@ def update(
     for k, v in avg_metrics_dict.items():
         avg_metrics_dict[k] = v / (epoch_ppo)
 
-    # Elements independent from epoch
     avg_metrics_dict["avg dones %"] += np.asarray(100 * dones.mean())
-    avg_metrics_dict["value_losses_individual"] += np.asarray(value_losses_individual)
-    avg_metrics_dict["targets_individual"] += np.asarray(targets)
+    avg_metrics_dict["values_individual"] += np.asarray(value.mean(0))
+    avg_metrics_dict["targets_individual"] += np.asarray(target.mean(0))
 
     return avg_metrics_dict, train_state, rng
 
@@ -597,7 +592,6 @@ def update_epoch(
     critic_coeff: float,
 ):
     for idx in idxes:
-        # print(action[idx].shape, action[idx].reshape(-1, 1).shape)
         grad_fn = jax.value_and_grad(loss_actor_and_critic, has_aux=True)
         total_loss, grads = grad_fn(
             train_state.params,
