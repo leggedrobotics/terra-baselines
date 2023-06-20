@@ -21,11 +21,11 @@ class Curriculum:
                 "map_height": 40,  # in meters
                 "max_steps_in_episode": 600,
             },
-            {
-                "map_width": 60,  # in meters
-                "map_height": 60,  # in meters
-                "max_steps_in_episode": 800,
-            },
+            # {
+            #     "map_width": 60,  # in meters
+            #     "map_height": 60,  # in meters
+            #     "max_steps_in_episode": 800,
+            # },
         ]
 
         self.curriculum_len = len(self.curriculum_dicts)
@@ -85,7 +85,8 @@ class Curriculum:
         env_cfgs = jax.vmap(EnvConfig.parametrized)(
             np.array(map_widths),
             np.array(map_heights),
-            np.array(max_steps_in_episodes)
+            np.array(max_steps_in_episodes),
+            np.array(self.dofs)
             )
         
         dofs_count_dict = self._get_dofs_count_dict()
@@ -99,7 +100,8 @@ class Curriculum:
         env_cfgs = jax.vmap(EnvConfig.parametrized)(
             np.array(map_widths),
             np.array(map_heights),
-            np.array(max_steps_in_episodes)
+            np.array(max_steps_in_episodes),
+            np.array(self.dofs)
             )
         dofs_count_dict = self._get_dofs_count_dict()
         return env_cfgs, dofs_count_dict
@@ -112,7 +114,8 @@ class Curriculum:
         env_cfgs = jax.vmap(EnvConfig.parametrized)(
             np.array(map_widths),
             np.array(map_heights),
-            np.array(max_steps_in_episodes)
+            np.array(max_steps_in_episodes),
+            np.array(self.dofs_eval),
             )
         
         dofs_count_dict = self._get_dofs_count_dict_eval()
