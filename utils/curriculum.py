@@ -56,9 +56,9 @@ class Curriculum:
         increase_dof = (value_losses_individual / targets_individual < 0.2) * (targets_individual > 0)  # TODO config
 
         dofs = self.dofs + increase_dof.astype(np.int8)
-        random_dofs = np.random.randint(0, self.curriculum_len, (dofs.shape[0],))
+        random_dofs = np.random.randint(0, self.curriculum_len, (dofs.shape[0],), dtype=np.int8)
         dofs = np.where(dofs < self.curriculum_len, dofs, random_dofs)
-        self.dofs = dofs
+        self.dofs = dofs.astype(np.int8)
     
     def _get_dofs_count_dict(self,):
         dof_counts = [sum(1 for dof in self.dofs if dof == j) for j in range(self.curriculum_len)]
