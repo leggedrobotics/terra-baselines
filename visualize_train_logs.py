@@ -51,6 +51,8 @@ if __name__ == "__main__":
     batch_size = obs_seq["local_map_action"].shape[0]
     seq_len = min(obs_seq["local_map_action"].shape[1], args.max_steps)
 
+    print(obs_seq.keys())
+
     # end_frame = 200
     # state_seq = state_seq[:end_frame]  # TODO remove
     env = TerraEnvBatch(rendering=True, n_imgs_row=int(np.sqrt(batch_size)))
