@@ -14,7 +14,7 @@ class Curriculum:
             {
                 "map_width": 20,  # in meters
                 "map_height": 20,  # in meters
-                "max_steps_in_episode": 400,
+                "max_steps_in_episode": 300,
             },
             {
                 "map_width": 40,  # in meters
@@ -56,7 +56,8 @@ class Curriculum:
         increase_dof = (value_losses_individual / targets_individual < 0.2) * (targets_individual > 0)  # TODO config
 
         dofs = self.dofs + increase_dof.astype(np.int8)
-        dofs = np.where(dofs < self.curriculum_len, dofs, np.random.randint(0, self.curriculum_len))
+        random_dofs = np.random.randint(0, self.curriculum_len, (dofs.shape[0],))
+        dofs = np.where(dofs < self.curriculum_len, dofs, random_dofs)
         self.dofs = dofs
     
     def _get_dofs_count_dict(self,):

@@ -189,7 +189,7 @@ class RolloutManager(object):
         return self.env.step(states, actions, env_cfgs, maps_buffer_keys)
         
     @partial(jax.jit, static_argnums=(0, 3, 6))
-    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, num_steps_test_rollouts):
+    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs):
         """Rollout an episode with lax.scan."""
         # Reset the environment
         rng_reset, rng_episode = jax.random.split(rng_input)
@@ -396,7 +396,6 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 action_mask_init,
                 config.n_evals_save,
                 env_cfgs_eval,
-                config.num_steps_test_rollouts
             )
             log_steps.append(total_steps)
             log_return.append(rewards)
@@ -434,7 +433,8 @@ def obs_to_model_input(obs):
         obs["local_map_target"],
         obs["action_map"],
         obs["target_map"],
-        obs["traversability_mask"]
+        obs["traversability_mask"],
+        obs["padding_mask"],
     ]
 
     # Legacy: Categorical MLP
