@@ -30,11 +30,11 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         #     model = GaussianSeparateMLP(
         #         **config.network_config, num_output_units=env.num_actions
         #     )
-        if config.network_name == "CategoricalNet":
-            model = CategoricalNet()
-        elif config.network_name == "SimplifiedCategoricalNet":
-            model = SimplifiedCategoricalNet()
-        elif config.network_name == "SimplifiedDecoupledCategoricalNet":
+        # if config.network_name == "CategoricalNet":
+        #     model = CategoricalNet()
+        # elif config.network_name == "SimplifiedCategoricalNet":
+        #     model = SimplifiedCategoricalNet()
+        if config.network_name == "SimplifiedDecoupledCategoricalNet":
             num_embeddings_agent = jnp.max(jnp.array(
                 [
                  config.num_embeddings_agent_min,
@@ -173,20 +173,11 @@ class AgentStateNet(nn.Module):
         return x_one_hot
 
 
-# ResNet = ResNetBase(
-#     block_cls=jax_resnet.ResNetBlock,
-#     stage_sizes=jax_resnet.STAGE_SIZES[18],
-#     stem_cls=jax_resnet.ResNetStem,
-#     n_classes=16,
-#     # norm_cls=nn.LayerNorm,
-# )
-
-
 class LocalMapNet(nn.Module):
     """
     Pre-process one or multiple maps.
     """
-    map_min_max: Sequence[int] = (-2, 2)
+    map_min_max: Sequence[int] = (-16, 16)
     hidden_dim_layers_mlp: Sequence[int] = (128, 16)
 
     def setup(self) -> None:
@@ -216,13 +207,14 @@ class MapsNet(nn.Module):
     """
     Pre-process one or multiple maps.
     """
-    map_min_max: Sequence[int] = (-2, 2)  # TODO from config
+    map_min_max: Sequence[int] = (-1, 4)  # TODO from config
 
     def setup(self) -> None:
         # self.conv1 = nn.Conv(3, kernel_size=(1, 1))
         self.resnet = ResNetBase(
                         block_cls=jax_resnet.ResNetBlock,
-                        stage_sizes=[1],  # jax_resnet.STAGE_SIZES[18],
+                        stage_sizes=[4, 4],
+                        hidden_sizes=(8, 16),
                         stem_cls=jax_resnet.ResNetStem,
                         n_classes=32,
                         # norm_cls=nn.LayerNorm,
@@ -244,148 +236,148 @@ class MapsNet(nn.Module):
         return x
     
 
-class SimplifiedMapsNet(nn.Module):
-    """
-    Pre-process one or multiple maps.
-    """
-    map_min_max: Sequence[int] = (-2, 2)  # TODO from config
-    hidden_dim_layers_mlp: Sequence[int] = (128, 32)
+# class SimplifiedMapsNet(nn.Module):
+#     """
+#     Pre-process one or multiple maps.
+#     """
+#     map_min_max: Sequence[int] = (-2, 2)  # TODO from config
+#     hidden_dim_layers_mlp: Sequence[int] = (128, 32)
 
-    def setup(self) -> None:
-        self.mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_mlp)
+#     def setup(self) -> None:
+#         self.mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_mlp)
 
-    def __call__(self, obs: dict[str, Array]):
-        action_map = normalize(obs[3], self.map_min_max[0], self.map_min_max[1])
+#     def __call__(self, obs: dict[str, Array]):
+#         action_map = normalize(obs[3], self.map_min_max[0], self.map_min_max[1])
 
-        # delta_target_map = jnp.clip(obs[3] - obs[2], a_max=0)
-        # delta_target_map = normalize(delta_target_map, self.map_min_max[0], 0)
+#         # delta_target_map = jnp.clip(obs[3] - obs[2], a_max=0)
+#         # delta_target_map = normalize(delta_target_map, self.map_min_max[0], 0)
 
-        target_map = normalize(obs[4], self.map_min_max[0], self.map_min_max[1])
+#         target_map = normalize(obs[4], self.map_min_max[0], self.map_min_max[1])
 
-        x = jnp.concatenate((action_map[..., None], target_map[..., None], obs[5][..., None]), axis=-1)
-        # x = self.conv1(x)
-        x = self.mlp(x.reshape(x.shape[0], -1))
-        return x
+#         x = jnp.concatenate((action_map[..., None], target_map[..., None], obs[5][..., None]), axis=-1)
+#         # x = self.conv1(x)
+#         x = self.mlp(x.reshape(x.shape[0], -1))
+#         return x
 
 
-class CategoricalNet(nn.Module):
-    """
-    The full net.
+# class CategoricalNet(nn.Module):
+#     """
+#     The full net.
 
-    The obs List follows the following order:
-    0 - obs["agent_state"],
-    1 - obs["local_map_action"],
-    2 - obs["local_map_target"],
-    3 - obs["action_map"],
-    4 - obs["target_map"],
-    5 - obs["traversability_mask"]
-    """
-    action_type: Union[TrackedAction, WheeledAction] = TrackedAction
-    hidden_dim_layers_common: Sequence[int] = (64, 32)
-    hidden_dim_pi: Sequence[int] = (16, 16)
-    hidden_dim_v: Sequence[int] = (16, 4, 1)
+#     The obs List follows the following order:
+#     0 - obs["agent_state"],
+#     1 - obs["local_map_action"],
+#     2 - obs["local_map_target"],
+#     3 - obs["action_map"],
+#     4 - obs["target_map"],
+#     5 - obs["traversability_mask"]
+#     """
+#     action_type: Union[TrackedAction, WheeledAction] = TrackedAction
+#     hidden_dim_layers_common: Sequence[int] = (64, 32)
+#     hidden_dim_pi: Sequence[int] = (16, 16)
+#     hidden_dim_v: Sequence[int] = (16, 4, 1)
 
-    def setup(self) -> None:
-        num_actions = self.action_type.get_num_actions()
+#     def setup(self) -> None:
+#         num_actions = self.action_type.get_num_actions()
 
-        self.common_mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_common)
-        self.mlp_v = MLP(hidden_dim_layers=self.hidden_dim_v)
-        self.mlp_pi = MLP(hidden_dim_layers=self.hidden_dim_pi + (num_actions,))
+#         self.common_mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_common)
+#         self.mlp_v = MLP(hidden_dim_layers=self.hidden_dim_v)
+#         self.mlp_pi = MLP(hidden_dim_layers=self.hidden_dim_pi + (num_actions,))
 
-        self.agent_state_net = AgentStateNet()
-        self.maps_net = MapsNet()
-        self.local_map_net = LocalMapNet()
+#         self.agent_state_net = AgentStateNet()
+#         self.maps_net = MapsNet()
+#         self.local_map_net = LocalMapNet()
 
-        self.activation = nn.relu
+#         self.activation = nn.relu
 
-    def __call__(self, obs: Array, action_mask: Array) -> Array:
-        x_agent_state = self.agent_state_net(obs)
-        x_maps = self.maps_net(obs)
-        x_local_map = self.local_map_net(obs)
+#     def __call__(self, obs: Array, action_mask: Array) -> Array:
+#         x_agent_state = self.agent_state_net(obs)
+#         x_maps = self.maps_net(obs)
+#         x_local_map = self.local_map_net(obs)
 
-        x = jnp.concatenate((x_agent_state, x_local_map, x_maps), axis=-1)
-        x = self.activation(x)
+#         x = jnp.concatenate((x_agent_state, x_local_map, x_maps), axis=-1)
+#         x = self.activation(x)
 
-        x = self.common_mlp(x)
-        x = self.activation(x)
+#         x = self.common_mlp(x)
+#         x = self.activation(x)
 
-        v = self.mlp_v(x)
+#         v = self.mlp_v(x)
 
-        x_pi = self.mlp_pi(x)
-        # x_pi = jnp.where(
-        #     action_mask.astype(jnp.bool_),
-        #     x_pi,
-        #     -1e8
-        # )
+#         x_pi = self.mlp_pi(x)
+#         # x_pi = jnp.where(
+#         #     action_mask.astype(jnp.bool_),
+#         #     x_pi,
+#         #     -1e8
+#         # )
 
-        # # Mask out arm extension
-        x_pi = x_pi.at[..., -2].set(-1e8)
-        x_pi = x_pi.at[..., -3].set(-1e8)
+#         # # Mask out arm extension
+#         x_pi = x_pi.at[..., -2].set(-1e8)
+#         x_pi = x_pi.at[..., -3].set(-1e8)
 
-        # jax.debug.print("action_mask={x}", x=action_mask)
-        # jax.debug.print("x_pi={x}", x=x_pi)
+#         # jax.debug.print("action_mask={x}", x=action_mask)
+#         # jax.debug.print("x_pi={x}", x=x_pi)
         
-        pi = tfp.distributions.Categorical(logits=x_pi)
-        return v, pi
+#         pi = tfp.distributions.Categorical(logits=x_pi)
+#         return v, pi
 
 
-class SimplifiedCategoricalNet(nn.Module):
-    """
-    The full net.
+# class SimplifiedCategoricalNet(nn.Module):
+#     """
+#     The full net.
 
-    The obs List follows the following order:
-    0 - obs["agent_state"],
-    1 - obs["local_map_action"],
-    2 - obs["local_map_target"],
-    3 - obs["action_map"],
-    4 - obs["target_map"],
-    5 - obs["traversability_mask"]
-    """
-    action_type: Union[TrackedAction, WheeledAction] = TrackedAction
-    hidden_dim_layers_common: Sequence[int] = (64, 32)
-    hidden_dim_pi: Sequence[int] = (16, 16)
-    hidden_dim_v: Sequence[int] = (16, 4, 1)
+#     The obs List follows the following order:
+#     0 - obs["agent_state"],
+#     1 - obs["local_map_action"],
+#     2 - obs["local_map_target"],
+#     3 - obs["action_map"],
+#     4 - obs["target_map"],
+#     5 - obs["traversability_mask"]
+#     """
+#     action_type: Union[TrackedAction, WheeledAction] = TrackedAction
+#     hidden_dim_layers_common: Sequence[int] = (64, 32)
+#     hidden_dim_pi: Sequence[int] = (16, 16)
+#     hidden_dim_v: Sequence[int] = (16, 4, 1)
 
-    def setup(self) -> None:
-        num_actions = self.action_type.get_num_actions()
+#     def setup(self) -> None:
+#         num_actions = self.action_type.get_num_actions()
 
-        self.common_mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_common)
-        self.mlp_v = MLP(hidden_dim_layers=self.hidden_dim_v)
-        self.mlp_pi = MLP(hidden_dim_layers=self.hidden_dim_pi + (num_actions,))
+#         self.common_mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_common)
+#         self.mlp_v = MLP(hidden_dim_layers=self.hidden_dim_v)
+#         self.mlp_pi = MLP(hidden_dim_layers=self.hidden_dim_pi + (num_actions,))
 
-        self.agent_state_net = AgentStateNet()
-        self.maps_net = SimplifiedMapsNet()
+#         self.agent_state_net = AgentStateNet()
+#         self.maps_net = SimplifiedMapsNet()
 
-        self.activation = nn.relu
+#         self.activation = nn.relu
 
-    def __call__(self, obs: Array, action_mask: Array) -> Array:
-        x_agent_state = self.agent_state_net(obs)
-        x_maps = self.maps_net(obs)
+#     def __call__(self, obs: Array, action_mask: Array) -> Array:
+#         x_agent_state = self.agent_state_net(obs)
+#         x_maps = self.maps_net(obs)
 
-        x = jnp.concatenate((x_agent_state, x_maps), axis=-1)
-        x = self.activation(x)
+#         x = jnp.concatenate((x_agent_state, x_maps), axis=-1)
+#         x = self.activation(x)
 
-        x = self.common_mlp(x)
-        x = self.activation(x)
+#         x = self.common_mlp(x)
+#         x = self.activation(x)
 
-        v = self.mlp_v(x)
+#         v = self.mlp_v(x)
 
-        x_pi = self.mlp_pi(x)
-        # x_pi = jnp.where(
-        #     action_mask.astype(jnp.bool_),
-        #     x_pi,
-        #     -1e8
-        # )
+#         x_pi = self.mlp_pi(x)
+#         # x_pi = jnp.where(
+#         #     action_mask.astype(jnp.bool_),
+#         #     x_pi,
+#         #     -1e8
+#         # )
 
-        # # Mask out arm extension
-        x_pi = x_pi.at[..., -2].set(-1e8)
-        x_pi = x_pi.at[..., -3].set(-1e8)
+#         # # Mask out arm extension
+#         x_pi = x_pi.at[..., -2].set(-1e8)
+#         x_pi = x_pi.at[..., -3].set(-1e8)
 
-        # jax.debug.print("action_mask={x}", x=action_mask)
-        # jax.debug.print("x_pi={x}", x=x_pi)
+#         # jax.debug.print("action_mask={x}", x=action_mask)
+#         # jax.debug.print("x_pi={x}", x=x_pi)
         
-        pi = tfp.distributions.Categorical(logits=x_pi)
-        return v, pi
+#         pi = tfp.distributions.Categorical(logits=x_pi)
+#         return v, pi
     
 class SimplifiedDecoupledCategoricalNet(nn.Module):
     """
