@@ -11,6 +11,7 @@ from time import gmtime
 from time import strftime
 from utils.curriculum import Curriculum
 from terra.env import TerraEnvBatch
+from terra.config import EnvConfig
 
 def _init_wandb(run_name, config):
     import wandb
@@ -61,7 +62,8 @@ def main(config, mle_log, log_ext=""):
         "log_return": log_return,
         "network": network_ckpt,
         "train_config": config,
-        "env_config": env.env_cfg._asdict(),
+        "curriculum": curriculum.curriculum_dicts,
+        "default_env_cfg": EnvConfig(),
         "batch_config": env.batch_cfg._asdict()
     }
 
