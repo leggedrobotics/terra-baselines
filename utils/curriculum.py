@@ -12,10 +12,11 @@ class Curriculum:
         self.rl_config = rl_config
 
         self.curriculum_dicts = [
+            # (values with -1 means it's not used)
             {
-                "map_width": 20,  # in meters
-                "map_height": 20,  # in meters
-                "max_steps_in_episode": 300,
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 200,
                 "map_type": MapType.TWO_SQUARE_TRENCHES_TWO_DUMP_AREAS,
             },
             {
