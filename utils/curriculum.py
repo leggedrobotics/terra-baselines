@@ -58,7 +58,7 @@ class Curriculum:
         value_losses_individual = np.square(values_individual - targets_individual)
 
         # increase_dof = (value_losses_individual / targets_individual < 0.13) * (targets_individual > 0)  # TODO config
-        increase_dof = (value_losses_individual / targets_individual < 0.2) * (targets_individual > 0)  # TODO config
+        increase_dof = (value_losses_individual / targets_individual < 0.1) * (targets_individual > 0)  # TODO config
 
         dofs = self.dofs + increase_dof.astype(np.int8)
         random_dofs = np.random.randint(0, self.curriculum_len, (dofs.shape[0],), dtype=np.int8)
