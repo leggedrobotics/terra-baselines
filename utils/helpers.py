@@ -6,7 +6,7 @@ import jax
 import jax.numpy as jnp
 import pickle
 from pathlib import Path
-from terra.utils import load_maps_from_disk
+from terra.maps_buffer import load_maps_from_disk
 from terra.utils import IntMap
 from terra.maps_buffer import MapsBuffer
 from terra.config import EnvConfig

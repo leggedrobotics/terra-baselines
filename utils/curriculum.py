@@ -3,6 +3,7 @@ from jax import Array
 from typing import Any
 from terra.config import EnvConfig
 import numpy as np
+from terra.config import MapType
 
 class Curriculum:
 
@@ -15,17 +16,20 @@ class Curriculum:
                 "map_width": 20,  # in meters
                 "map_height": 20,  # in meters
                 "max_steps_in_episode": 300,
+                "map_type": MapType.TWO_SQUARE_TRENCHES_TWO_DUMP_AREAS,
+            },
+            {
+                "map_width": 20,  # in meters
+                "map_height": 20,  # in meters
+                "max_steps_in_episode": 300,
+                "map_type": MapType.OPENSTREET_2_DIG_DUMP,
             },
             {
                 "map_width": 40,  # in meters
                 "map_height": 40,  # in meters
                 "max_steps_in_episode": 600,
+                "map_type": MapType.OPENSTREET_2_DIG_DUMP,
             },
-            # {
-            #     "map_width": 60,  # in meters
-            #     "map_height": 60,  # in meters
-            #     "max_steps_in_episode": 800,
-            # },
         ]
 
         self.curriculum_len = len(self.curriculum_dicts)
@@ -82,12 +86,14 @@ class Curriculum:
         map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs]
         map_heights = [self.curriculum_dicts[dof]["map_height"] for dof in self.dofs]
         max_steps_in_episodes = [self.curriculum_dicts[dof]["max_steps_in_episode"] for dof in self.dofs]
+        map_types = [self.curriculum_dicts[dof]["map_type"] for dof in self.dofs]
 
         env_cfgs = jax.vmap(EnvConfig.parametrized)(
             np.array(map_widths),
             np.array(map_heights),
             np.array(max_steps_in_episodes),
-            np.array(self.dofs)
+            np.array(self.dofs),
+            np.array(map_types),
             )
         
         dofs_count_dict = self._get_dofs_count_dict()
@@ -97,12 +103,14 @@ class Curriculum:
         map_widths = [self.curriculum_dicts[0]["map_width"] for _ in self.dofs]
         map_heights = [self.curriculum_dicts[0]["map_height"] for _ in self.dofs]
         max_steps_in_episodes = [self.curriculum_dicts[0]["max_steps_in_episode"] for _ in self.dofs]
+        map_types = [self.curriculum_dicts[0]["map_type"] for _ in self.dofs]
 
         env_cfgs = jax.vmap(EnvConfig.parametrized)(
             np.array(map_widths),
             np.array(map_heights),
             np.array(max_steps_in_episodes),
-            np.array(self.dofs)
+            np.array(self.dofs),
+            np.array(map_types),
             )
         dofs_count_dict = self._get_dofs_count_dict()
         return env_cfgs, dofs_count_dict
@@ -111,12 +119,14 @@ class Curriculum:
         map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs_eval]
         map_heights = [self.curriculum_dicts[dof]["map_height"] for dof in self.dofs_eval]
         max_steps_in_episodes = [self.curriculum_dicts[dof]["max_steps_in_episode"] for dof in self.dofs_eval]
+        map_types = [self.curriculum_dicts[dof]["map_type"] for dof in self.dofs_eval]
 
         env_cfgs = jax.vmap(EnvConfig.parametrized)(
             np.array(map_widths),
             np.array(map_heights),
             np.array(max_steps_in_episodes),
             np.array(self.dofs_eval),
+            np.array(map_types),
             )
         
         dofs_count_dict = self._get_dofs_count_dict_eval()
