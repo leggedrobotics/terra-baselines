@@ -30,25 +30,23 @@ def _init_wandb(run_name, config):
 def main(config, mle_log, log_ext=""):
     """Run training with ES or PPO. Store logs and agent ckpt."""
     now = strftime("%Y_%m_%d_%H_%M_%S", gmtime())  # note: UTC time
-    run_name = config.run_name + "_" + now
+    run_name = config["run_name"] + "_" + now
     if config["wandb"]:
         run = _init_wandb(run_name, config)
 
-    rng = jax.random.PRNGKey(config.seed_model)
+    rng = jax.random.PRNGKey(config["seed_model"])
     # Setup the model architecture
     rng, rng_init, rng_maps_buffer = jax.random.split(rng, 3)
     
     curriculum = Curriculum(rl_config=config)
     env = env = TerraEnvBatch()
-    config.num_embeddings_agent_min = curriculum.get_num_embeddings_agent_min()
+    config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     model, params = get_model_ready(rng_init, config, env)
     del rng_init
 
     # Run the training loop (either evosax ES or PPO)
-    if config.train_type == "PPO":
+    if config["train_type"] == "PPO":
         from utils.ppo import train_ppo as train_fn
-    # elif config.train_type == "ES":
-    #     from utils.es import train_es as train_fn
     else:
         raise ValueError("Unknown train_type.")
 
@@ -69,7 +67,7 @@ def main(config, mle_log, log_ext=""):
 
     save_pkl_object(
         data_to_store,
-        f"agents/{config.env_name}/{run_name}.pkl",
+        f"agents/{config['env_name']}/{run_name}.pkl",
     )
     run.finish()
 
@@ -131,7 +129,7 @@ if __name__ == "__main__":
     args, _ = parser.parse_known_args()
     config = load_config(args.config_fname, args.seed_env, args.seed_model, args.lrate, args.wandb, args.run_name)
     main(
-        config.train_config,
+        config["train_config"],
         mle_log=None,
         log_ext=str(args.lrate) if args.lrate != 5e-04 else "",
     )

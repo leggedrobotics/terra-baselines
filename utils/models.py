@@ -17,27 +17,11 @@ import jax_resnet
 
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     """Instantiate a model according to obs shape of environment."""
-    # Get number of desired output units
-    # env, env_params = gymnax.make(config.env_name, **config.env_kwargs)
-
-    # Instantiate model class (flax-based)
-    if config.train_type == "PPO":
-        # if config.network_name == "Categorical-MLP":
-        #     model = CategoricalSeparateMLP(
-        #         **config.network_config, num_output_units=env.num_actions
-        #     )
-        # elif config.network_name == "Gaussian-MLP":
-        #     model = GaussianSeparateMLP(
-        #         **config.network_config, num_output_units=env.num_actions
-        #     )
-        # if config.network_name == "CategoricalNet":
-        #     model = CategoricalNet()
-        # elif config.network_name == "SimplifiedCategoricalNet":
-        #     model = SimplifiedCategoricalNet()
-        if config.network_name == "SimplifiedDecoupledCategoricalNet":
+    if config["train_type"] == "PPO":
+        if config["network_name"] == "SimplifiedDecoupledCategoricalNet":
             num_embeddings_agent = jnp.max(jnp.array(
                 [
-                 config.num_embeddings_agent_min,
+                 config["num_embeddings_agent_min"],
                  env.batch_cfg.maps.max_height,
                  env.batch_cfg.maps.max_width,
                  env.batch_cfg.agent.angles_cabin,
@@ -45,36 +29,17 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
                  ], dtype=jnp.int16)
                 ).item()
             jax.debug.print("num_embeddings_agent = {x}", x=num_embeddings_agent)
-            jax.debug.print("config.use_action_masking={x}", x=config.use_action_masking)
+            jax.debug.print("config.use_action_masking={x}", x=config["use_action_masking"])
             model = SimplifiedDecoupledCategoricalNet(
-                use_action_masking=config.use_action_masking,
-                mask_out_arm_extension=config.mask_out_arm_extension,
+                use_action_masking=config["use_action_masking"],
+                mask_out_arm_extension=config["mask_out_arm_extension"],
                 num_embeddings_agent=num_embeddings_agent
             )
 
-    # Only use feedforward MLP in speed evaluations!
-    # if speed and config.network_name == "LSTM":
-    #     model = NetworkMapper["MLP"](
-    #         num_hidden_units=64,
-    #         num_hidden_layers=2,
-    #         hidden_activation="relu",
-    #         output_activation="categorical"
-    #         if config.env_name != "PointRobot-misc"
-    #         else "identity",
-    #         num_output_units=env.num_actions,
-    #     )
-    
-    # if config.network_name != "LSTM" or speed:
-    #     params = model.init(rng, jnp.zeros(obs_shape), rng=rng)
-    # else:
-    #     params = model.init(
-    #         rng, jnp.zeros(obs_shape), model.initialize_carry(), rng=rng
-    #     )
-
-    if config.network_name == "Categorical-MLP":
+    if config["network_name"] == "Categorical-MLP":
         obs_shape_cumsum = sum([reduce(lambda x, y: x*y, value) for value in env.observation_shapes.values()])
         params = model.init(rng, jnp.zeros((obs_shape_cumsum,)), rng=rng)
-    elif config.network_name in ("CategoricalNet", "SimplifiedCategoricalNet", "SimplifiedDecoupledCategoricalNet"):
+    elif config["network_name"] in ("CategoricalNet", "SimplifiedCategoricalNet", "SimplifiedDecoupledCategoricalNet"):
         map_width = env.batch_cfg.maps.max_width
         map_height = env.batch_cfg.maps.max_height
         obs = [
@@ -95,7 +60,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         # }
         params = model.init(rng, obs, action_mask)
 
-    print(f"{config.network_name}: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
+    print(f"{config['network_name']}: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
     return model, params
 
 

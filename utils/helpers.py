@@ -1,21 +1,13 @@
 """
 Partially from https://github.com/RobertTLange/gymnax-blines
 """
-import os
-import jax
-import jax.numpy as jnp
 import pickle
 from pathlib import Path
-from terra.maps_buffer import load_maps_from_disk
-from terra.utils import IntMap
-from terra.maps_buffer import MapsBuffer
-from terra.config import EnvConfig
 
 def load_config(config_fname, seed_env=None, seed_model=None, lrate=None, wandb=None, run_name=None):
     """Load training configuration and random seed of experiment."""
     import yaml
     import re
-    from dotmap import DotMap
 
     def load_yaml(config_fname: str) -> dict:
         """Load in YAML config file."""
@@ -56,7 +48,7 @@ def load_config(config_fname, seed_env=None, seed_model=None, lrate=None, wandb=
                 config["train_config"]["opt_params"]["lrate_init"] = lrate
             except Exception:
                 pass
-    return DotMap(config)
+    return config
 
 
 def save_pkl_object(obj, filename):

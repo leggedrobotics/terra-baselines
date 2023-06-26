@@ -15,7 +15,6 @@ import flax
 from flax.training.train_state import TrainState
 import numpy as np
 import tqdm
-# import gymnax
 from terra.env import TerraEnvBatch
 from utils.helpers import append_to_pkl_object
 from utils.curriculum import Curriculum
@@ -278,16 +277,16 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     if config["wandb"]:
         import wandb
     
-    num_total_epochs = int(config.num_train_steps // config.num_train_envs + 1)
-    num_steps_warm_up = int(config.num_train_steps * config.lr_warmup)
+    num_total_epochs = int(config["num_train_steps"] // config["num_train_envs"] + 1)
+    num_steps_warm_up = int(config["num_train_steps"] * config["lr_warmup"])
     schedule_fn = optax.linear_schedule(
-        init_value=-float(config.lr_begin),
-        end_value=-float(config.lr_end),
+        init_value=-float(config["lr_begin"]),
+        end_value=-float(config["lr_end"]),
         transition_steps=num_steps_warm_up,
     )
 
     tx = optax.chain(
-        optax.clip_by_global_norm(config.max_grad_norm),
+        optax.clip_by_global_norm(config["max_grad_norm"]),
         optax.scale_by_adam(eps=1e-5),
         optax.scale_by_schedule(schedule_fn),
     )
@@ -298,14 +297,14 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         tx=tx,
     )
     # Setup the rollout manager -> Collects data in vmapped-fashion over envs
-    rollout_manager = RolloutManager(env, config.num_train_envs)
+    rollout_manager = RolloutManager(env, config["num_train_envs"])
     num_actions = env.batch_cfg.action_type.get_num_actions()
 
     batch_manager = BatchManager(
-        discount=config.gamma,
-        gae_lambda=config.gae_lambda,
-        n_steps=config.n_steps + 1,
-        num_envs=config.num_train_envs,
+        discount=config["gamma"],
+        gae_lambda=config["gae_lambda"],
+        n_steps=config["n_steps"] + 1,
+        num_envs=config["num_train_envs"],
     )
 
     @jax.jit
@@ -342,13 +341,13 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     rng, rng_step, rng_reset, rng_eval, rng_update = jax.random.split(rng, 5)
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_init()
     state, obs, maps_buffer_keys = rollout_manager.batch_reset(
-        jax.random.split(rng_reset, config.num_train_envs), env_cfgs
+        jax.random.split(rng_reset, config["num_train_envs"]), env_cfgs
     )
 
     total_steps = 0
     log_steps, log_return = [], []
     action_mask_init = jnp.ones((num_actions,), dtype=jnp.bool_)
-    action_mask = action_mask_init.copy()[None].repeat(config.num_train_envs, 0)
+    action_mask = action_mask_init.copy()[None].repeat(config["num_train_envs"], 0)
     t = tqdm.tqdm(range(1, num_total_epochs + 1), desc="PPO", leave=True)
     for step in t:
         train_state, obs, state, batch, rng_step, action_mask, maps_buffer_keys = get_transition(
@@ -361,18 +360,18 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             env_cfgs,
             maps_buffer_keys
         )
-        total_steps += config.num_train_envs
-        if step % (config.n_steps + 1) == 0:
+        total_steps += config["num_train_envs"]
+        if step % (config["n_steps"] + 1) == 0:
             metric_dict, train_state, rng_update = update(
                 train_state,
                 batch_manager.get(batch),
-                config.num_train_envs,
-                config.n_steps,
-                config.n_minibatch,
-                config.epoch_ppo,
-                config.clip_eps,
-                config.entropy_coeff,
-                config.critic_coeff,
+                config["num_train_envs"],
+                config["n_steps"],
+                config["n_minibatch"],
+                config["epoch_ppo"],
+                config["clip_eps"],
+                config["entropy_coeff"],
+                config["critic_coeff"],
                 rng_update,
             )
 
@@ -388,18 +387,18 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             )
 
 
-        if (step + 1) % config.evaluate_every_epochs == 0:
+        if (step + 1) % config["evaluate_every_epochs"] == 0:
             rng, rng_eval = jax.random.split(rng)
             env_cfgs_eval, dofs_count_dict_eval = curriculum.get_cfgs_eval()
             rewards, dones = rollout_manager.batch_evaluate(
                 rng_eval,
                 train_state,
-                config.num_test_rollouts,
+                config["num_test_rollouts"],
                 step,
                 action_mask_init,
-                config.n_evals_save,
+                config["n_evals_save"],
                 env_cfgs_eval,
-                "agents/Terra/" + config.run_name
+                "agents/Terra/" + config["run_name"]
             )
             log_steps.append(total_steps)
             log_return.append(rewards)

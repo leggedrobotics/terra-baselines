@@ -8,7 +8,7 @@ from terra.config import MapType
 class Curriculum:
 
     def __init__(self, rl_config) -> None:
-        self.dofs = np.zeros((rl_config.num_train_envs,), dtype=np.int8)
+        self.dofs = np.zeros((rl_config["num_train_envs"],), dtype=np.int8)
         self.rl_config = rl_config
 
         self.curriculum_dicts = [
@@ -36,8 +36,8 @@ class Curriculum:
         self.curriculum_len = len(self.curriculum_dicts)
 
         # Get even eval dofs
-        n_eval_each = rl_config.num_test_rollouts // self.curriculum_len
-        n_mod = rl_config.num_test_rollouts % self.curriculum_len
+        n_eval_each = rl_config["num_test_rollouts"] // self.curriculum_len
+        n_mod = rl_config["num_test_rollouts"] % self.curriculum_len
         eval_dofs =  [i for _ in range(n_eval_each) for i in range(self.curriculum_len)]
         last = eval_dofs[-1]
         eval_dofs += [last for _ in range(n_mod)]
