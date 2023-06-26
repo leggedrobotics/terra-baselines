@@ -70,16 +70,15 @@ def save_pkl_object(obj, filename):
 
     print(f"Stored data at {filename}.")
 
-def append_to_pkl_object(obj, step, filename="agents/Terra/eval/eval_"):
+def append_to_pkl_object(obj, step, foldername):
     """Helper to append to pickle objects."""
-    filename = filename + str(step) + ".pkl"
-    output_file = Path(filename)
+    output_file = Path(foldername) / ("eval_" + str(step) + ".pkl")
     output_file.parent.mkdir(exist_ok=True, parents=True)
 
-    with open(filename, "ab") as output:
+    with open(str(output_file), "ab") as output:
         pickle.dump(obj, output, pickle.HIGHEST_PROTOCOL)
 
-    print(f"Appended data at {filename}.")
+    print(f"Appended data at {str(output_file)}.")
 
 
 def load_pkl_object(filename: str):

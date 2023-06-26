@@ -187,10 +187,9 @@ class RolloutManager(object):
     def batch_step(self, states, actions, env_cfgs, maps_buffer_keys):
         # maps_buffer_keys = jax.vmap(partial(jax.random.split, num=1))(maps_buffer_keys)
         return self.env.step(states, actions, env_cfgs, maps_buffer_keys)
-        
+    
     @partial(jax.jit, static_argnums=(0, 3, 6))
-    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs):
-        """Rollout an episode with lax.scan."""
+    def _batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs):
         # Reset the environment
         rng_reset, rng_episode = jax.random.split(rng_input)
         state, obs, maps_buffer_keys = self.batch_reset(jax.random.split(rng_reset, num_envs), env_cfgs)
@@ -243,11 +242,15 @@ class RolloutManager(object):
 
         cum_return = carry_out[4].squeeze()
         dones = carry_out[6].squeeze()
-
+        return jnp.mean(cum_return), dones, scan_out[0]
+    
+    
+    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, folder_name):
+        """Rollout an episode with lax.scan. and save outputs to pkl"""
+        cum_return_mean, dones, obs_log = self._batch_evaluate(rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs)
         # Append sample to pkl file
-        jax.experimental.io_callback(append_to_pkl_object, None, scan_out[0], step)
-
-        return jnp.mean(cum_return), dones
+        jax.experimental.io_callback(partial(append_to_pkl_object, foldername=folder_name), None, obs_log, step)
+        return cum_return_mean, dones
 
 @partial(jax.jit, static_argnums=0)
 def policy(
@@ -396,6 +399,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 action_mask_init,
                 config.n_evals_save,
                 env_cfgs_eval,
+                "agents/Terra/" + config.run_name
             )
             log_steps.append(total_steps)
             log_return.append(rewards)
