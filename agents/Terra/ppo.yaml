@@ -1,21 +1,22 @@
 train_config:
   train_type: "PPO"
-  num_train_steps: 1000000000
-  evaluate_every_epochs: 1500
+  num_train_steps: 4000000000
+  evaluate_every_epochs: 5000
 
   env_name: "Terra"
   env_kwargs: {}
   env_params: {}
-  num_test_rollouts: 128
+  num_test_rollouts: 64
   # num_steps_test_rollouts: 600  # TODO make it work (tracer problem)
 
   use_action_masking: False
   mask_out_arm_extension: False
 
-  num_train_envs: 1500  # Number of parallel env workers
+  fast_compile: True  # if True, much slower after compilation!
+  num_train_envs: 5120  # Number of parallel env workers
   epoch_ppo: 5  # "Number of PPO epochs on a single batch"
-  n_steps: 64 # "GAE n-steps"
-  n_minibatch: 16 # "Number of PPO minibatches"
+  n_steps: 16 # "GAE n-steps"
+  n_minibatch: 16 # "Number of PPO minibatches" -> Note: compile time scales with it!
   lr_begin: 1e-04  # Start PPO learning rate
   lr_end: 1e-04 #  End PPO learning rate
   lr_warmup: 0.05 # Prop epochs until warmup is completed 

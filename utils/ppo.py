@@ -373,6 +373,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 config["entropy_coeff"],
                 config["critic_coeff"],
                 rng_update,
+                config["fast_compile"]
             )
 
             if config["wandb"]:
@@ -520,6 +521,7 @@ def update(
     entropy_coeff: float,
     critic_coeff: float,
     rng: jax.random.PRNGKey,
+    fast_compile
 ):
     """Perform multiple epochs of updates with multiple updates."""
     obs, action_mask, action, log_pi_old, value, target, gae, rewards, dones = batch
@@ -529,26 +531,46 @@ def update(
     avg_metrics_dict = defaultdict(int)
 
     for _ in range(epoch_ppo):
-        idxes = jax.random.permutation(rng, idxes)
-        idxes_list = [
-            idxes[start : start + size_minibatch]
-            for start in jnp.arange(0, size_batch, size_minibatch)
-        ]
-
-        train_state, total_loss = update_epoch(
-            train_state,
-            idxes_list,
-            [flatten_dims(el) for el in obs],
-            flatten_dims(action_mask),
-            flatten_dims(action),
-            flatten_dims(log_pi_old),
-            flatten_dims(value),
-            jnp.array(flatten_dims(target)),
-            jnp.array(flatten_dims(gae)),
-            clip_eps,
-            entropy_coeff,
-            critic_coeff,
-        )
+        if fast_compile:
+            idxes_list = jnp.array([
+                idxes[start : start + size_minibatch]
+                for start in jnp.arange(0, size_batch, size_minibatch)
+            ])
+            train_state, total_loss = update_epoch_fast_compile(
+                    train_state,
+                    idxes_list,
+                    [flatten_dims(el) for el in obs],
+                    flatten_dims(action_mask),
+                    flatten_dims(action),
+                    flatten_dims(log_pi_old),
+                    flatten_dims(value),
+                    jnp.array(flatten_dims(target)),
+                    jnp.array(flatten_dims(gae)),
+                    clip_eps,
+                    entropy_coeff,
+                    critic_coeff,
+                    size_minibatch
+                )
+        else:
+            idxes = jax.random.permutation(rng, idxes)
+            idxes_list = [
+                idxes[start : start + size_minibatch]
+                for start in jnp.arange(0, size_batch, size_minibatch)
+            ]
+            train_state, total_loss = update_epoch(
+                train_state,
+                idxes_list,
+                [flatten_dims(el) for el in obs],
+                flatten_dims(action_mask),
+                flatten_dims(action),
+                flatten_dims(log_pi_old),
+                flatten_dims(value),
+                jnp.array(flatten_dims(target)),
+                jnp.array(flatten_dims(gae)),
+                clip_eps,
+                entropy_coeff,
+                critic_coeff,
+            )
 
         total_loss, (
             value_loss,
@@ -612,6 +634,57 @@ def update_epoch(
             entropy_coeff=entropy_coeff,
         )
         train_state = train_state.apply_gradients(grads=grads)
+
+    # Note: the total_loss returned is w.r.t. the last minibatch only
+    return train_state, total_loss
+
+@partial(jax.jit, static_argnames=("size_minibatch",))
+def update_epoch_fast_compile(
+    train_state: TrainState,
+    idxes: jnp.ndarray,
+    obs,
+    action_mask,
+    action,
+    log_pi_old,
+    value,
+    target,
+    gae,
+    clip_eps: float,
+    entropy_coeff: float,
+    critic_coeff: float,
+    size_minibatch: int  # needs to be static for better optimization of the for loop
+):
+    def _update_epoch(i, carry):
+        train_state, _ = carry
+        idx = idxes[i]
+        grad_fn = jax.value_and_grad(loss_actor_and_critic, has_aux=True)
+        total_loss, grads = grad_fn(
+            train_state.params,
+            train_state.apply_fn,
+            obs=[el[idx] for el in obs],
+            target=target[idx],
+            value_old=value[idx],
+            log_pi_old=log_pi_old[idx],
+            gae=gae[idx],
+            action_mask=action_mask[idx],
+            # action=action[idx].reshape(-1, 1),
+            action=jnp.expand_dims(action[idx], -1),
+            clip_eps=clip_eps,
+            critic_coeff=critic_coeff,
+            entropy_coeff=entropy_coeff,
+        )
+        train_state = train_state.apply_gradients(grads=grads)
+        carry = train_state, total_loss
+        return carry
+
+    carry = train_state, (0., (0., 0., 0., 0., 0., 0.))
+    carry = jax.lax.fori_loop(
+        0,
+        size_minibatch,
+        _update_epoch,
+        carry
+    )
+    train_state, total_loss = carry
 
     # Note: the total_loss returned is w.r.t. the last minibatch only
     return train_state, total_loss

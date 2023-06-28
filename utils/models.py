@@ -43,12 +43,12 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         map_width = env.batch_cfg.maps.max_width
         map_height = env.batch_cfg.maps.max_height
         obs = [
-            jnp.zeros((5, 6,)),
-            jnp.zeros((5, env.batch_cfg.agent.angles_cabin, env.batch_cfg.agent.max_arm_extension + 1)),
-            jnp.zeros((5, env.batch_cfg.agent.angles_cabin, env.batch_cfg.agent.max_arm_extension + 1)),
-            jnp.zeros((5, map_width, map_height)),
-            jnp.zeros((5, map_width, map_height)),
-            jnp.zeros((5, map_width, map_height)),
+            jnp.zeros((config["num_train_envs"], 6,)),
+            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, env.batch_cfg.agent.max_arm_extension + 1)),
+            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, env.batch_cfg.agent.max_arm_extension + 1)),
+            jnp.zeros((config["num_train_envs"], map_width, map_height)),
+            jnp.zeros((config["num_train_envs"], map_width, map_height)),
+            jnp.zeros((config["num_train_envs"], map_width, map_height)),
         ]
         action_mask = jnp.ones((5, env.batch_cfg.action_type.get_num_actions(),), dtype=jnp.bool_)
         # {
