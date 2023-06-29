@@ -532,11 +532,14 @@ def update(
 
     for _ in range(epoch_ppo):
         if fast_compile:
+            idxes = jax.random.permutation(rng, idxes)
             idxes_list = jnp.array([
                 idxes[start : start + size_minibatch]
                 for start in jnp.arange(0, size_batch, size_minibatch)
             ])
-            train_state, total_loss = update_epoch_fast_compile(
+
+            # Scan option
+            train_state, total_loss = update_epoch_scan(
                     train_state,
                     idxes_list,
                     [flatten_dims(el) for el in obs],
@@ -549,8 +552,25 @@ def update(
                     clip_eps,
                     entropy_coeff,
                     critic_coeff,
-                    size_minibatch
+                    n_minibatch
                 )
+            
+            # Fori_loop option
+            # train_state, total_loss = update_epoch_fori_loop(
+            #         train_state,
+            #         idxes_list,
+            #         [flatten_dims(el) for el in obs],
+            #         flatten_dims(action_mask),
+            #         flatten_dims(action),
+            #         flatten_dims(log_pi_old),
+            #         flatten_dims(value),
+            #         jnp.array(flatten_dims(target)),
+            #         jnp.array(flatten_dims(gae)),
+            #         clip_eps,
+            #         entropy_coeff,
+            #         critic_coeff,
+            #         n_minibatch
+            #     )
         else:
             idxes = jax.random.permutation(rng, idxes)
             idxes_list = [
@@ -638,8 +658,8 @@ def update_epoch(
     # Note: the total_loss returned is w.r.t. the last minibatch only
     return train_state, total_loss
 
-@partial(jax.jit, static_argnames=("size_minibatch",))
-def update_epoch_fast_compile(
+@partial(jax.jit, static_argnames=("n_minibatch",))
+def update_epoch_fori_loop(
     train_state: TrainState,
     idxes: jnp.ndarray,
     obs,
@@ -652,7 +672,7 @@ def update_epoch_fast_compile(
     clip_eps: float,
     entropy_coeff: float,
     critic_coeff: float,
-    size_minibatch: int  # needs to be static for better optimization of the for loop
+    n_minibatch: int  # needs to be static for better optimization of the for loop
 ):
     def _update_epoch(i, carry):
         train_state, _ = carry
@@ -680,11 +700,60 @@ def update_epoch_fast_compile(
     carry = train_state, (0., (0., 0., 0., 0., 0., 0.))
     carry = jax.lax.fori_loop(
         0,
-        size_minibatch,
+        n_minibatch,
         _update_epoch,
         carry
     )
     train_state, total_loss = carry
 
+    # Note: the total_loss returned is w.r.t. the last minibatch only
+    return train_state, total_loss
+
+
+@partial(jax.jit, static_argnames=("n_minibatch",))
+def update_epoch_scan(
+    train_state: TrainState,
+    idxes: jnp.ndarray,
+    obs,
+    action_mask,
+    action,
+    log_pi_old,
+    value,
+    target,
+    gae,
+    clip_eps: float,
+    entropy_coeff: float,
+    critic_coeff: float,
+    n_minibatch: int  # needs to be static for better optimization of the for loop
+):
+    grad_fn = jax.value_and_grad(loss_actor_and_critic, has_aux=True)
+    def _update_epoch(train_state, idx):
+        total_loss, grads = grad_fn(
+            train_state.params,
+            train_state.apply_fn,
+            obs=[el[idx] for el in obs],
+            target=target[idx],
+            value_old=value[idx],
+            log_pi_old=log_pi_old[idx],
+            gae=gae[idx],
+            action_mask=action_mask[idx],
+            # action=action[idx].reshape(-1, 1),
+            action=jnp.expand_dims(action[idx], -1),
+            clip_eps=clip_eps,
+            critic_coeff=critic_coeff,
+            entropy_coeff=entropy_coeff,
+        )
+        l = jnp.array([total_loss[0], *total_loss[1]])
+        train_state = train_state.apply_gradients(grads=grads)
+        return train_state, l
+
+    train_state, total_loss_l = jax.lax.scan(
+        _update_epoch,
+        train_state,
+        idxes,
+        length=n_minibatch,
+        # unroll=1,
+    )
+    total_loss = total_loss_l[-1][0], tuple(total_loss_l[-1, 1:])
     # Note: the total_loss returned is w.r.t. the last minibatch only
     return train_state, total_loss

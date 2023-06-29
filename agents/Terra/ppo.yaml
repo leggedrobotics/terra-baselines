@@ -12,7 +12,7 @@ train_config:
   use_action_masking: False
   mask_out_arm_extension: False
 
-  fast_compile: True  # if True, much slower after compilation!
+  fast_compile: True  # if True, uses jax.lax.scan to iterate over the minibatches
   num_train_envs: 5120  # Number of parallel env workers
   epoch_ppo: 5  # "Number of PPO epochs on a single batch"
   n_steps: 16 # "GAE n-steps"
