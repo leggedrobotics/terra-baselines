@@ -170,19 +170,15 @@ class LocalMapNet(nn.Module):
         x = self.mlp(x.reshape(*x.shape[:-3], -1))
         return x
     
-
-class Id(nn.Module):
-    @nn.compact
-    def __call__(self, x):
-        return x
-
 class ResNetStemIdentity(nn.Module):
     # need to name it conv_block_cls for compatibility with ResNet library
-    conv_block_cls: ModuleDef = Id
+    conv_block_cls: ModuleDef
 
-    @nn.compact
+    def setup(self) -> None:
+        pass
+    
     def __call__(self, x):
-        return self.conv_block_cls()(x)
+        return (x)
 
 class MapsNet(nn.Module):
     """
