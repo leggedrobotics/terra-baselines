@@ -8,11 +8,14 @@ from jax import Array
 import flax.linen as nn
 from tensorflow_probability.substrates import jax as tfp
 from functools import reduce
-from typing import Sequence, Union
+from typing import Any, Sequence, Union
 from terra.actions import TrackedAction, WheeledAction
 from terra.env import TerraEnvBatch
-from jax_resnet import ResNet as ResNetBase
 import jax_resnet
+from jax_resnet import ResNet as ResNetBase
+from jax_resnet import ModuleDef
+from jax_resnet import ConvBlock
+
 
 
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
@@ -166,7 +169,20 @@ class LocalMapNet(nn.Module):
         # x = self.resnet(x)
         x = self.mlp(x.reshape(*x.shape[:-3], -1))
         return x
+    
 
+class Id(nn.Module):
+    @nn.compact
+    def __call__(self, x):
+        return x
+
+class ResNetStemIdentity(nn.Module):
+    # need to name it conv_block_cls for compatibility with ResNet library
+    conv_block_cls: ModuleDef = Id
+
+    @nn.compact
+    def __call__(self, x):
+        return self.conv_block_cls()(x)
 
 class MapsNet(nn.Module):
     """
@@ -180,7 +196,7 @@ class MapsNet(nn.Module):
                         block_cls=jax_resnet.ResNetBlock,
                         stage_sizes=[4, 4],
                         hidden_sizes=(8, 16),
-                        stem_cls=jax_resnet.ResNetStem,
+                        stem_cls=ResNetStemIdentity,
                         n_classes=32,
                         # norm_cls=nn.LayerNorm,
                     )
