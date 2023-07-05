@@ -9,6 +9,7 @@ class Curriculum:
     def __init__(self, rl_config) -> None:
         self.dofs = np.zeros((rl_config["num_train_envs"],), dtype=np.int8)
         self.rl_config = rl_config
+        self.change_dof_threshold = rl_config["change_dof_threshold"]
 
         self.curriculum_dicts = [
             # (values with -1 means it's not used)
@@ -86,8 +87,7 @@ class Curriculum:
         targets_individual = metrics_dict["targets_individual"]
         value_losses_individual = np.square(values_individual - targets_individual)
 
-        # increase_dof = (value_losses_individual / targets_individual < 0.13) * (targets_individual > 0)  # TODO config
-        increase_dof = (value_losses_individual / targets_individual < 0.1) * (targets_individual > 0)  # TODO config
+        increase_dof = (value_losses_individual / targets_individual < self.change_dof_threshold) * (targets_individual > 0)
 
         dofs = self.dofs + increase_dof.astype(np.int8)
         random_dofs = np.random.randint(0, self.curriculum_len, (dofs.shape[0],), dtype=np.int8)

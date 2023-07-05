@@ -27,6 +27,9 @@ train_config:
   entropy_coeff: 0.01 # "Entropy loss coefficient"
   critic_coeff: 0.5  # "Value loss coefficient"
 
+  # Curriculum
+  change_dof_threshold: 0.05  # value_losses_individual / targets_individual < change_dof_threshold
+
   network_name: "SimplifiedDecoupledCategoricalNet"
 
   n_evals_save: 9
