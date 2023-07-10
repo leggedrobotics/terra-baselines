@@ -330,7 +330,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         batch = batch_manager.append(
             batch, obs, action.action, reward, done, log_pi, value, infos["action_mask"]
         )
-        return train_state, next_obs, next_state, batch, new_key, infos["action_mask"], maps_buffer_keys
+        return train_state, next_obs, next_state, batch, new_key, infos["action_mask"], done, maps_buffer_keys
 
     batch = batch_manager.reset(
         action_size=rollout_manager.env.actions_size,
@@ -349,8 +349,9 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     action_mask_init = jnp.ones((num_actions,), dtype=jnp.bool_)
     action_mask = action_mask_init.copy()[None].repeat(config["num_train_envs"], 0)
     t = tqdm.tqdm(range(1, num_total_epochs + 1), desc="PPO", leave=True)
+    dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
     for step in t:
-        train_state, obs, state, batch, rng_step, action_mask, maps_buffer_keys = get_transition(
+        train_state, obs, state, batch, rng_step, action_mask, dones, maps_buffer_keys = get_transition(
             train_state,
             obs,
             state,
@@ -360,6 +361,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             env_cfgs,
             maps_buffer_keys
         )
+        dones_after_update = dones_after_update | dones
         total_steps += config["num_train_envs"]
         if step % (config["n_steps"] + 1) == 0:
             metric_dict, train_state, rng_update = update(
@@ -379,13 +381,15 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             if config["wandb"]:
                 wandb.log({**metric_dict, **dofs_count_dict})
             
-            env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict)
+            env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict, dones_after_update)
 
             batch = batch_manager.reset(
                 action_size=rollout_manager.env.actions_size,
                 observation_shapes=rollout_manager.env.observation_shapes,
                 num_actions=num_actions
             )
+
+            dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
 
 
         if (step + 1) % config["evaluate_every_epochs"] == 0:

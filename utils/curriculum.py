@@ -1,4 +1,5 @@
 import jax
+from jax import Array
 from typing import Any
 from terra.config import EnvConfig
 import numpy as np
@@ -77,7 +78,7 @@ class Curriculum:
         self.num_embeddings_agent_min = max([max([el["map_width"], el["map_height"]]) for el in self.curriculum_dicts])
         print(f"{self.num_embeddings_agent_min=}")
 
-    def _evaluate_progress(self, metrics_dict: dict[str, Any]) -> int:
+    def _evaluate_progress(self, metrics_dict: dict[str, Any], dones_after_update: Array) -> int:
         """
         Goes from the training metrics to a DoF (degrees of freedom) value,
         considering the current DoF.
@@ -88,6 +89,7 @@ class Curriculum:
         value_losses_individual = np.square(values_individual - targets_individual)
 
         increase_dof = (value_losses_individual / targets_individual < self.change_dof_threshold) * (targets_individual > 0)
+        increase_dof *= dones_after_update  # only update dof if it completed the previous level
 
         dofs = self.dofs + increase_dof.astype(np.int8)
         random_dofs = np.random.randint(0, self.curriculum_len, (dofs.shape[0],), dtype=np.int8)
@@ -110,8 +112,8 @@ class Curriculum:
         }
         return dofs_count_dict
     
-    def get_cfgs(self, metrics_dict: dict[str, Any]):
-        self._evaluate_progress(metrics_dict)
+    def get_cfgs(self, metrics_dict: dict[str, Any], dones_after_update: Array):
+        self._evaluate_progress(metrics_dict, dones_after_update)
         
         map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs]
         map_heights = [self.curriculum_dicts[dof]["map_height"] for dof in self.dofs]
