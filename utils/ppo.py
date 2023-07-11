@@ -18,6 +18,7 @@ import tqdm
 from terra.env import TerraEnvBatch
 from utils.helpers import append_to_pkl_object
 from utils.curriculum import Curriculum
+from utils.reset_manager import ResetManager
 from tensorflow_probability.substrates import jax as tfp
 
 
@@ -129,13 +130,14 @@ class BatchManager:
 
 
 class RolloutManager(object):
-    def __init__(self, env, n_envs: int, model = None):
+    def __init__(self, env, n_envs: int, rl_config, observation_shapes, model = None):
         # Setup functionalities for vectorized batch rollout
         self.env: TerraEnvBatch = env
         # self.apply_fn = model.apply
         self.select_action = self.select_action_ppo
         self.select_action_deterministic = self.select_action_ppo_deterministic
         self.n_envs = n_envs
+        self.reset_manager_evaluate = ResetManager(rl_config, observation_shapes, eval=True)
 
     def __eq__(self, __o: object) -> bool:
         return isinstance(__o, RolloutManager) and self.env == __o.env
@@ -175,17 +177,11 @@ class RolloutManager(object):
     # @partial(jax.jit, static_argnums=(0,))
     def batch_reset(self, keys, env_cfgs):
         seeds = jnp.array([k[0] for k in keys])
-        # seeds_maps_buffer = jnp.array([k[1] for k in keys])
-        # maps_buffer_keys = jax.vmap(partial(jax.random.PRNGKey))(seeds_maps_buffer)
-        # maps_buffer_keys = jax.vmap(partial(jax.random.split, num=1))(maps_buffer_keys)
-        # jax.debug.print("seeds={x}", x=seeds.shape)
-        # jax.debug.print("env_cfgs={x}", x=env_cfgs)
         return self.env.reset(seeds, env_cfgs)
 
     @partial(jax.jit, static_argnums=(0,))
-    def batch_step(self, states, actions, env_cfgs, maps_buffer_keys):
-        # maps_buffer_keys = jax.vmap(partial(jax.random.split, num=1))(maps_buffer_keys)
-        return self.env.step(states, actions, env_cfgs, maps_buffer_keys)
+    def batch_step(self, states, actions, env_cfgs, maps_buffer_keys, force_resets):
+        return self.env.step(states, actions, env_cfgs, maps_buffer_keys, force_resets)
     
     @partial(jax.jit, static_argnums=(0, 3, 6))
     def _batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs):
@@ -199,11 +195,13 @@ class RolloutManager(object):
             rng, rng_step, rng_net = jax.random.split(rng, 3)
             action, _ = self.select_action_deterministic(train_state, obs, action_mask)
             jax.debug.print("bicount action = {x}", x=jnp.bincount(action, length=9))
+            force_resets_dummy = self.reset_manager_evaluate.dummy()
             next_s, (next_o, reward, done, infos), maps_buffer_keys = self.batch_step(
                 state,
                 wrap_action(action.squeeze(), self.env.batch_cfg.action_type),
                 env_cfgs,
-                maps_buffer_keys
+                maps_buffer_keys,
+                force_resets_dummy,  # TODO make it real
             )
             action_mask = infos["action_mask"]
             new_cum_reward = cum_reward + reward * valid_mask
@@ -272,7 +270,7 @@ def policy_deterministic(
     value, logits_pi = apply_fn(params, obs, action_mask)
     return value, np.argmax(logits_pi, axis=-1)
 
-def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum):
+def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, reset_manager: ResetManager):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     if config["wandb"]:
         import wandb
@@ -297,7 +295,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         tx=tx,
     )
     # Setup the rollout manager -> Collects data in vmapped-fashion over envs
-    rollout_manager = RolloutManager(env, config["num_train_envs"])
+    rollout_manager = RolloutManager(env, config["num_train_envs"], config, env.observation_shapes)
     num_actions = env.batch_cfg.action_type.get_num_actions()
 
     batch_manager = BatchManager(
@@ -323,10 +321,9 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             train_state, obs, action_mask, key_step
         )
         action = wrap_action(action, rollout_manager.env.batch_cfg.action_type)
-        # print(action.shape)
         
-        # maps_buffer_keys = jax.vmap(partial(jax.random.split, num=1))(maps_buffer_keys)
-        next_state, (next_obs, reward, done, infos), maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys)
+        force_resets = reset_manager.update(obs, action)
+        next_state, (next_obs, reward, done, infos), maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys, force_resets)
         batch = batch_manager.append(
             batch, obs, action.action, reward, done, log_pi, value, infos["action_mask"]
         )

@@ -10,6 +10,7 @@ from utils.helpers import load_config, save_pkl_object
 from time import gmtime
 from time import strftime
 from utils.curriculum import Curriculum
+from utils.reset_manager import ResetManager
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
 
@@ -50,9 +51,11 @@ def main(config, mle_log, log_ext=""):
     else:
         raise ValueError("Unknown train_type.")
 
+    reset_manager = ResetManager(config, env.observation_shapes)
+
     # Log and store the results.
     log_steps, log_return, network_ckpt = train_fn(
-        rng, config, model, params, mle_log, env, curriculum
+        rng, config, model, params, mle_log, env, curriculum, reset_manager
     )
 
     data_to_store = {

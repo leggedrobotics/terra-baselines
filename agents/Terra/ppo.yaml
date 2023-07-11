@@ -30,6 +30,9 @@ train_config:
   # Curriculum
   change_dof_threshold: 0.05  # value_losses_individual / targets_individual < change_dof_threshold
 
+  # Reset manager
+  context_length: 6  # store N steps in the past to evaluate if force reset
+
   network_name: "SimplifiedDecoupledCategoricalNet"
 
   n_evals_save: 9
