@@ -59,7 +59,7 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
         # if done or t_counter == max_frames:
         #     break
         # else:
-        if t_counter == max_frames:
+        if jnp.all(done).item() or t_counter == max_frames:
             break
         env_state = next_env_state
         obs = next_obs
