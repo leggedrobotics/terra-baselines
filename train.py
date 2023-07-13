@@ -53,6 +53,8 @@ def main(config, mle_log, log_ext=""):
 
     reset_manager = ResetManager(config, env.observation_shapes)
 
+    if config.profile:
+        jax.profiler.start_server(5555)
     # Log and store the results.
     log_steps, log_return, network_ckpt = train_fn(
         rng, config, model, params, mle_log, env, curriculum, reset_manager
@@ -73,6 +75,10 @@ def main(config, mle_log, log_ext=""):
         f"agents/{config['env_name']}/{run_name}.pkl",
     )
     run.finish()
+    
+    if config.profile:
+        jax.profiler.stop_server(5555)
+
 
 
 if __name__ == "__main__":
