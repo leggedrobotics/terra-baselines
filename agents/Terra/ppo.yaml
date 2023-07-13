@@ -36,7 +36,7 @@ train_config:
   network_name: "SimplifiedDecoupledCategoricalNet"
 
   n_evals_save: 9
-  benchmark: True
+  profile: True
 
 log_config:
   time_to_track: ["num_steps"]

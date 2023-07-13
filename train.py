@@ -53,7 +53,7 @@ def main(config, mle_log, log_ext=""):
 
     reset_manager = ResetManager(config, env.observation_shapes)
 
-    if config.profile:
+    if config["profile"]:
         jax.profiler.start_server(5555)
     # Log and store the results.
     log_steps, log_return, network_ckpt = train_fn(
@@ -76,7 +76,7 @@ def main(config, mle_log, log_ext=""):
     )
     run.finish()
     
-    if config.profile:
+    if config["profile"]:
         jax.profiler.stop_server(5555)
 
 
