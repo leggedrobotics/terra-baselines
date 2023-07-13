@@ -39,3 +39,16 @@ sbatch -c 32 --mem-per-cpu=4096 --tmp=1024 --gres=gpumem:36000 --gpus=1 --wrap="
 ~~~
 
 It is then possible to track the experiment from the log file on wandb (or in the slurm log file that gets created at job lauch).
+
+## Profiling
+You can profile the code by setting to True the `profile` flag in the `ppo.yaml` config file.
+
+This way, the profile stream will be available on the local port 5555.
+
+You can capture the profile stream in a file by running the following in a different terminal.
+~~~
+PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python python -m jax.collect_profile 5555 <duration_in_ms>
+~~~
+
+This will dump the profiling logs in a file and generate a Perfetto link to a dashboard.
+Click the link to access the profiling.
