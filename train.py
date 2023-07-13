@@ -40,7 +40,7 @@ def main(config, mle_log, log_ext=""):
     rng, rng_init, rng_maps_buffer = jax.random.split(rng, 3)
     
     curriculum = Curriculum(rl_config=config)
-    env = env = TerraEnvBatch()
+    env = TerraEnvBatch()
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     model, params = get_model_ready(rng_init, config, env)
     del rng_init
