@@ -3,6 +3,7 @@ import jax.numpy as jnp
 
 class ResetManager:
     def __init__(self, rl_config, observation_shapes, eval=False) -> None:
+        self.activate_reset_manager = rl_config["activate_reset_manager"]
         self.context_length = rl_config["context_length"]
         if eval:
             self.num_envs = rl_config["num_test_rollouts"]
@@ -48,6 +49,8 @@ class ResetManager:
         1. Unsolvable maps
         2. Infinite loops of actions
         """
+        if not self.activate_reset_manager:
+            return self.dummy()
 
         # Update buffer
         self._update_buffer(obs["action_map"], actions)
