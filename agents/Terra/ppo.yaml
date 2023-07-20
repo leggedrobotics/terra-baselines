@@ -10,7 +10,7 @@ train_config:
   # num_steps_test_rollouts: 600  # TODO make it work (tracer problem)
 
   use_action_masking: False
-  mask_out_arm_extension: False
+  mask_out_arm_extension: True
 
   fast_compile: True  # if True, uses jax.lax.scan to iterate over the minibatches
   num_train_envs: 5120  # Number of parallel env workers
@@ -28,7 +28,7 @@ train_config:
   critic_coeff: 0.5  # "Value loss coefficient"
 
   # Curriculum
-  change_dof_threshold: 0.05  # value_losses_individual / targets_individual < change_dof_threshold
+  change_dof_threshold: 0.01  # value_losses_individual / targets_individual < change_dof_threshold
 
   # Reset manager
   activate_reset_manager: False

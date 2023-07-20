@@ -17,50 +17,44 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 100,
-                "map_type": MapType.TRENCHES,
+                "max_steps_in_episode": 500,
+                "map_type": MapType.RECTANGLES,
             },
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 120,
-                "map_type": MapType.TRENCHES,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 150,
-                "map_type": MapType.TRENCHES,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 300,
-                "map_type": MapType.FOUNDATIONS,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 400,
-                "map_type": MapType.FOUNDATIONS,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 600,
-                "map_type": MapType.FOUNDATIONS,
+                "max_steps_in_episode": 500,
+                "map_type": MapType.RECTANGLES,
             },
             # {
-            #     "map_width": 20,  # in meters
-            #     "map_height": 20,  # in meters
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
             #     "max_steps_in_episode": 300,
-            #     "map_type": MapType.OPENSTREET_2_DIG_DUMP,
+            #     "map_type": MapType.TRENCHES,
             # },
             # {
-            #     "map_width": 40,  # in meters
-            #     "map_height": 40,  # in meters
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 300,
+            #     "map_type": MapType.TRENCHES,
+            # },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
             #     "max_steps_in_episode": 600,
-            #     "map_type": MapType.OPENSTREET_2_DIG_DUMP,
+            #     "map_type": MapType.FOUNDATIONS,
+            # },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 600,
+            #     "map_type": MapType.FOUNDATIONS,
+            # },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 600,
+            #     "map_type": MapType.FOUNDATIONS,
             # },
         ]
 
