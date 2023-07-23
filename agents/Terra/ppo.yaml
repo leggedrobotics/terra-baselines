@@ -1,6 +1,6 @@
 train_config:
   train_type: "PPO"
-  num_train_steps: 4000000000
+  num_train_steps: 1000000000
   evaluate_every_epochs: 5000
 
   env_name: "Terra"

@@ -20,12 +20,12 @@ class Curriculum:
                 "max_steps_in_episode": 500,
                 "map_type": MapType.RECTANGLES,
             },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 500,
-                "map_type": MapType.RECTANGLES,
-            },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 500,
+            #     "map_type": MapType.RECTANGLES,
+            # },
             # {
             #     "map_width": -1,  # in meters
             #     "map_height": -1,  # in meters
