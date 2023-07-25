@@ -17,7 +17,7 @@ train_config:
   epoch_ppo: 5  # "Number of PPO epochs on a single batch"
   n_steps: 16 # "GAE n-steps"
   n_minibatch: 16 # "Number of PPO minibatches" -> Note: compile time scales with it!
-  lr_begin: 1e-04  # Start PPO learning rate
+  lr_begin: 1e-06  # Start PPO learning rate
   lr_end: 1e-04 #  End PPO learning rate
   lr_warmup: 0.05 # Prop epochs until warmup is completed 
   max_grad_norm: 0.5  # Global norm to clip gradients by
