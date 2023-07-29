@@ -18,14 +18,14 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 500,
+                "max_steps_in_episode": 600,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.DENSE,
             },
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 500,
+                "max_steps_in_episode": 600,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
