@@ -52,8 +52,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
+            jnp.zeros((config["num_train_envs"], map_width, map_height)),
         ]
-        action_mask = jnp.ones((5, env.batch_cfg.action_type.get_num_actions(),), dtype=jnp.bool_)
+        action_mask = jnp.ones((config["num_train_envs"], env.batch_cfg.action_type.get_num_actions(),), dtype=jnp.bool_)
         # {
         #     "agent_state": jnp.zeros((5, 4,)),
         #     "local_map": jnp.zeros((5, env.env_cfg.agent.angles_cabin, env.env_cfg.agent.max_arm_extension + 1)),
@@ -203,13 +204,14 @@ class MapsNet(nn.Module):
 
     def __call__(self, obs: dict[str, Array]):
         action_map = normalize(obs[3], self.map_min_max[0], self.map_min_max[1])
+        do_prediction = normalize(obs[6], self.map_min_max[0], self.map_min_max[1])
 
         # delta_target_map = jnp.clip(obs[3] - obs[2], a_max=0)
         # delta_target_map = normalize(delta_target_map, self.map_min_max[0], 0)
 
         target_map = normalize(obs[4], self.map_min_max[0], self.map_min_max[1])
 
-        x = jnp.concatenate((action_map[..., None], target_map[..., None], obs[5][..., None]), axis=-1)
+        x = jnp.concatenate((action_map[..., None], target_map[..., None], obs[5][..., None], do_prediction[..., None]), axis=-1)
 
         # x = self.conv1(x)
         x = self.resnet(x)

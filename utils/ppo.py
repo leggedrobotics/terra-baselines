@@ -76,6 +76,7 @@ class BatchManager:
                     "action_map": buffer["states"]["action_map"].at[buffer["_p"]].set(obs["action_map"]),
                     "target_map": buffer["states"]["target_map"].at[buffer["_p"]].set(obs["target_map"]),
                     "traversability_mask": buffer["states"]["traversability_mask"].at[buffer["_p"]].set(obs["traversability_mask"]),
+                    "do_preview": buffer["states"]["do_preview"].at[buffer["_p"]].set(obs["do_preview"]),
                 },
                 "action_mask": buffer["action_mask"].at[buffer["_p"]].set(action_mask.squeeze()),
                 "actions": buffer["actions"].at[buffer["_p"]].set(action.squeeze()),
@@ -101,6 +102,7 @@ class BatchManager:
                 buffer["states"]["action_map"][:-1],
                 buffer["states"]["target_map"][:-1],
                 buffer["states"]["traversability_mask"][:-1],
+                buffer["states"]["do_preview"][:-1],
             ),
             buffer["action_mask"][:-1],
             buffer["actions"][:-1],
@@ -439,7 +441,7 @@ def obs_to_model_input(obs):
         obs["action_map"],
         obs["target_map"],
         obs["traversability_mask"],
-        obs["padding_mask"],
+        obs["do_preview"],
     ]
 
     # Legacy: Categorical MLP
