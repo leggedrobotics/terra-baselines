@@ -117,28 +117,31 @@ class AgentStateNet(nn.Module):
     num_embeddings: int
     num_embedding_features: int = 8
     hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
-    # hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 16)
+    hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
+    loaded_max: int = 100  # TODO config
     
     def setup(self) -> None:
         self.embedding = nn.Embed(num_embeddings=self.num_embeddings, features=self.num_embedding_features)
         self.mlp_one_hot = MLP(hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot)
-        # self.mlp_continuous = MLP(hidden_dim_layers=self.hidden_dim_layers_mlp_continuous)
+        self.mlp_continuous = MLP(hidden_dim_layers=self.hidden_dim_layers_mlp_continuous)
     
     def __call__(self, obs: dict[str, Array]):
         # NOTE: this implementation uses the pos of the agent explicitly
 
-        x_one_hot = obs[0].astype(dtype=jnp.int32)
-        # x_loaded = obs[0][..., [-1]]
+        x_one_hot = obs[0][..., :-1].astype(dtype=jnp.int32)
+        x_loaded = obs[0][..., [-1]].astype(dtype=jnp.int32)
 
+        # jax.debug.print("jnp.sum(jnp.isnan(x_one_hot)) BEFORE = {x}", x=jnp.sum(jnp.isnan(x_one_hot)))
         x_one_hot = self.embedding(x_one_hot)
+        # jax.debug.print("jnp.sum(jnp.isnan(x_one_hot)) = {x}", x=jnp.sum(jnp.isnan(x_one_hot)))
         x_one_hot = self.mlp_one_hot(x_one_hot.reshape(*x_one_hot.shape[:-2], -1))
 
-        # x_loaded = normalize(x_loaded, 0, self.loaded_max)
+        x_loaded = normalize(x_loaded, 0, self.loaded_max)
         # x_pos = normalize(x_pos, 0, self.pos_max)
-        # x_continuous = self.mlp_continuous(jnp.concatenate((x_pos, x_loaded), axis=-1))
+        x_continuous = self.mlp_continuous(x_loaded)
 
-        # return jnp.concatenate([x_one_hot, x_continuous], axis=-1)
-        return x_one_hot
+        return jnp.concatenate([x_one_hot, x_continuous], axis=-1)
+        # return x_one_hot
 
 
 class LocalMapNet(nn.Module):
