@@ -20,6 +20,7 @@ from utils.helpers import append_to_pkl_object
 from utils.curriculum import Curriculum
 from utils.reset_manager import ResetManager
 from tensorflow_probability.substrates import jax as tfp
+from utils.helpers import save_pkl_object
 
 
 class BatchManager:
@@ -198,7 +199,7 @@ class RolloutManager(object):
             obs, state, train_state, rng, cum_reward, valid_mask, done, action_mask, maps_buffer_keys = state_input
             rng, rng_step, rng_net = jax.random.split(rng, 3)
             action, _ = self.select_action_deterministic(train_state, obs, action_mask)
-            jax.debug.print("bicount action = {x}", x=jnp.bincount(action, length=9))
+            # jax.debug.print("bicount action = {x}", x=jnp.bincount(action, length=9))
             force_resets_dummy = self.reset_manager_evaluate.dummy()
             next_s, (next_o, reward, done, infos), maps_buffer_keys = self.batch_step(
                 state,
@@ -274,7 +275,7 @@ def policy_deterministic(
     value, logits_pi = apply_fn(params, obs, action_mask)
     return value, np.argmax(logits_pi, axis=-1)
 
-def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, reset_manager: ResetManager):
+def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, reset_manager: ResetManager, run_name: str):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     if config["wandb"]:
         import wandb
@@ -351,6 +352,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     action_mask = action_mask_init.copy()[None].repeat(config["num_train_envs"], 0)
     t = tqdm.tqdm(range(1, num_total_epochs + 1), desc="PPO", leave=True)
     dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
+    best_historical_eval_reward = -1e6
     for step in t:
         train_state, obs, state, batch, rng_step, action_mask, dones, maps_buffer_keys = get_transition(
             train_state,
@@ -411,13 +413,19 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             t.set_description(f"R: {str(rewards)}")
             t.refresh()
 
-            if mle_log is not None:
-                mle_log.update(
-                    {"num_steps": total_steps},
-                    {"return": rewards},
-                    model=train_state.params,
-                    save=True,
+            print(rewards)
+            rewards = 10  # TODO remove
+            if rewards > best_historical_eval_reward:
+                best_historical_eval_reward = rewards
+                model_dict = {
+                    "network": train_state.params
+                }
+                save_pkl_object(
+                    model_dict,
+                    f"agents/{config['env_name']}/{run_name}_best_model.pkl",
                 )
+                print(f"~~~~~~~~ New best model checkpoint saved -> reward = {rewards} ~~~~~~~~")
+
             if config["wandb"]:
                 wandb.log({"eval - cum_reward": rewards, "eval - dones %": 100 * dones.sum() / dones.shape[0]})
 
