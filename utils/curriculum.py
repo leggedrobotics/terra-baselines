@@ -12,6 +12,7 @@ class Curriculum:
         self.dofs = np.zeros((rl_config["num_train_envs"],), dtype=np.int8)
         self.rl_config = rl_config
         self.change_dof_threshold = rl_config["change_dof_threshold"]
+        self.max_change_ratio = rl_config["max_change_ratio"]
 
         self.curriculum_dicts = [
             # (values with -1 means it's not used)
@@ -88,6 +89,12 @@ class Curriculum:
         increase_dof = (value_losses_individual / targets_individual < self.change_dof_threshold) * (targets_individual > 0)
         increase_dof *= dones_after_update  # only update dof if it completed the previous level
 
+        # Limit the numbre of configs that can change at a given step
+        max_change_ratio_abs = int(self.max_change_ratio * increase_dof.shape[0])
+        increase_dof_cumsum = np.cumsum(increase_dof)
+        max_change_ratio_mask = increase_dof_cumsum < max_change_ratio_abs
+        increase_dof *= max_change_ratio_mask
+        
         dofs = self.dofs + increase_dof.astype(np.int8)
         random_dofs = np.random.randint(0, self.curriculum_len, (dofs.shape[0],), dtype=np.int8)
         dofs = np.where(dofs < self.curriculum_len, dofs, random_dofs)
