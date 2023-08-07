@@ -239,7 +239,7 @@ class RolloutManager(object):
                 maps_buffer_keys
             ],
             (),
-            600, #num_steps_test_rollouts,
+            300, #num_steps_test_rollouts,
         )
 
         cum_return = carry_out[4].squeeze()
@@ -413,8 +413,6 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             t.set_description(f"R: {str(rewards)}")
             t.refresh()
 
-            print(rewards)
-            rewards = 10  # TODO remove
             if rewards > best_historical_eval_reward:
                 best_historical_eval_reward = rewards
                 model_dict = {
