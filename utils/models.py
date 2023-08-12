@@ -12,9 +12,12 @@ from typing import Any, Sequence, Union
 from terra.actions import TrackedAction, WheeledAction
 from terra.env import TerraEnvBatch
 import jax_resnet
-from jax_resnet import ResNet as ResNetBase
+# from jax_resnet import ResNet as ResNetBase
 from jax_resnet import ModuleDef
 from jax_resnet import ConvBlock
+from typing import Optional, Callable
+from functools import partial
+from jax_resnet.common import Sequential
 
 
 
@@ -185,6 +188,120 @@ class ResNetStemIdentity(nn.Module):
     def __call__(self, x):
         return (x)
 
+def MyResNet(
+    block_cls: ModuleDef,
+    *,
+    stage_sizes: Sequence[int],
+    n_classes: int,
+    hidden_sizes: Sequence[int],
+    global_avg_pool: bool,
+    normalize_fn: Optional[Callable],
+    pool_fn: Optional[Callable],
+    conv_cls: ModuleDef = nn.Conv,
+    norm_cls: Optional[ModuleDef] = partial(nn.BatchNorm, momentum=0.9),
+    conv_block_cls: ModuleDef = ConvBlock,
+    # stem_cls: ModuleDef = ResNetStem,
+) -> Sequential:
+    conv_block_cls = partial(conv_block_cls, conv_cls=conv_cls, norm_cls=norm_cls)
+    # stem_cls = partial(stem_cls, conv_block_cls=conv_block_cls)
+    block_cls = partial(block_cls, conv_block_cls=conv_block_cls)
+
+    if pool_fn is not None:
+        # NOTE: we apply pooling before normalization
+        layers = [pool_fn,]
+    else:
+        layers = []
+    
+    if normalize_fn is not None:
+        layers.append(normalize_fn)
+
+    for i, (hsize, n_blocks) in enumerate(zip(hidden_sizes, stage_sizes)):
+        for b in range(n_blocks):
+            strides = (1, 1) if i == 0 or b != 0 else (2, 2)  # TODO is this (2, 2) an issue?
+            layers.append(block_cls(n_hidden=hsize, strides=strides))
+
+    if global_avg_pool:
+        layers.append(partial(jnp.mean, axis=(1, 2)))  # global average pool
+    else:
+        layers.append(lambda x: x.reshape(x.shape[0], -1))  # no pooling
+    
+    layers.append(nn.Dense(n_classes))
+    return Sequential(layers)
+
+@jax.jit
+def min_pool(x):
+    pool_fn = partial(nn.max_pool,
+                      window_shape=(3, 3),
+                      strides=(2, 2),
+                      padding=((1, 1), (1, 1)))
+    return -pool_fn(-x)
+
+@jax.jit
+def max_pool(x):
+    pool_fn = partial(nn.max_pool,
+                      window_shape=(3, 3),
+                      strides=(2, 2),
+                      padding=((1, 1), (1, 1)))
+    return pool_fn(x)
+
+@jax.jit
+def zero_pool(x):
+    """
+    Given an input x with neg to pos values,
+    zero_pool pools zeros with priority, then neg, then pos values.
+
+    # TODO: test
+    """
+    x_pos = jnp.clip(x, a_min=0)
+    x_neg = jnp.clip(x, a_max=0)
+    x_zero_pool_pos = min_pool(x_pos)
+    x_zero_pool_neg = max_pool(x_neg)
+    x_pool = min_pool(x)
+    return jnp.where(
+        (x_zero_pool_neg == 0) & (x_zero_pool_pos == 0),
+        0,
+        x_pool,
+    )
+
+@jax.jit
+def my_pool(x):
+    """
+    Handles special pooling on x, assumed to be ([N]xWxHxC).
+
+    List of channels and what we highlight with my_pool:
+    1. action map -> 0 tiles
+    2. target map -> -1 tiles
+    3. traversability map -> 1 tiles
+    4. do_prediction map -> 0 tiles
+    5. dig map -> 0 tiles
+    """
+    # jax.debug.print("x.shape = {y}", y=x.shape)
+
+    x = jnp.swapaxes(x, 0, 1)
+    x = jnp.swapaxes(x, 1, 2)
+
+    action_map = x[..., 0]
+    target_map = x[..., 1]
+    traversability_map = x[..., 2]
+    do_prediction_map = x[..., 3]
+    dig_map = x[..., 4]
+
+    action_map = zero_pool(action_map)
+    target_map = min_pool(target_map)
+    traversability_map = max_pool(traversability_map)
+    do_prediction_map = zero_pool(do_prediction_map)
+    dig_map = zero_pool(dig_map)
+
+    x = jnp.concatenate((action_map[..., None], target_map[..., None], traversability_map[..., None],
+                            do_prediction_map[..., None], dig_map[..., None]), axis=-1)
+
+    x = jnp.swapaxes(x, 1, 2)
+    x = jnp.swapaxes(x, 0, 1)
+
+    # jax.debug.print("x.shape = {y}", y=x.shape)
+    
+    return x
+
 class MapsNet(nn.Module):
     """
     Pre-process one or multiple maps.
@@ -192,28 +309,47 @@ class MapsNet(nn.Module):
     map_min_max: Sequence[int] = (-1, 4)  # TODO from config
 
     def setup(self) -> None:
-        # self.conv1 = nn.Conv(3, kernel_size=(1, 1))
-        self.resnet = ResNetBase(
+
+        # SET POOL FUNCTION HERE
+        pool_fn = my_pool
+        # pool_fn = None
+
+        # SET GLOBAL AVG POOL BOOL HERE
+        global_avg_pool = True
+        
+        # SET NORMALIZATION HERE
+        # TODO: this way I'm normalizing also traversability -- problems with that?
+        self.normalize_maps_fn = partial(
+            normalize,
+            x_min=self.map_min_max[0],
+            x_max=self.map_min_max[1],
+        )
+        # self.normalize_maps_fn = None
+
+
+        self.resnet = MyResNet(
                         block_cls=jax_resnet.ResNetBlock,
-                        stage_sizes=[4, 4],
-                        hidden_sizes=(8, 16),
-                        stem_cls=ResNetStemIdentity,
+                        stage_sizes=[2, 2, 2, 2],
+                        hidden_sizes=(4, 8, 16, 32),
+                        # stem_cls=ResNetStemIdentity,
                         n_classes=32,
-                        # norm_cls=nn.LayerNorm,
+                        pool_fn=pool_fn,
+                        global_avg_pool=global_avg_pool,
+                        normalize_fn=self.normalize_maps_fn,
                     )
         # self.mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_mlp)
 
+
     def __call__(self, obs: dict[str, Array]):
-        action_map = normalize(obs[3], self.map_min_max[0], self.map_min_max[1])
-        dig_map = normalize(obs[7], self.map_min_max[0], self.map_min_max[1])
-        do_prediction = normalize(obs[6], self.map_min_max[0], self.map_min_max[1])
+        action_map = obs[3]
+        target_map = obs[4]
+        traversability_map = obs[5]
+        do_prediction = obs[6]
+        dig_map = obs[7]
 
-        # delta_target_map = jnp.clip(obs[3] - obs[2], a_max=0)
-        # delta_target_map = normalize(delta_target_map, self.map_min_max[0], 0)
-
-        target_map = normalize(obs[4], self.map_min_max[0], self.map_min_max[1])
-
-        x = jnp.concatenate((action_map[..., None], target_map[..., None], obs[5][..., None], do_prediction[..., None], dig_map[..., None]), axis=-1)
+        # NOTE: if change the following, need to also change my_pool
+        x = jnp.concatenate((action_map[..., None], target_map[..., None], traversability_map[..., None],
+                             do_prediction[..., None], dig_map[..., None]), axis=-1)
 
         # x = self.conv1(x)
         x = self.resnet(x)
