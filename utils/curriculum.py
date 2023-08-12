@@ -15,79 +15,65 @@ class Curriculum:
         self.max_change_ratio = rl_config["max_change_ratio"]
 
         self.curriculum_dicts = [
-            # (values with -1 means it's not used)
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 150,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.DENSE,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 150,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.SPARSE,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 150,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.DENSE,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 150,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.SPARSE,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 200,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.DENSE,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 200,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.SPARSE,
-            },
+            # TRENCHES
             # {
             #     "map_width": -1,  # in meters
             #     "map_height": -1,  # in meters
-            #     "max_steps_in_episode": 300,
+            #     "max_steps_in_episode": 150,
             #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.DENSE,
             # },
             # {
             #     "map_width": -1,  # in meters
             #     "map_height": -1,  # in meters
-            #     "max_steps_in_episode": 300,
+            #     "max_steps_in_episode": 150,
             #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.SPARSE,
             # },
             # {
             #     "map_width": -1,  # in meters
             #     "map_height": -1,  # in meters
-            #     "max_steps_in_episode": 600,
-            #     "map_type": MapType.FOUNDATIONS,
+            #     "max_steps_in_episode": 150,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.DENSE,
             # },
             # {
             #     "map_width": -1,  # in meters
             #     "map_height": -1,  # in meters
-            #     "max_steps_in_episode": 600,
-            #     "map_type": MapType.FOUNDATIONS,
+            #     "max_steps_in_episode": 150,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.SPARSE,
             # },
             # {
             #     "map_width": -1,  # in meters
             #     "map_height": -1,  # in meters
-            #     "max_steps_in_episode": 600,
-            #     "map_type": MapType.FOUNDATIONS,
+            #     "max_steps_in_episode": 200,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.DENSE,
             # },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 200,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+
+            # FOUNDATIONS
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 300,
+                "map_type": MapType.FOUNDATIONS,
+                "rewards_type": RewardsType.DENSE,
+            },
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 300,
+                "map_type": MapType.FOUNDATIONS,
+                "rewards_type": RewardsType.SPARSE,
+            },
         ]
 
         self.curriculum_len = len(self.curriculum_dicts)
@@ -124,8 +110,15 @@ class Curriculum:
         increase_dof *= max_change_ratio_mask
         
         dofs = self.dofs + increase_dof.astype(np.int8)
-        random_dofs = np.random.randint(0, self.curriculum_len, (dofs.shape[0],), dtype=np.int8)
-        dofs = np.where(dofs < self.curriculum_len, dofs, random_dofs)
+
+        if self.rl_config["last_dof_random"]:
+            # last dof level at random
+            random_dofs = np.random.randint(0, self.curriculum_len, (dofs.shape[0],), dtype=np.int8)
+            dofs = np.where(dofs < self.curriculum_len, dofs, random_dofs)
+        else:
+            # cap dof to last level
+            dofs = np.where(dofs < self.curriculum_len, dofs, self.curriculum_len)
+        
         self.dofs = dofs.astype(np.int8)
     
     def _get_dofs_count_dict(self,):
