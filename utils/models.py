@@ -249,16 +249,12 @@ def zero_pool(x):
     """
     Given an input x with neg to pos values,
     zero_pool pools zeros with priority, then neg, then pos values.
-
-    # TODO: test
     """
-    x_pos = jnp.clip(x, a_min=0)
-    x_neg = jnp.clip(x, a_max=0)
-    x_zero_pool_pos = min_pool(x_pos)
-    x_zero_pool_neg = max_pool(x_neg)
     x_pool = min_pool(x)
+    mask_pool = max_pool(x == 0)
+
     return jnp.where(
-        (x_zero_pool_neg == 0) & (x_zero_pool_pos == 0),
+        mask_pool,
         0,
         x_pool,
     )
