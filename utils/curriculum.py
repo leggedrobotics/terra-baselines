@@ -117,7 +117,7 @@ class Curriculum:
             dofs = np.where(dofs < self.curriculum_len, dofs, random_dofs)
         else:
             # cap dof to last level
-            dofs = np.where(dofs < self.curriculum_len, dofs, self.curriculum_len)
+            dofs = np.where(dofs < self.curriculum_len, dofs, self.curriculum_len - 1)
         
         self.dofs = dofs.astype(np.int8)
     
