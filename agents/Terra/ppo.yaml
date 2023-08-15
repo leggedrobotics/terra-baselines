@@ -29,7 +29,7 @@ train_config:
 
   # Curriculum
   change_dof_threshold: 0.01  # value_losses_individual / targets_individual < change_dof_threshold
-  max_change_ratio: 0.05  # max percentage of configs that can change in one step
+  max_change_ratio: 0.01  # max percentage of configs that can change in one step
   last_dof_random: False  # if increase dof at last level, go to a random level (if False, stays to last level)
 
   # Reset manager
