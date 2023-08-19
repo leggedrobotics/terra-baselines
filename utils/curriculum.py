@@ -84,6 +84,9 @@ class Curriculum:
         ]
 
         self.curriculum_len = len(self.curriculum_dicts)
+        self.idx_sparse_rewards_levels = [i for i, level in enumerate(self.curriculum_dicts) if level["rewards_type"] == RewardsType.SPARSE]
+        self.n_sparse_levels = len(self.idx_sparse_rewards_levels)
+        print(f"{self.idx_sparse_rewards_levels=}")
 
         # Get even eval dofs
         n_eval_each = rl_config["num_test_rollouts"] // self.curriculum_len
@@ -118,13 +121,20 @@ class Curriculum:
         
         dofs = self.dofs + increase_dof.astype(np.int8)
 
-        if self.rl_config["last_dof_random"]:
+        if self.rl_config["last_dof_type"] == "random":
             # last dof level at random
             random_dofs = np.random.randint(0, self.curriculum_len, (dofs.shape[0],), dtype=np.int8)
             dofs = np.where(dofs < self.curriculum_len, dofs, random_dofs)
-        else:
+        elif self.rl_config["last_dof_type"] == "none":
             # cap dof to last level
             dofs = np.where(dofs < self.curriculum_len, dofs, self.curriculum_len - 1)
+        elif self.rl_config["last_dof_type"] == "sparse":
+            # last dof level at random from all sparse reward levels
+            random_dofs = np.random.randint(0, self.n_sparse_levels, (dofs.shape[0],), dtype=np.int8)
+            random_dofs_sparse_rewards = np.array([self.idx_sparse_rewards_levels[i] for i in random_dofs.tolist()])
+            dofs = np.where(dofs < self.curriculum_len, dofs, random_dofs_sparse_rewards)
+        else:
+            raise(ValueError(f"{self.rl_config['last_dof_type']=} does not exist."))
         
         self.dofs = dofs.astype(np.int8)
     
