@@ -307,8 +307,8 @@ class MapsNet(nn.Module):
     def setup(self) -> None:
 
         # SET POOL FUNCTION HERE
-        pool_fn = my_pool
-        # pool_fn = None
+        # pool_fn = my_pool
+        pool_fn = None
 
         # SET GLOBAL AVG POOL BOOL HERE
         global_avg_pool = True
