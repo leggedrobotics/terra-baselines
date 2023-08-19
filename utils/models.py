@@ -325,10 +325,10 @@ class MapsNet(nn.Module):
 
         self.resnet = MyResNet(
                         block_cls=jax_resnet.ResNetBlock,
-                        # stage_sizes=[2, 2, 2, 2],
-                        stage_sizes=[2, 2],
-                        # hidden_sizes=(4, 8, 16, 32),
-                        hidden_sizes=(16, 32),
+                        stage_sizes=[2, 2, 2, 2],
+                        # stage_sizes=[2, 2],
+                        hidden_sizes=(4, 8, 16, 32),
+                        # hidden_sizes=(16, 32),
                         # stem_cls=ResNetStemIdentity,
                         n_classes=32,
                         pool_fn=pool_fn,
