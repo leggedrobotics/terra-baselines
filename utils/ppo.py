@@ -332,7 +332,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         batch = batch_manager.append(
             batch, obs, action.action, reward, done, log_pi, value, infos["action_mask"]
         )
-        return train_state, next_obs, next_state, batch, new_key, infos["action_mask"], done, maps_buffer_keys
+        return train_state, next_obs, next_state, batch, new_key, infos["action_mask"], infos["done_task"], maps_buffer_keys
 
     batch = batch_manager.reset(
         action_size=rollout_manager.env.actions_size,
@@ -354,7 +354,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
     best_historical_eval_reward = -1e6
     for step in t:
-        train_state, obs, state, batch, rng_step, action_mask, dones, maps_buffer_keys = get_transition(
+        train_state, obs, state, batch, rng_step, action_mask, task_dones, maps_buffer_keys = get_transition(
             train_state,
             obs,
             state,
@@ -364,7 +364,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             env_cfgs,
             maps_buffer_keys
         )
-        dones_after_update = dones_after_update | dones
+        dones_after_update = dones_after_update | task_dones
         total_steps += config["num_train_envs"]
         if step % (config["n_steps"] + 1) == 0:
             metric_dict, train_state, rng_update = update(
