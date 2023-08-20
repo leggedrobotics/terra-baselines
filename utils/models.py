@@ -225,7 +225,14 @@ def MyResNet(
     else:
         layers.append(lambda x: x.reshape(x.shape[0], -1))  # no pooling
     
-    layers.append(nn.Dense(n_classes))
+    # Dense layers
+    mlp_head = MLP(
+        hidden_dim_layers=(512, 32),
+        use_layer_norm=True,
+    )
+    layers.append(mlp_head)
+    # layers.append(nn.Dense(n_classes))
+    
     return Sequential(layers)
 
 @jax.jit
@@ -302,7 +309,7 @@ class MapsNet(nn.Module):
     """
     Pre-process one or multiple maps.
     """
-    map_min_max: Sequence[int] = (-1, 4)  # TODO from config
+    map_min_max: Sequence[int] = (-1, 1)  # TODO from config
 
     def setup(self) -> None:
 
