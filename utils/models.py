@@ -229,12 +229,12 @@ def MyResNet(
         layers.append(lambda x: x.reshape(x.shape[0], -1))  # no pooling
     
     # Dense layers
-    mlp_head = MLP(
-        hidden_dim_layers=(512, 32),
-        use_layer_norm=True,
-    )
-    layers.append(mlp_head)
-    # layers.append(nn.Dense(n_classes))
+    # mlp_head = MLP(
+    #     hidden_dim_layers=(512, 32),
+    #     use_layer_norm=True,
+    # )
+    # layers.append(mlp_head)
+    layers.append(nn.Dense(n_classes))
     
     return Sequential(layers)
 
