@@ -1,7 +1,7 @@
 train_config:
   train_type: "PPO"
   num_train_steps: 3000000000
-  evaluate_every_epochs: 5000
+  evaluate_every_epochs: 10000 # 5000
 
   env_name: "Terra"
   env_kwargs: {}
