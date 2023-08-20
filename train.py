@@ -13,6 +13,7 @@ from utils.curriculum import Curriculum
 from utils.reset_manager import ResetManager
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
+from utils.helpers import load_pkl_object
 
 def _init_wandb(run_name, config):
     import wandb
@@ -44,6 +45,12 @@ def main(config, mle_log, log_ext=""):
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     model, params = get_model_ready(rng_init, config, env)
     del rng_init
+
+    if config["model_path"] is not None:
+        print(f"\nLoading pre-trained model from: {config['model_path']}")
+        log = load_pkl_object(config['model_path'])
+        params = log['network']
+        print("Pre-trained model loaded.\n")
 
     # Run the training loop (either evosax ES or PPO)
     if config["train_type"] == "PPO":
@@ -135,8 +142,15 @@ if __name__ == "__main__":
         default="ppo",
         help="Name used to store the run on wandb.",
     )
+    parser.add_argument(
+        "-m",
+        "--model_path",
+        type=str,
+        default=None,
+        help="Pre-trained model.",
+    )
     args, _ = parser.parse_known_args()
-    config = load_config(args.config_fname, args.seed_env, args.seed_model, args.lrate, args.wandb, args.run_name)
+    config = load_config(args.config_fname, args.seed_env, args.seed_model, args.lrate, args.wandb, args.run_name, args.model_path)
     main(
         config["train_config"],
         mle_log=None,
