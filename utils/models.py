@@ -39,7 +39,10 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             model = SimplifiedDecoupledCategoricalNet(
                 use_action_masking=config["use_action_masking"],
                 mask_out_arm_extension=config["mask_out_arm_extension"],
-                num_embeddings_agent=num_embeddings_agent
+                num_embeddings_agent=num_embeddings_agent,
+                map_min_max=tuple(config["maps_net_normalization_bounds"]) if not config["clip_action_maps"] else (-1, 1),
+                local_map_min_max=tuple(config["local_map_normalization_bounds"]),
+                loaded_max=config["loaded_max"],
             )
 
     if config["network_name"] == "Categorical-MLP":
@@ -120,10 +123,10 @@ class AgentStateNet(nn.Module):
     # hidden_dim: int = 8
     # one_hot_num_classes: int
     num_embeddings: int
+    loaded_max: int
     num_embedding_features: int = 8
     hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
     hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
-    loaded_max: int = 100  # TODO config
     
     def setup(self) -> None:
         self.embedding = nn.Embed(num_embeddings=self.num_embeddings, features=self.num_embedding_features)
@@ -153,7 +156,7 @@ class LocalMapNet(nn.Module):
     """
     Pre-process one or multiple maps.
     """
-    map_min_max: Sequence[int] = (-16, 16)
+    map_min_max: Sequence[int]
     hidden_dim_layers_mlp: Sequence[int] = (128, 16)
 
     def setup(self) -> None:
@@ -309,7 +312,7 @@ class MapsNet(nn.Module):
     """
     Pre-process one or multiple maps.
     """
-    map_min_max: Sequence[int] = (-1, 1)  # TODO from config
+    map_min_max: Sequence[int]
 
     def setup(self) -> None:
 
@@ -519,6 +522,9 @@ class SimplifiedDecoupledCategoricalNet(nn.Module):
     use_action_masking: bool
     mask_out_arm_extension: bool
     num_embeddings_agent: int
+    map_min_max: Sequence[int]
+    local_map_min_max: Sequence[int]
+    loaded_max: int
     action_type: Union[TrackedAction, WheeledAction] = TrackedAction
     # hidden_dim_layers_common: Sequence[int] = (256, 64)
     hidden_dim_pi: Sequence[int] = (128, 32)
@@ -533,15 +539,15 @@ class SimplifiedDecoupledCategoricalNet(nn.Module):
         self.mlp_v = MLP(hidden_dim_layers=self.hidden_dim_v)
         self.mlp_pi = MLP(hidden_dim_layers=self.hidden_dim_pi + (num_actions,))
 
-        self.local_map_net_v = LocalMapNet()
-        self.local_map_net_pi = LocalMapNet()
+        self.local_map_net_v = LocalMapNet(map_min_max=self.local_map_min_max)
+        self.local_map_net_pi = LocalMapNet(map_min_max=self.local_map_min_max)
 
-        self.agent_state_net_v = AgentStateNet(num_embeddings=self.num_embeddings_agent)
-        self.agent_state_net_pi = AgentStateNet(num_embeddings=self.num_embeddings_agent)
+        self.agent_state_net_v = AgentStateNet(num_embeddings=self.num_embeddings_agent, loaded_max=self.loaded_max)
+        self.agent_state_net_pi = AgentStateNet(num_embeddings=self.num_embeddings_agent, loaded_max=self.loaded_max)
 
         # Resnet
-        self.maps_net_v = MapsNet()
-        self.maps_net_pi = MapsNet()
+        self.maps_net_v = MapsNet(self.map_min_max)
+        self.maps_net_pi = MapsNet(self.map_min_max)
         # MLP for maps
         # self.maps_net_v = SimplifiedMapsNet()
         # self.maps_net_pi = SimplifiedMapsNet()

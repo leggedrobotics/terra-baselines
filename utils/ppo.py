@@ -188,8 +188,8 @@ class RolloutManager(object):
     def batch_step(self, states, actions, env_cfgs, maps_buffer_keys, force_resets):
         return self.env.step(states, actions, env_cfgs, maps_buffer_keys, force_resets)
     
-    @partial(jax.jit, static_argnums=(0, 3, 6))
-    def _batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs):
+    @partial(jax.jit, static_argnums=(0, 3, 6, 8))
+    def _batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps):
         # Reset the environment
         rng_reset, rng_episode = jax.random.split(rng_input)
         state, obs, maps_buffer_keys = self.batch_reset(jax.random.split(rng_reset, num_envs), env_cfgs)
@@ -198,6 +198,10 @@ class RolloutManager(object):
             """lax.scan compatible step transition in jax env."""
             obs, state, train_state, rng, cum_reward, valid_mask, done, action_mask, maps_buffer_keys = state_input
             rng, rng_step, rng_net = jax.random.split(rng, 3)
+            
+            if clip_action_maps:
+                obs = clip_action_maps_in_obs(obs)
+            
             action, _ = self.select_action_deterministic(train_state, obs, action_mask)
             # jax.debug.print("bicount action = {x}", x=jnp.bincount(action, length=9))
             force_resets_dummy = self.reset_manager_evaluate.dummy()
@@ -247,9 +251,9 @@ class RolloutManager(object):
         return jnp.mean(cum_return), dones, scan_out[0]
     
     
-    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, folder_name):
+    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, folder_name):
         """Rollout an episode with lax.scan. and save outputs to pkl"""
-        cum_return_mean, dones, obs_log = self._batch_evaluate(rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs)
+        cum_return_mean, dones, obs_log = self._batch_evaluate(rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps)
         # Append sample to pkl file
         jax.experimental.io_callback(partial(append_to_pkl_object, foldername=folder_name), None, obs_log, step)
         return cum_return_mean, dones
@@ -310,7 +314,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         num_envs=config["num_train_envs"],
     )
 
-    @jax.jit
+    @partial(jax.jit, static_argnames=("clip_action_maps",))
     def get_transition(
         train_state: TrainState,
         obs: jnp.ndarray,
@@ -320,8 +324,13 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         rng: jax.random.PRNGKey,
         env_cfgs,
         maps_buffer_keys: jax.random.PRNGKey,
+        clip_action_maps: bool,
     ):
         new_key, key_step = jax.random.split(rng)
+
+        if clip_action_maps:
+            obs = clip_action_maps_in_obs(obs)
+
         action, log_pi, value = rollout_manager.select_action(
             train_state, obs, action_mask, key_step
         )
@@ -362,7 +371,8 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             action_mask,
             rng_step,
             env_cfgs,
-            maps_buffer_keys
+            maps_buffer_keys,
+            int(config["clip_action_maps"]),
         )
         dones_after_update = dones_after_update | task_dones
         total_steps += config["num_train_envs"]
@@ -406,7 +416,8 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 action_mask_init,
                 config["n_evals_save"],
                 env_cfgs_eval,
-                "agents/Terra/" + config["run_name"]
+                int(config["clip_action_maps"]),
+                "agents/Terra/" + config["run_name"],
             )
             log_steps.append(total_steps)
             log_return.append(rewards)
@@ -453,11 +464,11 @@ def obs_to_model_input(obs):
         obs["dig_map"],
     ]
 
-    # Legacy: Categorical MLP
-    # num_train_envs = obs["local_map"].shape[0]
-    # print(f"{num_train_envs=}")
-    # obs = jnp.hstack([v.reshape(num_train_envs, -1) for v in obs.values()])
-    # return obs
+def clip_action_maps_in_obs(obs):
+    obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
+    obs["do_preview"] = jnp.clip(obs["do_preview"], a_min=-1, a_max=1)
+    obs["dig_map"] = jnp.clip(obs["dig_map"], a_min=-1, a_max=1)
+    return obs
 
 def wrap_action(action, action_type):
     action = action_type.new(action[:, None])

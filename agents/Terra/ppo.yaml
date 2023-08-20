@@ -27,6 +27,12 @@ train_config:
   entropy_coeff: 0.01 # "Entropy loss coefficient"
   critic_coeff: 0.5  # "Value loss coefficient"
 
+  # Model
+  clip_action_maps: False  # clips the action maps to [-1, 1]
+  maps_net_normalization_bounds: [-1, 8]  # automatically set to [-1, 1] if clip_action_maps is True
+  local_map_normalization_bounds: [-16, 16]
+  loaded_max: 100
+
   # Curriculum
   change_dof_threshold: 0.01  # value_losses_individual / targets_individual < change_dof_threshold
   max_change_ratio: 0.01  # max percentage of configs that can change in one step
