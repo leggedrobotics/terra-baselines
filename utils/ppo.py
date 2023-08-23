@@ -251,12 +251,10 @@ class RolloutManager(object):
         return jnp.mean(cum_return), dones, scan_out[0]
     
     
-    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, folder_name):
-        """Rollout an episode with lax.scan. and save outputs to pkl"""
+    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps):
+        """Rollout an episode with lax.scan"""
         cum_return_mean, dones, obs_log = self._batch_evaluate(rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps)
-        # Append sample to pkl file
-        jax.experimental.io_callback(partial(append_to_pkl_object, foldername=folder_name), None, obs_log, step)
-        return cum_return_mean, dones
+        return cum_return_mean, dones, obs_log
 
 @partial(jax.jit, static_argnums=0)
 def policy(
@@ -408,7 +406,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         if (step + 1) % config["evaluate_every_epochs"] == 0:
             rng, rng_eval = jax.random.split(rng)
             env_cfgs_eval, dofs_count_dict_eval = curriculum.get_cfgs_eval()
-            rewards, dones = rollout_manager.batch_evaluate(
+            rewards, dones, obs_log = rollout_manager.batch_evaluate(
                 rng_eval,
                 train_state,
                 config["num_test_rollouts"],
@@ -417,7 +415,6 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 config["n_evals_save"],
                 env_cfgs_eval,
                 int(config["clip_action_maps"]),
-                "agents/Terra/" + config["run_name"],
             )
             log_steps.append(total_steps)
             log_return.append(rewards)
@@ -426,6 +423,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
 
             if rewards > best_historical_eval_reward:
                 best_historical_eval_reward = rewards
+                # Save model
                 model_dict = {
                     "network": train_state.params
                 }
@@ -434,6 +432,13 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                     f"agents/{config['env_name']}/{run_name}_best_model.pkl",
                 )
                 print(f"~~~~~~~~ New best model checkpoint saved -> reward = {rewards} ~~~~~~~~")
+
+                # Save episode for replay
+                obs_log_filename = "agents/Terra/" + config["run_name"] + "/eval_best.pkl"
+                save_pkl_object(
+                    obs_log,
+                    obs_log_filename,
+                )
 
             if config["wandb"]:
                 wandb.log({"eval - cum_reward": rewards, "eval - dones %": 100 * dones.sum() / dones.shape[0]})
