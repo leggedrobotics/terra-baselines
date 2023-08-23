@@ -271,47 +271,48 @@ def zero_pool(x):
         x_pool,
     )
 
-@jax.jit
-def my_pool(x):
-    """
-    Handles special pooling on x, assumed to be ([N]xWxHxC).
+# NOTE: my_pool does not make sense for a radical delta map feature set.
+# @jax.jit
+# def my_pool(x):
+#     """
+#     Handles special pooling on x, assumed to be ([N]xWxHxC).
 
-    List of channels and what we highlight with my_pool:
-    1. action map -> 0 tiles
-    2. target map -> -1 tiles
-    3. traversability map -> 1 tiles
-    4. do_prediction map -> 0 tiles
-    5. dig map -> 0 tiles
-    5. delta map -> 1 tiles
-    """
-    # jax.debug.print("x.shape = {y}", y=x.shape)
+#     List of channels and what we highlight with my_pool:
+#     1. action map -> 0 tiles
+#     2. target map -> -1 tiles
+#     3. traversability map -> 1 tiles
+#     4. do_prediction map -> 0 tiles
+#     5. dig map -> 0 tiles
+#     5. delta map -> 1 tiles
+#     """
+#     # jax.debug.print("x.shape = {y}", y=x.shape)
 
-    x = jnp.swapaxes(x, 0, 1)
-    x = jnp.swapaxes(x, 1, 2)
+#     x = jnp.swapaxes(x, 0, 1)
+#     x = jnp.swapaxes(x, 1, 2)
 
-    action_map = x[..., 0]
-    target_map = x[..., 1]
-    traversability_map = x[..., 2]
-    do_prediction_map = x[..., 3]
-    dig_map = x[..., 4]
-    delta_map = x[..., 5]
+#     action_map = x[..., 0]
+#     target_map = x[..., 1]
+#     traversability_map = x[..., 2]
+#     do_prediction_map = x[..., 3]
+#     dig_map = x[..., 4]
+#     delta_map = x[..., 5]
 
-    action_map = zero_pool(action_map)
-    target_map = min_pool(target_map)
-    traversability_map = max_pool(traversability_map)
-    do_prediction_map = zero_pool(do_prediction_map)
-    dig_map = zero_pool(dig_map)
-    delta_map = max_pool(delta_map)
+#     action_map = zero_pool(action_map)
+#     target_map = min_pool(target_map)
+#     traversability_map = max_pool(traversability_map)
+#     do_prediction_map = zero_pool(do_prediction_map)
+#     dig_map = zero_pool(dig_map)
+#     delta_map = max_pool(delta_map)
 
-    x = jnp.concatenate((action_map[..., None], target_map[..., None], traversability_map[..., None],
-                            do_prediction_map[..., None], dig_map[..., None], delta_map[..., None]), axis=-1)
+#     x = jnp.concatenate((action_map[..., None], target_map[..., None], traversability_map[..., None],
+#                             do_prediction_map[..., None], dig_map[..., None], delta_map[..., None]), axis=-1)
 
-    x = jnp.swapaxes(x, 1, 2)
-    x = jnp.swapaxes(x, 0, 1)
+#     x = jnp.swapaxes(x, 1, 2)
+#     x = jnp.swapaxes(x, 0, 1)
 
-    # jax.debug.print("x.shape = {y}", y=x.shape)
+#     # jax.debug.print("x.shape = {y}", y=x.shape)
     
-    return x
+#     return x
 
 class MapsNet(nn.Module):
     """
@@ -330,12 +331,12 @@ class MapsNet(nn.Module):
         
         # SET NORMALIZATION HERE
         # TODO: this way I'm normalizing also traversability -- problems with that?
-        self.normalize_maps_fn = partial(
-            normalize,
-            x_min=self.map_min_max[0],
-            x_max=self.map_min_max[1],
-        )
-        # self.normalize_maps_fn = None
+        # self.normalize_maps_fn = partial(
+        #     normalize,
+        #     x_min=self.map_min_max[0],
+        #     x_max=self.map_min_max[1],
+        # )
+        self.normalize_maps_fn = None
 
 
         self.resnet = MyResNet(
@@ -359,17 +360,17 @@ class MapsNet(nn.Module):
         return am_clip - tm_clip
 
     def __call__(self, obs: dict[str, Array]):
-        action_map = obs[3]
+        # action_map = obs[3]
         target_map = obs[4]
         traversability_map = obs[5]
         do_prediction = obs[6]
         dig_map = obs[7]
 
-        delta_map = self._generate_delta_map(target_map, action_map)
+        dig_delta_map = self._generate_delta_map(target_map, dig_map)
+        do_prediction_delta_map = self._generate_delta_map(target_map, do_prediction)
 
         # NOTE: if change the following, need to also change my_pool
-        x = jnp.concatenate((action_map[..., None], target_map[..., None], traversability_map[..., None],
-                             do_prediction[..., None], dig_map[..., None], delta_map[..., None]), axis=-1)
+        x = jnp.concatenate((traversability_map[..., None], do_prediction_delta_map[..., None], dig_delta_map[..., None]), axis=-1)
 
         # x = self.conv1(x)
         x = self.resnet(x)
