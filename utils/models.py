@@ -36,11 +36,13 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
                 ).item()
             jax.debug.print("num_embeddings_agent = {x}", x=num_embeddings_agent)
             jax.debug.print("config.use_action_masking={x}", x=config["use_action_masking"])
+            map_min_max = tuple(config["maps_net_normalization_bounds"]) if not config["clip_action_maps"] else (-1, 1)
+            jax.debug.print("map normalization min max = {x}", x=map_min_max)
             model = SimplifiedDecoupledCategoricalNet(
                 use_action_masking=config["use_action_masking"],
                 mask_out_arm_extension=config["mask_out_arm_extension"],
                 num_embeddings_agent=num_embeddings_agent,
-                map_min_max=tuple(config["maps_net_normalization_bounds"]) if not config["clip_action_maps"] else (-1, 1),
+                map_min_max=map_min_max,
                 local_map_min_max=tuple(config["local_map_normalization_bounds"]),
                 loaded_max=config["loaded_max"],
             )
@@ -280,6 +282,7 @@ def my_pool(x):
     3. traversability map -> 1 tiles
     4. do_prediction map -> 0 tiles
     5. dig map -> 0 tiles
+    5. delta map -> 1 tiles
     """
     # jax.debug.print("x.shape = {y}", y=x.shape)
 
@@ -291,15 +294,17 @@ def my_pool(x):
     traversability_map = x[..., 2]
     do_prediction_map = x[..., 3]
     dig_map = x[..., 4]
+    delta_map = x[..., 5]
 
     action_map = zero_pool(action_map)
     target_map = min_pool(target_map)
     traversability_map = max_pool(traversability_map)
     do_prediction_map = zero_pool(do_prediction_map)
     dig_map = zero_pool(dig_map)
+    delta_map = max_pool(delta_map)
 
     x = jnp.concatenate((action_map[..., None], target_map[..., None], traversability_map[..., None],
-                            do_prediction_map[..., None], dig_map[..., None]), axis=-1)
+                            do_prediction_map[..., None], dig_map[..., None], delta_map[..., None]), axis=-1)
 
     x = jnp.swapaxes(x, 1, 2)
     x = jnp.swapaxes(x, 0, 1)
@@ -347,6 +352,11 @@ class MapsNet(nn.Module):
                     )
         # self.mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_mlp)
 
+    @staticmethod
+    def _generate_delta_map(target_map: Array, action_map: Array):
+        tm_clip = jnp.clip(target_map, a_max=0)
+        am_clip = jnp.clip(action_map, a_max=0)
+        return am_clip - tm_clip
 
     def __call__(self, obs: dict[str, Array]):
         action_map = obs[3]
@@ -355,9 +365,11 @@ class MapsNet(nn.Module):
         do_prediction = obs[6]
         dig_map = obs[7]
 
+        delta_map = self._generate_delta_map(target_map, action_map)
+
         # NOTE: if change the following, need to also change my_pool
         x = jnp.concatenate((action_map[..., None], target_map[..., None], traversability_map[..., None],
-                             do_prediction[..., None], dig_map[..., None]), axis=-1)
+                             do_prediction[..., None], dig_map[..., None], delta_map[..., None]), axis=-1)
 
         # x = self.conv1(x)
         x = self.resnet(x)
