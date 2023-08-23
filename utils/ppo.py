@@ -21,6 +21,7 @@ from utils.curriculum import Curriculum
 from utils.reset_manager import ResetManager
 from tensorflow_probability.substrates import jax as tfp
 from utils.helpers import save_pkl_object
+from terra.config import EnvConfig
 
 
 class BatchManager:
@@ -425,7 +426,11 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 best_historical_eval_reward = rewards
                 # Save model
                 model_dict = {
-                    "network": train_state.params
+                    "network": train_state.params,
+                    "train_config": config,
+                    "curriculum": curriculum.curriculum_dicts,
+                    "default_env_cfg": EnvConfig(),
+                    "batch_config": env.batch_cfg._asdict(),
                 }
                 save_pkl_object(
                     model_dict,
