@@ -31,12 +31,11 @@ def load_config(config_fname, seed_env=None, seed_model=None, lrate=None, wandb=
         return yaml_config
 
     config = load_yaml(config_fname)
+    config["train_config"]["model_path"] = model_path
     if run_name is not None:
         config["train_config"]["run_name"] = run_name
     if wandb is not None:
         config["train_config"]["wandb"] = wandb
-    if model_path is not None:
-        config["train_config"]["model_path"] = model_path
     if seed_env is not None:
         config["train_config"]["seed_env"] = seed_env
     if seed_model is not None:
