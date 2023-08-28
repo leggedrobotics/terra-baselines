@@ -30,7 +30,7 @@ def _append_to_obs(o, obs_log):
 #     return path_len
 
 
-def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_resets, rl_config, max_frames):
+def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_resets, rl_config, max_frames, deterministic):
     """
     NOTE: this function assumes it's a tracked agent in the way it computes the stats.
     """
@@ -54,8 +54,11 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
             obs_model = obs_to_model_input(obs)
             action_mask = jnp.ones((8,), dtype=jnp.bool_)  # TODO implement action masking
             v, logits_pi = model.apply(model_params, obs_model, action_mask)
-            pi = tfp.distributions.Categorical(logits=logits_pi)
-            action = pi.sample(seed=rng_act)
+            if deterministic:
+                action = np.argmax(logits_pi, axis=-1)
+            else:
+                pi = tfp.distributions.Categorical(logits=logits_pi)
+                action = pi.sample(seed=rng_act)
         else:
             raise RuntimeError("Model is None!")
         next_env_state, (next_obs, reward, done, info), maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys, force_resets)
@@ -126,6 +129,13 @@ if __name__ == "__main__":
         default=10,
         help="Number of steps.",
     )
+    parser.add_argument(
+        "-d",
+        "--deterministic",
+        type=bool,
+        default=True,
+        help="Deterministic.",
+    )
     args, _ = parser.parse_known_args()
 
     log = load_pkl_object(f"{args.run_name}")
@@ -147,8 +157,9 @@ if __name__ == "__main__":
 
     model = load_neural_network(config, env)
     model_params = log["network"]
+    print(f"\nDeterministic = {args.deterministic}\n")
     cum_rewards, stats = rollout_episode(
-        env, model, model_params, env_cfgs, force_resets, config, max_frames=args.n_steps
+        env, model, model_params, env_cfgs, force_resets, config, max_frames=args.n_steps, deterministic=args.deterministic
     )
 
     episode_done_once = stats["episode_done_once"]
