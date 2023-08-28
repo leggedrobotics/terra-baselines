@@ -197,7 +197,7 @@ class RolloutManager(object):
 
         def policy_step(state_input, _):
             """lax.scan compatible step transition in jax env."""
-            obs, state, train_state, rng, cum_reward, valid_mask, done, action_mask, maps_buffer_keys = state_input
+            obs, state, train_state, rng, cum_reward, valid_mask, done, action_mask, maps_buffer_keys, episode_length, episode_done_once = state_input
             rng, rng_step, rng_net = jax.random.split(rng, 3)
             
             if clip_action_maps:
@@ -216,6 +216,11 @@ class RolloutManager(object):
             action_mask = infos["action_mask"]
             new_cum_reward = cum_reward + reward * valid_mask
             new_valid_mask = valid_mask * (1 - done)
+
+            # Update episode length
+            episode_done_once = episode_done_once | done
+            episode_length += ~episode_done_once
+
             carry, y = [
                 next_o,
                 next_s,
@@ -225,7 +230,9 @@ class RolloutManager(object):
                 new_valid_mask,
                 done,
                 action_mask,
-                maps_buffer_keys
+                maps_buffer_keys,
+                episode_length,
+                episode_done_once,
             ], [{k: v[:n_evals_save] for k, v in obs.items()}]
             return carry, y
 
@@ -241,7 +248,9 @@ class RolloutManager(object):
                 jnp.array(num_envs * [1.0]),  # valid mask
                 jnp.array(num_envs * [False]),  # dones
                 action_mask_init[None].repeat(num_envs, 0),
-                maps_buffer_keys
+                maps_buffer_keys,
+                jnp.array(num_envs * [0], dtype=jnp.int32),  # episode_length
+                jnp.array(num_envs * [0], dtype=jnp.bool_),  # episode done once
             ],
             (),
             300, #num_steps_test_rollouts,
@@ -249,13 +258,16 @@ class RolloutManager(object):
 
         cum_return = carry_out[4].squeeze()
         dones = carry_out[6].squeeze()
-        return jnp.mean(cum_return), dones, scan_out[0]
+        episode_length = carry_out[9].squeeze()
+        obs_log = scan_out[0]
+        return jnp.mean(cum_return), dones, obs_log, episode_length
     
     
     def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps):
         """Rollout an episode with lax.scan"""
-        cum_return_mean, dones, obs_log = self._batch_evaluate(rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps)
-        return cum_return_mean, dones, obs_log
+        cum_return_mean, dones, obs_log, episode_length = self._batch_evaluate(rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps)
+        jax.debug.print("dones.shape = {x}", x=dones.shape)
+        return cum_return_mean, dones, obs_log, episode_length
 
 @partial(jax.jit, static_argnums=0)
 def policy(
@@ -407,7 +419,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         if (step + 1) % config["evaluate_every_epochs"] == 0:
             rng, rng_eval = jax.random.split(rng)
             env_cfgs_eval, dofs_count_dict_eval = curriculum.get_cfgs_eval()
-            rewards, dones, obs_log = rollout_manager.batch_evaluate(
+            rewards, dones, obs_log, episode_length = rollout_manager.batch_evaluate(
                 rng_eval,
                 train_state,
                 config["num_test_rollouts"],
@@ -446,7 +458,13 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 )
 
             if config["wandb"]:
-                wandb.log({"eval - cum_reward": rewards, "eval - dones %": 100 * dones.sum() / dones.shape[0]})
+                wandb.log(
+                    {
+                        "eval - cum_reward": rewards,
+                        "eval - dones %": 100 * dones.sum() / dones.shape[0],
+                        "eval - first episode length": episode_length.mean(),
+                    }
+                )
 
     return (
         log_steps,
