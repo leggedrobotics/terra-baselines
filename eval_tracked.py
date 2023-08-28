@@ -43,14 +43,12 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
 
     t_counter = 0
     reward_seq = []
-    obs_seq = {}
     episode_done_once = None
     episode_length = None
     # avg_coverage = None
     # avg_path_length = None
     # avg_workspaces = None
     while True:
-        obs_seq = _append_to_obs(obs, obs_seq)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
             obs_model = obs_to_model_input(obs)
@@ -63,7 +61,8 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
         next_env_state, (next_obs, reward, done, info), maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys, force_resets)
         # path_length_step = _get_path_length_step(obs, next_obs)
         reward_seq.append(reward)
-        print(t_counter, reward, action, done)
+        # print(t_counter, reward, action, done)
+        print(t_counter)
         print(10 * "=")
         t_counter += 1
         if jnp.all(done).item() or t_counter == max_frames:
@@ -92,7 +91,7 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
             # "avg_path_length": avg_path_length,
             # "avg_workspaces": avg_workspaces,
         }
-    return obs_seq, np.cumsum(reward_seq), stats
+    return np.cumsum(reward_seq), stats
 
 
 if __name__ == "__main__":
@@ -148,7 +147,7 @@ if __name__ == "__main__":
 
     model = load_neural_network(config, env)
     model_params = log["network"]
-    obs_seq, cum_rewards, stats = rollout_episode(
+    cum_rewards, stats = rollout_episode(
         env, model, model_params, env_cfgs, force_resets, config, max_frames=args.n_steps
     )
 
