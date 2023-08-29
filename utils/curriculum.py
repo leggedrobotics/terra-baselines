@@ -162,6 +162,7 @@ class Curriculum:
         max_steps_in_episodes = [self.curriculum_dicts[dof]["max_steps_in_episode"] for dof in self.dofs]
         map_types = [self.curriculum_dicts[dof]["map_type"] for dof in self.dofs]
         rewards_type = [self.curriculum_dicts[dof]["rewards_type"] for dof in self.dofs]
+        apply_trench_rewards = [self.curriculum_dicts[dof]["map_type"] == MapType.TRENCHES for dof in self.dofs]
 
         env_cfgs = jax.vmap(EnvConfig.parametrized)(
             np.array(map_widths),
@@ -170,6 +171,7 @@ class Curriculum:
             np.array(self.dofs),
             np.array(map_types),
             np.array(rewards_type),
+            np.array(apply_trench_rewards),
             )
         
         dofs_count_dict = self._get_dofs_count_dict()
@@ -181,6 +183,7 @@ class Curriculum:
         max_steps_in_episodes = [self.curriculum_dicts[0]["max_steps_in_episode"] for _ in self.dofs]
         map_types = [self.curriculum_dicts[0]["map_type"] for _ in self.dofs]
         rewards_type = [self.curriculum_dicts[0]["rewards_type"] for _ in self.dofs]
+        apply_trench_rewards = [self.curriculum_dicts[0]["map_type"] == MapType.TRENCHES for _ in self.dofs]
         
 
         env_cfgs = jax.vmap(EnvConfig.parametrized)(
@@ -190,6 +193,7 @@ class Curriculum:
             np.array(self.dofs),
             np.array(map_types),
             np.array(rewards_type),
+            np.array(apply_trench_rewards),
             )
         dofs_count_dict = self._get_dofs_count_dict()
         return env_cfgs, dofs_count_dict
@@ -200,6 +204,7 @@ class Curriculum:
         max_steps_in_episodes = [self.curriculum_dicts[dof]["max_steps_in_episode"] for dof in self.dofs_eval]
         map_types = [self.curriculum_dicts[dof]["map_type"] for dof in self.dofs_eval]
         rewards_type = [self.curriculum_dicts[dof]["rewards_type"] for dof in self.dofs_eval]
+        apply_trench_rewards = [self.curriculum_dicts[dof]["map_type"] == MapType.TRENCHES for dof in self.dofs_eval]
 
         env_cfgs = jax.vmap(EnvConfig.parametrized)(
             np.array(map_widths),
@@ -208,6 +213,7 @@ class Curriculum:
             np.array(self.dofs_eval),
             np.array(map_types),
             np.array(rewards_type),
+            np.array(apply_trench_rewards)
             )
         
         dofs_count_dict = self._get_dofs_count_dict_eval()
