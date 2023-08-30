@@ -14,6 +14,25 @@ def update_render(seq, env: TerraEnvBatch, frame):
     return env.terra_env.render_obs(obs, mode="gif")
 
 
+def animate_from_obs_seq(env, obs_seq, gif_name, max_steps=1000):
+    print(f"Starting animation...")
+    seq_len = min(obs_seq["local_map_action"].shape[1], max_steps)
+
+    print(obs_seq.keys())
+    
+    fig = env.terra_env.window.get_fig()
+    update_partial = lambda x: update_render(seq=obs_seq, env=env, frame=x)
+    ani = animation.FuncAnimation(
+            fig,
+            update_partial,
+            frames=seq_len,
+            blit=False,
+        )
+    ani_path = f"docs/{gif_name}.gif"
+    ani.save(ani_path)
+    print(f"Animation saved to {ani_path}!\n")
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -44,25 +63,10 @@ if __name__ == "__main__":
 
     obs_seq = load_pkl_object(args.pkl_file)
 
-    # Batch dim first
     if len(obs_seq["local_map_action"].shape) == 4:
         obs_seq = {k: v.swapaxes(0, 1) for k, v in obs_seq.items()}
     
     batch_size = obs_seq["local_map_action"].shape[0]
-    seq_len = min(obs_seq["local_map_action"].shape[1], args.max_steps)
-
-    print(obs_seq.keys())
-
-    # end_frame = 200
-    # state_seq = state_seq[:end_frame]  # TODO remove
     env = TerraEnvBatch(rendering=True, n_imgs_row=int(np.sqrt(batch_size)))
-    fig = env.terra_env.window.get_fig()
-    update_partial = lambda x: update_render(seq=obs_seq, env=env, frame=x)
-    ani = animation.FuncAnimation(
-            fig,
-            update_partial,
-            frames=seq_len,
-            blit=False,
-        )
-    # Save the animation to a gif
-    ani.save(f"docs/{args.env_name}.gif")
+
+    animate_from_obs_seq(env, obs_seq, args.env_name, args.max_steps)

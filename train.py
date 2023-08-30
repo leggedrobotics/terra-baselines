@@ -63,7 +63,7 @@ def main(config, mle_log, log_ext=""):
     if config["profile"]:
         jax.profiler.start_server(5555)
     # Log and store the results.
-    log_steps, log_return, network_ckpt = train_fn(
+    log_steps, log_return, network_ckpt, obs_seq = train_fn(
         rng, config, model, params, mle_log, env, curriculum, reset_manager, run_name
     )
 

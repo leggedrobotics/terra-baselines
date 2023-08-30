@@ -52,3 +52,23 @@ PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python python -m jax.collect_profile 5555
 
 This will dump the profiling logs in a file and generate a Perfetto link to a dashboard.
 Click the link to access the profiling.
+
+
+## Testbench
+The `testbench.py` script has the following design goals:
+- Purpose: evaluate changes with little compute
+- How: Identify easy tasks that the agent should easily be able to solve, 
+    and train on this set of tasks. Get scores on the performance on the taskset, 
+    and log the tasks that the agent couldn't complete, for visualization.
+
+You can run it with:
+```
+WANDB_MODE=offline python testbench.py -n <testbench-test-name>
+```
+and if you need offline maps to be loaded, you can do so in the `TestbenchConfig` (Terra repo)
+and include the usual env variables in the launch command.
+
+The training tasks are managed by a `CurriculumTestbench` and are independent from each other.
+After each training task, there is an evaluation step to get the statistics of the trained model.
+
+The config files are `testbench_ppo.yaml` and `curriculum_testbench.py` in this repo and `config.py` in Terra.

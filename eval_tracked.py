@@ -97,6 +97,20 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
     return np.cumsum(reward_seq), stats
 
 
+def print_stats(stats,):
+    episode_done_once = stats["episode_done_once"]
+    episode_length = stats["episode_length"]
+    # avg_path_length = stats["avg_path_length"]
+    # avg_workspaces = stats["avg_workspaces"]
+    # avg_coverage = stats["avg_coverage"]
+
+    print("\nStats:\n")
+    print(f"Number of episodes finished at least once: {episode_done_once.sum()} / {len(episode_done_once)} ({100 * episode_done_once.sum()/len(episode_done_once)}%)")
+    print(f"First episode length average: {episode_length.mean()}")
+    print(f"First episode length min: {episode_length.min()}")
+    print(f"First episode length max: {episode_length.max()}")
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -132,8 +146,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "-d",
         "--deterministic",
-        type=bool,
-        default=True,
+        type=int,
+        default=1,
         help="Deterministic.",
     )
     args, _ = parser.parse_known_args()
@@ -157,19 +171,11 @@ if __name__ == "__main__":
 
     model = load_neural_network(config, env)
     model_params = log["network"]
-    print(f"\nDeterministic = {args.deterministic}\n")
+    deterministic = bool(args.deterministic)
+    print(f"\nDeterministic = {deterministic}\n")
+
     cum_rewards, stats = rollout_episode(
-        env, model, model_params, env_cfgs, force_resets, config, max_frames=args.n_steps, deterministic=args.deterministic
+        env, model, model_params, env_cfgs, force_resets, config, max_frames=args.n_steps, deterministic=deterministic
     )
 
-    episode_done_once = stats["episode_done_once"]
-    episode_length = stats["episode_length"]
-    # avg_path_length = stats["avg_path_length"]
-    # avg_workspaces = stats["avg_workspaces"]
-    # avg_coverage = stats["avg_coverage"]
-
-    print("\nStats:\n")
-    print(f"Number of episodes finished at least once: {episode_done_once.sum()} / {len(episode_done_once)} ({100 * episode_done_once.sum()/len(episode_done_once)}%)")
-    print(f"First episode length average: {episode_length.mean()}")
-    print(f"First episode length min: {episode_length.min()}")
-    print(f"First episode length max: {episode_length.max()}")
+    print_stats(stats)

@@ -9,7 +9,7 @@ import jax
 # config.update("jax_debug_nans", True)
 import jax.numpy as jnp
 from jax import Array
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Tuple, Union
 from collections import defaultdict
 import flax
 from flax.training.train_state import TrainState
@@ -18,6 +18,7 @@ import tqdm
 from terra.env import TerraEnvBatch
 from utils.helpers import append_to_pkl_object
 from utils.curriculum import Curriculum
+from utils.curriculum_testbench import CurriculumTestbench
 from utils.reset_manager import ResetManager
 from tensorflow_probability.substrates import jax as tfp
 from utils.helpers import save_pkl_object
@@ -290,7 +291,7 @@ def policy_deterministic(
     value, logits_pi = apply_fn(params, obs, action_mask)
     return value, np.argmax(logits_pi, axis=-1)
 
-def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, reset_manager: ResetManager, run_name: str):
+def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Union[Curriculum, CurriculumTestbench], reset_manager: ResetManager, run_name: str):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     if config["wandb"]:
         import wandb
@@ -416,7 +417,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
 
 
-        if (step + 1) % config["evaluate_every_epochs"] == 0:
+        if (step + 1) % config["evaluate_every_epochs"] == 0 or step == num_total_epochs:
             rng, rng_eval = jax.random.split(rng)
             env_cfgs_eval, dofs_count_dict_eval = curriculum.get_cfgs_eval()
             rewards, dones, obs_log, episode_length = rollout_manager.batch_evaluate(
@@ -470,6 +471,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         log_steps,
         log_return,
         train_state.params,
+        obs_log,
     )
 
 
