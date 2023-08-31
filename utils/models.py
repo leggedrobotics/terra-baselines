@@ -192,6 +192,47 @@ class ResNetStemIdentity(nn.Module):
     
     def __call__(self, x):
         return (x)
+    
+# class CNN(nn.Module):
+#   """A simple CNN model."""
+
+#   @nn.compact
+#   def __call__(self, x):
+#     x = nn.Conv(features=32, kernel_size=(3, 3))(x)
+#     x = nn.relu(x)
+#     x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
+#     x = nn.Conv(features=64, kernel_size=(3, 3))(x)
+#     x = nn.relu(x)
+#     x = nn.avg_pool(x, window_shape=(2, 2), strides=(2, 2))
+#     x = x.reshape((x.shape[0], -1))  # flatten
+#     x = nn.Dense(features=256)(x)
+#     x = nn.relu(x)
+#     x = nn.Dense(features=32)(x)
+#     return x
+  
+class AtariCNN(nn.Module):
+    """From https://github.com/deepmind/dqn_zoo/blob/master/dqn_zoo/networks.py"""
+
+    @nn.compact
+    def __call__(self, x):
+        # TODO careful with padding!
+        # x = nn.Conv(features=32, kernel_size=(8, 8), strides=(4, 4))(x)
+        x = nn.Conv(features=8, kernel_size=(8, 8), strides=(4, 4))(x)
+        x = nn.relu(x)
+        # x = nn.Conv(features=64, kernel_size=(4, 4), strides=(2, 2))(x)
+        x = nn.Conv(features=16, kernel_size=(4, 4), strides=(2, 2))(x)
+        x = nn.relu(x)
+        # x = nn.Conv(features=64, kernel_size=(3, 3), strides=(1, 1))(x)
+        x = nn.Conv(features=16, kernel_size=(3, 3), strides=(1, 1))(x)
+        x = nn.relu(x)
+        x = x.reshape((x.shape[0], -1))
+        
+        # x = nn.Dense(features=512)(x)
+        x = nn.Dense(features=64)(x)
+        x = nn.relu(x)
+        x = nn.Dense(features=32)(x)
+        return x
+
 
 def MyResNet(
     block_cls: ModuleDef,
@@ -339,18 +380,21 @@ class MapsNet(nn.Module):
         self.normalize_maps_fn = None
 
 
-        self.resnet = MyResNet(
-                        block_cls=jax_resnet.ResNetBlock,
-                        stage_sizes=[2, 2, 2],
-                        # stage_sizes=[2, 2],
-                        hidden_sizes=(8, 16, 32),
-                        # hidden_sizes=(16, 32),
-                        # stem_cls=ResNetStemIdentity,
-                        n_classes=32,
-                        pool_fn=pool_fn,
-                        global_avg_pool=global_avg_pool,
-                        normalize_fn=self.normalize_maps_fn,
-                    )
+        # self.cnn = MyResNet(
+        #                 block_cls=jax_resnet.ResNetBlock,
+        #                 stage_sizes=[2, 2, 2],
+        #                 # stage_sizes=[2, 2],
+        #                 hidden_sizes=(8, 16, 32),
+        #                 # hidden_sizes=(16, 32),
+        #                 # stem_cls=ResNetStemIdentity,
+        #                 n_classes=32,
+        #                 pool_fn=pool_fn,
+        #                 global_avg_pool=global_avg_pool,
+        #                 normalize_fn=self.normalize_maps_fn,
+        #             )
+        
+        self.cnn = AtariCNN()
+
         # self.mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_mlp)
 
     @staticmethod
@@ -373,7 +417,7 @@ class MapsNet(nn.Module):
         x = jnp.concatenate((traversability_map[..., None], do_prediction_delta_map[..., None], dig_delta_map[..., None]), axis=-1)
 
         # x = self.conv1(x)
-        x = self.resnet(x)
+        x = self.cnn(x)
         return x
     
 
