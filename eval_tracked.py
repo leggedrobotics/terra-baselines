@@ -48,7 +48,9 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
     # avg_coverage = None
     # avg_path_length = None
     # avg_workspaces = None
+    obs_seq = {}
     while True:
+        obs_seq = _append_to_obs(obs, obs_seq)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
             obs_model = obs_to_model_input(obs)
@@ -94,7 +96,7 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
             # "avg_path_length": avg_path_length,
             # "avg_workspaces": avg_workspaces,
         }
-    return np.cumsum(reward_seq), stats
+    return np.cumsum(reward_seq), stats, obs_seq
 
 
 def print_stats(stats,):
@@ -174,7 +176,7 @@ if __name__ == "__main__":
     deterministic = bool(args.deterministic)
     print(f"\nDeterministic = {deterministic}\n")
 
-    cum_rewards, stats = rollout_episode(
+    cum_rewards, stats, _ = rollout_episode(
         env, model, model_params, env_cfgs, force_resets, config, max_frames=args.n_steps, deterministic=deterministic
     )
 

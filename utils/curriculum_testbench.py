@@ -16,10 +16,10 @@ class CurriculumTestbench:
 
         self.curriculum_dicts = [
             {
-                "map_width": 60,  # in meters
-                "map_height": 60,  # in meters
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
                 "max_steps_in_episode": 30,
-                "map_type": MapType.SINGLE_TILE,
+                "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.TERMINAL_ONLY,
             },
         ]

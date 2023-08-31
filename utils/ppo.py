@@ -417,7 +417,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
 
 
-        if (step + 1) % config["evaluate_every_epochs"] == 0 or step == num_total_epochs:
+        if (step + 1) % config["evaluate_every_epochs"] == 0:
             rng, rng_eval = jax.random.split(rng)
             env_cfgs_eval, dofs_count_dict_eval = curriculum.get_cfgs_eval()
             rewards, dones, obs_log, episode_length = rollout_manager.batch_evaluate(

@@ -14,9 +14,10 @@ def update_render(seq, env: TerraEnvBatch, frame):
     return env.terra_env.render_obs(obs, mode="gif")
 
 
-def animate_from_obs_seq(env, obs_seq, gif_name, max_steps=1000):
+def animate_from_obs_seq(env, obs_seq, gif_name, max_steps):
     print(f"Starting animation...")
     seq_len = min(obs_seq["local_map_action"].shape[1], max_steps)
+    print(f"{seq_len=}")
 
     print(obs_seq.keys())
     
@@ -63,10 +64,17 @@ if __name__ == "__main__":
 
     obs_seq = load_pkl_object(args.pkl_file)
 
-    if len(obs_seq["local_map_action"].shape) == 4:
-        obs_seq = {k: v.swapaxes(0, 1) for k, v in obs_seq.items()}
+
+    print(f"{obs_seq['local_map_action'].shape=}")
+
+    # TODO understand what's going on here for some logs
+    # if len(obs_seq["local_map_action"].shape) == 4:
+    #     obs_seq = {k: v.swapaxes(0, 1) for k, v in obs_seq.items()}
+    
+    obs_seq = {k: v[:9] for k, v in obs_seq.items()}
     
     batch_size = obs_seq["local_map_action"].shape[0]
+    print(f"{batch_size=}")
     env = TerraEnvBatch(rendering=True, n_imgs_row=int(np.sqrt(batch_size)))
 
     animate_from_obs_seq(env, obs_seq, args.env_name, args.max_steps)

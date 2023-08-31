@@ -23,6 +23,7 @@ from eval_tracked import rollout_episode
 from eval_tracked import print_stats
 from visualize_train_logs import animate_from_obs_seq
 import numpy as np
+# import gc
 
 def _init_wandb(run_name, config):
     import wandb
@@ -77,7 +78,7 @@ def main(config, mle_log, deterministic_eval, animate, gif_name):
             reset_manager = ResetManager(config, env.observation_shapes)
 
             # Log and store the results.
-            log_steps, log_return, params, obs_seq = train_fn(
+            log_steps, log_return, params, _ = train_fn(
                 rng, config, model, params, mle_log, env, curriculum, reset_manager, run_name
             )
 
@@ -99,7 +100,7 @@ def main(config, mle_log, deterministic_eval, animate, gif_name):
         reset_manager = ResetManager(config, env.observation_shapes, eval=True)
         force_resets_dummy = reset_manager.dummy()
         eval_cfgs, _ = curriculum.get_cfgs_eval()
-        cum_rewards, stats = rollout_episode(
+        cum_rewards, stats, obs_seq = rollout_episode(
             env,
             model,
             params,
@@ -111,11 +112,15 @@ def main(config, mle_log, deterministic_eval, animate, gif_name):
         )
         print_stats(stats)
 
+        obs_log_filename = "agents/Terra/" + config["run_name"] + "/eval_best.pkl"
+        save_pkl_object(
+            obs_seq,
+            obs_log_filename,
+        )
+
         if animate:
-            if config["model_path"] is None:
-                animate_from_obs_seq(env, obs_seq, f"{gif_name}_{task_idx}")
-            else:
-                print("Can't generate an animation without training (yet)...")
+            # gc.collect()
+            animate_from_obs_seq(env, obs_seq, f"{gif_name}_{task_idx}")
         
         run.finish()
 
@@ -190,6 +195,6 @@ if __name__ == "__main__":
         config["train_config"],
         mle_log=None,
         deterministic_eval=deterministic,
-        animate=True,
+        animate=False,
         gif_name="testbench",
     )
