@@ -15,6 +15,52 @@ class Curriculum:
         self.max_change_ratio = rl_config["max_change_ratio"]
 
         self.curriculum_dicts = [
+            # SPARSE ONLY
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 30,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 45,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 60,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 100,
+                "map_type": MapType.TRENCHES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 150,
+                "map_type": MapType.TRENCHES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 200,
+                "map_type": MapType.TRENCHES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+
+
+            # ONETILE
             # {
             #     "map_width": -1,  # in meters
             #     "map_height": -1,  # in meters
@@ -24,48 +70,48 @@ class Curriculum:
             # },
 
             # TRENCHES
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 150,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.DENSE,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 150,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.SPARSE,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 150,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.DENSE,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 150,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.SPARSE,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 200,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.DENSE,
-            },
-            {
-                "map_width": -1,  # in meters
-                "map_height": -1,  # in meters
-                "max_steps_in_episode": 200,
-                "map_type": MapType.TRENCHES,
-                "rewards_type": RewardsType.SPARSE,
-            },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 150,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.DENSE,
+            # },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 150,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 150,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.DENSE,
+            # },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 150,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 200,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.DENSE,
+            # },
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 200,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
 
             # FOUNDATIONS
             # {
