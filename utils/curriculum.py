@@ -9,13 +9,19 @@ from terra.config import RewardsType
 class Curriculum:
 
     def __init__(self, rl_config) -> None:
-        self.dofs = np.zeros((rl_config["num_train_envs"],), dtype=np.int8)
+        self.num_dof_random = int(rl_config["random_dof_ratio"] * rl_config["num_train_envs"])
+        self.num_dof = rl_config["num_train_envs"] - self.num_dof_random
+        self.dofs_main = np.zeros((self.num_dof,), dtype=np.int8)
+        self.dofs_random = np.zeros((self.num_dof_random,), dtype=np.int8)
+        self.dofs = np.concatenate((self.dofs_main, self.dofs_random), axis=0)
+
         self.rl_config = rl_config
         self.change_dof_threshold = rl_config["change_dof_threshold"]
         self.max_change_ratio = rl_config["max_change_ratio"]
 
         self.curriculum_dicts = [
             # SPARSE ONLY
+            # Onetile
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
@@ -23,6 +29,7 @@ class Curriculum:
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
+            # 2-sided squares
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
@@ -30,6 +37,7 @@ class Curriculum:
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
+            # 5-sided squares
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
@@ -37,13 +45,87 @@ class Curriculum:
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
+            # 6-sided squares
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 80,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            # lev1-T-trenches
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 80,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            # 7-sided squares
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 80,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            # 8-sided squares
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
                 "max_steps_in_episode": 100,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            # lev2-T-trenches
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 100,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            # 9-sided squares
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 100,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            # lev3-T-trenches
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 100,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            # 10-sided squares
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 120,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            # lev4-T-trenches
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 120,
+                "map_type": MapType.RECTANGLES,
+                "rewards_type": RewardsType.SPARSE,
+            },
+            # Trenches easy
+            {
+                "map_width": -1,  # in meters
+                "map_height": -1,  # in meters
+                "max_steps_in_episode": 120,
                 "map_type": MapType.TRENCHES,
                 "rewards_type": RewardsType.SPARSE,
             },
+            # Trenches medium
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
@@ -51,6 +133,7 @@ class Curriculum:
                 "map_type": MapType.TRENCHES,
                 "rewards_type": RewardsType.SPARSE,
             },
+            # Trenches hard
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
@@ -159,9 +242,11 @@ class Curriculum:
         Goes from the training metrics to a DoF (degrees of freedom) value,
         considering the current DoF.
         """
-
+        dones_after_update = dones_after_update[:self.num_dof]
         values_individual = metrics_dict["values_individual"]
+        values_individual = values_individual[:self.num_dof]
         targets_individual = metrics_dict["targets_individual"]
+        targets_individual = targets_individual[:self.num_dof]
         value_losses_individual = np.square(values_individual - targets_individual)
 
         increase_dof = (value_losses_individual / targets_individual < self.change_dof_threshold) * (targets_individual > 0)
@@ -173,7 +258,7 @@ class Curriculum:
         max_change_ratio_mask = increase_dof_cumsum < max_change_ratio_abs
         increase_dof *= max_change_ratio_mask
         
-        dofs = self.dofs + increase_dof.astype(np.int8)
+        dofs = self.dofs_main + increase_dof.astype(np.int8)
 
         if self.rl_config["last_dof_type"] == "random":
             # last dof level at random
@@ -190,7 +275,14 @@ class Curriculum:
         else:
             raise(ValueError(f"{self.rl_config['last_dof_type']=} does not exist."))
         
-        self.dofs = dofs.astype(np.int8)
+        self.dofs_main = dofs.astype(np.int8)
+        
+        # Random dofs
+        unlocked_dofs = np.arange(self.dofs.max() + 1)
+        self.dofs_random = np.random.choice(unlocked_dofs, (self.num_dof_random,)).astype(np.int8)
+
+        # Combine the two
+        self.dofs = np.concatenate((self.dofs_main, self.dofs_random), axis=0)
     
     def _get_dofs_count_dict(self,):
         dof_counts = [sum(1 for dof in self.dofs if dof == j) for j in range(self.curriculum_len)]
