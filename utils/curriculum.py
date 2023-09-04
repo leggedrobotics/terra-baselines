@@ -268,6 +268,7 @@ class Curriculum:
         self.updates_no_dones += ~dones_after_update
         assert(len(self.updates_no_dones) == len(self.max_updates_no_dones), f"{len(self.updates_no_dones)=}, {len(self.max_updates_no_dones)=}")
         decrease_dof = self.updates_no_dones > self.max_updates_no_dones
+        decrease_dof *= self.dofs_main > 0  # make sure the dofs are not decreased to negative numbers
         self.updates_no_dones = np.where(
             decrease_dof | increase_dof,
             0,
