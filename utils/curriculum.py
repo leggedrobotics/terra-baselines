@@ -1,5 +1,6 @@
 import jax
 import math
+import wandb
 from jax import Array
 from typing import Any
 from terra.config import EnvConfig
@@ -310,6 +311,14 @@ class Curriculum:
 
         # Combine the two
         self.dofs = np.concatenate((self.dofs_main, self.dofs_random), axis=0)
+
+        # Logging
+        wandb.log(
+            {
+                "increase_dof": increase_dof.sum(),
+                "decrease_dof": decrease_dof.sum(),
+            }
+        )
     
     def _get_dofs_count_dict(self,):
         dof_counts = [sum(1 for dof in self.dofs if dof == j) for j in range(self.curriculum_len)]
