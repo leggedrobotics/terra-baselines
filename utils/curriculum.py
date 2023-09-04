@@ -1,4 +1,5 @@
 import jax
+import math
 from jax import Array
 from typing import Any
 from terra.config import EnvConfig
@@ -10,6 +11,7 @@ class Curriculum:
 
     def __init__(self, rl_config) -> None:
         self.num_dof_random = int(rl_config["random_dof_ratio"] * rl_config["num_train_envs"])
+        print(f"Number of random dofs = {self.num_dof_random} / {rl_config['num_train_envs']}")
         self.num_dof = rl_config["num_train_envs"] - self.num_dof_random
         self.dofs_main = np.zeros((self.num_dof,), dtype=np.int8)
         self.dofs_random = np.zeros((self.num_dof_random,), dtype=np.int8)
@@ -237,6 +239,12 @@ class Curriculum:
         self.num_embeddings_agent_min = max([max([el["map_width"], el["map_height"]]) for el in self.curriculum_dicts])
         print(f"{self.num_embeddings_agent_min=}")
 
+        # For each main env, the number of updates since the last done
+        self.max_episodes_no_dones = rl_config["max_episodes_no_dones"]
+        self.n_gae_steps = rl_config["n_steps"]
+        self.updates_no_dones = np.zeros_like(self.dofs_main)
+        self.max_updates_no_dones = (self.curriculum_dicts[0]["max_steps_in_episode"] * self.max_episodes_no_dones / self.n_gae_steps) * np.ones(self.num_dof, dtype=np.int8)
+
     def _evaluate_progress(self, metrics_dict: dict[str, Any], dones_after_update: Array) -> int:
         """
         Goes from the training metrics to a DoF (degrees of freedom) value,
@@ -249,8 +257,24 @@ class Curriculum:
         targets_individual = targets_individual[:self.num_dof]
         value_losses_individual = np.square(values_individual - targets_individual)
 
+        # Increase dof
         increase_dof = (value_losses_individual / targets_individual < self.change_dof_threshold) * (targets_individual > 0)
         increase_dof *= dones_after_update  # only update dof if it completed the previous level
+
+        # Decrease dof
+        self.max_updates_no_dones = np.array(
+            [math.ceil(self.curriculum_dicts[dof]["max_steps_in_episode"] * self.max_episodes_no_dones / self.n_gae_steps) for dof in self.dofs_main], dtype=np.int8
+        )
+        self.updates_no_dones += ~dones_after_update
+        assert(len(self.updates_no_dones) == len(self.max_updates_no_dones), f"{len(self.updates_no_dones)=}, {len(self.max_updates_no_dones)=}")
+        decrease_dof = self.updates_no_dones > self.max_updates_no_dones
+        self.updates_no_dones = np.where(
+            decrease_dof | increase_dof,
+            0,
+            self.updates_no_dones
+        )
+        # print(f"{decrease_dof=}")
+        # print(f"{self.updates_no_dones=}")
 
         # Limit the numbre of configs that can change at a given step
         max_change_ratio_abs = int(self.max_change_ratio * increase_dof.shape[0])
@@ -258,7 +282,7 @@ class Curriculum:
         max_change_ratio_mask = increase_dof_cumsum < max_change_ratio_abs
         increase_dof *= max_change_ratio_mask
         
-        dofs = self.dofs_main + increase_dof.astype(np.int8)
+        dofs = self.dofs_main + increase_dof.astype(np.int8) - decrease_dof.astype(np.int8)
 
         if self.rl_config["last_dof_type"] == "random":
             # last dof level at random

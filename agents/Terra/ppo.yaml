@@ -36,7 +36,8 @@ train_config:
   # Curriculum
   change_dof_threshold: 0.01  # value_losses_individual / targets_individual < change_dof_threshold
   max_change_ratio: 0.01  # max percentage of configs that can change in one step
-  random_dof_ratio: 0.33  # % of envs that get a random dofs sampled from the ones already unlocked
+  random_dof_ratio: 0.0  # % of envs that get a random dofs sampled from the ones already unlocked
+  max_episodes_no_dones: 3  # number of episodes per env with no dones before decreasing the dof
   last_dof_type: 'none'  # ['none', 'random', 'sparse']
 
   # Reset manager
