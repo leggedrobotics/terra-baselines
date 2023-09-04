@@ -242,7 +242,7 @@ class Curriculum:
         # For each main env, the number of updates since the last done
         self.max_episodes_no_dones = rl_config["max_episodes_no_dones"]
         self.n_gae_steps = rl_config["n_steps"]
-        self.updates_no_dones = np.zeros_like(self.dofs_main)
+        self.updates_no_dones = np.zeros(self.dofs_main.shape, dtype=np.int16)
         self.max_updates_no_dones = (self.curriculum_dicts[0]["max_steps_in_episode"] * self.max_episodes_no_dones / self.n_gae_steps) * np.ones(self.num_dof, dtype=np.int8)
 
     def _evaluate_progress(self, metrics_dict: dict[str, Any], dones_after_update: Array) -> int:
@@ -265,17 +265,19 @@ class Curriculum:
         self.max_updates_no_dones = np.array(
             [math.ceil(self.curriculum_dicts[dof]["max_steps_in_episode"] * self.max_episodes_no_dones / self.n_gae_steps) for dof in self.dofs_main], dtype=np.int8
         )
-        self.updates_no_dones += ~dones_after_update
+        # print(f"{self.max_updates_no_dones=}")
+        self.updates_no_dones += (~dones_after_update).astype(np.int16)
+        # print(f"{self.updates_no_dones=}")
         assert(len(self.updates_no_dones) == len(self.max_updates_no_dones), f"{len(self.updates_no_dones)=}, {len(self.max_updates_no_dones)=}")
         decrease_dof = self.updates_no_dones > self.max_updates_no_dones
         decrease_dof *= self.dofs_main > 0  # make sure the dofs are not decreased to negative numbers
+        # print(f"{decrease_dof=}")
+        # print(f"{decrease_dof.sum()=}\n")
         self.updates_no_dones = np.where(
-            decrease_dof | increase_dof,
+            decrease_dof | increase_dof | (self.dofs_main == 0),
             0,
             self.updates_no_dones
-        )
-        # print(f"{decrease_dof=}")
-        # print(f"{self.updates_no_dones=}")
+        ).astype(np.int16)
 
         # Limit the numbre of configs that can change at a given step
         max_change_ratio_abs = int(self.max_change_ratio * increase_dof.shape[0])
