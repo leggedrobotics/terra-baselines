@@ -35,8 +35,8 @@ train_config:
 
   # Curriculum
   # increase_dof_threshold: 0.01  # value_losses_individual / targets_individual < increase_dof_threshold
-  increase_dof_consecutive_episodes: 5  # if the agent can solve X consecutive episodes on the given env, increase the dof
-  max_episodes_no_dones: 1000  # number of episodes per env with no dones before decreasing the dof
+  increase_dof_consecutive_episodes: 2  # if the agent can solve X consecutive episodes on the given env, increase the dof
+  max_episodes_no_dones: 10  # number of episodes per env with no dones before decreasing the dof
   max_increase_dof_ratio: 0.01  # max percentage of configs that can increase dof in one step
   max_decrease_dof_ratio: 0.01  # max percentage of configs that can decrease dof in one step
   random_dof_ratio: 0.0  # % of envs that get a random dofs sampled from the ones already unlocked

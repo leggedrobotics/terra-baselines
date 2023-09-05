@@ -248,14 +248,13 @@ class Curriculum:
         self.n_gae_steps = rl_config["n_steps"]
         self.updates_no_dones = np.zeros(self.dofs_main.shape, dtype=np.int16)
         self.updates_dones = np.zeros(self.dofs_main.shape, dtype=np.int16)
-        # self.max_updates_no_dones = (self.curriculum_dicts[0]["max_steps_in_episode"] * self.max_episodes_no_dones / self.n_gae_steps) * np.ones(self.num_dof, dtype=np.int8)
 
-    def _evaluate_progress(self, metrics_dict: dict[str, Any], dones_after_update: Array, timeouts: Array) -> int:
+    def _evaluate_progress(self, metrics_dict: dict[str, Any], terminated: Array, timeouts: Array) -> int:
         """
         Goes from the training metrics to a DoF (degrees of freedom) value,
         considering the current DoF.
         """
-        dones_after_update = dones_after_update[:self.num_dof]
+        terminated = terminated[:self.num_dof]
         timeouts = timeouts[:self.num_dof]
 
         # values_individual = metrics_dict["values_individual"]
@@ -269,7 +268,7 @@ class Curriculum:
         # increase_dof = (value_losses_individual / targets_individual < self.increase_dof_threshold) * (targets_individual > 0)
         # increase_dof *= dones_after_update  # only update dof if it completed the previous level
         # [method 2: using consecutive successful terminations]
-        self.updates_dones += dones_after_update
+        self.updates_dones += terminated
         self.updates_dones = np.where(
             timeouts,
             0,
@@ -278,21 +277,13 @@ class Curriculum:
         increase_dof = self.updates_dones > self.increase_dof_consecutive_episodes
 
         # Decrease dof
-        self.max_updates_no_dones = np.array(
-            [math.ceil(self.curriculum_dicts[dof]["max_steps_in_episode"] * self.max_episodes_no_dones / self.n_gae_steps) for dof in self.dofs_main], dtype=np.int8
-        )
-        # print(f"{self.max_updates_no_dones=}")
-        self.updates_no_dones += (~dones_after_update).astype(np.int16)
-        # print(f"{self.updates_no_dones=}")
-        decrease_dof = self.updates_no_dones > self.max_updates_no_dones
-        decrease_dof *= self.dofs_main > 0  # make sure the dofs are not decreased to negative numbers
-        # print(f"{decrease_dof=}")
-        # print(f"{decrease_dof.sum()=}\n")
+        self.updates_no_dones += timeouts
         self.updates_no_dones = np.where(
-            decrease_dof | increase_dof | (self.dofs_main == 0),
+            terminated,
             0,
             self.updates_no_dones
-        ).astype(np.int16)
+        )
+        decrease_dof = self.updates_no_dones > self.max_episodes_no_dones
 
         # Limit the numbre of configs that can increase at a given step
         max_increase_dof_ratio_abs = int(self.max_increase_dof_ratio * increase_dof.shape[0])
@@ -335,7 +326,9 @@ class Curriculum:
         self.dofs = np.concatenate((self.dofs_main, self.dofs_random), axis=0)
 
         # Update vars for next iteration
-        self.updates_dones *= (~increase_dof)  # set to 0 if dof has just been increased
+        dof_changed = increase_dof | decrease_dof
+        self.updates_dones *= (~dof_changed)  # set to 0 if dof has just changed
+        self.updates_no_dones *= (~dof_changed)  # set to 0 if dof has just changed
 
         # Logging
         wandb.log(
@@ -361,8 +354,8 @@ class Curriculum:
         }
         return dofs_count_dict
     
-    def get_cfgs(self, metrics_dict: dict[str, Any], dones_after_update: Array, timeouts: Array):
-        self._evaluate_progress(metrics_dict, dones_after_update, timeouts)
+    def get_cfgs(self, metrics_dict: dict[str, Any], terminated: Array, timeouts: Array):
+        self._evaluate_progress(metrics_dict, terminated, timeouts)
         
         map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs]
         map_heights = [self.curriculum_dicts[dof]["map_height"] for dof in self.dofs]

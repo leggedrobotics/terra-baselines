@@ -373,7 +373,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     action_mask_init = jnp.ones((num_actions,), dtype=jnp.bool_)
     action_mask = action_mask_init.copy()[None].repeat(config["num_train_envs"], 0)
     t = tqdm.tqdm(range(1, num_total_epochs + 1), desc="PPO", leave=True)
-    dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
+    terminated_aggregate = np.zeros(config["num_train_envs"], dtype=np.bool_)
     timeouts = np.zeros(config["num_train_envs"], dtype=np.bool_)
     all_dones_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
     best_historical_eval_reward = -1e6
@@ -389,7 +389,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             maps_buffer_keys,
             int(config["clip_action_maps"]),
         )
-        dones_after_update = dones_after_update | terminated
+        terminated_aggregate = terminated_aggregate | terminated
         timeouts = timeouts | (done & (~terminated))
         all_dones_update = all_dones_update | done
         total_steps += config["num_train_envs"]
@@ -414,12 +414,12 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                         **metric_dict,
                         **dofs_count_dict,
                         "envs done %": all_dones_update.mean(),
-                        "envs terminated %": dones_after_update.mean(),
+                        "envs terminated %": terminated_aggregate.mean(),
                         "envs timeouts %": timeouts.mean(),
                     }
                 )
             
-            env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict, dones_after_update, timeouts)
+            env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict, terminated_aggregate, timeouts)
 
             batch = batch_manager.reset(
                 action_size=rollout_manager.env.actions_size,
@@ -427,7 +427,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 num_actions=num_actions
             )
 
-            dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
+            terminated_aggregate = np.zeros(config["num_train_envs"], dtype=np.bool_)
             timeouts = np.zeros(config["num_train_envs"], dtype=np.bool_)
             all_dones_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
 
