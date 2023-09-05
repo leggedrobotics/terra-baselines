@@ -373,8 +373,9 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     action_mask_init = jnp.ones((num_actions,), dtype=jnp.bool_)
     action_mask = action_mask_init.copy()[None].repeat(config["num_train_envs"], 0)
     t = tqdm.tqdm(range(1, num_total_epochs + 1), desc="PPO", leave=True)
-    dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
-    timeouts = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
+    dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
+    timeouts = np.zeros(config["num_train_envs"], dtype=np.bool_)
+    all_dones_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
     best_historical_eval_reward = -1e6
     for step in t:
         train_state, obs, state, batch, rng_step, action_mask, done, terminated, maps_buffer_keys = get_transition(
@@ -390,6 +391,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         )
         dones_after_update = dones_after_update | terminated
         timeouts = timeouts | (done & (~terminated))
+        all_dones_update = all_dones_update | done
         total_steps += config["num_train_envs"]
         if step % (config["n_steps"] + 1) == 0:
             metric_dict, train_state, rng_update = update(
@@ -407,7 +409,15 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             )
 
             if config["wandb"]:
-                wandb.log({**metric_dict, **dofs_count_dict})
+                wandb.log(
+                    {
+                        **metric_dict,
+                        **dofs_count_dict,
+                        "envs done %": all_dones_update.mean(),
+                        "envs terminated %": dones_after_update.mean(),
+                        "envs timeouts %": timeouts.mean(),
+                    }
+                )
             
             env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict, dones_after_update, timeouts)
 
@@ -417,7 +427,9 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 num_actions=num_actions
             )
 
-            dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
+            dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
+            timeouts = np.zeros(config["num_train_envs"], dtype=np.bool_)
+            all_dones_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
 
 
         if (step + 1) % config["evaluate_every_epochs"] == 0:
@@ -670,7 +682,7 @@ def update(
     for k, v in avg_metrics_dict.items():
         avg_metrics_dict[k] = v / (epoch_ppo)
 
-    avg_metrics_dict["avg dones %"] += np.asarray(100 * dones.mean())
+    # avg_metrics_dict["avg dones %"] += np.asarray(100 * dones.mean())
     avg_metrics_dict["values_individual"] += np.asarray(value.mean(0))
     avg_metrics_dict["targets_individual"] += np.asarray(target.mean(0))
 
