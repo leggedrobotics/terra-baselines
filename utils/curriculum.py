@@ -284,6 +284,7 @@ class Curriculum:
             self.updates_no_dones
         )
         decrease_dof = self.updates_no_dones > self.max_episodes_no_dones
+        decrease_dof *= self.dofs_main > 0  # make sure the dofs are not decreased to negative numbers
 
         # Limit the numbre of configs that can increase at a given step
         max_increase_dof_ratio_abs = int(self.max_increase_dof_ratio * increase_dof.shape[0])
