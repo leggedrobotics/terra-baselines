@@ -350,10 +350,11 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         
         force_resets = reset_manager.update(obs, action)
         next_state, (next_obs, reward, done, infos), maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys, force_resets)
+        terminated = infos["done_task"]
         batch = batch_manager.append(
             batch, obs, action.action, reward, done, log_pi, value, infos["action_mask"]
         )
-        return train_state, next_obs, next_state, batch, new_key, infos["action_mask"], infos["done_task"], maps_buffer_keys
+        return train_state, next_obs, next_state, batch, new_key, infos["action_mask"], done, terminated, maps_buffer_keys
 
     batch = batch_manager.reset(
         action_size=rollout_manager.env.actions_size,
@@ -373,9 +374,10 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     action_mask = action_mask_init.copy()[None].repeat(config["num_train_envs"], 0)
     t = tqdm.tqdm(range(1, num_total_epochs + 1), desc="PPO", leave=True)
     dones_after_update = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
+    timeouts = np.zeros(config["num_train_envs"], dtype=np.bool_)  # reset dones
     best_historical_eval_reward = -1e6
     for step in t:
-        train_state, obs, state, batch, rng_step, action_mask, task_dones, maps_buffer_keys = get_transition(
+        train_state, obs, state, batch, rng_step, action_mask, done, terminated, maps_buffer_keys = get_transition(
             train_state,
             obs,
             state,
@@ -386,7 +388,8 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             maps_buffer_keys,
             int(config["clip_action_maps"]),
         )
-        dones_after_update = dones_after_update | task_dones
+        dones_after_update = dones_after_update | terminated
+        timeouts = timeouts | (done & (~terminated))
         total_steps += config["num_train_envs"]
         if step % (config["n_steps"] + 1) == 0:
             metric_dict, train_state, rng_update = update(
@@ -406,7 +409,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             if config["wandb"]:
                 wandb.log({**metric_dict, **dofs_count_dict})
             
-            env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict, dones_after_update)
+            env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict, dones_after_update, timeouts)
 
             batch = batch_manager.reset(
                 action_size=rollout_manager.env.actions_size,

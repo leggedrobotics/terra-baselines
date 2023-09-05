@@ -19,8 +19,11 @@ class Curriculum:
         self.dofs = np.concatenate((self.dofs_main, self.dofs_random), axis=0)
 
         self.rl_config = rl_config
-        self.change_dof_threshold = rl_config["change_dof_threshold"]
-        self.max_change_ratio = rl_config["max_change_ratio"]
+        # self.increase_dof_threshold = rl_config["increase_dof_threshold"]
+        self.increase_dof_consecutive_episodes = rl_config["increase_dof_consecutive_episodes"]
+
+        self.max_increase_dof_ratio = rl_config["max_increase_dof_ratio"]
+        self.max_decrease_dof_ratio = rl_config["max_decrease_dof_ratio"]
 
         self.curriculum_dicts = [
             # SPARSE ONLY
@@ -244,23 +247,35 @@ class Curriculum:
         self.max_episodes_no_dones = rl_config["max_episodes_no_dones"]
         self.n_gae_steps = rl_config["n_steps"]
         self.updates_no_dones = np.zeros(self.dofs_main.shape, dtype=np.int16)
-        self.max_updates_no_dones = (self.curriculum_dicts[0]["max_steps_in_episode"] * self.max_episodes_no_dones / self.n_gae_steps) * np.ones(self.num_dof, dtype=np.int8)
+        self.updates_dones = np.zeros(self.dofs_main.shape, dtype=np.int16)
+        # self.max_updates_no_dones = (self.curriculum_dicts[0]["max_steps_in_episode"] * self.max_episodes_no_dones / self.n_gae_steps) * np.ones(self.num_dof, dtype=np.int8)
 
-    def _evaluate_progress(self, metrics_dict: dict[str, Any], dones_after_update: Array) -> int:
+    def _evaluate_progress(self, metrics_dict: dict[str, Any], dones_after_update: Array, timeouts: Array) -> int:
         """
         Goes from the training metrics to a DoF (degrees of freedom) value,
         considering the current DoF.
         """
         dones_after_update = dones_after_update[:self.num_dof]
-        values_individual = metrics_dict["values_individual"]
-        values_individual = values_individual[:self.num_dof]
-        targets_individual = metrics_dict["targets_individual"]
-        targets_individual = targets_individual[:self.num_dof]
-        value_losses_individual = np.square(values_individual - targets_individual)
+        timeouts = timeouts[:self.num_dof]
+
+        # values_individual = metrics_dict["values_individual"]
+        # values_individual = values_individual[:self.num_dof]
+        # targets_individual = metrics_dict["targets_individual"]
+        # targets_individual = targets_individual[:self.num_dof]
+        # value_losses_individual = np.square(values_individual - targets_individual)
 
         # Increase dof
-        increase_dof = (value_losses_individual / targets_individual < self.change_dof_threshold) * (targets_individual > 0)
-        increase_dof *= dones_after_update  # only update dof if it completed the previous level
+        # [method 1: using value loss]
+        # increase_dof = (value_losses_individual / targets_individual < self.increase_dof_threshold) * (targets_individual > 0)
+        # increase_dof *= dones_after_update  # only update dof if it completed the previous level
+        # [method 2: using consecutive successful terminations]
+        self.updates_dones += dones_after_update
+        self.updates_dones = np.where(
+            timeouts,
+            0,
+            self.updates_dones
+        )
+        increase_dof = self.updates_dones > self.increase_dof_consecutive_episodes
 
         # Decrease dof
         self.max_updates_no_dones = np.array(
@@ -269,7 +284,6 @@ class Curriculum:
         # print(f"{self.max_updates_no_dones=}")
         self.updates_no_dones += (~dones_after_update).astype(np.int16)
         # print(f"{self.updates_no_dones=}")
-        assert(len(self.updates_no_dones) == len(self.max_updates_no_dones), f"{len(self.updates_no_dones)=}, {len(self.max_updates_no_dones)=}")
         decrease_dof = self.updates_no_dones > self.max_updates_no_dones
         decrease_dof *= self.dofs_main > 0  # make sure the dofs are not decreased to negative numbers
         # print(f"{decrease_dof=}")
@@ -280,12 +294,20 @@ class Curriculum:
             self.updates_no_dones
         ).astype(np.int16)
 
-        # Limit the numbre of configs that can change at a given step
-        max_change_ratio_abs = int(self.max_change_ratio * increase_dof.shape[0])
+        # Limit the numbre of configs that can increase at a given step
+        max_increase_dof_ratio_abs = int(self.max_increase_dof_ratio * increase_dof.shape[0])
         increase_dof_cumsum = np.cumsum(increase_dof)
-        max_change_ratio_mask = increase_dof_cumsum < max_change_ratio_abs
-        increase_dof *= max_change_ratio_mask
+        max_increase_dof_ratio_mask = increase_dof_cumsum < max_increase_dof_ratio_abs
+        increase_dof *= max_increase_dof_ratio_mask
+
+        # Limit the numbre of configs that can decrease at a given step
+        max_decrease_dof_ratio_abs = int(self.max_decrease_dof_ratio * decrease_dof.shape[0])
+        decrease_dof_cumsum = np.cumsum(decrease_dof)
+        max_decrease_dof_ratio_mask = decrease_dof_cumsum < max_decrease_dof_ratio_abs
+        decrease_dof *= max_decrease_dof_ratio_mask
         
+        # assert((increase_dof @ decrease_dof).item() == 0, f"{(increase_dof @ decrease_dof).item()=}")
+
         dofs = self.dofs_main + increase_dof.astype(np.int8) - decrease_dof.astype(np.int8)
 
         if self.rl_config["last_dof_type"] == "random":
@@ -312,6 +334,9 @@ class Curriculum:
         # Combine the two
         self.dofs = np.concatenate((self.dofs_main, self.dofs_random), axis=0)
 
+        # Update vars for next iteration
+        self.updates_dones *= (~increase_dof)  # set to 0 if dof has just been increased
+
         # Logging
         wandb.log(
             {
@@ -336,8 +361,8 @@ class Curriculum:
         }
         return dofs_count_dict
     
-    def get_cfgs(self, metrics_dict: dict[str, Any], dones_after_update: Array):
-        self._evaluate_progress(metrics_dict, dones_after_update)
+    def get_cfgs(self, metrics_dict: dict[str, Any], dones_after_update: Array, timeouts: Array):
+        self._evaluate_progress(metrics_dict, dones_after_update, timeouts)
         
         map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs]
         map_heights = [self.curriculum_dicts[dof]["map_height"] for dof in self.dofs]
