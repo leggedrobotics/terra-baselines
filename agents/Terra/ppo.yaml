@@ -43,7 +43,7 @@ train_config:
   max_increase_dof_ratio: 0.01  # max percentage of configs that can increase dof in one step
   max_decrease_dof_ratio: 0.01  # max percentage of configs that can decrease dof in one step
   random_dof_ratio: 0.0  # % of envs that get a random dofs sampled from the ones already unlocked
-  last_dof_type: 'none'  # ['none', 'random', 'sparse']
+  last_dof_type: 'random_from_selection'  # ['none', 'random', 'sparse', 'random_from_selection']
 
   # Reset manager
   activate_reset_manager: False

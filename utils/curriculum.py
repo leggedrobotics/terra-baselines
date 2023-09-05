@@ -226,6 +226,9 @@ class Curriculum:
             # },
         ]
 
+        # Set selection of random dofs here (only active through 'last_dof_type' in rl config)
+        self.dof_selection = np.array([12, 13, 14], dtype=np.int8)
+
         self.curriculum_len = len(self.curriculum_dicts)
         self.idx_sparse_rewards_levels = [i for i, level in enumerate(self.curriculum_dicts) if level["rewards_type"] == RewardsType.SPARSE]
         self.n_sparse_levels = len(self.idx_sparse_rewards_levels)
@@ -314,6 +317,9 @@ class Curriculum:
             random_dofs = np.random.randint(0, self.n_sparse_levels, (dofs.shape[0],), dtype=np.int8)
             random_dofs_sparse_rewards = np.array([self.idx_sparse_rewards_levels[i] for i in random_dofs.tolist()])
             dofs = np.where(dofs < self.curriculum_len, dofs, random_dofs_sparse_rewards)
+        elif self.rl_config["last_dof_type"] == "random_from_selection":
+            random_dofs = np.random.choice(self.dof_selection, (self.dofs.shape[0],))
+            dofs = np.where(dofs < self.curriculum_len, dofs, random_dofs)
         else:
             raise(ValueError(f"{self.rl_config['last_dof_type']=} does not exist."))
         
