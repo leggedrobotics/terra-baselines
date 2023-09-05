@@ -32,6 +32,7 @@ class BatchManager:
         gae_lambda: float,
         n_steps: int,
         num_envs: int,
+        max_reward: float,
     ):
         self.num_envs = num_envs
         self.buffer_size = num_envs * n_steps
@@ -39,6 +40,7 @@ class BatchManager:
         self.n_steps = n_steps
         self.discount = discount
         self.gae_lambda = gae_lambda
+        self.max_reward = max_reward
     
     # TODO jit
     # @partial(jax.jit, static_argnums=0)
@@ -124,6 +126,9 @@ class BatchManager:
     def calculate_gae(
         self, value: jnp.ndarray, reward: jnp.ndarray, done: jnp.ndarray
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        # Normalize the rewards
+        reward /= self.max_reward
+
         advantages = []
         gae = 0.0
         for t in reversed(range(len(reward) - 1)):
@@ -324,6 +329,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         gae_lambda=config["gae_lambda"],
         n_steps=config["n_steps"] + 1,
         num_envs=config["num_train_envs"],
+        max_reward=config["max_reward"]
     )
 
     @partial(jax.jit, static_argnames=("clip_action_maps",))

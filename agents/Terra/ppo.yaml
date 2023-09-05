@@ -27,6 +27,9 @@ train_config:
   entropy_coeff: 0.01 # "Entropy loss coefficient"
   critic_coeff: 0.5  # "Value loss coefficient"
 
+  # Rewards
+  max_reward: 200  # TODO take it from env config (used for rewards normalization)
+
   # Model
   clip_action_maps: True  # clips the action maps to [-1, 1]
   maps_net_normalization_bounds: [-1, 8]  # automatically set to [-1, 1] if clip_action_maps is True
@@ -35,7 +38,7 @@ train_config:
 
   # Curriculum
   # increase_dof_threshold: 0.01  # value_losses_individual / targets_individual < increase_dof_threshold
-  increase_dof_consecutive_episodes: 2  # if the agent can solve X consecutive episodes on the given env, increase the dof
+  increase_dof_consecutive_episodes: 1  # if the agent can solve X consecutive episodes on the given env, increase the dof
   max_episodes_no_dones: 10  # number of episodes per env with no dones before decreasing the dof
   max_increase_dof_ratio: 0.01  # max percentage of configs that can increase dof in one step
   max_decrease_dof_ratio: 0.01  # max percentage of configs that can decrease dof in one step
