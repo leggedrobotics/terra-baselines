@@ -49,7 +49,7 @@ train_config:
   activate_reset_manager: False
   context_length: 6  # store N steps in the past to evaluate if force reset
 
-  network_name: "SimplifiedDecoupledCategoricalNet"
+  network_name: "SimplifiedCoupledCategoricalNet" # "SimplifiedDecoupledCategoricalNet"
 
   n_evals_save: 9
   profile: False

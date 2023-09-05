@@ -46,11 +46,33 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
                 local_map_min_max=tuple(config["local_map_normalization_bounds"]),
                 loaded_max=config["loaded_max"],
             )
+        elif config["network_name"] == "SimplifiedCoupledCategoricalNet":
+            num_embeddings_agent = jnp.max(jnp.array(
+                [
+                 config["num_embeddings_agent_min"],
+                 env.batch_cfg.maps.max_height,
+                 env.batch_cfg.maps.max_width,
+                 env.batch_cfg.agent.angles_cabin,
+                 env.batch_cfg.agent.angles_base,
+                 ], dtype=jnp.int16)
+                ).item()
+            jax.debug.print("num_embeddings_agent = {x}", x=num_embeddings_agent)
+            jax.debug.print("config.use_action_masking={x}", x=config["use_action_masking"])
+            map_min_max = tuple(config["maps_net_normalization_bounds"]) if not config["clip_action_maps"] else (-1, 1)
+            jax.debug.print("map normalization min max = {x}", x=map_min_max)
+            model = SimplifiedCoupledCategoricalNet(
+                use_action_masking=config["use_action_masking"],
+                mask_out_arm_extension=config["mask_out_arm_extension"],
+                num_embeddings_agent=num_embeddings_agent,
+                map_min_max=map_min_max,
+                local_map_min_max=tuple(config["local_map_normalization_bounds"]),
+                loaded_max=config["loaded_max"],
+            )
 
     if config["network_name"] == "Categorical-MLP":
         obs_shape_cumsum = sum([reduce(lambda x, y: x*y, value) for value in env.observation_shapes.values()])
         params = model.init(rng, jnp.zeros((obs_shape_cumsum,)), rng=rng)
-    elif config["network_name"] in ("CategoricalNet", "SimplifiedCategoricalNet", "SimplifiedDecoupledCategoricalNet"):
+    elif config["network_name"] in ("CategoricalNet", "SimplifiedCategoricalNet", "SimplifiedDecoupledCategoricalNet", "SimplifiedCoupledCategoricalNet"):
         map_width = env.batch_cfg.maps.max_width
         map_height = env.batch_cfg.maps.max_height
         obs = [
@@ -636,6 +658,87 @@ class SimplifiedDecoupledCategoricalNet(nn.Module):
         v = self.mlp_v(xv)
 
         xpi = self.mlp_pi(xpi)
+
+        # INVALID ACTION MASKING
+        if self.use_action_masking:
+            action_mask = action_mask.astype(jnp.bool_)
+            # OPTION 1
+            xpi = xpi * action_mask - 1e8 * (~action_mask)
+            # OPTION 2
+            # xpi = jnp.where(
+            #     action_mask,
+            #     xpi,
+            #     -1e8
+            # )
+
+        if self.mask_out_arm_extension:
+            xpi = xpi.at[..., -2].set(-1e8)
+            xpi = xpi.at[..., -3].set(-1e8)
+
+        # jax.debug.print("action_mask={x}", x=action_mask)
+        # jax.debug.print("xpi={x}", x=xpi)
+        
+        # Note: returning logits xpi, not distribution pi!
+        return v, xpi
+    
+
+class SimplifiedCoupledCategoricalNet(nn.Module):
+    """
+    The full net.
+
+    The obs List follows the following order:
+    0 - obs["agent_state"],
+    1 - obs["local_map_action"],
+    2 - obs["local_map_target"],
+    3 - obs["action_map"],
+    4 - obs["target_map"],
+    5 - obs["traversability_mask"]
+    """
+    use_action_masking: bool
+    mask_out_arm_extension: bool
+    num_embeddings_agent: int
+    map_min_max: Sequence[int]
+    local_map_min_max: Sequence[int]
+    loaded_max: int
+    action_type: Union[TrackedAction, WheeledAction] = TrackedAction
+    # hidden_dim_layers_common: Sequence[int] = (256, 64)
+    hidden_dim_pi: Sequence[int] = (128, 32)
+    hidden_dim_v: Sequence[int] = (128, 32, 1)
+
+    def setup(self) -> None:
+        num_actions = self.action_type.get_num_actions()
+
+        # self.common_mlp_v = MLP(hidden_dim_layers=self.hidden_dim_layers_common)
+        # self.common_mlp_pi = MLP(hidden_dim_layers=self.hidden_dim_layers_common)
+
+        self.mlp_v = MLP(hidden_dim_layers=self.hidden_dim_v)
+        self.mlp_pi = MLP(hidden_dim_layers=self.hidden_dim_pi + (num_actions,))
+
+        self.local_map_net = LocalMapNet(map_min_max=self.local_map_min_max)
+
+        self.agent_state_net = AgentStateNet(num_embeddings=self.num_embeddings_agent, loaded_max=self.loaded_max)
+
+        # Resnet
+        self.maps_net = MapsNet(self.map_min_max)
+        # MLP for maps
+        # self.maps_net_v = SimplifiedMapsNet()
+        # self.maps_net_pi = SimplifiedMapsNet()
+
+        self.activation = nn.relu
+
+    def __call__(self, obs: Array, action_mask: Array) -> Array:
+        x_agent_state = self.agent_state_net(obs)
+        
+        x_maps = self.maps_net(obs)
+
+        x_local_map = self.local_map_net(obs)
+
+        x = jnp.concatenate((x_agent_state, x_maps, x_local_map), axis=-1)
+        x = self.activation(x)
+
+        v = self.mlp_v(x)
+
+        xpi = self.mlp_pi(x)
 
         # INVALID ACTION MASKING
         if self.use_action_masking:
