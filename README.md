@@ -72,3 +72,11 @@ The training tasks are managed by a `CurriculumTestbench` and are independent fr
 After each training task, there is an evaluation step to get the statistics of the trained model.
 
 The config files are `testbench_ppo.yaml` and `curriculum_testbench.py` in this repo and `config.py` in Terra.
+
+## Command examples
+
+### Visualization from model
+Set your curriculum and your map file pahts in Terra. Then run:
+~~~
+DATASET_PATH=/media/img_generator DATASET_SIZE=1000 python visualize.py -run agents/Terra/models/euler-sparse-normreward-curr-1up-10down-0.3rateup-0.3ratedown-15evels-3000envs-3e-4lr-coupledmodel_2023_09_05_18_05_23_best_model -n 9 -steps 100 -d 1
+~~~
