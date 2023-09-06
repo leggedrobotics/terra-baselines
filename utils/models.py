@@ -438,20 +438,19 @@ class MapsNet(nn.Module):
         do_prediction = obs[6]
         dig_map = obs[7]
 
-        dig_delta_map_negative = self._generate_delta_map_negative(target_map, dig_map)
-        do_prediction_delta_map_negative = self._generate_delta_map_negative(target_map, do_prediction)
+        # dig_delta_map_negative = self._generate_delta_map_negative(target_map, dig_map)
+        # do_prediction_delta_map_negative = self._generate_delta_map_negative(target_map, do_prediction)
 
-        dig_delta_map_positive = self._generate_delta_map_positive(target_map, dig_map)
-        do_prediction_delta_map_positive = self._generate_delta_map_positive(target_map, do_prediction)
+        # dig_delta_map_positive = self._generate_delta_map_positive(target_map, dig_map)
+        # do_prediction_delta_map_positive = self._generate_delta_map_positive(target_map, do_prediction)
 
         # NOTE: if change the following, need to also change my_pool
         x = jnp.concatenate(
             (
                 traversability_map[..., None],
-                do_prediction_delta_map_negative[..., None],
-                dig_delta_map_negative[..., None],
-                do_prediction_delta_map_positive[..., None],
-                dig_delta_map_positive[..., None],
+                target_map[..., None],
+                do_prediction[..., None],
+                dig_map[..., None],
             ),
             axis=-1,
             )
