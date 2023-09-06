@@ -420,9 +420,15 @@ class MapsNet(nn.Module):
         # self.mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_mlp)
 
     @staticmethod
-    def _generate_delta_map(target_map: Array, action_map: Array):
+    def _generate_delta_map_negative(target_map: Array, action_map: Array):
         tm_clip = jnp.clip(target_map, a_max=0)
         am_clip = jnp.clip(action_map, a_max=0)
+        return am_clip - tm_clip
+    
+    @staticmethod
+    def _generate_delta_map_positive(target_map: Array, action_map: Array):
+        tm_clip = jnp.clip(target_map, a_min=0)
+        am_clip = jnp.clip(action_map, a_min=0)
         return am_clip - tm_clip
 
     def __call__(self, obs: dict[str, Array]):
@@ -432,11 +438,23 @@ class MapsNet(nn.Module):
         do_prediction = obs[6]
         dig_map = obs[7]
 
-        dig_delta_map = self._generate_delta_map(target_map, dig_map)
-        do_prediction_delta_map = self._generate_delta_map(target_map, do_prediction)
+        dig_delta_map_negative = self._generate_delta_map_negative(target_map, dig_map)
+        do_prediction_delta_map_negative = self._generate_delta_map_negative(target_map, do_prediction)
+
+        dig_delta_map_positive = self._generate_delta_map_positive(target_map, dig_map)
+        do_prediction_delta_map_positive = self._generate_delta_map_positive(target_map, do_prediction)
 
         # NOTE: if change the following, need to also change my_pool
-        x = jnp.concatenate((traversability_map[..., None], do_prediction_delta_map[..., None], dig_delta_map[..., None]), axis=-1)
+        x = jnp.concatenate(
+            (
+                traversability_map[..., None],
+                do_prediction_delta_map_negative[..., None],
+                dig_delta_map_negative[..., None],
+                do_prediction_delta_map_positive[..., None],
+                dig_delta_map_positive[..., None],
+            ),
+            axis=-1,
+            )
 
         # x = self.conv1(x)
         x = self.cnn(x)

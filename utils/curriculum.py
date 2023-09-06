@@ -26,7 +26,7 @@ class Curriculum:
         self.max_decrease_dof_ratio = rl_config["max_decrease_dof_ratio"]
 
         self.curriculum_dicts = [
-            # SPARSE ONLY
+            # SPARSE ONLY - with dumping constraints (increased max steps)
             # Onetile
             {
                 "map_width": -1,  # in meters
@@ -39,7 +39,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 45,
+                "max_steps_in_episode": 50,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -47,7 +47,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 60,
+                "max_steps_in_episode": 70,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -55,7 +55,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 80,
+                "max_steps_in_episode": 100,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -63,7 +63,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 80,
+                "max_steps_in_episode": 100,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -71,7 +71,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 80,
+                "max_steps_in_episode": 100,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -79,7 +79,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 100,
+                "max_steps_in_episode": 120,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -87,7 +87,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 100,
+                "max_steps_in_episode": 120,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -95,7 +95,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 100,
+                "max_steps_in_episode": 120,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -103,7 +103,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 100,
+                "max_steps_in_episode": 120,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -111,7 +111,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 120,
+                "max_steps_in_episode": 150,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -119,7 +119,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 120,
+                "max_steps_in_episode": 150,
                 "map_type": MapType.RECTANGLES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -127,7 +127,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 120,
+                "max_steps_in_episode": 150,
                 "map_type": MapType.TRENCHES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -135,7 +135,7 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 150,
+                "max_steps_in_episode": 200,
                 "map_type": MapType.TRENCHES,
                 "rewards_type": RewardsType.SPARSE,
             },
@@ -143,10 +143,134 @@ class Curriculum:
             {
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
-                "max_steps_in_episode": 200,
+                "max_steps_in_episode": 270,
                 "map_type": MapType.TRENCHES,
                 "rewards_type": RewardsType.SPARSE,
             },
+
+
+
+            # # SPARSE ONLY
+            # # Onetile
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 30,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # 2-sided squares
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 45,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # 5-sided squares
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 60,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # 6-sided squares
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 80,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # lev1-T-trenches
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 80,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # 7-sided squares
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 80,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # 8-sided squares
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 100,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # lev2-T-trenches
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 100,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # 9-sided squares
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 100,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # lev3-T-trenches
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 100,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # 10-sided squares
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 120,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # lev4-T-trenches
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 120,
+            #     "map_type": MapType.RECTANGLES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # Trenches easy
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 120,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # Trenches medium
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 150,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
+            # # Trenches hard
+            # {
+            #     "map_width": -1,  # in meters
+            #     "map_height": -1,  # in meters
+            #     "max_steps_in_episode": 200,
+            #     "map_type": MapType.TRENCHES,
+            #     "rewards_type": RewardsType.SPARSE,
+            # },
 
 
             # ONETILE
