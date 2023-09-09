@@ -650,15 +650,12 @@ def update(
     for _ in range(epoch_ppo):
         if fast_compile:
             idxes = jax.random.permutation(rng, idxes)
-            idxes_list = jnp.array([
-                idxes[start : start + size_minibatch]
-                for start in jnp.arange(0, size_batch, size_minibatch)
-            ])
+            idxes = idxes.reshape(n_minibatch, -1)
 
             # Scan option
             train_state, total_loss = update_epoch_scan(
                     train_state,
-                    idxes_list,
+                    idxes,
                     [flatten_dims(el) for el in obs],
                     flatten_dims(action_mask),
                     flatten_dims(action),
