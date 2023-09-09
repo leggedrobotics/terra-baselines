@@ -28,7 +28,8 @@ train_config:
   critic_coeff: 0.5  # "Value loss coefficient"
 
   # Rewards
-  max_reward: 200  # TODO take it from env config (used for rewards normalization)
+  reward_normalizer: "adaptive"  # ["adaptive", "constant"]
+  max_reward: 200  # only used for constant rewards normalization
 
   # Model
   clip_action_maps: True  # clips the action maps to [-1, 1]

@@ -23,6 +23,43 @@ from utils.reset_manager import ResetManager
 from tensorflow_probability.substrates import jax as tfp
 from utils.helpers import save_pkl_object
 from terra.config import EnvConfig
+from typing import NamedTuple
+
+
+class AdaptiveRewardNormalizer(NamedTuple):
+    mean: float = 0.0
+    var: float = 1.0
+    alpha: float = 0.99
+
+    @partial(jax.jit, static_argnums=(0,))
+    def update(self, rewards: Array) -> "AdaptiveRewardNormalizer":
+        # Update running mean and variance
+        new_mean = jnp.mean(rewards)
+        new_var = jnp.var(rewards)
+        mean = self.alpha * self.mean + (1 - self.alpha) * new_mean
+        var = self.alpha * self.var + (1 - self.alpha) * new_var
+        return AdaptiveRewardNormalizer(
+            mean=mean,
+            var=var,
+        )
+
+    @partial(jax.jit, static_argnums=(0,))
+    def normalize(self, rewards: Array) -> Array:
+        # Normalize based on running statistics
+        normalized_rewards = (rewards - self.mean) / (jnp.sqrt(self.var) + 1e-8)
+        return normalized_rewards
+
+
+class ConstantRewardNormalizer(NamedTuple):
+    max_reward: float 
+    
+    @partial(jax.jit, static_argnums=(0,))
+    def update(self, rewards: Array) -> "ConstantRewardNormalizer":
+        return ConstantRewardNormalizer(self.max_reward)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def normalize(self, rewards: Array) -> Array:
+        return rewards / self.max_reward
 
 
 class BatchManager:
@@ -32,7 +69,6 @@ class BatchManager:
         gae_lambda: float,
         n_steps: int,
         num_envs: int,
-        max_reward: float,
     ):
         self.num_envs = num_envs
         self.buffer_size = num_envs * n_steps
@@ -40,7 +76,6 @@ class BatchManager:
         self.n_steps = n_steps
         self.discount = discount
         self.gae_lambda = gae_lambda
-        self.max_reward = max_reward
     
     # TODO jit
     # @partial(jax.jit, static_argnums=0)
@@ -72,7 +107,9 @@ class BatchManager:
         }
 
     @partial(jax.jit, static_argnums=0)
-    def append(self, buffer, obs, action, reward, done, log_pi, value, action_mask):
+    def append(self, buffer, obs, action, reward, done, log_pi, value, action_mask, reward_normalizer):
+        # Normalize the rewards
+        reward = reward_normalizer.normalize(reward)
         return {
                 "states": {
                     "agent_states": buffer["states"]["agent_states"].at[buffer["_p"]].set(obs["agent_state"]),
@@ -126,9 +163,6 @@ class BatchManager:
     def calculate_gae(
         self, value: jnp.ndarray, reward: jnp.ndarray, done: jnp.ndarray
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        # Normalize the rewards
-        reward /= self.max_reward
-
         advantages = []
         gae = 0.0
         for t in reversed(range(len(reward) - 1)):
@@ -329,10 +363,16 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         gae_lambda=config["gae_lambda"],
         n_steps=config["n_steps"] + 1,
         num_envs=config["num_train_envs"],
-        max_reward=config["max_reward"]
     )
 
-    @partial(jax.jit, static_argnames=("clip_action_maps",))
+    if config["reward_normalizer"] == "constant":
+        reward_normalizer = ConstantRewardNormalizer(max_reward=config["max_reward"])
+    elif config["reward_normalizer"] == "adaptive":
+        reward_normalizer = AdaptiveRewardNormalizer()
+    else:
+        raise(ValueError(f"{config['reward_normalizer']=}"))
+
+    @partial(jax.jit, static_argnames=("clip_action_maps", "reward_normalizer"))
     def get_transition(
         train_state: TrainState,
         obs: jnp.ndarray,
@@ -343,6 +383,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         env_cfgs,
         maps_buffer_keys: jax.random.PRNGKey,
         clip_action_maps: bool,
+        reward_normalizer,
     ):
         new_key, key_step = jax.random.split(rng)
 
@@ -357,8 +398,9 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         force_resets = reset_manager.update(obs, action)
         next_state, (next_obs, reward, done, infos), maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys, force_resets)
         terminated = infos["done_task"]
+        reward_normalizer = reward_normalizer.update(reward)
         batch = batch_manager.append(
-            batch, obs, action.action, reward, done, log_pi, value, infos["action_mask"]
+            batch, obs, action.action, reward, done, log_pi, value, infos["action_mask"], reward_normalizer
         )
         return train_state, next_obs, next_state, batch, new_key, infos["action_mask"], done, terminated, maps_buffer_keys
 
@@ -394,6 +436,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             env_cfgs,
             maps_buffer_keys,
             int(config["clip_action_maps"]),
+            reward_normalizer,
         )
         terminated_aggregate = terminated_aggregate | terminated
         timeouts = timeouts | (done & (~terminated))
