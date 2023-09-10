@@ -59,6 +59,32 @@ class ConstantRewardNormalizer(NamedTuple):
     @partial(jax.jit, static_argnums=(0,))
     def normalize(self, rewards: Array) -> Array:
         return rewards / self.max_reward
+    
+
+class AdaptiveScaledRewardNormalizer(NamedTuple):
+    max_reward: float
+    mean: float = 0.0
+    var: float = 1.0
+    alpha: float = 0.99
+
+    @partial(jax.jit, static_argnums=(0,))
+    def update(self, rewards: Array) -> "AdaptiveRewardNormalizer":
+        # Update running mean and variance
+        new_mean = jnp.mean(rewards)
+        new_var = jnp.var(rewards)
+        mean = self.alpha * self.mean + (1 - self.alpha) * new_mean
+        var = self.alpha * self.var + (1 - self.alpha) * new_var
+        return AdaptiveRewardNormalizer(
+            mean=mean,
+            var=var,
+        )
+
+    @partial(jax.jit, static_argnums=(0,))
+    def normalize(self, rewards: Array) -> Array:
+        rewards /= self.max_reward
+        # Normalize based on running statistics
+        normalized_rewards = (rewards - self.mean) / (jnp.sqrt(self.var) + 1e-8)
+        return normalized_rewards
 
 
 class BatchManager:
@@ -368,6 +394,8 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         reward_normalizer = ConstantRewardNormalizer(max_reward=config["max_reward"])
     elif config["reward_normalizer"] == "adaptive":
         reward_normalizer = AdaptiveRewardNormalizer()
+    elif config["reward_normalizer"] == "adaptive-scaled":
+        reward_normalizer = AdaptiveScaledRewardNormalizer(max_reward=config["max_reward"])
     else:
         raise(ValueError(f"{config['reward_normalizer']=}"))
 

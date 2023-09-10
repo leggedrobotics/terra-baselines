@@ -28,7 +28,7 @@ train_config:
   critic_coeff: 1.0  # "Value loss coefficient"
 
   # Rewards
-  reward_normalizer: "adaptive"  # ["adaptive", "constant"]
+  reward_normalizer: "adaptive-scaled"  # ["adaptive", "constant", "adaptive-scaled"]
   max_reward: 200  # only used for constant rewards normalization
 
   # Model
