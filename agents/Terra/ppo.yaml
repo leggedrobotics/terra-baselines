@@ -54,6 +54,7 @@ train_config:
 
   n_evals_save: 9
   profile: False
+  save_episode_for_replay: False
 
 log_config:
   time_to_track: ["num_steps"]

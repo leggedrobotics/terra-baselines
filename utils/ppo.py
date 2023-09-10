@@ -16,7 +16,6 @@ from flax.training.train_state import TrainState
 import numpy as np
 import tqdm
 from terra.env import TerraEnvBatch
-from utils.helpers import append_to_pkl_object
 from utils.curriculum import Curriculum
 from utils.curriculum_testbench import CurriculumTestbench
 from utils.reset_manager import ResetManager
@@ -516,11 +515,12 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 print(f"~~~~~~~~ New best model checkpoint saved -> reward = {rewards} ~~~~~~~~")
 
                 # Save episode for replay
-                obs_log_filename = "agents/Terra/" + config["run_name"] + "/eval_best.pkl"
-                save_pkl_object(
-                    obs_log,
-                    obs_log_filename,
-                )
+                if config['save_episode_for_replay']:
+                    obs_log_filename = "agents/Terra/" + config["run_name"] + "/eval_best.pkl"
+                    save_pkl_object(
+                        obs_log,
+                        obs_log_filename,
+                    )
 
             if config["wandb"]:
                 wandb.log(
