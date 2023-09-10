@@ -98,10 +98,6 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     print(f"{config['network_name']}: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
     return model, params
 
-
-def default_mlp_init(scale=0.05):
-    return nn.initializers.uniform(scale)
-
 def normalize(x: Array, x_min: Array, x_max: Array) -> Array:
     """
     Normalizes to [-1, 1]
@@ -114,17 +110,26 @@ class MLP(nn.Module):
     """
     hidden_dim_layers: Sequence[int]
     use_layer_norm: bool
+    last_layer_init_scaling: float = 1.0
 
     def setup(self) -> None:
+        layer_init = nn.initializers.lecun_normal
+        last_layer_init = lambda a,b,c: self.last_layer_init_scaling * layer_init()(a,b,c)
+        self.activation = nn.relu
+
         if self.use_layer_norm:
             self.layers = [
-                nn.Sequential([nn.Dense(self.hidden_dim_layers[i]), nn.LayerNorm()])
+                nn.Sequential([nn.Dense(self.hidden_dim_layers[i], kernel_init=layer_init()), nn.LayerNorm()])
                 for i in range(len(self.hidden_dim_layers) - 1)
                 ]
-            self.layers += (nn.Dense(self.hidden_dim_layers[-1]),)
+            self.layers += (nn.Dense(self.hidden_dim_layers[-1], kernel_init=last_layer_init),)
         else:
-            self.layers = [nn.Dense(f) for f in self.hidden_dim_layers]
-        self.activation = nn.relu
+            self.layers = []
+            for i, f in enumerate(self.hidden_dim_layers):
+                if i < len(self.hidden_dim_layers) - 1:
+                    self.layers += (nn.Dense(f, kernel_init=layer_init()),)
+                else:
+                    self.layers += (nn.Dense(f, kernel_init=last_layer_init),)
     
     def __call__(self, x):
         if self.use_layer_norm:
@@ -580,7 +585,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     # hidden_dim_layers_common: Sequence[int] = (256, 64)
     hidden_dim_pi: Sequence[int] = (128, 32)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
-    mlp_use_layernorm: bool = False
+    mlp_use_layernorm: bool = True
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
@@ -588,8 +593,8 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         # self.common_mlp_v = MLP(hidden_dim_layers=self.hidden_dim_layers_common)
         # self.common_mlp_pi = MLP(hidden_dim_layers=self.hidden_dim_layers_common)
 
-        self.mlp_v = MLP(hidden_dim_layers=self.hidden_dim_v, use_layer_norm=self.mlp_use_layernorm)
-        self.mlp_pi = MLP(hidden_dim_layers=self.hidden_dim_pi + (num_actions,), use_layer_norm=self.mlp_use_layernorm)
+        self.mlp_v = MLP(hidden_dim_layers=self.hidden_dim_v, use_layer_norm=self.mlp_use_layernorm, last_layer_init_scaling=0.01)
+        self.mlp_pi = MLP(hidden_dim_layers=self.hidden_dim_pi + (num_actions,), use_layer_norm=self.mlp_use_layernorm, last_layer_init_scaling=0.01)
 
         self.local_map_net = LocalMapNet(map_min_max=self.local_map_min_max, mlp_use_layernorm=self.mlp_use_layernorm)
 
