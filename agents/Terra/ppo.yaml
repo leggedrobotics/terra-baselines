@@ -13,10 +13,10 @@ train_config:
   mask_out_arm_extension: True
 
   fast_compile: True  # if True, uses jax.lax.scan to iterate over the minibatches
-  num_train_envs: 3000  # 5120  # Number of parallel env workers
-  epoch_ppo: 1  # "Number of PPO epochs on a single batch"
-  n_steps: 16 # "GAE n-steps"
-  n_minibatch: 16 # "Number of PPO minibatches" -> Note: compile time scales with it!
+  num_train_envs: 1500  # 5120  # Number of parallel env workers
+  epoch_ppo: 3  # "Number of PPO epochs on a single batch"
+  n_steps: 32 # "GAE n-steps"
+  n_minibatch: 64 # "Number of PPO minibatches" -> Note: compile time scales with it!
   lr_begin: 3e-04  # Start PPO learning rate
   lr_end: 3e-04 #  End PPO learning rate
   lr_warmup: 0.05 # Prop epochs until warmup is completed 
