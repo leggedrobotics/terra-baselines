@@ -585,7 +585,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     # hidden_dim_layers_common: Sequence[int] = (256, 64)
     hidden_dim_pi: Sequence[int] = (128, 32)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
-    mlp_use_layernorm: bool = True
+    mlp_use_layernorm: bool = False
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
