@@ -108,25 +108,34 @@ class BatchManager:
         return {
             "states": {
                 key: jnp.empty(
-                (self.n_steps, self.num_envs, *value)
+                (self.n_steps, self.num_envs, *value),
+                dtype=jnp.int16
                 )
                 for key, value in observation_shapes.items()
             },
             "action_mask": jnp.empty(
                 (self.n_steps, self.num_envs, num_actions),
+                dtype=jnp.uint8,
             ),
             "actions": jnp.empty(
                 (self.n_steps, self.num_envs, *action_size),
+                dtype=jnp.int8,
             ),
             "rewards": jnp.empty(
-                (self.n_steps, self.num_envs), dtype=jnp.float32
+                (self.n_steps, self.num_envs),
+                dtype=jnp.float32
             ),
-            "dones": jnp.empty((self.n_steps, self.num_envs), dtype=jnp.uint8),
+            "dones": jnp.empty(
+                (self.n_steps, self.num_envs),
+                dtype=jnp.uint8
+                ),
             "log_pis_old": jnp.empty(
-                (self.n_steps, self.num_envs), dtype=jnp.float32
+                (self.n_steps, self.num_envs),
+                dtype=jnp.float32
             ),
             "values_old": jnp.empty(
-                (self.n_steps, self.num_envs), dtype=jnp.float32
+                (self.n_steps, self.num_envs),
+                dtype=jnp.float32
             ),
             "_p": 0,
         }

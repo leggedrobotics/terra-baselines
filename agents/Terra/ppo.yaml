@@ -13,7 +13,7 @@ train_config:
   mask_out_arm_extension: True
 
   fast_compile: True  # if True, uses jax.lax.scan to iterate over the minibatches
-  num_train_envs: 1500  # 5120  # Number of parallel env workers
+  num_train_envs: 4500  # Number of parallel env workers
   epoch_ppo: 3  # "Number of PPO epochs on a single batch"
   n_steps: 32 # "GAE n-steps"
   n_minibatch: 64 # "Number of PPO minibatches" -> Note: compile time scales with it!
@@ -25,10 +25,10 @@ train_config:
   clip_eps: 0.2 # "Clipping range"
   gae_lambda: 0.95 # "GAE lambda"
   entropy_coeff: 0.01 # "Entropy loss coefficient"
-  critic_coeff: 1.0  # "Value loss coefficient"
+  critic_coeff: 5.0  # "Value loss coefficient"
 
   # Rewards
-  reward_normalizer: "adaptive-scaled"  # ["adaptive", "constant", "adaptive-scaled"]
+  reward_normalizer: "constant"  # ["adaptive", "constant", "adaptive-scaled"]
   max_reward: 200  # only used for constant rewards normalization
 
   # Model
