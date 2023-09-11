@@ -107,11 +107,38 @@ class BatchManager:
     def reset(self, action_size, observation_shapes, num_actions):
         return {
             "states": {
-                key: jnp.empty(
-                (self.n_steps, self.num_envs, *value),
-                dtype=jnp.int16
-                )
-                for key, value in observation_shapes.items()
+                "agent_states": jnp.empty(
+                    (self.n_steps, self.num_envs, *(observation_shapes["agent_states"])),
+                    dtype=jnp.int16,    
+                ),
+                "local_map_action": jnp.empty(
+                    (self.n_steps, self.num_envs, *(observation_shapes["local_map_action"])),
+                    dtype=jnp.int8,    
+                ),
+                "local_map_target": jnp.empty(
+                    (self.n_steps, self.num_envs, *(observation_shapes["local_map_target"])),
+                    dtype=jnp.int8,    
+                ),
+                "action_map": jnp.empty(
+                    (self.n_steps, self.num_envs, *(observation_shapes["action_map"])),
+                    dtype=jnp.int8,    
+                ),
+                "target_map": jnp.empty(
+                    (self.n_steps, self.num_envs, *(observation_shapes["target_map"])),
+                    dtype=jnp.int8,    
+                ),
+                "traversability_mask": jnp.empty(
+                    (self.n_steps, self.num_envs, *(observation_shapes["traversability_mask"])),
+                    dtype=jnp.int8,    
+                ),
+                "do_preview": jnp.empty(
+                    (self.n_steps, self.num_envs, *(observation_shapes["do_preview"])),
+                    dtype=jnp.int8,    
+                ),
+                "dig_map": jnp.empty(
+                    (self.n_steps, self.num_envs, *(observation_shapes["dig_map"])),
+                    dtype=jnp.int8,
+                ),
             },
             "action_mask": jnp.empty(
                 (self.n_steps, self.num_envs, num_actions),
