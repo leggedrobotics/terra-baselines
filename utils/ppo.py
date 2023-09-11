@@ -94,6 +94,7 @@ class BatchManager:
         gae_lambda: float,
         n_steps: int,
         num_envs: int,
+        mask_out_arm_extension: bool,
     ):
         self.num_envs = num_envs
         self.buffer_size = num_envs * n_steps
@@ -101,10 +102,17 @@ class BatchManager:
         self.n_steps = n_steps
         self.discount = discount
         self.gae_lambda = gae_lambda
+        self.mask_out_arm_extension = mask_out_arm_extension
     
     # TODO jit
     # @partial(jax.jit, static_argnums=0)
     def reset(self, action_size, observation_shapes, num_actions):
+        local_maps_obs_shape = observation_shapes["local_map_action"]
+        if self.mask_out_arm_extension:
+            local_maps_obs_shape = list(observation_shapes["local_map_action"])
+            local_maps_obs_shape[-1] = 1
+            local_maps_obs_shape = tuple(local_maps_obs_shape)
+            
         return {
             "states": {
                 "agent_states": jnp.empty(
@@ -112,11 +120,11 @@ class BatchManager:
                     dtype=jnp.int16,    
                 ),
                 "local_map_action": jnp.empty(
-                    (self.n_steps, self.num_envs, *(observation_shapes["local_map_action"])),
+                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
                 "local_map_target": jnp.empty(
-                    (self.n_steps, self.num_envs, *(observation_shapes["local_map_target"])),
+                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
                 "action_map": jnp.empty(
@@ -290,8 +298,8 @@ class RolloutManager(object):
     def batch_step(self, states, actions, env_cfgs, maps_buffer_keys, force_resets):
         return self.env.step(states, actions, env_cfgs, maps_buffer_keys, force_resets)
     
-    @partial(jax.jit, static_argnums=(0, 3, 6, 8))
-    def _batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps):
+    @partial(jax.jit, static_argnums=(0, 3, 6, 8, 9))
+    def _batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension):
         # Reset the environment
         rng_reset, rng_episode = jax.random.split(rng_input)
         state, obs, maps_buffer_keys = self.batch_reset(jax.random.split(rng_reset, num_envs), env_cfgs)
@@ -303,6 +311,8 @@ class RolloutManager(object):
             
             if clip_action_maps:
                 obs = clip_action_maps_in_obs(obs)
+            if mask_out_arm_extension:
+                obs = cut_local_map_layers(obs)
             
             action, _ = self.select_action_deterministic(train_state, obs, action_mask)
             # jax.debug.print("bicount action = {x}", x=jnp.bincount(action, length=9))
@@ -364,9 +374,9 @@ class RolloutManager(object):
         return jnp.mean(cum_return), dones, obs_log, episode_length
     
     
-    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps):
+    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension):
         """Rollout an episode with lax.scan"""
-        cum_return_mean, dones, obs_log, episode_length = self._batch_evaluate(rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps)
+        cum_return_mean, dones, obs_log, episode_length = self._batch_evaluate(rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension)
         jax.debug.print("dones.shape = {x}", x=dones.shape)
         return cum_return_mean, dones, obs_log, episode_length
 
@@ -424,6 +434,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         gae_lambda=config["gae_lambda"],
         n_steps=config["n_steps"] + 1,
         num_envs=config["num_train_envs"],
+        mask_out_arm_extension=config["mask_out_arm_extension"],
     )
 
     if config["reward_normalizer"] == "constant":
@@ -452,6 +463,8 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
 
         if clip_action_maps:
             obs = clip_action_maps_in_obs(obs)
+        if config["mask_out_arm_extension"]:
+            obs = cut_local_map_layers(obs)
 
         action, log_pi, value = rollout_manager.select_action(
             train_state, obs, action_mask, key_step
@@ -556,6 +569,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 config["n_evals_save"],
                 env_cfgs_eval,
                 int(config["clip_action_maps"]),
+                int(config["mask_out_arm_extension"]),
             )
             log_steps.append(total_steps)
             log_return.append(rewards)
@@ -626,6 +640,12 @@ def clip_action_maps_in_obs(obs):
     obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
     obs["do_preview"] = jnp.clip(obs["do_preview"], a_min=-1, a_max=1)
     obs["dig_map"] = jnp.clip(obs["dig_map"], a_min=-1, a_max=1)
+    return obs
+
+def cut_local_map_layers(obs):
+    """Only keep the first layer of the local map"""
+    obs["local_map_action"] = obs["local_map_action"][..., [0]]
+    obs["local_map_target"] = obs["local_map_target"][..., [0]]
     return obs
 
 def wrap_action(action, action_type):

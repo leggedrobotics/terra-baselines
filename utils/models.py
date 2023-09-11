@@ -75,10 +75,11 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     elif config["network_name"] in ("CategoricalNet", "SimplifiedCategoricalNet", "SimplifiedDecoupledCategoricalNet", "SimplifiedCoupledCategoricalNet"):
         map_width = env.batch_cfg.maps.max_width
         map_height = env.batch_cfg.maps.max_height
+        n_local_maps_layers = env.batch_cfg.agent.max_arm_extension + 1 if not config["mask_out_arm_extension"] else 1
         obs = [
             jnp.zeros((config["num_train_envs"], 6,)),
-            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, env.batch_cfg.agent.max_arm_extension + 1)),
-            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, env.batch_cfg.agent.max_arm_extension + 1)),
+            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
+            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
             jnp.zeros((config["num_train_envs"], map_width, map_height)),

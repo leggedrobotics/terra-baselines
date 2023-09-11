@@ -10,7 +10,7 @@ train_config:
   # num_steps_test_rollouts: 600  # TODO make it work (tracer problem)
 
   use_action_masking: False
-  mask_out_arm_extension: True
+  mask_out_arm_extension: True  # Note: this also removes features from arm extension in the local maps
 
   fast_compile: True  # if True, uses jax.lax.scan to iterate over the minibatches
   num_train_envs: 9000  # Number of parallel env workers
