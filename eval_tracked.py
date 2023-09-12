@@ -5,7 +5,7 @@ from utils.models import get_model_ready
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
-from utils.ppo import obs_to_model_input, wrap_action
+from utils.ppo import obs_to_model_input, wrap_action, clip_action_maps_in_obs, cut_local_map_layers
 from utils.curriculum import Curriculum
 from utils.reset_manager import ResetManager
 from tensorflow_probability.substrates import jax as tfp
@@ -53,6 +53,10 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
         obs_seq = _append_to_obs(obs, obs_seq)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
+            if rl_config["clip_action_maps"]:
+                obs = clip_action_maps_in_obs(obs)
+            if rl_config["mask_out_arm_extension"]:
+                obs = cut_local_map_layers(obs)
             obs_model = obs_to_model_input(obs)
             action_mask = jnp.ones((8,), dtype=jnp.bool_)  # TODO implement action masking
             v, logits_pi = model.apply(model_params, obs_model, action_mask)
