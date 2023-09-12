@@ -85,6 +85,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
+            jnp.zeros((config["num_train_envs"], map_width, map_height)),
         ]
         action_mask = jnp.ones((config["num_train_envs"], env.batch_cfg.action_type.get_num_actions(),), dtype=jnp.bool_)
         # {
@@ -445,6 +446,7 @@ class MapsNet(nn.Module):
         traversability_map = obs[5]
         do_prediction = obs[6]
         dig_map = obs[7]
+        dumpability_mask = obs[8]
 
         # dig_delta_map_negative = self._generate_delta_map_negative(target_map, dig_map)
         # do_prediction_delta_map_negative = self._generate_delta_map_negative(target_map, do_prediction)
@@ -459,6 +461,7 @@ class MapsNet(nn.Module):
                 target_map[..., None],
                 do_prediction[..., None],
                 dig_map[..., None],
+                dumpability_mask[..., None],
             ),
             axis=-1,
             )

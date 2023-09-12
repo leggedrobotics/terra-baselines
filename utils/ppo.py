@@ -147,6 +147,10 @@ class BatchManager:
                     (self.n_steps, self.num_envs, *(observation_shapes["dig_map"])),
                     dtype=jnp.int8,
                 ),
+                "dumpability_mask": jnp.empty(
+                    (self.n_steps, self.num_envs, *(observation_shapes["dumpability_mask"])),
+                    dtype=jnp.bool_,
+                ),
             },
             "action_mask": jnp.empty(
                 (self.n_steps, self.num_envs, num_actions),
@@ -189,6 +193,7 @@ class BatchManager:
                     "traversability_mask": buffer["states"]["traversability_mask"].at[buffer["_p"]].set(obs["traversability_mask"]),
                     "do_preview": buffer["states"]["do_preview"].at[buffer["_p"]].set(obs["do_preview"]),
                     "dig_map": buffer["states"]["dig_map"].at[buffer["_p"]].set(obs["dig_map"]),
+                    "dumpability_mask": buffer["states"]["dumpability_mask"].at[buffer["_p"]].set(obs["dumpability_mask"]),
                 },
                 "action_mask": buffer["action_mask"].at[buffer["_p"]].set(action_mask.squeeze()),
                 "actions": buffer["actions"].at[buffer["_p"]].set(action.squeeze()),
@@ -216,6 +221,7 @@ class BatchManager:
                 buffer["states"]["traversability_mask"][:-1],
                 buffer["states"]["do_preview"][:-1],
                 buffer["states"]["dig_map"][:-1],
+                buffer["states"]["dumpability_mask"][:-1],
             ),
             buffer["action_mask"][:-1],
             buffer["actions"][:-1],
@@ -634,6 +640,7 @@ def obs_to_model_input(obs):
         obs["traversability_mask"],
         obs["do_preview"],
         obs["dig_map"],
+        obs["dumpability_mask"],
     ]
 
 def clip_action_maps_in_obs(obs):
