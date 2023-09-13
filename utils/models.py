@@ -80,6 +80,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             jnp.zeros((config["num_train_envs"], 6,)),
             jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
             jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
+            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
+            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
             jnp.zeros((config["num_train_envs"], map_width, map_height)),
@@ -204,9 +206,31 @@ class LocalMapNet(nn.Module):
         self.mlp = MLP(hidden_dim_layers=self.hidden_dim_layers_mlp, use_layer_norm=self.mlp_use_layernorm)
 
     def __call__(self, obs: dict[str, Array]):
-        x_action = normalize(obs[1], self.map_min_max[0], self.map_min_max[1])
-        x_target = normalize(obs[2], self.map_min_max[0], self.map_min_max[1])
-        x = jnp.concatenate((x_action[..., None], x_target[..., None]), -1)
+        """
+        obs["agent_state"],
+        obs["local_map_action_neg"],
+        obs["local_map_action_pos"],
+        obs["local_map_target_neg"],
+        obs["local_map_target_pos"],
+        obs["action_map"],
+        obs["target_map"],
+        obs["traversability_mask"],
+        obs["do_preview"],
+        obs["dig_map"],
+        obs["dumpability_mask"],
+        """
+        x_action_neg = normalize(obs[1], self.map_min_max[0], self.map_min_max[1])
+        x_action_pos = normalize(obs[2], self.map_min_max[0], self.map_min_max[1])
+        x_target_neg = normalize(obs[3], self.map_min_max[0], self.map_min_max[1])
+        x_target_pos = normalize(obs[4], self.map_min_max[0], self.map_min_max[1])
+        x = jnp.concatenate((
+            x_action_neg[..., None],
+            x_action_pos[..., None],
+            x_target_neg[..., None],
+            x_target_pos[..., None],
+            ),
+            -1,
+        )
 
         # x = self.conv1(x)
         # x = x[..., None]
@@ -441,12 +465,24 @@ class MapsNet(nn.Module):
         return am_clip - tm_clip
 
     def __call__(self, obs: dict[str, Array]):
-        # action_map = obs[3]
-        target_map = obs[4]
-        traversability_map = obs[5]
-        do_prediction = obs[6]
-        dig_map = obs[7]
-        dumpability_mask = obs[8]
+        """
+        obs["agent_state"],
+        obs["local_map_action_neg"],
+        obs["local_map_action_pos"],
+        obs["local_map_target_neg"],
+        obs["local_map_target_pos"],
+        obs["action_map"],
+        obs["target_map"],
+        obs["traversability_mask"],
+        obs["do_preview"],
+        obs["dig_map"],
+        obs["dumpability_mask"],
+        """
+        target_map = obs[6]
+        traversability_map = obs[7]
+        do_prediction = obs[8]
+        dig_map = obs[9]
+        dumpability_mask = obs[10]
 
         # dig_delta_map_negative = self._generate_delta_map_negative(target_map, dig_map)
         # do_prediction_delta_map_negative = self._generate_delta_map_negative(target_map, do_prediction)
@@ -476,12 +512,17 @@ class MapsNet(nn.Module):
 #     The full net.
 
 #     The obs List follows the following order:
-#     0 - obs["agent_state"],
-#     1 - obs["local_map_action"],
-#     2 - obs["local_map_target"],
-#     3 - obs["action_map"],
-#     4 - obs["target_map"],
-#     5 - obs["traversability_mask"]
+#     obs["agent_state"],
+    # obs["local_map_action_neg"],
+    # obs["local_map_action_pos"],
+    # obs["local_map_target_neg"],
+    # obs["local_map_target_pos"],
+    # obs["action_map"],
+    # obs["target_map"],
+    # obs["traversability_mask"],
+    # obs["do_preview"],
+    # obs["dig_map"],
+    # obs["dumpability_mask"],
 #     """
 #     use_action_masking: bool
 #     mask_out_arm_extension: bool
@@ -572,12 +613,17 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     The full net.
 
     The obs List follows the following order:
-    0 - obs["agent_state"],
-    1 - obs["local_map_action"],
-    2 - obs["local_map_target"],
-    3 - obs["action_map"],
-    4 - obs["target_map"],
-    5 - obs["traversability_mask"]
+    obs["agent_state"],
+    obs["local_map_action_neg"],
+    obs["local_map_action_pos"],
+    obs["local_map_target_neg"],
+    obs["local_map_target_pos"],
+    obs["action_map"],
+    obs["target_map"],
+    obs["traversability_mask"],
+    obs["do_preview"],
+    obs["dig_map"],
+    obs["dumpability_mask"],
     """
     use_action_masking: bool
     mask_out_arm_extension: bool

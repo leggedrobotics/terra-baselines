@@ -107,9 +107,9 @@ class BatchManager:
     # TODO jit
     # @partial(jax.jit, static_argnums=0)
     def reset(self, action_size, observation_shapes, num_actions):
-        local_maps_obs_shape = observation_shapes["local_map_action"]
+        local_maps_obs_shape = observation_shapes["local_map_action_neg"]
         if self.mask_out_arm_extension:
-            local_maps_obs_shape = list(observation_shapes["local_map_action"])
+            local_maps_obs_shape = list(observation_shapes["local_map_action_neg"])
             local_maps_obs_shape[-1] = 1
             local_maps_obs_shape = tuple(local_maps_obs_shape)
             
@@ -119,11 +119,19 @@ class BatchManager:
                     (self.n_steps, self.num_envs, *(observation_shapes["agent_states"])),
                     dtype=jnp.int16,    
                 ),
-                "local_map_action": jnp.empty(
+                "local_map_action_neg": jnp.empty(
                     (self.n_steps, self.num_envs, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
-                "local_map_target": jnp.empty(
+                "local_map_action_pos": jnp.empty(
+                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
+                    dtype=jnp.int8,    
+                ),
+                "local_map_target_neg": jnp.empty(
+                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
+                    dtype=jnp.int8,    
+                ),
+                "local_map_target_pos": jnp.empty(
                     (self.n_steps, self.num_envs, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
@@ -186,8 +194,10 @@ class BatchManager:
         return {
                 "states": {
                     "agent_states": buffer["states"]["agent_states"].at[buffer["_p"]].set(obs["agent_state"]),
-                    "local_map_action": buffer["states"]["local_map_action"].at[buffer["_p"]].set(obs["local_map_action"]),
-                    "local_map_target": buffer["states"]["local_map_target"].at[buffer["_p"]].set(obs["local_map_target"]),
+                    "local_map_action_neg": buffer["states"]["local_map_action_neg"].at[buffer["_p"]].set(obs["local_map_action_neg"]),
+                    "local_map_action_pos": buffer["states"]["local_map_action_pos"].at[buffer["_p"]].set(obs["local_map_action_pos"]),
+                    "local_map_target_neg": buffer["states"]["local_map_target_neg"].at[buffer["_p"]].set(obs["local_map_target_neg"]),
+                    "local_map_target_pos": buffer["states"]["local_map_target_pos"].at[buffer["_p"]].set(obs["local_map_target_pos"]),
                     "action_map": buffer["states"]["action_map"].at[buffer["_p"]].set(obs["action_map"]),
                     "target_map": buffer["states"]["target_map"].at[buffer["_p"]].set(obs["target_map"]),
                     "traversability_mask": buffer["states"]["traversability_mask"].at[buffer["_p"]].set(obs["traversability_mask"]),
@@ -214,8 +224,10 @@ class BatchManager:
         batch = (
             (
                 buffer["states"]["agent_states"][:-1],
-                buffer["states"]["local_map_action"][:-1],
-                buffer["states"]["local_map_target"][:-1],
+                buffer["states"]["local_map_action_neg"][:-1],
+                buffer["states"]["local_map_action_pos"][:-1],
+                buffer["states"]["local_map_target_neg"][:-1],
+                buffer["states"]["local_map_target_pos"][:-1],
                 buffer["states"]["action_map"][:-1],
                 buffer["states"]["target_map"][:-1],
                 buffer["states"]["traversability_mask"][:-1],
@@ -633,8 +645,10 @@ def obs_to_model_input(obs):
     """
     return [
         obs["agent_state"],
-        obs["local_map_action"],
-        obs["local_map_target"],
+        obs["local_map_action_neg"],
+        obs["local_map_action_pos"],
+        obs["local_map_target_neg"],
+        obs["local_map_target_pos"],
         obs["action_map"],
         obs["target_map"],
         obs["traversability_mask"],
@@ -651,8 +665,10 @@ def clip_action_maps_in_obs(obs):
 
 def cut_local_map_layers(obs):
     """Only keep the first layer of the local map"""
-    obs["local_map_action"] = obs["local_map_action"][..., [0]]
-    obs["local_map_target"] = obs["local_map_target"][..., [0]]
+    obs["local_map_action_neg"] = obs["local_map_action_neg"][..., [0]]
+    obs["local_map_action_pos"] = obs["local_map_action_pos"][..., [0]]
+    obs["local_map_target_neg"] = obs["local_map_target_neg"][..., [0]]
+    obs["local_map_target_pos"] = obs["local_map_target_pos"][..., [0]]
     return obs
 
 def wrap_action(action, action_type):
