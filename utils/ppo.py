@@ -756,7 +756,8 @@ def update(
 
     for _ in range(epoch_ppo):
         if fast_compile:
-            idxes = jax.random.permutation(rng, idxes)
+            rng, subkey = jax.random.split(rng)
+            idxes = jax.random.permutation(subkey, idxes)
             idxes = idxes.reshape(n_minibatch, -1)
 
             # Scan option
@@ -793,7 +794,8 @@ def update(
             #         n_minibatch
             #     )
         else:
-            idxes = jax.random.permutation(rng, idxes)
+            rng, subkey = jax.random.split(rng)
+            idxes = jax.random.permutation(subkey, idxes)
             idxes_list = [
                 idxes[start : start + size_minibatch]
                 for start in jnp.arange(0, size_batch, size_minibatch)
