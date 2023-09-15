@@ -93,17 +93,18 @@ class BatchManager:
         gae_lambda: float,
         n_steps: int,
         num_envs: int,
+        n_devices: int,
         mask_out_arm_extension: bool,
         observation_shapes,
     ):
         self.num_envs = num_envs
         self.buffer_size = num_envs * n_steps
-        self.num_envs = num_envs
         self.n_steps = n_steps
         self.discount = discount
         self.gae_lambda = gae_lambda
         self.mask_out_arm_extension = mask_out_arm_extension
         self.observation_shapes = observation_shapes
+        self.num_envs_one_device = num_envs // n_devices
     
     @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(0, 2, 3))
     def reset(self, dummy, action_size, num_actions):
@@ -116,72 +117,72 @@ class BatchManager:
         return {
             "states": {
                 "agent_states": jnp.empty(
-                    (self.n_steps, self.num_envs, *(self.observation_shapes["agent_states"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["agent_states"])),
                     dtype=jnp.int16,    
                 ),
                 "local_map_action_neg": jnp.empty(
-                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
                 "local_map_action_pos": jnp.empty(
-                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
                 "local_map_target_neg": jnp.empty(
-                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
                 "local_map_target_pos": jnp.empty(
-                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
                 "action_map": jnp.empty(
-                    (self.n_steps, self.num_envs, *(self.observation_shapes["action_map"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["action_map"])),
                     dtype=jnp.int8,    
                 ),
                 "target_map": jnp.empty(
-                    (self.n_steps, self.num_envs, *(self.observation_shapes["target_map"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["target_map"])),
                     dtype=jnp.int8,    
                 ),
                 "traversability_mask": jnp.empty(
-                    (self.n_steps, self.num_envs, *(self.observation_shapes["traversability_mask"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["traversability_mask"])),
                     dtype=jnp.int8,    
                 ),
                 "do_preview": jnp.empty(
-                    (self.n_steps, self.num_envs, *(self.observation_shapes["do_preview"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["do_preview"])),
                     dtype=jnp.int8,    
                 ),
                 "dig_map": jnp.empty(
-                    (self.n_steps, self.num_envs, *(self.observation_shapes["dig_map"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["dig_map"])),
                     dtype=jnp.int8,
                 ),
                 "dumpability_mask": jnp.empty(
-                    (self.n_steps, self.num_envs, *(self.observation_shapes["dumpability_mask"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["dumpability_mask"])),
                     dtype=jnp.bool_,
                 ),
             },
             "action_mask": jnp.empty(
-                (self.n_steps, self.num_envs, num_actions),
+                (self.n_steps, self.num_envs_one_device, num_actions),
                 dtype=jnp.uint8,
             ),
             "actions": jnp.empty(
-                (self.n_steps, self.num_envs, *action_size),
+                (self.n_steps, self.num_envs_one_device, *action_size),
                 dtype=jnp.int8,
             ),
             "rewards": jnp.empty(
-                (self.n_steps, self.num_envs),
+                (self.n_steps, self.num_envs_one_device),
                 dtype=jnp.float32
             ),
             "dones": jnp.empty(
-                (self.n_steps, self.num_envs),
+                (self.n_steps, self.num_envs_one_device),
                 dtype=jnp.uint8
                 ),
             "log_pis_old": jnp.empty(
-                (self.n_steps, self.num_envs),
+                (self.n_steps, self.num_envs_one_device),
                 dtype=jnp.float32
             ),
             "values_old": jnp.empty(
-                (self.n_steps, self.num_envs),
+                (self.n_steps, self.num_envs_one_device),
                 dtype=jnp.float32
             ),
             "_p": 0,
@@ -467,6 +468,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         gae_lambda=config["gae_lambda"],
         n_steps=config["n_steps"] + 1,
         num_envs=config["num_train_envs"],
+        n_devices=n_devices,
         mask_out_arm_extension=config["mask_out_arm_extension"],
         observation_shapes=rollout_manager.env.observation_shapes,
     )
