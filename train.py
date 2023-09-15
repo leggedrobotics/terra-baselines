@@ -36,11 +36,15 @@ def main(config, mle_log, log_ext=""):
     if config["wandb"]:
         run = _init_wandb(run_name, config)
 
+    # Parallelization across multiple GPUs
+    n_devices = jax.local_device_count()
+    print(f"\n{n_devices=} detected.\n")
+
     rng = jax.random.PRNGKey(config["seed_model"])
     # Setup the model architecture
     rng, rng_init, rng_maps_buffer = jax.random.split(rng, 3)
     
-    curriculum = Curriculum(rl_config=config)
+    curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     env = TerraEnvBatch()
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     model, params = get_model_ready(rng_init, config, env)
@@ -62,9 +66,9 @@ def main(config, mle_log, log_ext=""):
 
     if config["profile"]:
         jax.profiler.start_server(5555)
-    # Log and store the results.
+
     log_steps, log_return, network_ckpt, obs_seq = train_fn(
-        rng, config, model, params, mle_log, env, curriculum, reset_manager, run_name
+        rng, config, model, params, mle_log, env, curriculum, reset_manager, run_name, n_devices
     )
 
     data_to_store = {

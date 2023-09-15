@@ -10,7 +10,8 @@ from terra.config import RewardsType
 
 class Curriculum:
 
-    def __init__(self, rl_config) -> None:
+    def __init__(self, rl_config, n_devices) -> None:
+        self.n_devices = n_devices
         self.num_dof_random = int(rl_config["random_dof_ratio"] * rl_config["num_train_envs"])
         print(f"Number of random dofs = {self.num_dof_random} / {rl_config['num_train_envs']}")
         self.num_dof = rl_config["num_train_envs"] - self.num_dof_random
@@ -66,6 +67,8 @@ class Curriculum:
         Goes from the training metrics to a DoF (degrees of freedom) value,
         considering the current DoF.
         """
+        terminated = terminated.reshape(-1)
+        timeouts = timeouts.reshape(-1)
         terminated = terminated[:self.num_dof]
         timeouts = timeouts[:self.num_dof]
 
@@ -189,7 +192,9 @@ class Curriculum:
             np.array(rewards_type),
             np.array(apply_trench_rewards),
             )
-        
+        env_cfgs = jax.tree_map(
+            lambda x: jax.numpy.reshape(x, (self.n_devices, x.shape[0] // self.n_devices, *x.shape[1:])), env_cfgs
+        )
         dofs_count_dict = self._get_dofs_count_dict()
         return env_cfgs, dofs_count_dict
 
@@ -211,6 +216,9 @@ class Curriculum:
             np.array(rewards_type),
             np.array(apply_trench_rewards),
             )
+        env_cfgs = jax.tree_map(
+            lambda x: jax.numpy.reshape(x, (self.n_devices, x.shape[0] // self.n_devices, *x.shape[1:])), env_cfgs
+        )
         dofs_count_dict = self._get_dofs_count_dict()
         return env_cfgs, dofs_count_dict
     
