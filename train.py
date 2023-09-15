@@ -10,7 +10,6 @@ from utils.helpers import load_config, save_pkl_object
 from time import gmtime
 from time import strftime
 from utils.curriculum import Curriculum
-from utils.reset_manager import ResetManager
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
 from utils.helpers import load_pkl_object
@@ -62,13 +61,11 @@ def main(config, mle_log, log_ext=""):
     else:
         raise ValueError("Unknown train_type.")
 
-    reset_manager = ResetManager(config, env.observation_shapes)
-
     if config["profile"]:
         jax.profiler.start_server(5555)
 
     log_steps, log_return, network_ckpt, obs_seq = train_fn(
-        rng, config, model, params, mle_log, env, curriculum, reset_manager, run_name, n_devices
+        rng, config, model, params, mle_log, env, curriculum, run_name, n_devices
     )
 
     data_to_store = {

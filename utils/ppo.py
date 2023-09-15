@@ -18,7 +18,6 @@ import tqdm
 from terra.env import TerraEnvBatch
 from utils.curriculum import Curriculum
 from utils.curriculum_testbench import CurriculumTestbench
-from utils.reset_manager import ResetManager
 from tensorflow_probability.substrates import jax as tfp
 from utils.helpers import save_pkl_object
 from terra.config import EnvConfig
@@ -271,7 +270,6 @@ class RolloutManager(object):
         self.select_action = self.select_action_ppo
         self.select_action_deterministic = self.select_action_ppo_deterministic
         self.n_envs = n_envs
-        self.reset_manager_evaluate = ResetManager(rl_config, observation_shapes, eval=True)
 
     def __eq__(self, __o: object) -> bool:
         return isinstance(__o, RolloutManager) and self.env == __o.env
@@ -320,8 +318,8 @@ class RolloutManager(object):
         return self.env.reset(seeds, env_cfgs)
 
     @partial(jax.jit, static_argnums=(0,))
-    def batch_step(self, states, actions, env_cfgs, maps_buffer_keys, force_resets):
-        return self.env.step(states, actions, env_cfgs, maps_buffer_keys, force_resets)
+    def batch_step(self, states, actions, env_cfgs, maps_buffer_keys):
+        return self.env.step(states, actions, env_cfgs, maps_buffer_keys)
     
     @partial(jax.jit, static_argnums=(0, 3, 6, 8, 9))
     def _batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension):
@@ -341,13 +339,11 @@ class RolloutManager(object):
             
             action, _ = self.select_action_deterministic(train_state, obs, action_mask)
             # jax.debug.print("bicount action = {x}", x=jnp.bincount(action, length=9))
-            force_resets_dummy = self.reset_manager_evaluate.dummy()
             next_s, (next_o, reward, done, infos), maps_buffer_keys = self.batch_step(
                 state,
                 wrap_action(action.squeeze(), self.env.batch_cfg.action_type),
                 env_cfgs,
                 maps_buffer_keys,
-                force_resets_dummy,  # TODO make it real
             )
             action_mask = infos["action_mask"]
             new_cum_reward = cum_reward + reward * valid_mask
@@ -435,7 +431,7 @@ def create_train_state(params, apply_fn, tx):
         )
     return _create_train_state(params)
 
-def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Union[Curriculum, CurriculumTestbench], reset_manager: ResetManager, run_name: str, n_devices: int):
+def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Union[Curriculum, CurriculumTestbench], run_name: str, n_devices: int):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     if config["wandb"]:
         import wandb
@@ -508,8 +504,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         )
         action = wrap_action(action, rollout_manager.env.batch_cfg.action_type)
         
-        force_resets = reset_manager.update(obs, action)
-        next_state, (next_obs, reward, done, infos), maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys, force_resets)
+        next_state, (next_obs, reward, done, infos), maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys)
         terminated = infos["done_task"]
         reward_normalizer = reward_normalizer.update(reward)
         batch = batch_manager.append(
