@@ -573,6 +573,8 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 config["critic_coeff"],
                 rng_update,
             )
+            
+            metric_dict = reduce_metric_dict(metric_dict)
 
             if config["wandb"]:
                 wandb.log(
@@ -657,6 +659,15 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         obs_log,
     )
 
+
+def reduce_metric_dict(metric_dict):
+    """
+    Take only 1 data element for each metric_dict value.
+    The values in there are duplicated on axis 0 as they come from different devices in sync.
+    """
+    return jax.tree_map(
+        lambda x: x[0], metric_dict 
+        )
 
 @jax.jit
 def flatten_dims(x):
