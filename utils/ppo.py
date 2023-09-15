@@ -554,6 +554,8 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             maps_buffer_keys,
             reward_normalizer,
         )
+        terminated = terminated.reshape(-1)
+        done = done.reshape(-1)
         terminated_aggregate = terminated_aggregate | terminated
         timeouts = timeouts | (done & (~terminated))
         all_dones_update = all_dones_update | done
