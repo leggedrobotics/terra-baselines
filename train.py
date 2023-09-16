@@ -52,7 +52,8 @@ def main(config, mle_log, log_ext=""):
     if config["model_path"] is not None:
         print(f"\nLoading pre-trained model from: {config['model_path']}")
         log = load_pkl_object(config['model_path'])
-        params = log['network']
+        replicated_params = log['network']
+        params = jax.tree_map(lambda x: x[0], replicated_params)
         print("Pre-trained model loaded.\n")
 
     # Run the training loop (either evosax ES or PPO)
