@@ -5,6 +5,7 @@ Partially from https://github.com/RobertTLange/gymnax-blines
 from functools import partial
 import optax
 import jax
+import time
 # from jax import config
 # config.update("jax_debug_nans", True)
 import jax.numpy as jnp
@@ -542,6 +543,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     timeouts = np.zeros(config["num_train_envs"], dtype=np.bool_)
     all_dones_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
     best_historical_eval_reward = -1e6
+    s = time.time()
     for step in t:
         train_state, obs, state, batch, rng_step, action_mask, done, terminated, maps_buffer_keys = get_transition(
             train_state,
@@ -561,6 +563,11 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         all_dones_update = all_dones_update | done
         total_steps += config["num_train_envs"]
         if step % (config["n_steps"] + 1) == 0:
+            e = time.time()
+            time_diff = e - s
+            steps_elapsed = config["n_steps"]
+            steps_per_sec = steps_elapsed * config['num_train_envs'] / time_diff
+            
             metric_dict, train_state, rng_update = update(
                 train_state,
                 batch_manager.get(batch),
@@ -584,6 +591,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                         "envs done %": all_dones_update.mean(),
                         "envs terminated %": terminated_aggregate.mean(),
                         "envs timeouts %": timeouts.mean(),
+                        "env steps per second": steps_per_sec,
                     }
                 )
             
@@ -598,6 +606,8 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             terminated_aggregate = np.zeros(config["num_train_envs"], dtype=np.bool_)
             timeouts = np.zeros(config["num_train_envs"], dtype=np.bool_)
             all_dones_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
+
+            s = time.time()
 
 
         if (step + 1) % config["evaluate_every_epochs"] == 0:
