@@ -783,11 +783,10 @@ def update(
 ):
     """Perform multiple epochs of updates with multiple updates."""
     obs, action_mask, action, log_pi_old, value, target, gae, rewards, dones = batch
-    idxes = jnp.arange(num_envs * n_steps)
-
-    for _ in range(epoch_ppo):
-        rng, subkey = jax.random.split(rng)
-        idxes = jax.random.permutation(subkey, idxes)
+    idxes_init = jnp.arange(num_envs * n_steps)
+    
+    def _epochs_scan(train_state: TrainState, subkey: jax.random.PRNGKeyArray):
+        idxes = jax.random.permutation(subkey, idxes_init)
         idxes = idxes.reshape(n_minibatch, -1)
 
         train_state, total_loss = update_epoch_scan(
@@ -814,19 +813,40 @@ def update(
             gae_val,
         ) = total_loss
 
-        avg_metrics_dict = defaultdict(int)
-        avg_metrics_dict["total_loss"] += jnp.asarray(total_loss)
-        avg_metrics_dict["value_loss"] += jnp.asarray(value_loss)
-        avg_metrics_dict["actor_loss"] += jnp.asarray(loss_actor)
-        avg_metrics_dict["entropy"] += jnp.asarray(entropy)
-        avg_metrics_dict["value_pred"] += jnp.asarray(value_pred)
-        avg_metrics_dict["target"] += jnp.asarray(target_val)
-        avg_metrics_dict["gae"] += jnp.asarray(gae_val)
-        avg_metrics_dict["max_reward"] += jnp.asarray(rewards.max())
-        avg_metrics_dict["min_reward"] += jnp.asarray(rewards.min())
+        avg_metrics_list = jnp.array(
+            [
+                total_loss,
+                value_loss,
+                loss_actor,
+                entropy,
+                value_pred,
+                target_val,
+                gae_val,
+                rewards.max(),
+                rewards.min(),
+            ]
+        )
+        return train_state, avg_metrics_list
 
-    for k, v in avg_metrics_dict.items():
-        avg_metrics_dict[k] = v.mean()
+    rng, *subkeys = jax.random.split(rng, epoch_ppo + 1)
+    train_state, avg_metrics_stack = jax.lax.scan(
+        _epochs_scan,
+        train_state,
+        jnp.stack(subkeys),
+    )
+
+    avg_metrics_stack = avg_metrics_stack.mean(-2)
+
+    avg_metrics_dict = defaultdict(int)
+    avg_metrics_dict["total_loss"] = jnp.asarray(avg_metrics_stack[0])
+    avg_metrics_dict["value_loss"] = jnp.asarray(avg_metrics_stack[1])
+    avg_metrics_dict["actor_loss"] = jnp.asarray(avg_metrics_stack[2])
+    avg_metrics_dict["entropy"] = jnp.asarray(avg_metrics_stack[3])
+    avg_metrics_dict["value_pred"] = jnp.asarray(avg_metrics_stack[4])
+    avg_metrics_dict["target"] = jnp.asarray(avg_metrics_stack[5])
+    avg_metrics_dict["gae"] = jnp.asarray(avg_metrics_stack[6])
+    avg_metrics_dict["max_reward"] = jnp.asarray(avg_metrics_stack[7])
+    avg_metrics_dict["min_reward"] = jnp.asarray(avg_metrics_stack[8])
 
     return avg_metrics_dict, train_state, rng
 

@@ -12,7 +12,6 @@ train_config:
   use_action_masking: False
   mask_out_arm_extension: True  # Note: this also removes features from arm extension in the local maps
 
-  fast_compile: True  # if True, uses jax.lax.scan to iterate over the minibatches
   num_train_envs: 7250  # Number of parallel env workers
   epoch_ppo: 3  # "Number of PPO epochs on a single batch"
   n_steps: 32 # "GAE n-steps"
