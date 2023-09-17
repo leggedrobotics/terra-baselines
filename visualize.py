@@ -13,7 +13,6 @@ from utils.ppo import obs_to_model_input, wrap_action, clip_action_maps_in_obs, 
 from terra.state import State
 import matplotlib.animation as animation
 from utils.curriculum import Curriculum
-from utils.reset_manager import ResetManager
 from tensorflow_probability.substrates import jax as tfp
 
 
@@ -29,7 +28,7 @@ def _append_to_obs(o, obs_log):
     return obs_log
 
 
-def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_resets, rl_config, max_frames):
+def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames):
     rng = jax.random.PRNGKey(0)
 
 
@@ -55,7 +54,7 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
             action = pi.sample(seed=rng_act)
         else:
             raise RuntimeError("Model is None!")
-        next_env_state, (next_obs, reward, done, info), maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys, force_resets)
+        next_env_state, (next_obs, reward, done, info), maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys)
         reward_seq.append(reward)
         print(t_counter, reward, action, done)
         print(10 * "=")
@@ -113,19 +112,20 @@ if __name__ == "__main__":
     log = load_pkl_object(f"{args.run_name}" + ".pkl")
     config = log["train_config"]
     config["num_test_rollouts"] = args.n_envs
+
+    n_devices = 1
     
-    curriculum = Curriculum(rl_config=config)
+    curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
     env = TerraEnvBatch(rendering=True, n_imgs_row=int(math.sqrt(args.n_envs)))
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     
-    reset_manager = ResetManager(config, env.observation_shapes, eval=True)
-    force_resets = reset_manager.dummy()
 
     model = load_neural_network(config, env)
-    model_params = log["network"]
+    replicated_params = log['network']
+    model_params = jax.tree_map(lambda x: x[0], replicated_params)
     obs_seq, cum_rewards = rollout_episode(
-        env, model, model_params, env_cfgs, force_resets, config, max_frames=args.n_steps
+        env, model, model_params, env_cfgs, config, max_frames=args.n_steps
     )
     seq_len = min(obs_seq["local_map_action"].shape[1], args.n_steps)
     fig = env.terra_env.window.get_fig()
