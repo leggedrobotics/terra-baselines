@@ -4,7 +4,7 @@ Partially from https://github.com/RobertTLange/gymnax-blines
 
 import numpy as np
 import jax
-import math
+from tqdm import tqdm
 from utils.models import get_model_ready
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
@@ -38,9 +38,9 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
 
     t_counter = 0
     reward_seq = []
-    obs_seq = {}
+    obs_seq = []
     while True:
-        obs_seq = _append_to_obs(obs, obs_seq)
+        obs_seq.append(obs)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
             if rl_config["clip_action_maps"]:
@@ -94,11 +94,18 @@ if __name__ == "__main__":
         help="Environment name.",
     )
     parser.add_argument(
-        "-n",
-        "--n_envs",
+        "-nx",
+        "--n_envs_x",
         type=int,
         default=1,
-        help="Number of environments.",
+        help="Number of environments on x.",
+    )
+    parser.add_argument(
+        "-ny",
+        "--n_envs_y",
+        type=int,
+        default=1,
+        help="Number of environments on y.",
     )
     parser.add_argument(
         "-steps",
@@ -108,16 +115,17 @@ if __name__ == "__main__":
         help="Number of steps.",
     )
     args, _ = parser.parse_known_args()
+    n_envs = args.n_envs_x * args.n_envs_y
 
     log = load_pkl_object(f"{args.run_name}" + ".pkl")
     config = log["train_config"]
-    config["num_test_rollouts"] = args.n_envs
+    config["num_test_rollouts"] = n_envs
 
     n_devices = 1
-    
+
     curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
-    env = TerraEnvBatch(rendering=True, n_imgs_row=int(math.sqrt(args.n_envs)))
+    env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, rendering_engine="pygame")
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     
 
@@ -127,14 +135,8 @@ if __name__ == "__main__":
     obs_seq, cum_rewards = rollout_episode(
         env, model, model_params, env_cfgs, config, max_frames=args.n_steps
     )
-    seq_len = min(obs_seq["local_map_action_neg"].shape[1], args.n_steps)
-    fig = env.terra_env.window.get_fig()
-    update_partial = lambda x: update_render(seq=obs_seq, env=env, frame=x)
-    ani = animation.FuncAnimation(
-            fig,
-            update_partial,
-            frames=seq_len,
-            blit=False,
-        )
-    # Save the animation to a gif
-    ani.save(f"docs/{args.env_name}.gif")
+
+    for o in tqdm(obs_seq, desc="Rendering"):
+        env.terra_env.render_obs_pygame(o, generate_gif=True)
+    
+    env.terra_env.rendering_engine.create_gif()
