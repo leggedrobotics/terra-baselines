@@ -127,7 +127,7 @@ if __name__ == "__main__":
     obs_seq, cum_rewards = rollout_episode(
         env, model, model_params, env_cfgs, config, max_frames=args.n_steps
     )
-    seq_len = min(obs_seq["local_map_action"].shape[1], args.n_steps)
+    seq_len = min(obs_seq["local_map_action_neg"].shape[1], args.n_steps)
     fig = env.terra_env.window.get_fig()
     update_partial = lambda x: update_render(seq=obs_seq, env=env, frame=x)
     ani = animation.FuncAnimation(
