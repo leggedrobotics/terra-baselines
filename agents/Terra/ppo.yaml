@@ -1,12 +1,12 @@
 train_config:
   train_type: "PPO"
   num_train_steps: 3000000000
-  evaluate_every_epochs: 4000
+  evaluate_every_epochs: 1000
 
   env_name: "Terra"
   env_kwargs: {}
   env_params: {}
-  num_test_rollouts: 128
+  num_test_rollouts: 256
   # num_steps_test_rollouts: 600  # TODO make it work (tracer problem)
 
   use_action_masking: False
