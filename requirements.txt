@@ -13,3 +13,4 @@ jax-resnet
 opencv-python
 shapely
 scikit-image
+pygame
