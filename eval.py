@@ -4,6 +4,7 @@ import math
 from utils.models import get_model_ready
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
+from terra.actions import WheeledAction, TrackedAction, WheeledActionType, TrackedActionType
 import jax.numpy as jnp
 from utils.ppo import obs_to_model_input, wrap_action, clip_action_maps_in_obs, cut_local_map_layers
 from utils.curriculum import Curriculum
@@ -39,14 +40,37 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
     rng, *rng_reset = jax.random.split(rng, rl_config["num_test_rollouts"] + 1)
     reset_seeds = jnp.array([r[0] for r in rng_reset])
     env_state, obs, maps_buffer_keys = env.reset(reset_seeds, env_cfgs)
+    
+    tile_size = env_cfgs.tile_size[0].item()
+    move_tiles = env_cfgs.agent.move_tiles[0].item()
+    
+    action_type = env.batch_cfg.action_type
+    if action_type == TrackedAction:
+        move_actions = (TrackedActionType.FORWARD, TrackedActionType.BACKWARD)
+        l_actions = ()
+        do_action = TrackedActionType.DO
+    elif action_type == WheeledAction:
+        move_actions = (WheeledActionType.FORWARD, WheeledActionType.BACKWARD)
+        l_actions = (
+            WheeledActionType.CLOCK_FORWARD,
+            WheeledActionType.CLOCK_BACKWARD,
+            WheeledActionType.ANTICLOCK_FORWARD,
+            WheeledActionType.ANTICLOCK_BACKWARD,
+        )
+        do_action = WheeledActionType.DO
+    else:
+        raise(ValueError(f"{action_type=}"))
+    
+    areas = (obs["target_map"] == -1).sum(tuple([i for i in range(len(obs["target_map"].shape))][1:])) * (tile_size**2)
+    target_maps_init = obs["target_map"].copy()
+    dig_tiles_per_target_map_init = (target_maps_init == -1).sum(tuple([i for i in range(len(target_maps_init.shape))][1:]))
 
     t_counter = 0
     reward_seq = []
     episode_done_once = None
     episode_length = None
-    # avg_coverage = None
-    # avg_path_length = None
-    # avg_workspaces = None
+    move_cumsum = None
+    do_cumsum = None
     obs_seq = {}
     while True:
         obs_seq = _append_to_obs(obs, obs_seq)
@@ -83,37 +107,68 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
             episode_done_once = done
         if episode_length is None:
             episode_length = jnp.zeros_like(done, dtype=jnp.int32)
-        # if avg_path_length is None:
-        #     avg_path_length = jnp.zeros_like(done, dtype=jnp.int32)
-        # if avg_workspaces is None:
-        #     avg_workspaces = jnp.zeros_like(done, dtype=jnp.int32)
+        if move_cumsum is None:
+            move_cumsum = jnp.zeros_like(done, dtype=jnp.int32)
+        if do_cumsum is None:
+            do_cumsum = jnp.zeros_like(done, dtype=jnp.int32)
+        
         episode_done_once = episode_done_once | done
+        
         episode_length += ~episode_done_once
-        # avg_path_length += path_length_step
-        # avg_workspaces += 
+        
+        move_cumsum_tmp = jnp.zeros_like(done, dtype=jnp.int32)
+        for move_action in move_actions:
+            move_mask = (action == move_action) * (~episode_done_once)
+            move_cumsum_tmp += move_tiles * tile_size * move_mask.astype(jnp.int32)
+        for l_action in l_actions:
+            l_mask = (action == l_action) * (~episode_done_once)
+            move_cumsum_tmp += 2 * move_tiles * tile_size * l_mask.astype(jnp.int32)
+        move_cumsum += move_cumsum_tmp
 
-        stats = {
-            "episode_done_once": episode_done_once,
-            "episode_length": episode_length,
-            # "avg_coverage": avg_coverage,
-            # "avg_path_length": avg_path_length,
-            # "avg_workspaces": avg_workspaces,
-        }
+        do_cumsum += (action == do_action) * (~episode_done_once)
+
+        
+
+    # Path efficiency -- only include finished envs
+    move_cumsum *= episode_done_once
+    path_efficiency = (move_cumsum / jnp.sqrt(areas)).sum()
+    
+    # Workspaces efficiency -- only include finished envs
+    reference_workspace_area = 0.5 * np.pi * (8**2)
+    n_dig_actions = do_cumsum // 2
+    workspaces_efficiency = reference_workspace_area * ((n_dig_actions * episode_done_once) / areas).sum() / episode_done_once.sum()
+
+    # Coverage scores
+    dug_tiles_per_action_map = (obs["action_map"] == -1).sum(tuple([i for i in range(len(obs["action_map"].shape))][1:]))
+    coverage_ratios = dug_tiles_per_action_map / dig_tiles_per_target_map_init
+    coverage_scores = episode_done_once + (~episode_done_once) * coverage_ratios
+    coverage_score = coverage_scores.mean()
+
+    stats = {
+        "episode_done_once": episode_done_once,
+        "episode_length": episode_length,
+        "path_efficiency": path_efficiency,
+        "workspaces_efficiency": workspaces_efficiency,
+        "coverage": coverage_score,
+    }
     return np.cumsum(reward_seq), stats, obs_seq
 
 
 def print_stats(stats,):
     episode_done_once = stats["episode_done_once"]
     episode_length = stats["episode_length"]
-    # avg_path_length = stats["avg_path_length"]
-    # avg_workspaces = stats["avg_workspaces"]
-    # avg_coverage = stats["avg_coverage"]
+    path_efficiency = stats["path_efficiency"]
+    workspaces_efficiency = stats["workspaces_efficiency"]
+    coverage = stats["coverage"]
 
     print("\nStats:\n")
     print(f"Number of episodes finished at least once: {episode_done_once.sum()} / {len(episode_done_once)} ({100 * episode_done_once.sum()/len(episode_done_once)}%)")
     print(f"First episode length average: {episode_length.mean()}")
     print(f"First episode length min: {episode_length.min()}")
     print(f"First episode length max: {episode_length.max()}")
+    print(f"Path efficiency: {path_efficiency}")
+    print(f"Workspaces efficiency: {workspaces_efficiency}")
+    print(f"Coverage: {coverage}")
 
 
 if __name__ == "__main__":
@@ -135,11 +190,18 @@ if __name__ == "__main__":
         help="Environment name.",
     )
     parser.add_argument(
-        "-n",
-        "--n_envs",
+        "-nx",
+        "--n_envs_x",
         type=int,
         default=1,
-        help="Number of environments.",
+        help="Number of environments on x.",
+    )
+    parser.add_argument(
+        "-ny",
+        "--n_envs_y",
+        type=int,
+        default=1,
+        help="Number of environments on y.",
     )
     parser.add_argument(
         "-steps",
@@ -156,21 +218,22 @@ if __name__ == "__main__":
         help="Deterministic.",
     )
     args, _ = parser.parse_known_args()
+    n_envs = args.n_envs_x * args.n_envs_y
 
     log = load_pkl_object(f"{args.run_name}")
 
     # TODO revert once train_config is available
-    # config = log["train_config"]
-    from utils.helpers import load_config
-    config = load_config("agents/Terra/ppo.yaml", 22333, 33222, 5e-04, True, "")["train_config"]
+    config = log["train_config"]
+    # from utils.helpers import load_config
+    # config = load_config("agents/Terra/ppo.yaml", 22333, 33222, 5e-04, True, "")["train_config"]
     
-    config["num_test_rollouts"] = args.n_envs
+    config["num_test_rollouts"] = n_envs
 
     n_devices = 1
     
     curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
-    env = TerraEnvBatch(rendering=True, n_imgs_row=int(math.sqrt(args.n_envs)))
+    env = TerraEnvBatch(rendering=False, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y)
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     
 
