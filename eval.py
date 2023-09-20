@@ -131,7 +131,7 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
 
     # Path efficiency -- only include finished envs
     move_cumsum *= episode_done_once
-    path_efficiency = (move_cumsum / jnp.sqrt(areas)).sum()
+    path_efficiency = (move_cumsum / jnp.sqrt(areas)).sum() / episode_done_once.sum()
     
     # Workspaces efficiency -- only include finished envs
     reference_workspace_area = 0.5 * np.pi * (8**2)
@@ -161,14 +161,16 @@ def print_stats(stats,):
     workspaces_efficiency = stats["workspaces_efficiency"]
     coverage = stats["coverage"]
 
+    completion_rate = 100 * episode_done_once.sum()/len(episode_done_once)
+
     print("\nStats:\n")
-    print(f"Number of episodes finished at least once: {episode_done_once.sum()} / {len(episode_done_once)} ({100 * episode_done_once.sum()/len(episode_done_once)}%)")
-    print(f"First episode length average: {episode_length.mean()}")
-    print(f"First episode length min: {episode_length.min()}")
-    print(f"First episode length max: {episode_length.max()}")
-    print(f"Path efficiency: {path_efficiency}")
-    print(f"Workspaces efficiency: {workspaces_efficiency}")
-    print(f"Coverage: {coverage}")
+    print(f"Completion: {completion_rate:.2f}%")
+    # print(f"First episode length average: {episode_length.mean()}")
+    # print(f"First episode length min: {episode_length.min()}")
+    # print(f"First episode length max: {episode_length.max()}")
+    print(f"Path efficiency: {path_efficiency:.2f}")
+    print(f"Workspaces efficiency: {workspaces_efficiency:.2f}")
+    print(f"Coverage: {coverage:.2f}")
 
 
 if __name__ == "__main__":
