@@ -137,6 +137,14 @@ class BatchManager:
                     (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
+                "local_map_dumpability": jnp.empty(
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
+                    dtype=jnp.int8,    
+                ),
+                "local_map_obstacles": jnp.empty(
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
+                    dtype=jnp.int8,    
+                ),
                 "action_map": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["action_map"])),
                     dtype=jnp.int8,    
@@ -200,6 +208,8 @@ class BatchManager:
                     "local_map_action_pos": buffer["states"]["local_map_action_pos"].at[buffer["_p"]].set(obs["local_map_action_pos"]),
                     "local_map_target_neg": buffer["states"]["local_map_target_neg"].at[buffer["_p"]].set(obs["local_map_target_neg"]),
                     "local_map_target_pos": buffer["states"]["local_map_target_pos"].at[buffer["_p"]].set(obs["local_map_target_pos"]),
+                    "local_map_dumpability": buffer["states"]["local_map_dumpability"].at[buffer["_p"]].set(obs["local_map_dumpability"]),
+                    "local_map_obstacles": buffer["states"]["local_map_obstacles"].at[buffer["_p"]].set(obs["local_map_obstacles"]),
                     "action_map": buffer["states"]["action_map"].at[buffer["_p"]].set(obs["action_map"]),
                     "target_map": buffer["states"]["target_map"].at[buffer["_p"]].set(obs["target_map"]),
                     "traversability_mask": buffer["states"]["traversability_mask"].at[buffer["_p"]].set(obs["traversability_mask"]),
@@ -230,6 +240,8 @@ class BatchManager:
                 buffer["states"]["local_map_action_pos"][:-1],
                 buffer["states"]["local_map_target_neg"][:-1],
                 buffer["states"]["local_map_target_pos"][:-1],
+                buffer["states"]["local_map_dumpability"][:-1],
+                buffer["states"]["local_map_obstacles"][:-1],
                 buffer["states"]["action_map"][:-1],
                 buffer["states"]["target_map"][:-1],
                 buffer["states"]["traversability_mask"][:-1],
@@ -693,6 +705,8 @@ def obs_to_model_input(obs):
         obs["local_map_action_pos"],
         obs["local_map_target_neg"],
         obs["local_map_target_pos"],
+        obs["local_map_dumpability"],
+        obs["local_map_obstacles"],
         obs["action_map"],
         obs["target_map"],
         obs["traversability_mask"],
@@ -713,6 +727,8 @@ def cut_local_map_layers(obs):
     obs["local_map_action_pos"] = obs["local_map_action_pos"][..., [0]]
     obs["local_map_target_neg"] = obs["local_map_target_neg"][..., [0]]
     obs["local_map_target_pos"] = obs["local_map_target_pos"][..., [0]]
+    obs["local_map_dumpability"] = obs["local_map_dumpability"][..., [0]]
+    obs["local_map_obstacles"] = obs["local_map_obstacles"][..., [0]]
     return obs
 
 def wrap_action(action, action_type):
