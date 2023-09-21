@@ -595,6 +595,11 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             
             metric_dict = reduce_metric_dict(metric_dict)
 
+            e_full = time.time()
+            time_diff_full = e_full - s
+            steps_elapsed = config["n_steps"]
+            steps_per_sec_full = steps_elapsed * config['num_train_envs'] / time_diff_full
+
             if config["wandb"]:
                 wandb.log(
                     {
@@ -604,6 +609,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                         "envs terminated %": terminated_aggregate.mean(),
                         "envs timeouts %": timeouts.mean(),
                         "env steps per second": steps_per_sec,
+                        "env steps per second including update": steps_per_sec_full,
                     }
                 )
             
