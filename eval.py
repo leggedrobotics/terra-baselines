@@ -131,25 +131,39 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
 
     # Path efficiency -- only include finished envs
     move_cumsum *= episode_done_once
-    path_efficiency = (move_cumsum / jnp.sqrt(areas)).sum() / episode_done_once.sum()
+    path_efficiency = (move_cumsum / jnp.sqrt(areas))[episode_done_once]
+    path_efficiency_std = path_efficiency.std()
+    path_efficiency_mean = path_efficiency.mean()
     
     # Workspaces efficiency -- only include finished envs
     reference_workspace_area = 0.5 * np.pi * (8**2)
     n_dig_actions = do_cumsum // 2
-    workspaces_efficiency = reference_workspace_area * ((n_dig_actions * episode_done_once) / areas).sum() / episode_done_once.sum()
+    workspaces_efficiency = reference_workspace_area * ((n_dig_actions * episode_done_once) / areas)[episode_done_once]
+    workspaces_efficiency_mean = workspaces_efficiency.mean()
+    workspaces_efficiency_std = workspaces_efficiency.std()
 
     # Coverage scores
     dug_tiles_per_action_map = (obs["action_map"] == -1).sum(tuple([i for i in range(len(obs["action_map"].shape))][1:]))
     coverage_ratios = dug_tiles_per_action_map / dig_tiles_per_target_map_init
     coverage_scores = episode_done_once + (~episode_done_once) * coverage_ratios
-    coverage_score = coverage_scores.mean()
+    coverage_score_mean = coverage_scores.mean()
+    coverage_score_std = coverage_scores.std()
 
     stats = {
         "episode_done_once": episode_done_once,
         "episode_length": episode_length,
-        "path_efficiency": path_efficiency,
-        "workspaces_efficiency": workspaces_efficiency,
-        "coverage": coverage_score,
+        "path_efficiency": {
+            "mean": path_efficiency_mean,
+            "std": path_efficiency_std,
+        },
+        "workspaces_efficiency": {
+            "mean": workspaces_efficiency_mean,
+            "std": workspaces_efficiency_std,
+        },
+        "coverage": {
+            "mean": coverage_score_mean,
+            "std": coverage_score_std,
+        },
     }
     return np.cumsum(reward_seq), stats, obs_seq
 
@@ -168,9 +182,9 @@ def print_stats(stats,):
     # print(f"First episode length average: {episode_length.mean()}")
     # print(f"First episode length min: {episode_length.min()}")
     # print(f"First episode length max: {episode_length.max()}")
-    print(f"Path efficiency: {path_efficiency:.2f}")
-    print(f"Workspaces efficiency: {workspaces_efficiency:.2f}")
-    print(f"Coverage: {coverage:.2f}")
+    print(f"Path efficiency: {path_efficiency['mean']:.2f} ({path_efficiency['std']:.2f})")
+    print(f"Workspaces efficiency: {workspaces_efficiency['mean']:.2f} ({workspaces_efficiency['std']:.2f})")
+    print(f"Coverage: {coverage['mean']:.2f} ({coverage['std']:.2f})")
 
 
 if __name__ == "__main__":
