@@ -30,11 +30,12 @@ def _append_to_obs(o, obs_log):
 #     return path_len
 
 
-def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, deterministic):
+def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, deterministic, seed):
     """
     NOTE: this function assumes it's a tracked agent in the way it computes the stats.
     """
-    rng = jax.random.PRNGKey(0)
+    print(f"Using {seed=}")
+    rng = jax.random.PRNGKey(seed)
 
 
     rng, *rng_reset = jax.random.split(rng, rl_config["num_test_rollouts"] + 1)
@@ -233,6 +234,13 @@ if __name__ == "__main__":
         default=1,
         help="Deterministic.",
     )
+    parser.add_argument(
+        "-s",
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for the environment.",
+    )
     args, _ = parser.parse_known_args()
     n_envs = args.n_envs_x * args.n_envs_y
 
@@ -260,7 +268,7 @@ if __name__ == "__main__":
     print(f"\nDeterministic = {deterministic}\n")
 
     cum_rewards, stats, _ = rollout_episode(
-        env, model, model_params, env_cfgs, config, max_frames=args.n_steps, deterministic=deterministic
+        env, model, model_params, env_cfgs, config, max_frames=args.n_steps, deterministic=deterministic, seed=args.seed
     )
 
     print_stats(stats)

@@ -28,8 +28,9 @@ def _append_to_obs(o, obs_log):
     return obs_log
 
 
-def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames):
-    rng = jax.random.PRNGKey(0)
+def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed):
+    print(f"Using {seed=}")
+    rng = jax.random.PRNGKey(seed)
 
 
     rng, *rng_reset = jax.random.split(rng, rl_config["num_test_rollouts"] + 1)
@@ -114,6 +115,13 @@ if __name__ == "__main__":
         default=10,
         help="Number of steps.",
     )
+    parser.add_argument(
+        "-s",
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for the environment.",
+    )
     args, _ = parser.parse_known_args()
     n_envs = args.n_envs_x * args.n_envs_y
 
@@ -125,7 +133,7 @@ if __name__ == "__main__":
 
     curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
-    env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, rendering_engine="pygame")
+    env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, progressive_gif=False, rendering_engine="pygame")
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     
 
@@ -133,7 +141,7 @@ if __name__ == "__main__":
     replicated_params = log['network']
     model_params = jax.tree_map(lambda x: x[0], replicated_params)
     obs_seq, cum_rewards = rollout_episode(
-        env, model, model_params, env_cfgs, config, max_frames=args.n_steps
+        env, model, model_params, env_cfgs, config, max_frames=args.n_steps, seed=args.seed
     )
 
     for o in tqdm(obs_seq, desc="Rendering"):
