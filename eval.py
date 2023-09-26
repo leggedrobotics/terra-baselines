@@ -29,8 +29,94 @@ def _append_to_obs(o, obs_log):
 #     path_len = np.abs(agent_pos - agent_pos_next).sum()
 #     return path_len
 
+class Instance:
+    def __init__(
+            self,
+            state,
+            obs,
+            value,
+            action,
+            reward,
+            ) -> None:
+        self.state = state
+        self.obs = obs
+        self.value = value
+        self.action = action
+        self.reward = reward
 
-def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, deterministic, seed):
+def tree_search(rng, env_state, obs, model, maps_buffer_keys, clip_action_maps, mask_out_arm_extension, n_branches = 2, depth = 8, n_rollouts = 1, gamma = 0.995):
+    action_mask = jnp.ones((8,), dtype=jnp.bool_)  # TODO implement action masking
+
+    # TODO shouldn't do this copy here, most of the tree will be repeated this way
+    # last_instance_level = [Instance(env_state, obs, 0, -1, 0) for _ in range(n_branches)]
+    last_instance_level = [Instance(env_state, obs, 0, -1, 0)]
+    instance_levels = []
+    for depth_level in range(depth):
+        # print(f"{depth_level=}")
+        new_instance_level = []
+        for instance_idx, instance in enumerate(last_instance_level):
+            # print(f"{instance_idx=}")
+
+            if clip_action_maps:
+                obs = clip_action_maps_in_obs(instance.obs)
+            if mask_out_arm_extension:
+                obs = cut_local_map_layers(obs)
+            obs_model = obs_to_model_input(obs)
+            _, logits_pi = model.apply(model_params, obs_model, action_mask)
+            actions = np.argsort(logits_pi, axis=-1)[..., -n_branches:]
+            actions = [actions[..., i] for i in range(actions.shape[-1])]
+            # print(f"{actions=}")
+            for action_idx, action in enumerate(actions):
+                # print(f"{action_idx=}")
+
+                # TODO take into account 'done' for following env
+                next_env_state, (next_obs_dict, reward, done, info), maps_buffer_keys = env.step(instance.state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys)
+                if clip_action_maps:
+                    next_obs = clip_action_maps_in_obs(next_obs_dict)
+                if mask_out_arm_extension:
+                    next_obs = cut_local_map_layers(next_obs)
+                next_obs_model = obs_to_model_input(next_obs)
+                v, _ = model.apply(model_params, next_obs_model, action_mask)
+                new_instance_level.append(Instance(next_env_state, next_obs_dict, v, action, reward))
+        instance_levels.append(new_instance_level)
+        last_instance_level = new_instance_level
+
+    # print(f"{instance_levels=}")
+
+    # Backprop
+    cum_disc_rewards = np.zeros((len(instance_levels[-1]), action.shape[0]))
+    # print(f"{cum_disc_rewards.shape=}")
+    for current_depth, instance_level in enumerate(instance_levels):
+        # print(f"{current_depth=}")
+        values = np.array([el.value.squeeze(-1).tolist() for el in instance_level])
+        rewards = np.array([el.reward.tolist() for el in instance_level])
+        n_repeats = max(1, n_branches ** (depth - current_depth - 1))
+        # print(f"0 {values.shape=}")
+        # print(f"0 {rewards.shape=}")
+        # print(f"{n_repeats=}")
+        values = values.repeat(n_repeats, 0)
+        rewards /= 200  # TODO use proper normalizer here
+        rewards = rewards.repeat(n_repeats, 0)
+        # print(f"1 {values.shape=}")
+        # print(f"1 {rewards.shape=}")
+        if n_repeats == 1:
+            cum_disc_rewards += (gamma ** (current_depth + 1)) * values
+        else:
+            cum_disc_rewards += (gamma ** (current_depth + 1)) * rewards
+    
+    # print(f"{cum_disc_rewards=}")
+    winning_branches = np.argmax(cum_disc_rewards, 0)
+    winning_first_branches = winning_branches  // (n_branches ** (depth - 1))
+    # print(f"{winning_branches=}")
+    print(f"{winning_first_branches=}")
+
+    winning_actions = np.array([instance_levels[0][idx].action.tolist()[action_idx] for action_idx, idx in enumerate(winning_first_branches.tolist())])
+    print(f"{winning_actions=}")
+
+    return winning_actions, rng
+
+
+def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, deterministic, seed, search):
     """
     NOTE: this function assumes it's a tracked agent in the way it computes the stats.
     """
@@ -77,18 +163,28 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
         obs_seq = _append_to_obs(obs, obs_seq)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
-            if rl_config["clip_action_maps"]:
-                obs = clip_action_maps_in_obs(obs)
-            if rl_config["mask_out_arm_extension"]:
-                obs = cut_local_map_layers(obs)
-            obs_model = obs_to_model_input(obs)
-            action_mask = jnp.ones((8,), dtype=jnp.bool_)  # TODO implement action masking
-            v, logits_pi = model.apply(model_params, obs_model, action_mask)
-            if deterministic:
+            if search:
+                action, rng = tree_search(rng, env_state, obs, model, maps_buffer_keys, rl_config["clip_action_maps"], rl_config["mask_out_arm_extension"])
+            elif deterministic:
+                if rl_config["clip_action_maps"]:
+                    obs = clip_action_maps_in_obs(obs)
+                if rl_config["mask_out_arm_extension"]:
+                    obs = cut_local_map_layers(obs)
+                obs_model = obs_to_model_input(obs)
+                action_mask = jnp.ones((8,), dtype=jnp.bool_)  # TODO implement action masking
+                v, logits_pi = model.apply(model_params, obs_model, action_mask)
                 action = np.argmax(logits_pi, axis=-1)
             else:
+                if rl_config["clip_action_maps"]:
+                    obs = clip_action_maps_in_obs(obs)
+                if rl_config["mask_out_arm_extension"]:
+                    obs = cut_local_map_layers(obs)
+                obs_model = obs_to_model_input(obs)
+                action_mask = jnp.ones((8,), dtype=jnp.bool_)  # TODO implement action masking
+                v, logits_pi = model.apply(model_params, obs_model, action_mask)
                 pi = tfp.distributions.Categorical(logits=logits_pi)
                 action = pi.sample(seed=rng_act)
+            
         else:
             raise RuntimeError("Model is None!")
         next_env_state, (next_obs, reward, done, info), maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys)
@@ -241,6 +337,13 @@ if __name__ == "__main__":
         default=0,
         help="Random seed for the environment.",
     )
+    parser.add_argument(
+        "-search",
+        "--tree_search",
+        type=int,
+        default=0,
+        help="Random seed for the environment.",
+    )
     args, _ = parser.parse_known_args()
     n_envs = args.n_envs_x * args.n_envs_y
 
@@ -266,9 +369,11 @@ if __name__ == "__main__":
     model_params = jax.tree_map(lambda x: x[0], replicated_params)
     deterministic = bool(args.deterministic)
     print(f"\nDeterministic = {deterministic}\n")
+    search = bool(args.tree_search)
+    print(f"\nTree Search = {search}\n")
 
     cum_rewards, stats, _ = rollout_episode(
-        env, model, model_params, env_cfgs, config, max_frames=args.n_steps, deterministic=deterministic, seed=args.seed
+        env, model, model_params, env_cfgs, config, max_frames=args.n_steps, deterministic=deterministic, seed=args.seed, search=search
     )
 
     print_stats(stats)
