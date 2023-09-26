@@ -122,6 +122,13 @@ if __name__ == "__main__":
         default=0,
         help="Random seed for the environment.",
     )
+    parser.add_argument(
+        "-pg",
+        "--progressive_gif",
+        type=int,
+        default=0,
+        help="Random seed for the environment.",
+    )
     args, _ = parser.parse_known_args()
     n_envs = args.n_envs_x * args.n_envs_y
 
@@ -133,7 +140,9 @@ if __name__ == "__main__":
 
     curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
-    env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, progressive_gif=False, rendering_engine="pygame")
+    progressive_gif = bool(args.progressive_gif)
+    print(f"Using progressive_gif = {progressive_gif}")
+    env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, progressive_gif=args.progressive_gif, rendering_engine="pygame")
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     
 
