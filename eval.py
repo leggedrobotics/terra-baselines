@@ -44,7 +44,8 @@ class Instance:
         self.action = action
         self.reward = reward
 
-def tree_search(rng, env_state, obs, model, maps_buffer_keys, clip_action_maps, mask_out_arm_extension, n_branches = 2, depth = 8, n_rollouts = 1, gamma = 0.995):
+def tree_search(rng, env_state, obs, model, maps_buffer_keys, clip_action_maps, mask_out_arm_extension, n_branches = 2, depth = 4, n_rollouts = 4, gamma = 0.995):
+    """Naive tree search implementation (can be optimized a lot)"""
     action_mask = jnp.ones((8,), dtype=jnp.bool_)  # TODO implement action masking
 
     # TODO shouldn't do this copy here, most of the tree will be repeated this way
@@ -68,16 +69,22 @@ def tree_search(rng, env_state, obs, model, maps_buffer_keys, clip_action_maps, 
             # print(f"{actions=}")
             for action_idx, action in enumerate(actions):
                 # print(f"{action_idx=}")
-
                 # TODO take into account 'done' for following env
-                next_env_state, (next_obs_dict, reward, done, info), maps_buffer_keys = env.step(instance.state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys)
-                if clip_action_maps:
-                    next_obs = clip_action_maps_in_obs(next_obs_dict)
-                if mask_out_arm_extension:
-                    next_obs = cut_local_map_layers(next_obs)
-                next_obs_model = obs_to_model_input(next_obs)
-                v, _ = model.apply(model_params, next_obs_model, action_mask)
-                new_instance_level.append(Instance(next_env_state, next_obs_dict, v, action, reward))
+                original_action = action.copy()
+                local_cum_disc_reward = np.zeros((actions[0].shape[0],))
+                for rollout_level in range(n_rollouts):
+                    rng, rng_act = jax.random.split(rng)
+                    next_env_state, (next_obs_dict, reward, done, info), maps_buffer_keys = env.step(instance.state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys)
+                    local_cum_disc_reward += (gamma ** ((depth_level * n_rollouts) + rollout_level)) * reward / 200
+                    if clip_action_maps:
+                        next_obs = clip_action_maps_in_obs(next_obs_dict)
+                    if mask_out_arm_extension:
+                        next_obs = cut_local_map_layers(next_obs)
+                    next_obs_model = obs_to_model_input(next_obs)
+                    v, logits_pi = model.apply(model_params, next_obs_model, action_mask)
+                    pi = tfp.distributions.Categorical(logits=logits_pi)
+                    action = pi.sample(seed=rng_act)
+                new_instance_level.append(Instance(next_env_state, next_obs_dict, v, original_action, local_cum_disc_reward))
         instance_levels.append(new_instance_level)
         last_instance_level = new_instance_level
 
@@ -95,14 +102,13 @@ def tree_search(rng, env_state, obs, model, maps_buffer_keys, clip_action_maps, 
         # print(f"0 {rewards.shape=}")
         # print(f"{n_repeats=}")
         values = values.repeat(n_repeats, 0)
-        rewards /= 200  # TODO use proper normalizer here
         rewards = rewards.repeat(n_repeats, 0)
         # print(f"1 {values.shape=}")
         # print(f"1 {rewards.shape=}")
         if n_repeats == 1:
-            cum_disc_rewards += (gamma ** (current_depth + 1)) * values
+            cum_disc_rewards += (gamma ** (depth * n_rollouts)) * values
         else:
-            cum_disc_rewards += (gamma ** (current_depth + 1)) * rewards
+            cum_disc_rewards += rewards
     
     # print(f"{cum_disc_rewards=}")
     winning_branches = np.argmax(cum_disc_rewards, 0)
