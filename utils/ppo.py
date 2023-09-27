@@ -5,6 +5,7 @@ Partially from https://github.com/RobertTLange/gymnax-blines
 from functools import partial
 import optax
 import jax
+import time
 # from jax import config
 # config.update("jax_debug_nans", True)
 import jax.numpy as jnp
@@ -18,7 +19,6 @@ import tqdm
 from terra.env import TerraEnvBatch
 from utils.curriculum import Curriculum
 from utils.curriculum_testbench import CurriculumTestbench
-from utils.reset_manager import ResetManager
 from tensorflow_probability.substrates import jax as tfp
 from utils.helpers import save_pkl_object
 from terra.config import EnvConfig
@@ -94,94 +94,104 @@ class BatchManager:
         gae_lambda: float,
         n_steps: int,
         num_envs: int,
+        n_devices: int,
         mask_out_arm_extension: bool,
+        observation_shapes,
     ):
         self.num_envs = num_envs
         self.buffer_size = num_envs * n_steps
-        self.num_envs = num_envs
         self.n_steps = n_steps
         self.discount = discount
         self.gae_lambda = gae_lambda
         self.mask_out_arm_extension = mask_out_arm_extension
+        self.observation_shapes = observation_shapes
+        self.num_envs_one_device = num_envs // n_devices
     
-    # TODO jit
-    # @partial(jax.jit, static_argnums=0)
-    def reset(self, action_size, observation_shapes, num_actions):
-        local_maps_obs_shape = observation_shapes["local_map_action_neg"]
+    @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(0, 2, 3))
+    def reset(self, dummy, action_size, num_actions):
+        local_maps_obs_shape = self.observation_shapes["local_map_action_neg"]
         if self.mask_out_arm_extension:
-            local_maps_obs_shape = list(observation_shapes["local_map_action_neg"])
+            local_maps_obs_shape = list(self.observation_shapes["local_map_action_neg"])
             local_maps_obs_shape[-1] = 1
             local_maps_obs_shape = tuple(local_maps_obs_shape)
             
         return {
             "states": {
                 "agent_states": jnp.empty(
-                    (self.n_steps, self.num_envs, *(observation_shapes["agent_states"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["agent_states"])),
                     dtype=jnp.int16,    
                 ),
                 "local_map_action_neg": jnp.empty(
-                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
                 "local_map_action_pos": jnp.empty(
-                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
                 "local_map_target_neg": jnp.empty(
-                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
                 "local_map_target_pos": jnp.empty(
-                    (self.n_steps, self.num_envs, *local_maps_obs_shape),
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
+                    dtype=jnp.int8,    
+                ),
+                "local_map_dumpability": jnp.empty(
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
+                    dtype=jnp.int8,    
+                ),
+                "local_map_obstacles": jnp.empty(
+                    (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
                     dtype=jnp.int8,    
                 ),
                 "action_map": jnp.empty(
-                    (self.n_steps, self.num_envs, *(observation_shapes["action_map"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["action_map"])),
                     dtype=jnp.int8,    
                 ),
                 "target_map": jnp.empty(
-                    (self.n_steps, self.num_envs, *(observation_shapes["target_map"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["target_map"])),
                     dtype=jnp.int8,    
                 ),
                 "traversability_mask": jnp.empty(
-                    (self.n_steps, self.num_envs, *(observation_shapes["traversability_mask"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["traversability_mask"])),
                     dtype=jnp.int8,    
                 ),
                 "do_preview": jnp.empty(
-                    (self.n_steps, self.num_envs, *(observation_shapes["do_preview"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["do_preview"])),
                     dtype=jnp.int8,    
                 ),
                 "dig_map": jnp.empty(
-                    (self.n_steps, self.num_envs, *(observation_shapes["dig_map"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["dig_map"])),
                     dtype=jnp.int8,
                 ),
                 "dumpability_mask": jnp.empty(
-                    (self.n_steps, self.num_envs, *(observation_shapes["dumpability_mask"])),
+                    (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["dumpability_mask"])),
                     dtype=jnp.bool_,
                 ),
             },
             "action_mask": jnp.empty(
-                (self.n_steps, self.num_envs, num_actions),
+                (self.n_steps, self.num_envs_one_device, num_actions),
                 dtype=jnp.uint8,
             ),
             "actions": jnp.empty(
-                (self.n_steps, self.num_envs, *action_size),
+                (self.n_steps, self.num_envs_one_device, *action_size),
                 dtype=jnp.int8,
             ),
             "rewards": jnp.empty(
-                (self.n_steps, self.num_envs),
+                (self.n_steps, self.num_envs_one_device),
                 dtype=jnp.float32
             ),
             "dones": jnp.empty(
-                (self.n_steps, self.num_envs),
+                (self.n_steps, self.num_envs_one_device),
                 dtype=jnp.uint8
                 ),
             "log_pis_old": jnp.empty(
-                (self.n_steps, self.num_envs),
+                (self.n_steps, self.num_envs_one_device),
                 dtype=jnp.float32
             ),
             "values_old": jnp.empty(
-                (self.n_steps, self.num_envs),
+                (self.n_steps, self.num_envs_one_device),
                 dtype=jnp.float32
             ),
             "_p": 0,
@@ -198,6 +208,8 @@ class BatchManager:
                     "local_map_action_pos": buffer["states"]["local_map_action_pos"].at[buffer["_p"]].set(obs["local_map_action_pos"]),
                     "local_map_target_neg": buffer["states"]["local_map_target_neg"].at[buffer["_p"]].set(obs["local_map_target_neg"]),
                     "local_map_target_pos": buffer["states"]["local_map_target_pos"].at[buffer["_p"]].set(obs["local_map_target_pos"]),
+                    "local_map_dumpability": buffer["states"]["local_map_dumpability"].at[buffer["_p"]].set(obs["local_map_dumpability"]),
+                    "local_map_obstacles": buffer["states"]["local_map_obstacles"].at[buffer["_p"]].set(obs["local_map_obstacles"]),
                     "action_map": buffer["states"]["action_map"].at[buffer["_p"]].set(obs["action_map"]),
                     "target_map": buffer["states"]["target_map"].at[buffer["_p"]].set(obs["target_map"]),
                     "traversability_mask": buffer["states"]["traversability_mask"].at[buffer["_p"]].set(obs["traversability_mask"]),
@@ -214,7 +226,7 @@ class BatchManager:
                 "_p": (buffer["_p"] + 1) % self.n_steps,
             }
 
-    @partial(jax.jit, static_argnums=0)
+    @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(0,))
     def get(self, buffer):
         gae, target = self.calculate_gae(
             value=buffer["values_old"],
@@ -228,6 +240,8 @@ class BatchManager:
                 buffer["states"]["local_map_action_pos"][:-1],
                 buffer["states"]["local_map_target_neg"][:-1],
                 buffer["states"]["local_map_target_pos"][:-1],
+                buffer["states"]["local_map_dumpability"][:-1],
+                buffer["states"]["local_map_obstacles"][:-1],
                 buffer["states"]["action_map"][:-1],
                 buffer["states"]["target_map"][:-1],
                 buffer["states"]["traversability_mask"][:-1],
@@ -270,7 +284,6 @@ class RolloutManager(object):
         self.select_action = self.select_action_ppo
         self.select_action_deterministic = self.select_action_ppo_deterministic
         self.n_envs = n_envs
-        self.reset_manager_evaluate = ResetManager(rl_config, observation_shapes, eval=True)
 
     def __eq__(self, __o: object) -> bool:
         return isinstance(__o, RolloutManager) and self.env == __o.env
@@ -304,23 +317,29 @@ class RolloutManager(object):
         # Prepare policy input from Terra State
         obs = obs_to_model_input(obs)
 
-        value, action = policy_deterministic(train_state.apply_fn, train_state.params, obs, action_mask)
+        params_single_set = jax.tree_map(
+            lambda x: x[0], train_state.params
+        )
+        value, action = policy_deterministic(train_state.apply_fn, params_single_set, obs, action_mask)
         return action, value[:, 0]
 
-    # @partial(jax.jit, static_argnums=(0,))
-    def batch_reset(self, keys, env_cfgs):
+    @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(0,))
+    def batch_reset(self, seeds, env_cfgs):
+        return self.env.reset(seeds, env_cfgs)
+    
+    def batch_reset_eval(self, keys, env_cfgs):
         seeds = jnp.array([k[0] for k in keys])
         return self.env.reset(seeds, env_cfgs)
 
     @partial(jax.jit, static_argnums=(0,))
-    def batch_step(self, states, actions, env_cfgs, maps_buffer_keys, force_resets):
-        return self.env.step(states, actions, env_cfgs, maps_buffer_keys, force_resets)
+    def batch_step(self, states, actions, env_cfgs, maps_buffer_keys):
+        return self.env.step(states, actions, env_cfgs, maps_buffer_keys)
     
     @partial(jax.jit, static_argnums=(0, 3, 6, 8, 9))
     def _batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension):
         # Reset the environment
         rng_reset, rng_episode = jax.random.split(rng_input)
-        state, obs, maps_buffer_keys = self.batch_reset(jax.random.split(rng_reset, num_envs), env_cfgs)
+        state, obs, maps_buffer_keys = self.batch_reset_eval(jax.random.split(rng_reset, num_envs), env_cfgs)
 
         def policy_step(state_input, _):
             """lax.scan compatible step transition in jax env."""
@@ -334,13 +353,11 @@ class RolloutManager(object):
             
             action, _ = self.select_action_deterministic(train_state, obs, action_mask)
             # jax.debug.print("bicount action = {x}", x=jnp.bincount(action, length=9))
-            force_resets_dummy = self.reset_manager_evaluate.dummy()
             next_s, (next_o, reward, done, infos), maps_buffer_keys = self.batch_step(
                 state,
                 wrap_action(action.squeeze(), self.env.batch_cfg.action_type),
                 env_cfgs,
                 maps_buffer_keys,
-                force_resets_dummy,  # TODO make it real
             )
             action_mask = infos["action_mask"]
             new_cum_reward = cum_reward + reward * valid_mask
@@ -395,7 +412,6 @@ class RolloutManager(object):
     def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension):
         """Rollout an episode with lax.scan"""
         cum_return_mean, dones, obs_log, episode_length = self._batch_evaluate(rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension)
-        jax.debug.print("dones.shape = {x}", x=dones.shape)
         return cum_return_mean, dones, obs_log, episode_length
 
 @partial(jax.jit, static_argnums=0)
@@ -419,7 +435,17 @@ def policy_deterministic(
     value, logits_pi = apply_fn(params, obs, action_mask)
     return value, np.argmax(logits_pi, axis=-1)
 
-def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Union[Curriculum, CurriculumTestbench], reset_manager: ResetManager, run_name: str):
+def create_train_state(params, apply_fn, tx):
+    @jax.pmap
+    def _create_train_state(p):
+        return TrainState.create(
+            apply_fn=apply_fn,
+            params=p,
+            tx=tx,
+        )
+    return _create_train_state(params)
+
+def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Union[Curriculum, CurriculumTestbench], run_name: str, n_devices: int):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     if config["wandb"]:
         import wandb
@@ -438,11 +464,14 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         optax.scale_by_schedule(schedule_fn),
     )
 
-    train_state = TrainState.create(
+    # Initialize the models on multiple GPUs with the same params
+    replicated_params = jax.tree_map(lambda x: jnp.array([x] * n_devices), params)
+    train_state = create_train_state(
+        params=replicated_params,
         apply_fn=model.apply,
-        params=params,
         tx=tx,
     )
+
     # Setup the rollout manager -> Collects data in vmapped-fashion over envs
     rollout_manager = RolloutManager(env, config["num_train_envs"], config, env.observation_shapes)
     num_actions = env.batch_cfg.action_type.get_num_actions()
@@ -452,7 +481,9 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         gae_lambda=config["gae_lambda"],
         n_steps=config["n_steps"] + 1,
         num_envs=config["num_train_envs"],
+        n_devices=n_devices,
         mask_out_arm_extension=config["mask_out_arm_extension"],
+        observation_shapes=rollout_manager.env.observation_shapes,
     )
 
     if config["reward_normalizer"] == "constant":
@@ -464,7 +495,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     else:
         raise(ValueError(f"{config['reward_normalizer']=}"))
 
-    @partial(jax.jit, static_argnames=("clip_action_maps", "reward_normalizer"))
+    @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(8,))
     def get_transition(
         train_state: TrainState,
         obs: jnp.ndarray,
@@ -474,12 +505,11 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         rng: jax.random.PRNGKey,
         env_cfgs,
         maps_buffer_keys: jax.random.PRNGKey,
-        clip_action_maps: bool,
         reward_normalizer,
     ):
         new_key, key_step = jax.random.split(rng)
 
-        if clip_action_maps:
+        if config["clip_action_maps"]:
             obs = clip_action_maps_in_obs(obs)
         if config["mask_out_arm_extension"]:
             obs = cut_local_map_layers(obs)
@@ -489,8 +519,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         )
         action = wrap_action(action, rollout_manager.env.batch_cfg.action_type)
         
-        force_resets = reset_manager.update(obs, action)
-        next_state, (next_obs, reward, done, infos), maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys, force_resets)
+        next_state, (next_obs, reward, done, infos), maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys)
         terminated = infos["done_task"]
         reward_normalizer = reward_normalizer.update(reward)
         batch = batch_manager.append(
@@ -499,26 +528,34 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         return train_state, next_obs, next_state, batch, new_key, infos["action_mask"], done, terminated, maps_buffer_keys
 
     batch = batch_manager.reset(
-        action_size=rollout_manager.env.actions_size,
-        observation_shapes=rollout_manager.env.observation_shapes,
-        num_actions=num_actions
+        jnp.empty((n_devices, 1)),
+        rollout_manager.env.actions_size,
+        num_actions
     )
 
     rng, rng_step, rng_reset, rng_eval, rng_update = jax.random.split(rng, 5)
+    rng_step = jax.random.split(rng_step, n_devices)
+    rng_update = jax.random.split(rng_update, n_devices)
+
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_init()
+    
+    # Init batch over multiple devices with different env seeds
+    k_dev_envs = jax.random.split(rng_reset, config["num_train_envs"])
+    seeds = jnp.array([k[0] for k in k_dev_envs]).reshape(n_devices, -1)
     state, obs, maps_buffer_keys = rollout_manager.batch_reset(
-        jax.random.split(rng_reset, config["num_train_envs"]), env_cfgs
+        seeds, env_cfgs
     )
 
     total_steps = 0
     log_steps, log_return = [], []
-    action_mask_init = jnp.ones((num_actions,), dtype=jnp.bool_)
-    action_mask = action_mask_init.copy()[None].repeat(config["num_train_envs"], 0)
+    action_mask_init = jnp.ones((n_devices, num_actions,), dtype=jnp.bool_)
+    action_mask = action_mask_init.copy()[:, None].repeat(config["num_train_envs"], 1)
     t = tqdm.tqdm(range(1, num_total_epochs + 1), desc="PPO", leave=True)
     terminated_aggregate = np.zeros(config["num_train_envs"], dtype=np.bool_)
     timeouts = np.zeros(config["num_train_envs"], dtype=np.bool_)
     all_dones_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
     best_historical_eval_reward = -1e6
+    s = time.time()
     for step in t:
         train_state, obs, state, batch, rng_step, action_mask, done, terminated, maps_buffer_keys = get_transition(
             train_state,
@@ -529,14 +566,20 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             rng_step,
             env_cfgs,
             maps_buffer_keys,
-            int(config["clip_action_maps"]),
             reward_normalizer,
         )
+        terminated = terminated.reshape(-1)
+        done = done.reshape(-1)
         terminated_aggregate = terminated_aggregate | terminated
         timeouts = timeouts | (done & (~terminated))
         all_dones_update = all_dones_update | done
         total_steps += config["num_train_envs"]
         if step % (config["n_steps"] + 1) == 0:
+            e = time.time()
+            time_diff = e - s
+            steps_elapsed = config["n_steps"]
+            steps_per_sec = steps_elapsed * config['num_train_envs'] / time_diff
+            
             metric_dict, train_state, rng_update = update(
                 train_state,
                 batch_manager.get(batch),
@@ -548,8 +591,14 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 config["entropy_coeff"],
                 config["critic_coeff"],
                 rng_update,
-                config["fast_compile"]
             )
+            
+            metric_dict = reduce_metric_dict(metric_dict)
+
+            e_full = time.time()
+            time_diff_full = e_full - s
+            steps_elapsed = config["n_steps"]
+            steps_per_sec_full = steps_elapsed * config['num_train_envs'] / time_diff_full
 
             if config["wandb"]:
                 wandb.log(
@@ -559,20 +608,24 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                         "envs done %": all_dones_update.mean(),
                         "envs terminated %": terminated_aggregate.mean(),
                         "envs timeouts %": timeouts.mean(),
+                        "env steps per second": steps_per_sec,
+                        "env steps per second including update": steps_per_sec_full,
                     }
                 )
             
             env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict, terminated_aggregate, timeouts)
 
             batch = batch_manager.reset(
-                action_size=rollout_manager.env.actions_size,
-                observation_shapes=rollout_manager.env.observation_shapes,
-                num_actions=num_actions
+                jnp.empty((n_devices, 1)),
+                rollout_manager.env.actions_size,
+                num_actions
             )
 
             terminated_aggregate = np.zeros(config["num_train_envs"], dtype=np.bool_)
             timeouts = np.zeros(config["num_train_envs"], dtype=np.bool_)
             all_dones_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
+
+            s = time.time()
 
 
         if (step + 1) % config["evaluate_every_epochs"] == 0:
@@ -583,7 +636,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 train_state,
                 config["num_test_rollouts"],
                 step,
-                action_mask_init,
+                action_mask_init[0],
                 config["n_evals_save"],
                 env_cfgs_eval,
                 int(config["clip_action_maps"]),
@@ -635,6 +688,15 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     )
 
 
+def reduce_metric_dict(metric_dict):
+    """
+    Take only 1 data element for each metric_dict value.
+    The values in there are duplicated on axis 0 as they come from different devices in sync.
+    """
+    return jax.tree_map(
+        lambda x: x[0], metric_dict 
+        )
+
 @jax.jit
 def flatten_dims(x):
     return x.swapaxes(0, 1).reshape(x.shape[0] * x.shape[1], *x.shape[2:])
@@ -649,6 +711,8 @@ def obs_to_model_input(obs):
         obs["local_map_action_pos"],
         obs["local_map_target_neg"],
         obs["local_map_target_pos"],
+        obs["local_map_dumpability"],
+        obs["local_map_obstacles"],
         obs["action_map"],
         obs["target_map"],
         obs["traversability_mask"],
@@ -669,6 +733,8 @@ def cut_local_map_layers(obs):
     obs["local_map_action_pos"] = obs["local_map_action_pos"][..., [0]]
     obs["local_map_target_neg"] = obs["local_map_target_neg"][..., [0]]
     obs["local_map_target_pos"] = obs["local_map_target_pos"][..., [0]]
+    obs["local_map_dumpability"] = obs["local_map_dumpability"][..., [0]]
+    obs["local_map_obstacles"] = obs["local_map_obstacles"][..., [0]]
     return obs
 
 def wrap_action(action, action_type):
@@ -734,6 +800,7 @@ def loss_actor_and_critic(
     )
 
 
+@partial(jax.pmap, axis_name="model", static_broadcasted_argnums=(2, 3, 4, 5, 6, 7, 8,))
 def update(
     train_state: TrainState,
     batch: Tuple,
@@ -745,64 +812,18 @@ def update(
     entropy_coeff: float,
     critic_coeff: float,
     rng: jax.random.PRNGKey,
-    fast_compile
 ):
     """Perform multiple epochs of updates with multiple updates."""
     obs, action_mask, action, log_pi_old, value, target, gae, rewards, dones = batch
-    size_batch = num_envs * n_steps
-    size_minibatch = size_batch // n_minibatch
-    idxes = jnp.arange(num_envs * n_steps)
-    avg_metrics_dict = defaultdict(int)
+    idxes_init = jnp.arange(num_envs * n_steps)
+    
+    def _epochs_scan(train_state: TrainState, subkey: jax.random.PRNGKeyArray):
+        idxes = jax.random.permutation(subkey, idxes_init)
+        idxes = idxes.reshape(n_minibatch, -1)
 
-    for _ in range(epoch_ppo):
-        if fast_compile:
-            rng, subkey = jax.random.split(rng)
-            idxes = jax.random.permutation(subkey, idxes)
-            idxes = idxes.reshape(n_minibatch, -1)
-
-            # Scan option
-            train_state, total_loss = update_epoch_scan(
-                    train_state,
-                    idxes,
-                    [flatten_dims(el) for el in obs],
-                    flatten_dims(action_mask),
-                    flatten_dims(action),
-                    flatten_dims(log_pi_old),
-                    flatten_dims(value),
-                    jnp.array(flatten_dims(target)),
-                    jnp.array(flatten_dims(gae)),
-                    clip_eps,
-                    entropy_coeff,
-                    critic_coeff,
-                    n_minibatch
-                )
-            
-            # Fori_loop option
-            # train_state, total_loss = update_epoch_fori_loop(
-            #         train_state,
-            #         idxes_list,
-            #         [flatten_dims(el) for el in obs],
-            #         flatten_dims(action_mask),
-            #         flatten_dims(action),
-            #         flatten_dims(log_pi_old),
-            #         flatten_dims(value),
-            #         jnp.array(flatten_dims(target)),
-            #         jnp.array(flatten_dims(gae)),
-            #         clip_eps,
-            #         entropy_coeff,
-            #         critic_coeff,
-            #         n_minibatch
-            #     )
-        else:
-            rng, subkey = jax.random.split(rng)
-            idxes = jax.random.permutation(subkey, idxes)
-            idxes_list = [
-                idxes[start : start + size_minibatch]
-                for start in jnp.arange(0, size_batch, size_minibatch)
-            ]
-            train_state, total_loss = update_epoch(
+        train_state, total_loss = update_epoch_scan(
                 train_state,
-                idxes_list,
+                idxes,
                 [flatten_dims(el) for el in obs],
                 flatten_dims(action_mask),
                 flatten_dims(action),
@@ -814,7 +835,7 @@ def update(
                 entropy_coeff,
                 critic_coeff,
             )
-
+        
         total_loss, (
             value_loss,
             loss_actor,
@@ -824,116 +845,44 @@ def update(
             gae_val,
         ) = total_loss
 
-        avg_metrics_dict["total_loss"] += np.asarray(total_loss)
-        avg_metrics_dict["value_loss"] += np.asarray(value_loss)
-        avg_metrics_dict["actor_loss"] += np.asarray(loss_actor)
-        avg_metrics_dict["entropy"] += np.asarray(entropy)
-        avg_metrics_dict["value_pred"] += np.asarray(value_pred)
-        avg_metrics_dict["target"] += np.asarray(target_val)
-        avg_metrics_dict["gae"] += np.asarray(gae_val)
-        avg_metrics_dict["max_reward"] += np.asarray(rewards.max())
-        avg_metrics_dict["min_reward"] += np.asarray(rewards.min())
+        avg_metrics_list = jnp.array(
+            [
+                total_loss,
+                value_loss,
+                loss_actor,
+                entropy,
+                value_pred,
+                target_val,
+                gae_val,
+                rewards.max(),
+                rewards.min(),
+            ]
+        )
+        return train_state, avg_metrics_list
 
-    for k, v in avg_metrics_dict.items():
-        avg_metrics_dict[k] = v / (epoch_ppo)
+    rng, *subkeys = jax.random.split(rng, epoch_ppo + 1)
+    train_state, avg_metrics_stack = jax.lax.scan(
+        _epochs_scan,
+        train_state,
+        jnp.stack(subkeys),
+    )
 
-    # avg_metrics_dict["avg dones %"] += np.asarray(100 * dones.mean())
-    avg_metrics_dict["values_individual"] += np.asarray(value.mean(0))
-    avg_metrics_dict["targets_individual"] += np.asarray(target.mean(0))
+    avg_metrics_stack = avg_metrics_stack.mean(-2)
+
+    avg_metrics_dict = defaultdict(int)
+    avg_metrics_dict["total_loss"] = jnp.asarray(avg_metrics_stack[0])
+    avg_metrics_dict["value_loss"] = jnp.asarray(avg_metrics_stack[1])
+    avg_metrics_dict["actor_loss"] = jnp.asarray(avg_metrics_stack[2])
+    avg_metrics_dict["entropy"] = jnp.asarray(avg_metrics_stack[3])
+    avg_metrics_dict["value_pred"] = jnp.asarray(avg_metrics_stack[4])
+    avg_metrics_dict["target"] = jnp.asarray(avg_metrics_stack[5])
+    avg_metrics_dict["gae"] = jnp.asarray(avg_metrics_stack[6])
+    avg_metrics_dict["max_reward"] = jnp.asarray(avg_metrics_stack[7])
+    avg_metrics_dict["min_reward"] = jnp.asarray(avg_metrics_stack[8])
 
     return avg_metrics_dict, train_state, rng
 
 
-@jax.jit
-def update_epoch(
-    train_state: TrainState,
-    idxes: jnp.ndarray,
-    obs,
-    action_mask,
-    action,
-    log_pi_old,
-    value,
-    target,
-    gae,
-    clip_eps: float,
-    entropy_coeff: float,
-    critic_coeff: float,
-):
-    for idx in idxes:
-        grad_fn = jax.value_and_grad(loss_actor_and_critic, has_aux=True)
-        total_loss, grads = grad_fn(
-            train_state.params,
-            train_state.apply_fn,
-            obs=[el[idx] for el in obs], #obs[idx],
-            target=target[idx],
-            value_old=value[idx],
-            log_pi_old=log_pi_old[idx],
-            gae=gae[idx],
-            action_mask=action_mask[idx],
-            # action=action[idx].reshape(-1, 1),
-            action=jnp.expand_dims(action[idx], -1),
-            clip_eps=clip_eps,
-            critic_coeff=critic_coeff,
-            entropy_coeff=entropy_coeff,
-        )
-        train_state = train_state.apply_gradients(grads=grads)
-
-    # Note: the total_loss returned is w.r.t. the last minibatch only
-    return train_state, total_loss
-
-@partial(jax.jit, static_argnames=("n_minibatch",))
-def update_epoch_fori_loop(
-    train_state: TrainState,
-    idxes: jnp.ndarray,
-    obs,
-    action_mask,
-    action,
-    log_pi_old,
-    value,
-    target,
-    gae,
-    clip_eps: float,
-    entropy_coeff: float,
-    critic_coeff: float,
-    n_minibatch: int  # needs to be static for better optimization of the for loop
-):
-    def _update_epoch(i, carry):
-        train_state, _ = carry
-        idx = idxes[i]
-        grad_fn = jax.value_and_grad(loss_actor_and_critic, has_aux=True)
-        total_loss, grads = grad_fn(
-            train_state.params,
-            train_state.apply_fn,
-            obs=[el[idx] for el in obs],
-            target=target[idx],
-            value_old=value[idx],
-            log_pi_old=log_pi_old[idx],
-            gae=gae[idx],
-            action_mask=action_mask[idx],
-            # action=action[idx].reshape(-1, 1),
-            action=jnp.expand_dims(action[idx], -1),
-            clip_eps=clip_eps,
-            critic_coeff=critic_coeff,
-            entropy_coeff=entropy_coeff,
-        )
-        train_state = train_state.apply_gradients(grads=grads)
-        carry = train_state, total_loss
-        return carry
-
-    carry = train_state, (0., (0., 0., 0., 0., 0., 0.))
-    carry = jax.lax.fori_loop(
-        0,
-        n_minibatch,
-        _update_epoch,
-        carry
-    )
-    train_state, total_loss = carry
-
-    # Note: the total_loss returned is w.r.t. the last minibatch only
-    return train_state, total_loss
-
-
-@partial(jax.jit, static_argnames=("n_minibatch",))
 def update_epoch_scan(
     train_state: TrainState,
     idxes: jnp.ndarray,
@@ -947,7 +896,6 @@ def update_epoch_scan(
     clip_eps: float,
     entropy_coeff: float,
     critic_coeff: float,
-    n_minibatch: int  # needs to be static for better optimization of the for loop
 ):
     grad_fn = jax.value_and_grad(loss_actor_and_critic, has_aux=True)
     def _update_epoch(train_state, idx):
@@ -966,15 +914,20 @@ def update_epoch_scan(
             critic_coeff=critic_coeff,
             entropy_coeff=entropy_coeff,
         )
-        l = jnp.array([total_loss[0], *total_loss[1]])
-        train_state = train_state.apply_gradients(grads=grads)
-        return train_state, l
+        # Combine loss and grads from different devices
+        total_loss = jax.tree_map(
+            lambda x: jax.lax.pmean(x, axis_name="model"), total_loss 
+        )
+        grads = jax.lax.pmean(grads, axis_name="model")
 
+        train_state = train_state.apply_gradients(grads=grads)
+        l = jnp.array([total_loss[0], *total_loss[1]])
+        return train_state, l
+    
     train_state, total_loss_l = jax.lax.scan(
         _update_epoch,
         train_state,
         idxes,
-        length=n_minibatch,
         # unroll=1,
     )
     total_loss = total_loss_l[-1][0], tuple(total_loss_l[-1, 1:])

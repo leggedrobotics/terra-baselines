@@ -4,7 +4,7 @@ Partially from https://github.com/RobertTLange/gymnax-blines
 
 import numpy as np
 import jax
-import math
+from tqdm import tqdm
 from utils.models import get_model_ready
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
@@ -13,7 +13,6 @@ from utils.ppo import obs_to_model_input, wrap_action, clip_action_maps_in_obs, 
 from terra.state import State
 import matplotlib.animation as animation
 from utils.curriculum import Curriculum
-from utils.reset_manager import ResetManager
 from tensorflow_probability.substrates import jax as tfp
 
 
@@ -29,8 +28,9 @@ def _append_to_obs(o, obs_log):
     return obs_log
 
 
-def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_resets, rl_config, max_frames):
-    rng = jax.random.PRNGKey(0)
+def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed):
+    print(f"Using {seed=}")
+    rng = jax.random.PRNGKey(seed)
 
 
     rng, *rng_reset = jax.random.split(rng, rl_config["num_test_rollouts"] + 1)
@@ -39,9 +39,9 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
 
     t_counter = 0
     reward_seq = []
-    obs_seq = {}
+    obs_seq = []
     while True:
-        obs_seq = _append_to_obs(obs, obs_seq)
+        obs_seq.append(obs)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
             if rl_config["clip_action_maps"]:
@@ -55,7 +55,7 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, force_res
             action = pi.sample(seed=rng_act)
         else:
             raise RuntimeError("Model is None!")
-        next_env_state, (next_obs, reward, done, info), maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys, force_resets)
+        next_env_state, (next_obs, reward, done, info), maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys)
         reward_seq.append(reward)
         print(t_counter, reward, action, done)
         print(10 * "=")
@@ -95,11 +95,18 @@ if __name__ == "__main__":
         help="Environment name.",
     )
     parser.add_argument(
-        "-n",
-        "--n_envs",
+        "-nx",
+        "--n_envs_x",
         type=int,
         default=1,
-        help="Number of environments.",
+        help="Number of environments on x.",
+    )
+    parser.add_argument(
+        "-ny",
+        "--n_envs_y",
+        type=int,
+        default=1,
+        help="Number of environments on y.",
     )
     parser.add_argument(
         "-steps",
@@ -108,33 +115,45 @@ if __name__ == "__main__":
         default=10,
         help="Number of steps.",
     )
+    parser.add_argument(
+        "-s",
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for the environment.",
+    )
+    parser.add_argument(
+        "-pg",
+        "--progressive_gif",
+        type=int,
+        default=0,
+        help="Random seed for the environment.",
+    )
     args, _ = parser.parse_known_args()
+    n_envs = args.n_envs_x * args.n_envs_y
 
     log = load_pkl_object(f"{args.run_name}" + ".pkl")
     config = log["train_config"]
-    config["num_test_rollouts"] = args.n_envs
-    
-    curriculum = Curriculum(rl_config=config)
+    config["num_test_rollouts"] = n_envs
+
+    n_devices = 1
+
+    curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
-    env = TerraEnvBatch(rendering=True, n_imgs_row=int(math.sqrt(args.n_envs)))
+    progressive_gif = bool(args.progressive_gif)
+    print(f"Using progressive_gif = {progressive_gif}")
+    env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, progressive_gif=args.progressive_gif, rendering_engine="pygame")
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     
-    reset_manager = ResetManager(config, env.observation_shapes, eval=True)
-    force_resets = reset_manager.dummy()
 
     model = load_neural_network(config, env)
-    model_params = log["network"]
+    replicated_params = log['network']
+    model_params = jax.tree_map(lambda x: x[0], replicated_params)
     obs_seq, cum_rewards = rollout_episode(
-        env, model, model_params, env_cfgs, force_resets, config, max_frames=args.n_steps
+        env, model, model_params, env_cfgs, config, max_frames=args.n_steps, seed=args.seed
     )
-    seq_len = min(obs_seq["local_map_action"].shape[1], args.n_steps)
-    fig = env.terra_env.window.get_fig()
-    update_partial = lambda x: update_render(seq=obs_seq, env=env, frame=x)
-    ani = animation.FuncAnimation(
-            fig,
-            update_partial,
-            frames=seq_len,
-            blit=False,
-        )
-    # Save the animation to a gif
-    ani.save(f"docs/{args.env_name}.gif")
+
+    for o in tqdm(obs_seq, desc="Rendering"):
+        env.terra_env.render_obs_pygame(o, generate_gif=True)
+    
+    env.terra_env.rendering_engine.create_gif()

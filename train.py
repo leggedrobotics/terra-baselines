@@ -10,7 +10,6 @@ from utils.helpers import load_config, save_pkl_object
 from time import gmtime
 from time import strftime
 from utils.curriculum import Curriculum
-from utils.reset_manager import ResetManager
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
 from utils.helpers import load_pkl_object
@@ -36,11 +35,15 @@ def main(config, mle_log, log_ext=""):
     if config["wandb"]:
         run = _init_wandb(run_name, config)
 
+    # Parallelization across multiple GPUs
+    n_devices = jax.local_device_count()
+    print(f"\n{n_devices=} detected.\n")
+
     rng = jax.random.PRNGKey(config["seed_model"])
     # Setup the model architecture
     rng, rng_init, rng_maps_buffer = jax.random.split(rng, 3)
     
-    curriculum = Curriculum(rl_config=config)
+    curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     env = TerraEnvBatch()
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     model, params = get_model_ready(rng_init, config, env)
@@ -49,7 +52,8 @@ def main(config, mle_log, log_ext=""):
     if config["model_path"] is not None:
         print(f"\nLoading pre-trained model from: {config['model_path']}")
         log = load_pkl_object(config['model_path'])
-        params = log['network']
+        replicated_params = log['network']
+        params = jax.tree_map(lambda x: x[0], replicated_params)
         print("Pre-trained model loaded.\n")
 
     # Run the training loop (either evosax ES or PPO)
@@ -58,13 +62,11 @@ def main(config, mle_log, log_ext=""):
     else:
         raise ValueError("Unknown train_type.")
 
-    reset_manager = ResetManager(config, env.observation_shapes)
-
     if config["profile"]:
         jax.profiler.start_server(5555)
-    # Log and store the results.
+
     log_steps, log_return, network_ckpt, obs_seq = train_fn(
-        rng, config, model, params, mle_log, env, curriculum, reset_manager, run_name
+        rng, config, model, params, mle_log, env, curriculum, run_name, n_devices
     )
 
     data_to_store = {
