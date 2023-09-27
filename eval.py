@@ -44,7 +44,7 @@ class Instance:
         self.action = action
         self.reward = reward
 
-def tree_search(rng, env_state, obs, model, maps_buffer_keys, clip_action_maps, mask_out_arm_extension, n_branches = 2, depth = 4, n_rollouts = 4, gamma = 0.995):
+def tree_search(rng, env_state, obs, model, maps_buffer_keys, clip_action_maps, mask_out_arm_extension, deterministic, n_branches = 4, depth = 1, n_rollouts = 1, gamma = 0.995):
     """Naive tree search implementation (can be optimized a lot)"""
     action_mask = jnp.ones((8,), dtype=jnp.bool_)  # TODO implement action masking
 
@@ -82,8 +82,11 @@ def tree_search(rng, env_state, obs, model, maps_buffer_keys, clip_action_maps, 
                         next_obs = cut_local_map_layers(next_obs)
                     next_obs_model = obs_to_model_input(next_obs)
                     v, logits_pi = model.apply(model_params, next_obs_model, action_mask)
-                    pi = tfp.distributions.Categorical(logits=logits_pi)
-                    action = pi.sample(seed=rng_act)
+                    if deterministic:
+                        action = np.argmax(logits_pi, axis=-1)
+                    else:
+                        pi = tfp.distributions.Categorical(logits=logits_pi)
+                        action = pi.sample(seed=rng_act)
                 new_instance_level.append(Instance(next_env_state, next_obs_dict, v, original_action, local_cum_disc_reward))
         instance_levels.append(new_instance_level)
         last_instance_level = new_instance_level
@@ -170,7 +173,7 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
             if search:
-                action, rng = tree_search(rng, env_state, obs, model, maps_buffer_keys, rl_config["clip_action_maps"], rl_config["mask_out_arm_extension"])
+                action, rng = tree_search(rng, env_state, obs, model, maps_buffer_keys, rl_config["clip_action_maps"], rl_config["mask_out_arm_extension"], deterministic)
             elif deterministic:
                 if rl_config["clip_action_maps"]:
                     obs = clip_action_maps_in_obs(obs)
