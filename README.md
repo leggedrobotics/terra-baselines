@@ -1,4 +1,11 @@
 # rl-excavator-planning
+
+## Installation
+Install the requirements with:
+```
+pip install -r requirements.txt
+```
+
 Install the Terra environment with:
 ```
 pip install terra
@@ -7,28 +14,51 @@ or if not available, clone the Terra repo and install it from the Terra folder w
 ```
 pip install -e .
 ```
+Note: don't forget to install JAX separately (see Terra readme).
 
-## Visualization
-If you want to render the environment, you are going to need the following:
+## Training
+To run a training job, set your hyperparameters in `ppo.yaml`, set your maps in Terra's `config.py`, and set your curriculum
+in `curriculum.py`. Note: make sure that the number of map paths you include is the same as the number of curriculum steps
+you specify. Untested behavior otherwise.
 
-on Ubuntu:
+You can run your training with:
 ~~~
-sudo apt install libcairo2-dev
-sudo apt install libgirepository1.0-dev
+DATASET_PATH=/path/to/dataset DATASET_SIZE=dataset_size python train.py -n training_job_name -sm model_seed -se env_seed
 ~~~
+The training job is automatically logged on Wandb. If you only want to log it locally, use the environment variable `WANDB_MODE=offline`.
 
+### Visualization from model
+The main way to visualize results from the model is using the `pygame` rendering engine from Terra.
+
+Before launching the script, make sure to select in `config.py`, `curriculum.py`, and `ppo.yaml` the settings you
+want your model to be tested on.
+You can launch the visualization with something like:
 ~~~
-matplotlib
-PyGObject (you could use another backend like PyQt5 but it will clash with cv2 as it's QT-based)
+WANDB_MODE=offline DATASET_PATH="/home/antonio/Downloads/img_generator" DATASET_SIZE=1000 python visualize.py -run agents/Terra/models/my_model -nx 3 -ny 4 -steps 120 -d 0 -s 8964231 -pg 0
 ~~~
+This command will load 1000 images per dataset, load my_model (note, without the final .pkl extension), render a visualization
+with 3x4 environments (`pygame` will take care of the size of the window) for 120 steps, using sampling (d = deterministic is set to 0), with seed = 8964231, and with a normal type of gif (pg = progressive gif is used to create gifs where the agent trace is left on screen, mainly to generate a static animation for PDF format).
+
+A GIF will be generated and saved to disk.
+
+### Evaluation
+You can run the evaluation script with a command like:
+~~~
+DATASET_PATH=/media/img_generator DATASET_SIZE=3000 python eval.py -run agents/Terra/models/my_model.pkl -nx 500 -ny 1 -steps 300 -d 1
+~~~
+The flags have the same meaning as in the visualization script.
+
+At the end of the evaluation, the scores will be printed in the terminal.
 
 ## Euler cluster workflow
+You can use Euler to run multiple jobs at the same time as well as using multiple devices (GPUs) for a single job.
+
 Load modules with
 ~~~
 module load gcc/8.2.0 python_gpu/3.11.2 cuda/11.8.0
 ~~~
 
-Source venv with
+Source your venv with
 ~~~
 source ~/venvs/agent/bin/activate
 ~~~
@@ -39,6 +69,9 @@ sbatch -c 32 --mem-per-cpu=4096 --tmp=1024 --gres=gpumem:36000 --gpus=1 --wrap="
 ~~~
 
 It is then possible to track the experiment from the log file on wandb (or in the slurm log file that gets created at job lauch).
+
+Note: if you launch the jobs this way, the files get loaded as soon as the job STARTS. Meaning, if you want to run multiple
+jobs with different config files, you need to wait that the last job is running (using `squeue`) before changing config file.
 
 ## Profiling
 You can profile the code by setting to True the `profile` flag in the `ppo.yaml` config file.
@@ -52,31 +85,3 @@ PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python python -m jax.collect_profile 5555
 
 This will dump the profiling logs in a file and generate a Perfetto link to a dashboard.
 Click the link to access the profiling.
-
-
-## Testbench
-The `testbench.py` script has the following design goals:
-- Purpose: evaluate changes with little compute
-- How: Identify easy tasks that the agent should easily be able to solve, 
-    and train on this set of tasks. Get scores on the performance on the taskset, 
-    and log the tasks that the agent couldn't complete, for visualization.
-
-You can run it with:
-```
-WANDB_MODE=offline python testbench.py -n <testbench-test-name>
-```
-and if you need offline maps to be loaded, you can do so in the `TestbenchConfig` (Terra repo)
-and include the usual env variables in the launch command.
-
-The training tasks are managed by a `CurriculumTestbench` and are independent from each other.
-After each training task, there is an evaluation step to get the statistics of the trained model.
-
-The config files are `testbench_ppo.yaml` and `curriculum_testbench.py` in this repo and `config.py` in Terra.
-
-## Command examples
-
-### Visualization from model
-Set your curriculum and your map file pahts in Terra. Then run:
-~~~
-DATASET_PATH=/media/img_generator DATASET_SIZE=1000 python visualize.py -run agents/Terra/models/euler-sparse-normreward-curr-1up-10down-0.3rateup-0.3ratedown-15evels-3000envs-3e-4lr-coupledmodel_2023_09_05_18_05_23_best_model -n 9 -steps 100 -d 1
-~~~

@@ -244,18 +244,6 @@ class Curriculum:
         
         return env_cfgs, dofs_count_dict
 
-    def _increase_task_complexity(self,):
-        pass
-
-    def _decrease_task_complexity(self,):
-        pass
-
-    def _bring_agent_closer_to_reward(self,):
-        pass
-    
-    def _rewind_model_and_env(self,):
-        pass
-
     def _get_curriculum(self, idx: int):
         return self.curriculum_dicts[idx]
 

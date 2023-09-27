@@ -6,8 +6,6 @@ from functools import partial
 import optax
 import jax
 import time
-# from jax import config
-# config.update("jax_debug_nans", True)
 import jax.numpy as jnp
 from jax import Array
 from typing import Any, Callable, Tuple, Union
@@ -741,10 +739,6 @@ def wrap_action(action, action_type):
     action = action_type.new(action[:, None])
     return action
 
-# def obs_to_model_input_batch(obs):
-#     obs = [v.swapaxes(0, 1).reshape(v.shape[0] * v.shape[1], -1) for v in obs]
-#     return jnp.hstack(obs)
-
 def loss_actor_and_critic(
     params_model: flax.core.frozen_dict.FrozenDict,
     apply_fn: Callable[..., Any],
@@ -764,8 +758,6 @@ def loss_actor_and_critic(
     pi = tfp.distributions.Categorical(logits=logits_pi)
     value_pred = value_pred[:, 0]
 
-    # TODO: Figure out why training without 0 breaks categorical model
-    # And why with 0 breaks gaussian model pi
     log_prob = pi.log_prob(action[..., -1])
 
     value_pred_clipped = value_old + (value_pred - value_old).clip(
@@ -908,7 +900,6 @@ def update_epoch_scan(
             log_pi_old=log_pi_old[idx],
             gae=gae[idx],
             action_mask=action_mask[idx],
-            # action=action[idx].reshape(-1, 1),
             action=jnp.expand_dims(action[idx], -1),
             clip_eps=clip_eps,
             critic_coeff=critic_coeff,
@@ -928,8 +919,6 @@ def update_epoch_scan(
         _update_epoch,
         train_state,
         idxes,
-        # unroll=1,
     )
     total_loss = total_loss_l[-1][0], tuple(total_loss_l[-1, 1:])
-    # Note: the total_loss returned is w.r.t. the last minibatch only
     return train_state, total_loss

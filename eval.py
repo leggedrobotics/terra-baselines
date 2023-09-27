@@ -22,13 +22,6 @@ def _append_to_obs(o, obs_log):
     obs_log = {k: jnp.concatenate((v, o[k][:, None]), axis=1) for k, v in obs_log.items()}
     return obs_log
 
-# def _get_path_length_step(obs, next_obs):
-#     print(obs["agent_state"][0])
-#     agent_pos = obs["agent_state"][:, [0, 1]]
-#     agent_pos_next = next_obs["agent_state"][:, [0, 1]]
-#     path_len = np.abs(agent_pos - agent_pos_next).sum()
-#     return path_len
-
 class Instance:
     def __init__(
             self,
@@ -45,7 +38,7 @@ class Instance:
         self.reward = reward
 
 def tree_search(rng, env_state, obs, model, maps_buffer_keys, clip_action_maps, mask_out_arm_extension, deterministic, n_branches = 4, depth = 1, n_rollouts = 1, gamma = 0.995):
-    """Naive tree search implementation (can be optimized a lot)"""
+    """Experimental: might contain bugs + it's not optimized"""
     action_mask = jnp.ones((8,), dtype=jnp.bool_)  # TODO implement action masking
 
     # TODO shouldn't do this copy here, most of the tree will be repeated this way
@@ -197,9 +190,7 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
         else:
             raise RuntimeError("Model is None!")
         next_env_state, (next_obs, reward, done, info), maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys)
-        # path_length_step = _get_path_length_step(obs, next_obs)
         reward_seq.append(reward)
-        # print(t_counter, reward, action, done)
         print(t_counter)
         print(10 * "=")
         t_counter += 1
@@ -358,7 +349,6 @@ if __name__ == "__main__":
 
     log = load_pkl_object(f"{args.run_name}")
 
-    # TODO revert once train_config is available
     config = log["train_config"]
     # from utils.helpers import load_config
     # config = load_config("agents/Terra/ppo.yaml", 22333, 33222, 5e-04, True, "")["train_config"]
