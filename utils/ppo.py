@@ -8,7 +8,7 @@ import jax
 import time
 import jax.numpy as jnp
 from jax import Array
-from typing import Any, Callable, Tuple, Union
+from typing import Any, Callable, Tuple
 from collections import defaultdict
 import flax
 from flax.training.train_state import TrainState
@@ -16,7 +16,6 @@ import numpy as np
 import tqdm
 from terra.env import TerraEnvBatch
 from utils.curriculum import Curriculum
-from utils.curriculum_testbench import CurriculumTestbench
 from tensorflow_probability.substrates import jax as tfp
 from utils.helpers import save_pkl_object
 from terra.config import EnvConfig
@@ -443,7 +442,7 @@ def create_train_state(params, apply_fn, tx):
         )
     return _create_train_state(params)
 
-def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Union[Curriculum, CurriculumTestbench], run_name: str, n_devices: int):
+def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str, n_devices: int):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     if config["wandb"]:
         import wandb
