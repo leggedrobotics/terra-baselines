@@ -11,6 +11,18 @@ from terra.config import RewardsType
 class Curriculum:
 
     def __init__(self, rl_config, n_devices) -> None:
+        """
+        The Curriculum provides a list of EnvConfig based on a given state of the training.
+        The idea is that each environment has its own config and is independed from the others.
+        
+        You can define you curriculum down here setting self.curriculum_dicts.
+
+        Notes:
+        - self.dofs is the list of degrees of freedom (curriculum milestones) per environment
+        - self.dofs_random is the portion of self.dofs that doesn't follow the main logic but
+            is picked at random from all the degrees of freedom already unlocked from the main logic.
+        - for the main logic of switching dof, read the docstring of self._evaluate_progress
+        """
         self.n_devices = n_devices
         self.num_dof_random = int(rl_config["random_dof_ratio"] * rl_config["num_train_envs"])
         print(f"Number of random dofs = {self.num_dof_random} / {rl_config['num_train_envs']}")
@@ -64,25 +76,27 @@ class Curriculum:
 
     def _evaluate_progress(self, metrics_dict: dict[str, Any], terminated: Array, timeouts: Array) -> int:
         """
-        Goes from the training metrics to a DoF (degrees of freedom) value,
-        considering the current DoF.
+        Goes from the training metrics to a DoF (degrees of freedom) vector - one for each environment.
+
+        The switching logic.
+        A given dof:
+        - increases by 1: if the policy was able to solve at least self.increase_dof_consecutive_episodes
+            episodes in a row in a given environment
+        - decreases by 1: if the policy failed to solve at least self.max_episodes_no_dones
+            episodes in a row in a given environment
+        If the last level of the curriculum is reached and the logic indicates to increase level,
+        then there can be different actions taken based on the config value self.rl_config["last_dof_type"]:
+        - random: a random dof will be selected
+        - none: the last dof will be selected
+        - sparse: a random dof will be selected out of the sparse reward curriculum levels
+        - random_from_selection: a random dof will be selected out of the ones indicated in self.dof_selection
         """
         terminated = terminated.reshape(-1)
         timeouts = timeouts.reshape(-1)
         terminated = terminated[:self.num_dof]
         timeouts = timeouts[:self.num_dof]
 
-        # values_individual = metrics_dict["values_individual"]
-        # values_individual = values_individual[:self.num_dof]
-        # targets_individual = metrics_dict["targets_individual"]
-        # targets_individual = targets_individual[:self.num_dof]
-        # value_losses_individual = np.square(values_individual - targets_individual)
-
         # Increase dof
-        # [method 1: using value loss]
-        # increase_dof = (value_losses_individual / targets_individual < self.increase_dof_threshold) * (targets_individual > 0)
-        # increase_dof *= dones_after_update  # only update dof if it completed the previous level
-        # [method 2: using consecutive successful terminations]
         self.updates_dones += terminated
         self.updates_dones = np.where(
             timeouts,
@@ -113,8 +127,6 @@ class Curriculum:
         max_decrease_dof_ratio_mask = decrease_dof_cumsum < max_decrease_dof_ratio_abs
         decrease_dof *= max_decrease_dof_ratio_mask
         
-        # assert((increase_dof @ decrease_dof).item() == 0, f"{(increase_dof @ decrease_dof).item()=}")
-
         dofs = self.dofs_main + increase_dof.astype(np.int8) - decrease_dof.astype(np.int8)
 
         if self.rl_config["last_dof_type"] == "random":
