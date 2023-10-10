@@ -12,6 +12,7 @@ from time import strftime
 from utils.curriculum import Curriculum
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
+from utils.helpers import load_pkl_object
 
 def _init_wandb(run_name, config):
     import wandb
@@ -34,15 +35,26 @@ def main(config, mle_log, log_ext=""):
     if config["wandb"]:
         run = _init_wandb(run_name, config)
 
+    # Parallelization across multiple GPUs
+    n_devices = jax.local_device_count()
+    print(f"\n{n_devices=} detected.\n")
+
     rng = jax.random.PRNGKey(config["seed_model"])
     # Setup the model architecture
     rng, rng_init, rng_maps_buffer = jax.random.split(rng, 3)
     
-    curriculum = Curriculum(rl_config=config)
-    env = env = TerraEnvBatch()
+    curriculum = Curriculum(rl_config=config, n_devices=n_devices)
+    env = TerraEnvBatch()
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
     model, params = get_model_ready(rng_init, config, env)
     del rng_init
+
+    if config["model_path"] is not None:
+        print(f"\nLoading pre-trained model from: {config['model_path']}")
+        log = load_pkl_object(config['model_path'])
+        replicated_params = log['network']
+        params = jax.tree_map(lambda x: x[0], replicated_params)
+        print("Pre-trained model loaded.\n")
 
     # Run the training loop (either evosax ES or PPO)
     if config["train_type"] == "PPO":
@@ -50,9 +62,11 @@ def main(config, mle_log, log_ext=""):
     else:
         raise ValueError("Unknown train_type.")
 
-    # Log and store the results.
-    log_steps, log_return, network_ckpt = train_fn(
-        rng, config, model, params, mle_log, env, curriculum
+    if config["profile"]:
+        jax.profiler.start_server(5555)
+
+    log_steps, log_return, network_ckpt, obs_seq = train_fn(
+        rng, config, model, params, mle_log, env, curriculum, run_name, n_devices
     )
 
     data_to_store = {
@@ -70,6 +84,10 @@ def main(config, mle_log, log_ext=""):
         f"agents/{config['env_name']}/{run_name}.pkl",
     )
     run.finish()
+    
+    if config["profile"]:
+        jax.profiler.stop_server(5555)
+
 
 
 if __name__ == "__main__":
@@ -126,8 +144,15 @@ if __name__ == "__main__":
         default="ppo",
         help="Name used to store the run on wandb.",
     )
+    parser.add_argument(
+        "-m",
+        "--model_path",
+        type=str,
+        default=None,
+        help="Pre-trained model.",
+    )
     args, _ = parser.parse_known_args()
-    config = load_config(args.config_fname, args.seed_env, args.seed_model, args.lrate, args.wandb, args.run_name)
+    config = load_config(args.config_fname, args.seed_env, args.seed_model, args.lrate, args.wandb, args.run_name, args.model_path)
     main(
         config["train_config"],
         mle_log=None,

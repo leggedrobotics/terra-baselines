@@ -9,7 +9,8 @@ tensorflow_probability
 notebook
 seaborn
 wandb
-jax-resnet
 opencv-python
 shapely
 scikit-image
+pygame
+jax_resnet
