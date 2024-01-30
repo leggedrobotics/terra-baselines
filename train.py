@@ -38,11 +38,9 @@ def main(config, mle_log, log_ext=""):
     # Parallelization across multiple GPUs
     n_devices = jax.local_device_count()
     print(f"\n{n_devices=} detected.\n")
-
     rng = jax.random.PRNGKey(config["seed_model"])
     # Setup the model architecture
     rng, rng_init, rng_maps_buffer = jax.random.split(rng, 3)
-    
     curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     env = TerraEnvBatch()
     config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
@@ -58,7 +56,7 @@ def main(config, mle_log, log_ext=""):
 
     # Run the training loop (either evosax ES or PPO)
     if config["train_type"] == "PPO":
-        from utils.ppo import train_ppo as train_fn
+        from utils.ppo2 import train_ppo as train_fn
     else:
         raise ValueError("Unknown train_type.")
 
@@ -153,8 +151,9 @@ if __name__ == "__main__":
     )
     args, _ = parser.parse_known_args()
     config = load_config(args.config_fname, args.seed_env, args.seed_model, args.lrate, args.wandb, args.run_name, args.model_path)
-    main(
-        config["train_config"],
-        mle_log=None,
-        log_ext=str(args.lrate) if args.lrate != 5e-04 else "",
-    )
+    with jax.disable_jit():
+        main(
+            config["train_config"],
+            mle_log=None,
+            log_ext=str(args.lrate) if args.lrate != 5e-04 else "",
+        )

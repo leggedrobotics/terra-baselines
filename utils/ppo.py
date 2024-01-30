@@ -14,6 +14,7 @@ import flax
 from flax.training.train_state import TrainState
 import numpy as np
 import tqdm
+from terra.Transition import Transition
 from terra.env import TerraEnvBatch
 from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
@@ -47,8 +48,8 @@ class AdaptiveRewardNormalizer(NamedTuple):
 
 
 class ConstantRewardNormalizer(NamedTuple):
-    max_reward: float 
-    
+    max_reward: float
+
     @partial(jax.jit, static_argnums=(0,))
     def update(self, rewards: Array) -> "ConstantRewardNormalizer":
         return ConstantRewardNormalizer(self.max_reward)
@@ -56,7 +57,7 @@ class ConstantRewardNormalizer(NamedTuple):
     @partial(jax.jit, static_argnums=(0,))
     def normalize(self, rewards: Array) -> Array:
         return rewards / self.max_reward
-    
+
 
 class AdaptiveScaledRewardNormalizer(NamedTuple):
     max_reward: float
@@ -86,14 +87,14 @@ class AdaptiveScaledRewardNormalizer(NamedTuple):
 
 class BatchManager:
     def __init__(
-        self,
-        discount: float,
-        gae_lambda: float,
-        n_steps: int,
-        num_envs: int,
-        n_devices: int,
-        mask_out_arm_extension: bool,
-        observation_shapes,
+            self,
+            discount: float,
+            gae_lambda: float,
+            n_steps: int,
+            num_envs: int,
+            n_devices: int,
+            mask_out_arm_extension: bool,
+            observation_shapes,
     ):
         self.num_envs = num_envs
         self.buffer_size = num_envs * n_steps
@@ -103,7 +104,7 @@ class BatchManager:
         self.mask_out_arm_extension = mask_out_arm_extension
         self.observation_shapes = observation_shapes
         self.num_envs_one_device = num_envs // n_devices
-    
+
     @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(0, 2, 3))
     def reset(self, dummy, action_size, num_actions):
         local_maps_obs_shape = self.observation_shapes["local_map_action_neg"]
@@ -111,52 +112,52 @@ class BatchManager:
             local_maps_obs_shape = list(self.observation_shapes["local_map_action_neg"])
             local_maps_obs_shape[-1] = 1
             local_maps_obs_shape = tuple(local_maps_obs_shape)
-            
+
         return {
             "states": {
                 "agent_states": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["agent_states"])),
-                    dtype=jnp.int16,    
+                    dtype=jnp.int16,
                 ),
                 "local_map_action_neg": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
-                    dtype=jnp.int8,    
+                    dtype=jnp.int8,
                 ),
                 "local_map_action_pos": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
-                    dtype=jnp.int8,    
+                    dtype=jnp.int8,
                 ),
                 "local_map_target_neg": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
-                    dtype=jnp.int8,    
+                    dtype=jnp.int8,
                 ),
                 "local_map_target_pos": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
-                    dtype=jnp.int8,    
+                    dtype=jnp.int8,
                 ),
                 "local_map_dumpability": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
-                    dtype=jnp.int8,    
+                    dtype=jnp.int8,
                 ),
                 "local_map_obstacles": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *local_maps_obs_shape),
-                    dtype=jnp.int8,    
+                    dtype=jnp.int8,
                 ),
                 "action_map": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["action_map"])),
-                    dtype=jnp.int8,    
+                    dtype=jnp.int8,
                 ),
                 "target_map": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["target_map"])),
-                    dtype=jnp.int8,    
+                    dtype=jnp.int8,
                 ),
                 "traversability_mask": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["traversability_mask"])),
-                    dtype=jnp.int8,    
+                    dtype=jnp.int8,
                 ),
                 "do_preview": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["do_preview"])),
-                    dtype=jnp.int8,    
+                    dtype=jnp.int8,
                 ),
                 "dig_map": jnp.empty(
                     (self.n_steps, self.num_envs_one_device, *(self.observation_shapes["dig_map"])),
@@ -182,7 +183,7 @@ class BatchManager:
             "dones": jnp.empty(
                 (self.n_steps, self.num_envs_one_device),
                 dtype=jnp.uint8
-                ),
+            ),
             "log_pis_old": jnp.empty(
                 (self.n_steps, self.num_envs_one_device),
                 dtype=jnp.float32
@@ -199,29 +200,36 @@ class BatchManager:
         # Normalize the rewards
         reward = reward_normalizer.normalize(reward)
         return {
-                "states": {
-                    "agent_states": buffer["states"]["agent_states"].at[buffer["_p"]].set(obs["agent_state"]),
-                    "local_map_action_neg": buffer["states"]["local_map_action_neg"].at[buffer["_p"]].set(obs["local_map_action_neg"]),
-                    "local_map_action_pos": buffer["states"]["local_map_action_pos"].at[buffer["_p"]].set(obs["local_map_action_pos"]),
-                    "local_map_target_neg": buffer["states"]["local_map_target_neg"].at[buffer["_p"]].set(obs["local_map_target_neg"]),
-                    "local_map_target_pos": buffer["states"]["local_map_target_pos"].at[buffer["_p"]].set(obs["local_map_target_pos"]),
-                    "local_map_dumpability": buffer["states"]["local_map_dumpability"].at[buffer["_p"]].set(obs["local_map_dumpability"]),
-                    "local_map_obstacles": buffer["states"]["local_map_obstacles"].at[buffer["_p"]].set(obs["local_map_obstacles"]),
-                    "action_map": buffer["states"]["action_map"].at[buffer["_p"]].set(obs["action_map"]),
-                    "target_map": buffer["states"]["target_map"].at[buffer["_p"]].set(obs["target_map"]),
-                    "traversability_mask": buffer["states"]["traversability_mask"].at[buffer["_p"]].set(obs["traversability_mask"]),
-                    "do_preview": buffer["states"]["do_preview"].at[buffer["_p"]].set(obs["do_preview"]),
-                    "dig_map": buffer["states"]["dig_map"].at[buffer["_p"]].set(obs["dig_map"]),
-                    "dumpability_mask": buffer["states"]["dumpability_mask"].at[buffer["_p"]].set(obs["dumpability_mask"]),
-                },
-                "action_mask": buffer["action_mask"].at[buffer["_p"]].set(action_mask.squeeze()),
-                "actions": buffer["actions"].at[buffer["_p"]].set(action.squeeze()),
-                "rewards": buffer["rewards"].at[buffer["_p"]].set(reward.squeeze()),
-                "dones": buffer["dones"].at[buffer["_p"]].set(done.squeeze()),
-                "log_pis_old": buffer["log_pis_old"].at[buffer["_p"]].set(log_pi),
-                "values_old": buffer["values_old"].at[buffer["_p"]].set(value),
-                "_p": (buffer["_p"] + 1) % self.n_steps,
-            }
+            "states": {
+                "agent_states": buffer["states"]["agent_states"].at[buffer["_p"]].set(obs["agent_state"]),
+                "local_map_action_neg": buffer["states"]["local_map_action_neg"].at[buffer["_p"]].set(
+                    obs["local_map_action_neg"]),
+                "local_map_action_pos": buffer["states"]["local_map_action_pos"].at[buffer["_p"]].set(
+                    obs["local_map_action_pos"]),
+                "local_map_target_neg": buffer["states"]["local_map_target_neg"].at[buffer["_p"]].set(
+                    obs["local_map_target_neg"]),
+                "local_map_target_pos": buffer["states"]["local_map_target_pos"].at[buffer["_p"]].set(
+                    obs["local_map_target_pos"]),
+                "local_map_dumpability": buffer["states"]["local_map_dumpability"].at[buffer["_p"]].set(
+                    obs["local_map_dumpability"]),
+                "local_map_obstacles": buffer["states"]["local_map_obstacles"].at[buffer["_p"]].set(
+                    obs["local_map_obstacles"]),
+                "action_map": buffer["states"]["action_map"].at[buffer["_p"]].set(obs["action_map"]),
+                "target_map": buffer["states"]["target_map"].at[buffer["_p"]].set(obs["target_map"]),
+                "traversability_mask": buffer["states"]["traversability_mask"].at[buffer["_p"]].set(
+                    obs["traversability_mask"]),
+                "do_preview": buffer["states"]["do_preview"].at[buffer["_p"]].set(obs["do_preview"]),
+                "dig_map": buffer["states"]["dig_map"].at[buffer["_p"]].set(obs["dig_map"]),
+                "dumpability_mask": buffer["states"]["dumpability_mask"].at[buffer["_p"]].set(obs["dumpability_mask"]),
+            },
+            "action_mask": buffer["action_mask"].at[buffer["_p"]].set(action_mask.squeeze()),
+            "actions": buffer["actions"].at[buffer["_p"]].set(action.squeeze()),
+            "rewards": buffer["rewards"].at[buffer["_p"]].set(reward.squeeze()),
+            "dones": buffer["dones"].at[buffer["_p"]].set(done.squeeze()),
+            "log_pis_old": buffer["log_pis_old"].at[buffer["_p"]].set(log_pi),
+            "values_old": buffer["values_old"].at[buffer["_p"]].set(value),
+            "_p": (buffer["_p"] + 1) % self.n_steps,
+        }
 
     @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(0,))
     def get(self, buffer):
@@ -259,7 +267,7 @@ class BatchManager:
 
     @partial(jax.jit, static_argnums=0)
     def calculate_gae(
-        self, value: jnp.ndarray, reward: jnp.ndarray, done: jnp.ndarray
+            self, value: jnp.ndarray, reward: jnp.ndarray, done: jnp.ndarray
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         advantages = []
         gae = 0.0
@@ -274,7 +282,7 @@ class BatchManager:
 
 
 class RolloutManager(object):
-    def __init__(self, env, n_envs: int, rl_config, observation_shapes, model = None):
+    def __init__(self, env, n_envs: int, rl_config, observation_shapes, model=None):
         # Setup functionalities for vectorized batch rollout
         self.env: TerraEnvBatch = env
         # self.apply_fn = model.apply
@@ -290,11 +298,11 @@ class RolloutManager(object):
 
     @partial(jax.jit, static_argnums=0)
     def select_action_ppo(
-        self,
-        train_state: TrainState,
-        obs: jnp.ndarray,
-        action_mask: Array,
-        rng: jax.random.PRNGKey,
+            self,
+            train_state: TrainState,
+            obs: jnp.ndarray,
+            action_mask: Array,
+            rng: jax.random.PRNGKey,
     ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.random.PRNGKey]:
         # Prepare policy input from Terra State
         obs = obs_to_model_input(obs)
@@ -303,13 +311,13 @@ class RolloutManager(object):
         action = pi.sample(seed=rng)
         log_prob = pi.log_prob(action)
         return action, log_prob, value[:, 0]
-    
+
     @partial(jax.jit, static_argnums=0)
     def select_action_ppo_deterministic(
-        self,
-        train_state: TrainState,
-        obs: jnp.ndarray,
-        action_mask: Array,
+            self,
+            train_state: TrainState,
+            obs: jnp.ndarray,
+            action_mask: Array,
     ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.random.PRNGKey]:
         # Prepare policy input from Terra State
         obs = obs_to_model_input(obs)
@@ -323,17 +331,18 @@ class RolloutManager(object):
     @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(0,))
     def batch_reset(self, seeds, env_cfgs):
         return self.env.reset(seeds, env_cfgs)
-    
+
     def batch_reset_eval(self, keys, env_cfgs):
         seeds = jnp.array([k[0] for k in keys])
         return self.env.reset(seeds, env_cfgs)
 
     @partial(jax.jit, static_argnums=(0,))
-    def batch_step(self, states, actions, env_cfgs, maps_buffer_keys):
+    def batch_step(self, states, actions, env_cfgs, maps_buffer_keys) -> (Transition, Any):
         return self.env.step(states, actions, env_cfgs, maps_buffer_keys)
-    
+
     @partial(jax.jit, static_argnums=(0, 3, 6, 8, 9))
-    def _batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension):
+    def _batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs,
+                        clip_action_maps, mask_out_arm_extension):
         # Reset the environment
         rng_reset, rng_episode = jax.random.split(rng_input)
         state, obs, maps_buffer_keys = self.batch_reset_eval(jax.random.split(rng_reset, num_envs), env_cfgs)
@@ -342,22 +351,22 @@ class RolloutManager(object):
             """lax.scan compatible step transition in jax env."""
             obs, state, train_state, rng, cum_reward, valid_mask, done, action_mask, maps_buffer_keys, episode_length, episode_done_once = state_input
             rng, rng_step, rng_net = jax.random.split(rng, 3)
-            
+
             if clip_action_maps:
                 obs = clip_action_maps_in_obs(obs)
             if mask_out_arm_extension:
                 obs = cut_local_map_layers(obs)
-            
+
             action, _ = self.select_action_deterministic(train_state, obs, action_mask)
             # jax.debug.print("bicount action = {x}", x=jnp.bincount(action, length=9))
-            next_s, (next_o, reward, done, infos), maps_buffer_keys = self.batch_step(
+            transition, maps_buffer_keys = self.batch_step(
                 state,
                 wrap_action(action.squeeze(), self.env.batch_cfg.action_type),
                 env_cfgs,
                 maps_buffer_keys,
             )
-            action_mask = infos["action_mask"]
-            new_cum_reward = cum_reward + reward * valid_mask
+            action_mask = transition.infos["action_mask"]
+            new_cum_reward = cum_reward + transition.reward * valid_mask
             new_valid_mask = valid_mask * (1 - done)
 
             # Update episode length
@@ -365,8 +374,8 @@ class RolloutManager(object):
             episode_length += ~episode_done_once
 
             carry, y = [
-                next_o,
-                next_s,
+                transition.obs,
+                transition.next_state,
                 train_state,
                 rng,
                 new_cum_reward,
@@ -396,7 +405,7 @@ class RolloutManager(object):
                 jnp.array(num_envs * [0], dtype=jnp.bool_),  # episode done once
             ],
             (),
-            300, #num_steps_test_rollouts,
+            300,  # num_steps_test_rollouts,
         )
 
         cum_return = carry_out[4].squeeze()
@@ -404,12 +413,15 @@ class RolloutManager(object):
         episode_length = carry_out[9].squeeze()
         obs_log = scan_out[0]
         return jnp.mean(cum_return), dones, obs_log, episode_length
-    
-    
-    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension):
+
+    def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs,
+                       clip_action_maps, mask_out_arm_extension):
         """Rollout an episode with lax.scan"""
-        cum_return_mean, dones, obs_log, episode_length = self._batch_evaluate(rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension)
+        cum_return_mean, dones, obs_log, episode_length = self._batch_evaluate(rng_input, train_state, num_envs, step,
+                                                                               action_mask_init, n_evals_save, env_cfgs,
+                                                                               clip_action_maps, mask_out_arm_extension)
         return cum_return_mean, dones, obs_log, episode_length
+
 
 @partial(jax.jit, static_argnums=0)
 def policy(
@@ -422,15 +434,17 @@ def policy(
     pi = tfp.distributions.Categorical(logits=logits_pi)
     return value, pi
 
+
 @partial(jax.jit, static_argnums=0)
 def policy_deterministic(
-    apply_fn: Callable[..., Any],
-    params: flax.core.frozen_dict.FrozenDict,
-    obs: jnp.ndarray,
-    action_mask: Array
+        apply_fn: Callable[..., Any],
+        params: flax.core.frozen_dict.FrozenDict,
+        obs: jnp.ndarray,
+        action_mask: Array
 ):
     value, logits_pi = apply_fn(params, obs, action_mask)
     return value, np.argmax(logits_pi, axis=-1)
+
 
 def create_train_state(params, apply_fn, tx):
     @jax.pmap
@@ -440,13 +454,16 @@ def create_train_state(params, apply_fn, tx):
             params=p,
             tx=tx,
         )
+
     return _create_train_state(params)
 
-def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str, n_devices: int):
+
+
+def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str,
+              n_devices: int):
     """Training loop for PPO based on https://github.com/bmazoure/ppo_jax."""
     if config["wandb"]:
         import wandb
-    
     num_total_epochs = int(config["num_train_steps"] // config["num_train_envs"] + 1)
     num_steps_warm_up = int(config["num_train_steps"] * config["lr_warmup"])
     schedule_fn = optax.linear_schedule(
@@ -490,21 +507,22 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     elif config["reward_normalizer"] == "adaptive-scaled":
         reward_normalizer = AdaptiveScaledRewardNormalizer(max_reward=config["max_reward"])
     else:
-        raise(ValueError(f"{config['reward_normalizer']=}"))
+        raise (ValueError(f"{config['reward_normalizer']=}"))
 
     @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(8,))
     def get_transition(
-        train_state: TrainState,
-        obs: jnp.ndarray,
-        state: dict,
-        batch,
-        action_mask: Array,
-        rng: jax.random.PRNGKey,
-        env_cfgs,
-        maps_buffer_keys: jax.random.PRNGKey,
-        reward_normalizer,
+            train_state: TrainState,
+            obs: jnp.ndarray,
+            state: dict,
+            batch,
+            action_mask: Array,
+            rng: jax.random.PRNGKey,
+            env_cfgs,
+            maps_buffer_keys: jax.random.PRNGKey,
+            reward_normalizer,
     ):
         new_key, key_step = jax.random.split(rng)
+        print("inside GPU", train_state.params["params"]["agent_state_net"]["embedding"]["embedding"].shape)
 
         if config["clip_action_maps"]:
             obs = clip_action_maps_in_obs(obs)
@@ -515,14 +533,23 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             train_state, obs, action_mask, key_step
         )
         action = wrap_action(action, rollout_manager.env.batch_cfg.action_type)
-        
-        next_state, (next_obs, reward, done, infos), maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys)
-        terminated = infos["done_task"]
-        reward_normalizer = reward_normalizer.update(reward)
+
+        transition, _maps_buffer_keys = rollout_manager.batch_step(state, action, env_cfgs, maps_buffer_keys)
+        terminated = transition.infos["done_task"]
+        reward_normalizer = reward_normalizer.update(transition.reward)
         batch = batch_manager.append(
-            batch, obs, action.action, reward, done, log_pi, value, infos["action_mask"], reward_normalizer
+            batch, obs, action.action, transition.reward, transition.done, log_pi, value, transition.infos["action_mask"],
+            reward_normalizer
         )
-        return train_state, next_obs, next_state, batch, new_key, infos["action_mask"], done, terminated, maps_buffer_keys
+        return (train_state,
+                transition.obs,
+                transition.next_state,
+                batch,
+                new_key,
+                transition.infos["action_mask"],
+                transition.done,
+                terminated,
+                _maps_buffer_keys)
 
     batch = batch_manager.reset(
         jnp.empty((n_devices, 1)),
@@ -535,10 +562,10 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     rng_update = jax.random.split(rng_update, n_devices)
 
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_init()
-    
+
     # Init batch over multiple devices with different env seeds
     k_dev_envs = jax.random.split(rng_reset, config["num_train_envs"])
-    seeds = jnp.array([k[0] for k in k_dev_envs]).reshape(n_devices, -1)
+    seeds = k_dev_envs.reshape((1,k_dev_envs.shape[0],k_dev_envs.shape[1]))
     state, obs, maps_buffer_keys = rollout_manager.batch_reset(
         seeds, env_cfgs
     )
@@ -553,6 +580,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     all_dones_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
     best_historical_eval_reward = -1e6
     s = time.time()
+
     for step in t:
         train_state, obs, state, batch, rng_step, action_mask, done, terminated, maps_buffer_keys = get_transition(
             train_state,
@@ -565,6 +593,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             maps_buffer_keys,
             reward_normalizer,
         )
+
         terminated = terminated.reshape(-1)
         done = done.reshape(-1)
         terminated_aggregate = terminated_aggregate | terminated
@@ -576,7 +605,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             time_diff = e - s
             steps_elapsed = config["n_steps"]
             steps_per_sec = steps_elapsed * config['num_train_envs'] / time_diff
-            
+
             metric_dict, train_state, rng_update = update(
                 train_state,
                 batch_manager.get(batch),
@@ -589,7 +618,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                 config["critic_coeff"],
                 rng_update,
             )
-            
+
             metric_dict = reduce_metric_dict(metric_dict)
 
             e_full = time.time()
@@ -609,7 +638,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
                         "env steps per second including update": steps_per_sec_full,
                     }
                 )
-            
+
             env_cfgs, dofs_count_dict = curriculum.get_cfgs(metric_dict, terminated_aggregate, timeouts)
 
             batch = batch_manager.reset(
@@ -623,7 +652,6 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             all_dones_update = np.zeros(config["num_train_envs"], dtype=np.bool_)
 
             s = time.time()
-
 
         if (step + 1) % config["evaluate_every_epochs"] == 0:
             rng, rng_eval = jax.random.split(rng)
@@ -691,12 +719,14 @@ def reduce_metric_dict(metric_dict):
     The values in there are duplicated on axis 0 as they come from different devices in sync.
     """
     return jax.tree_map(
-        lambda x: x[0], metric_dict 
-        )
+        lambda x: x[0], metric_dict
+    )
+
 
 @jax.jit
 def flatten_dims(x):
     return x.swapaxes(0, 1).reshape(x.shape[0] * x.shape[1], *x.shape[2:])
+
 
 def obs_to_model_input(obs):
     """
@@ -718,11 +748,13 @@ def obs_to_model_input(obs):
         obs["dumpability_mask"],
     ]
 
+
 def clip_action_maps_in_obs(obs):
     obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
     obs["do_preview"] = jnp.clip(obs["do_preview"], a_min=-1, a_max=1)
     obs["dig_map"] = jnp.clip(obs["dig_map"], a_min=-1, a_max=1)
     return obs
+
 
 def cut_local_map_layers(obs):
     """Only keep the first layer of the local map"""
@@ -734,25 +766,26 @@ def cut_local_map_layers(obs):
     obs["local_map_obstacles"] = obs["local_map_obstacles"][..., [0]]
     return obs
 
+
 def wrap_action(action, action_type):
     action = action_type.new(action[:, None])
     return action
 
-def loss_actor_and_critic(
-    params_model: flax.core.frozen_dict.FrozenDict,
-    apply_fn: Callable[..., Any],
-    obs: jnp.ndarray,
-    target: jnp.ndarray,
-    value_old: jnp.ndarray,
-    log_pi_old: jnp.ndarray,
-    gae: jnp.ndarray,
-    action_mask: jnp.ndarray,
-    action: jnp.ndarray,
-    clip_eps: float,
-    critic_coeff: float,
-    entropy_coeff: float,
-) -> jnp.ndarray:
 
+def loss_actor_and_critic(
+        params_model: flax.core.frozen_dict.FrozenDict,
+        apply_fn: Callable[..., Any],
+        obs: jnp.ndarray,
+        target: jnp.ndarray,
+        value_old: jnp.ndarray,
+        log_pi_old: jnp.ndarray,
+        gae: jnp.ndarray,
+        action_mask: jnp.ndarray,
+        action: jnp.ndarray,
+        clip_eps: float,
+        critic_coeff: float,
+        entropy_coeff: float,
+) -> jnp.ndarray:
     value_pred, logits_pi = apply_fn(params_model, obs, action_mask)
     pi = tfp.distributions.Categorical(logits=logits_pi)
     value_pred = value_pred[:, 0]
@@ -778,7 +811,7 @@ def loss_actor_and_critic(
     entropy = pi.entropy().mean()
 
     total_loss = (
-        loss_actor + critic_coeff * value_loss - entropy_coeff * entropy
+            loss_actor + critic_coeff * value_loss - entropy_coeff * entropy
     )
 
     return total_loss, (
@@ -793,40 +826,40 @@ def loss_actor_and_critic(
 
 @partial(jax.pmap, axis_name="model", static_broadcasted_argnums=(2, 3, 4, 5, 6, 7, 8,))
 def update(
-    train_state: TrainState,
-    batch: Tuple,
-    num_envs: int,
-    n_steps: int,
-    n_minibatch: int,
-    epoch_ppo: int,
-    clip_eps: float,
-    entropy_coeff: float,
-    critic_coeff: float,
-    rng: jax.random.PRNGKey,
+        train_state: TrainState,
+        batch: Tuple,
+        num_envs: int,
+        n_steps: int,
+        n_minibatch: int,
+        epoch_ppo: int,
+        clip_eps: float,
+        entropy_coeff: float,
+        critic_coeff: float,
+        rng: jax.random.PRNGKey,
 ):
     """Perform multiple epochs of updates with multiple updates."""
     obs, action_mask, action, log_pi_old, value, target, gae, rewards, dones = batch
     idxes_init = jnp.arange(num_envs * n_steps)
-    
+
     def _epochs_scan(train_state: TrainState, subkey: jax.random.PRNGKeyArray):
         idxes = jax.random.permutation(subkey, idxes_init)
         idxes = idxes.reshape(n_minibatch, -1)
 
         train_state, total_loss = update_epoch_scan(
-                train_state,
-                idxes,
-                [flatten_dims(el) for el in obs],
-                flatten_dims(action_mask),
-                flatten_dims(action),
-                flatten_dims(log_pi_old),
-                flatten_dims(value),
-                jnp.array(flatten_dims(target)),
-                jnp.array(flatten_dims(gae)),
-                clip_eps,
-                entropy_coeff,
-                critic_coeff,
-            )
-        
+            train_state,
+            idxes,
+            [flatten_dims(el) for el in obs],
+            flatten_dims(action_mask),
+            flatten_dims(action),
+            flatten_dims(log_pi_old),
+            flatten_dims(value),
+            jnp.array(flatten_dims(target)),
+            jnp.array(flatten_dims(gae)),
+            clip_eps,
+            entropy_coeff,
+            critic_coeff,
+        )
+
         total_loss, (
             value_loss,
             loss_actor,
@@ -875,21 +908,23 @@ def update(
 
 
 def update_epoch_scan(
-    train_state: TrainState,
-    idxes: jnp.ndarray,
-    obs,
-    action_mask,
-    action,
-    log_pi_old,
-    value,
-    target,
-    gae,
-    clip_eps: float,
-    entropy_coeff: float,
-    critic_coeff: float,
+        train_state: TrainState,
+        idxes: jnp.ndarray,
+        obs,
+        action_mask,
+        action,
+        log_pi_old,
+        value,
+        target,
+        gae,
+        clip_eps: float,
+        entropy_coeff: float,
+        critic_coeff: float,
 ):
     grad_fn = jax.value_and_grad(loss_actor_and_critic, has_aux=True)
+
     def _update_epoch(train_state, idx):
+        print(train_state.params)
         total_loss, grads = grad_fn(
             train_state.params,
             train_state.apply_fn,
@@ -906,14 +941,14 @@ def update_epoch_scan(
         )
         # Combine loss and grads from different devices
         total_loss = jax.tree_map(
-            lambda x: jax.lax.pmean(x, axis_name="model"), total_loss 
+            lambda x: jax.lax.pmean(x, axis_name="model"), total_loss
         )
         grads = jax.lax.pmean(grads, axis_name="model")
 
         train_state = train_state.apply_gradients(grads=grads)
         l = jnp.array([total_loss[0], *total_loss[1]])
         return train_state, l
-    
+
     train_state, total_loss_l = jax.lax.scan(
         _update_epoch,
         train_state,

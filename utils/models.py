@@ -229,7 +229,7 @@ class AtariCNN(nn.Module):
         x = nn.Conv(features=16, kernel_size=(3, 3), strides=(1, 1))(x)
         x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
-        
+        print(x.shape)
         x = nn.Dense(features=64)(x)
         x = nn.relu(x)
         x = nn.Dense(features=32)(x)

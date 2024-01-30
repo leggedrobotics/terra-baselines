@@ -12,10 +12,10 @@ train_config:
   use_action_masking: False
   mask_out_arm_extension: True  # Note: this also removes features from arm extension in the local maps
 
-  num_train_envs: 7250  # Number of parallel env workers
+  num_train_envs: 10  # Number of parallel env workers
   epoch_ppo: 3  # "Number of PPO epochs on a single batch"
-  n_steps: 32 # "GAE n-steps"
-  n_minibatch: 500 # "Number of PPO minibatches" -> Note: compile time scales with it!
+  n_steps: 6 # "GAE n-steps"
+  n_minibatch: 2 # "Number of PPO minibatches" -> Note: compile time scales with it!
   lr_begin: 3e-04  # Start PPO learning rate
   lr_end: 3e-04 #  End PPO learning rate
   lr_warmup: 0.05 # Prop epochs until warmup is completed 
@@ -52,7 +52,7 @@ train_config:
   network_name: "SimplifiedCoupledCategoricalNet" # "SimplifiedDecoupledCategoricalNet"
 
   n_evals_save: 9
-  profile: False
+  profile: True
   save_episode_for_replay: False
 
 log_config:
