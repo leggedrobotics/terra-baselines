@@ -477,7 +477,6 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
         optax.scale_by_adam(eps=1e-5),
         optax.scale_by_schedule(schedule_fn),
     )
-
     # Initialize the models on multiple GPUs with the same params
     replicated_params = jax.tree_map(lambda x: jnp.array([x] * n_devices), params)
     train_state = create_train_state(
@@ -522,7 +521,6 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
             reward_normalizer,
     ):
         new_key, key_step = jax.random.split(rng)
-        print("inside GPU", train_state.params["params"]["agent_state_net"]["embedding"]["embedding"].shape)
 
         if config["clip_action_maps"]:
             obs = clip_action_maps_in_obs(obs)
@@ -562,7 +560,6 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     rng_update = jax.random.split(rng_update, n_devices)
 
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_init()
-
     # Init batch over multiple devices with different env seeds
     k_dev_envs = jax.random.split(rng_reset, config["num_train_envs"])
     seeds = k_dev_envs.reshape((1,k_dev_envs.shape[0],k_dev_envs.shape[1]))
@@ -924,7 +921,6 @@ def update_epoch_scan(
     grad_fn = jax.value_and_grad(loss_actor_and_critic, has_aux=True)
 
     def _update_epoch(train_state, idx):
-        print(train_state.params)
         total_loss, grads = grad_fn(
             train_state.params,
             train_state.apply_fn,

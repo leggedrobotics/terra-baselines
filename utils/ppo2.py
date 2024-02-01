@@ -16,6 +16,7 @@ import numpy as np
 import tqdm
 from terra.Transition import Transition
 from terra.env import TerraEnvBatch, TerraEnv
+from terra.maps_buffer import init_maps_buffer
 from terra.state import State
 
 from utils.curriculum import Curriculum
@@ -25,7 +26,7 @@ from terra.config import EnvConfig
 from typing import NamedTuple
 
 from utils.ppo import ConstantRewardNormalizer, AdaptiveRewardNormalizer, AdaptiveScaledRewardNormalizer, \
-    obs_to_model_input, loss_actor_and_critic
+    obs_to_model_input, loss_actor_and_critic, clip_action_maps_in_obs, cut_local_map_layers, wrap_action, update
 
 
 def create_train_state(params, apply_fn, tx):
@@ -40,20 +41,22 @@ def create_train_state(params, apply_fn, tx):
     return _create_train_state(params)
 
 
-
-class StepState(NamedTuple):
+class StepStateUnvectorized(NamedTuple):
     train_state: TrainState
-    env_state: State
-    obs: Any
     action_mask: Any
-    env: TerraEnv
+    env: TerraEnvBatch
     maps_buffer_keys: Any
     rng: jax.random.PRNGKey
     reward_normalizer: Any
 
 
+class StepState(NamedTuple):
+    env_state: State
+    obs: Any
+
+
 def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str,
-                n_devices: int):
+              n_devices: int):
     num_updates = config["num_train_steps"] // config["n_steps"] // config["num_train_envs"]
     num_steps_warm_up = int(config["num_train_steps"] * config["lr_warmup"])
     env_cfgs, dofs_count_dict = curriculum.get_cfgs_init()
@@ -70,9 +73,6 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         optax.scale_by_schedule(schedule_fn),
     )
 
-
-
-
     if config["reward_normalizer"] == "constant":
         reward_normalizer = ConstantRewardNormalizer(max_reward=config["max_reward"])
     elif config["reward_normalizer"] == "adaptive":
@@ -82,84 +82,91 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
     else:
         raise (ValueError(f"{config['reward_normalizer']=}"))
 
-    def calculate_gae(value: jnp.ndarray, reward: jnp.ndarray, done: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        advantages = []
-        gae = 0.0
-        for t in reversed(range(len(reward) - 1)):
-            value_diff = config["gamma"] * value[t + 1] * (1 - done[t]) - value[t]
-            delta = reward[t] + value_diff
-            gae = delta + config["gamma"] * config["gae_lambda"] * (1 - done[t]) * gae
-            advantages.append(gae)
-        advantages = advantages[::-1]
-        advantages = jnp.array(advantages)
-        return advantages, advantages + value[:-1]
+    def _calculate_gae(traj_batch, last_val):
+        def _get_advantages(gae_and_next_value, transition):
+            print(transition)
+            gae, next_value = gae_and_next_value
+            done, value, reward = (
+                transition.done,
+                transition.value,
+                transition.reward,
+            )
+            delta = reward + config["gamma"] * next_value * (1 - done) - value
+            gae = (
+                    delta
+                    + config["gamma"] * config["gae_lambda"] * (1 - done) * gae
+            )
+            return (gae, value), gae
+
+        _, advantages = jax.lax.scan(
+            _get_advantages,
+            (jnp.zeros_like(last_val), last_val),
+            traj_batch,
+            reverse=True,
+            unroll=16,
+        )
+        return advantages, advantages + traj_batch.value
 
     def _update_step():
 
         @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(0,))
-        def _individual_gradients(env: TerraEnvBatch, _env_config: EnvConfig, _rng, _train_state: TrainState):
+        def _individual_gradients(_envBatch: TerraEnvBatch, _env_config: EnvConfig, _rng, _train_state: TrainState):
 
-            @jax.vmap
-            def _env_step(step_state: StepState, _) -> (StepState, Transition):
-                current, next = jax.random.split(step_state.rng, 2)
+            def vectorized_step(step_state_tuple: (StepState, StepStateUnvectorized), _):
+                _step_state = step_state_tuple[0]
+                unvectorized_step_state = step_state_tuple[1]
+                current, next = jax.random.split(unvectorized_step_state.rng, 2)
+
                 obs = step_state.obs
-                _train_state: TrainState = step_state.train_state
+                _train_state: TrainState = unvectorized_step_state.train_state
                 model_input_obs = obs_to_model_input(obs)
-                value, logits_pi = _train_state.apply_fn(_train_state.params, model_input_obs, step_state.action_mask)
+                value, logits_pi = _train_state.apply_fn(_train_state.params, model_input_obs,
+                                                         unvectorized_step_state.action_mask)
                 pi = tfp.distributions.Categorical(logits=logits_pi)
                 action = pi.sample(seed=current)
                 log_prob = pi.log_prob(action)
-                value = value[:,0]
-                transition = step_state.env.step(step_state.env_state,action, step_state.env_state.env_cfg, step_state.maps_buffer_keys)
-                reward_normalizer = step_state.reward_normalizer.update(transition.reward)
-
-                new_step_state = StepState(step_state.train_state,
-                                           transition.next_state,
-                                           transition.obs,
-                                           transition.infos["action_mask"],
-                                           step_state.maps_buffer_keys,
-                                           next, reward_normalizer)
+                value = value[:, 0]
+                wrapped_action = wrap_action(action,env.batch_cfg.action_type)
+                transition, next_map_buffer_keys =unvectorized_step_state.env.step(_step_state.env_state, wrapped_action, _env_config, unvectorized_step_state.maps_buffer_keys)
+                reward_normalizer = unvectorized_step_state.reward_normalizer.update(transition.reward)
+                new_unvectorized_step_state = StepStateUnvectorized(unvectorized_step_state.train_state,
+                                                                    transition.infos["action_mask"],
+                                                                    unvectorized_step_state.env,
+                                                                    unvectorized_step_state.maps_buffer_keys,
+                                                                    next, reward_normalizer)
+                new_step_state = StepState(transition.next_state,
+                                           transition.obs)
                 terminated = transition.infos["done_task"]
 
-                return new_step_state, (transition.obs,
-                                        action.action,
-                                        transition.reward,
-                                        transition.done,
-                                        log_prob,
-                                        value,
-                                        transition.infos["action_mask"],
-                                        reward_normalizer)
-
+                return (new_step_state, new_unvectorized_step_state), (transition.obs,
+                                                                       wrapped_action.action,
+                                                                       transition.reward,
+                                                                       transition.done,
+                                                                       log_prob,
+                                                                       value,
+                                                                       transition.infos["action_mask"],
+                                                                       reward_normalizer)
 
             current, next = jax.random.split(_rng, 2)
             # Init batch over multiple devices with different env seeds
             k_dev_envs = jax.random.split(current, config["num_train_envs"])
-            env_state, obs, maps_buffer_keys = env.reset(k_dev_envs, _env_config)
+            env_state, obs, maps_buffer_keys = _envBatch.reset(k_dev_envs, _env_config)
+            if config["clip_action_maps"]:
+                obs = clip_action_maps_in_obs(obs)
+            if config["mask_out_arm_extension"]:
+                obs = cut_local_map_layers(obs)
             # multi_reset = jax.vmap(env.reset, in_axes=(0, None))
             # env_state, obs, maps_buffer_keys = multi_reset(k_dev_envs, env_config)
-            multi_stepstate = jax.vmap(StepState, in_axes=(None, 0, 0, None, None, None, None, None))
-            step_state = multi_stepstate(_train_state, env_state, obs, None, env.terra_env, maps_buffer_keys, next, reward_normalizer)
-            carry, progress = jax.lax.scan(_env_step, step_state, None, length=config["n_steps"])
-            grad_fn = jax.value_and_grad(loss_actor_and_critic, has_aux=True)
-            value = [step[5] for step in progress]
-            log_pi = [step[4] for step in progress]
-            action_mask = [step[6] for step in progress]
-            actions = [step[1] for step in progress]
-            gae, target = calculate_gae(value, [step[2] for step in progress], [step[3] for step in progress])
-            total_loss, grads = grad_fn(_train_state.params,
-                                        _train_state.apply_fn,
-                                        obs=[step[0] for step in progress],
-                                        target=target,
-                                        value_old=value,
-                                        log_pi_old=log_pi,
-                                        gae=gae,
-                                        action_mask=action_mask,
-                                        action=actions,
-                                        clip_eps=config["clip_eps"],
-                                        critical_coeff=config["critic_coeff"],
-                                        entropy_coeff=config["entropy_coeff"],
-                                        )
-            return total_loss, grads
+            multi_stepstate = jax.vmap(StepState, in_axes=(0, 0))
+            step_state = multi_stepstate(env_state, obs)
+            step_state_unvectorized = StepStateUnvectorized(_train_state, None, _envBatch, maps_buffer_keys, next,
+                                                            reward_normalizer)
+            carry, progress = jax.lax.scan(vectorized_step, (step_state, step_state_unvectorized), None,
+                                           length=config["n_steps"])
+
+            #Todo Vectorized call
+            last_val, _ = carry[1].train_state.apply_fn(carry[1].train_state.params, obs_to_model_input(carry[0].obs), carry[1].action_mask)
+            _calculate_gae(progress, last_val)
 
         # Initialize the models on multiple GPUs with the same params
         replicated_params = jax.tree_map(lambda x: jnp.array([x] * n_devices), model_params)

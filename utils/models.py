@@ -213,7 +213,6 @@ class LocalMapNet(nn.Module):
             ),
             -1,
         )
-
         x = self.mlp(x.reshape(*x.shape[:-3], -1))
         return x
     
@@ -229,7 +228,6 @@ class AtariCNN(nn.Module):
         x = nn.Conv(features=16, kernel_size=(3, 3), strides=(1, 1))(x)
         x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
-        print(x.shape)
         x = nn.Dense(features=64)(x)
         x = nn.relu(x)
         x = nn.Dense(features=32)(x)
@@ -412,7 +410,6 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         x_agent_state = self.agent_state_net(obs)
         
         x_maps = self.maps_net(obs)
-
         x_local_map = self.local_map_net(obs)
 
         x = jnp.concatenate((x_agent_state, x_maps, x_local_map), axis=-1)
