@@ -55,6 +55,24 @@ class StepState(NamedTuple):
     obs: Any
 
 
+def forward(_step_state: StepState, _unvectorized_step_state: StepStateUnvectorized):
+    current, next = jax.random.split(_unvectorized_step_state.rng, 2)
+
+    obs = _step_state.obs
+    _train_state: TrainState = _unvectorized_step_state.train_state
+    model_input_obs = obs_to_model_input(obs)
+
+    value, logits_pi = _train_state.apply_fn(_train_state.params, model_input_obs,
+                                             _unvectorized_step_state.action_mask)
+    pi = tfp.distributions.Categorical(logits=logits_pi)
+    action = pi.sample(seed=current)
+    log_prob = pi.log_prob(action)
+    value = value[:, 0]
+    wrapped_action = wrap_action(action, _unvectorized_step_state.env.batch_cfg.action_type)
+    return log_prob, value, wrapped_action
+
+
+
 def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str,
               n_devices: int):
     num_updates = config["num_train_steps"] // config["n_steps"] // config["num_train_envs"]
@@ -83,13 +101,14 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         raise (ValueError(f"{config['reward_normalizer']=}"))
 
     def _calculate_gae(traj_batch, last_val):
+
+        # Inherently vectorized, thus no vmap?
         def _get_advantages(gae_and_next_value, transition):
-            print(transition)
             gae, next_value = gae_and_next_value
             done, value, reward = (
-                transition.done,
-                transition.value,
-                transition.reward,
+                transition[3],
+                transition[5],
+                transition[2],
             )
             delta = reward + config["gamma"] * next_value * (1 - done) - value
             gae = (
@@ -105,30 +124,29 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
             reverse=True,
             unroll=16,
         )
-        return advantages, advantages + traj_batch.value
+        return advantages, advantages + traj_batch[5]
 
     def _update_step():
 
         @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(0,))
         def _individual_gradients(_envBatch: TerraEnvBatch, _env_config: EnvConfig, _rng, _train_state: TrainState):
 
-            def vectorized_step(step_state_tuple: (StepState, StepStateUnvectorized), _):
-                _step_state = step_state_tuple[0]
-                unvectorized_step_state = step_state_tuple[1]
-                current, next = jax.random.split(unvectorized_step_state.rng, 2)
 
-                obs = step_state.obs
-                _train_state: TrainState = unvectorized_step_state.train_state
-                model_input_obs = obs_to_model_input(obs)
-                value, logits_pi = _train_state.apply_fn(_train_state.params, model_input_obs,
-                                                         unvectorized_step_state.action_mask)
-                pi = tfp.distributions.Categorical(logits=logits_pi)
-                action = pi.sample(seed=current)
-                log_prob = pi.log_prob(action)
-                value = value[:, 0]
-                wrapped_action = wrap_action(action,env.batch_cfg.action_type)
-                transition, next_map_buffer_keys =unvectorized_step_state.env.step(_step_state.env_state, wrapped_action, _env_config, unvectorized_step_state.maps_buffer_keys)
+
+            def generateObservation(step_state_tuple: (StepState, StepStateUnvectorized), _):
+                _step_state, unvectorized_step_state = step_state_tuple
+
+                # Vectorized forward
+                log_prob, value, wrapped_action = forward(_step_state, unvectorized_step_state)
+
+                # Vectorized env step
+                transition, next_map_buffer_keys = unvectorized_step_state.env.step(_step_state.env_state,
+                                                                                    wrapped_action, _env_config,
+                                                                                    unvectorized_step_state.maps_buffer_keys)
+
+                # Todo Vectorization needed?
                 reward_normalizer = unvectorized_step_state.reward_normalizer.update(transition.reward)
+
                 new_unvectorized_step_state = StepStateUnvectorized(unvectorized_step_state.train_state,
                                                                     transition.infos["action_mask"],
                                                                     unvectorized_step_state.env,
@@ -148,25 +166,122 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
                                                                        reward_normalizer)
 
             current, next = jax.random.split(_rng, 2)
+
             # Init batch over multiple devices with different env seeds
             k_dev_envs = jax.random.split(current, config["num_train_envs"])
+
+            # Vectorized reset
             env_state, obs, maps_buffer_keys = _envBatch.reset(k_dev_envs, _env_config)
+
             if config["clip_action_maps"]:
                 obs = clip_action_maps_in_obs(obs)
             if config["mask_out_arm_extension"]:
                 obs = cut_local_map_layers(obs)
-            # multi_reset = jax.vmap(env.reset, in_axes=(0, None))
-            # env_state, obs, maps_buffer_keys = multi_reset(k_dev_envs, env_config)
+
             multi_stepstate = jax.vmap(StepState, in_axes=(0, 0))
             step_state = multi_stepstate(env_state, obs)
             step_state_unvectorized = StepStateUnvectorized(_train_state, None, _envBatch, maps_buffer_keys, next,
                                                             reward_normalizer)
-            carry, progress = jax.lax.scan(vectorized_step, (step_state, step_state_unvectorized), None,
+            carry, progress = jax.lax.scan(generateObservation, (step_state, step_state_unvectorized), None,
                                            length=config["n_steps"])
 
-            #Todo Vectorized call
-            last_val, _ = carry[1].train_state.apply_fn(carry[1].train_state.params, obs_to_model_input(carry[0].obs), carry[1].action_mask)
-            _calculate_gae(progress, last_val)
+            last_step_state, last_unvectorized_step_state = carry
+            log_prob, value, wrapped_action = forward(last_step_state, last_unvectorized_step_state)
+
+
+            advantages, targets = _calculate_gae(progress, value)
+            update_state = (carry, progress, advantages, targets, rng)
+
+            # UPDATE NETWORK
+            def _update_epoch(update_state, unused):
+                (train_state, unvectorized_step_state), traj_batch, advantages, targets, rng = update_state
+
+                def _update_minbatch(train_state, batch_info):
+                    traj_batch, advantages, targets = batch_info
+
+                    def _loss_fn(params, traj_batch, gae, targets):
+
+                        def _forward(_train_state, action_mask, action):
+                            model_input_obs = obs_to_model_input(traj_batch.obs)
+
+                            value, logits_pi = _train_state.apply_fn(_train_state.params, model_input_obs,
+                                                                     action_mask)
+                            pi = tfp.distributions.Categorical(logits=logits_pi)
+                            log_prob = pi.log_prob(action)
+                            value = value[:, 0]
+                            return log_prob, value, pi.entropy()
+
+                        log_prob, value, entropy = _forward(train_state, unvectorized_step_state.action_mask, traj_batch.action)
+
+                        # CALCULATE VALUE LOSS
+                        value_pred_clipped = traj_batch.value + (
+                                value - traj_batch.value
+                        ).clip(-config["CLIP_EPS"], config["CLIP_EPS"])
+                        value_losses = jnp.square(value - targets)
+                        value_losses_clipped = jnp.square(value_pred_clipped - targets)
+                        value_loss = (
+                                0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+                        )
+
+                        # CALCULATE ACTOR LOSS
+                        ratio = jnp.exp(log_prob - traj_batch.log_prob)
+                        gae = (gae - gae.mean()) / (gae.std() + 1e-8)
+                        loss_actor1 = ratio * gae
+                        loss_actor2 = (
+                                jnp.clip(
+                                    ratio,
+                                    1.0 - config["CLIP_EPS"],
+                                    1.0 + config["CLIP_EPS"],
+                                )
+                                * gae
+                        )
+                        loss_actor = -jnp.minimum(loss_actor1, loss_actor2)
+                        loss_actor = loss_actor.mean()
+                        entropy = entropy.mean()
+
+                        total_loss = (
+                                loss_actor
+                                + config["VF_COEF"] * value_loss
+                                - config["ENT_COEF"] * entropy
+                        )
+                        return total_loss, (value_loss, loss_actor, entropy)
+
+                    grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
+                    total_loss, grads = grad_fn(
+                        train_state.params, traj_batch, advantages, targets
+                    )
+                    train_state = train_state.apply_gradients(grads=grads)
+                    return train_state, total_loss
+
+                rng, _rng = jax.random.split(rng)
+                batch_size = config["MINIBATCH_SIZE"] * config["NUM_MINIBATCHES"]
+                assert (
+                        batch_size == config["NUM_STEPS"] * config["NUM_ENVS"]
+                ), "batch size must be equal to number of steps * number of envs"
+                permutation = jax.random.permutation(_rng, batch_size)
+                batch = (traj_batch, advantages, targets)
+                batch = jax.tree_util.tree_map(
+                    lambda x: x.reshape((batch_size,) + x.shape[2:]), batch
+                )
+                shuffled_batch = jax.tree_util.tree_map(
+                    lambda x: jnp.take(x, permutation, axis=0), batch
+                )
+                minibatches = jax.tree_util.tree_map(
+                    lambda x: jnp.reshape(
+                        x, [config["NUM_MINIBATCHES"], -1] + list(x.shape[1:])
+                    ),
+                    shuffled_batch,
+                )
+                train_state, total_loss = jax.lax.scan(
+                    _update_minbatch, train_state, minibatches
+                )
+                update_state = (train_state, traj_batch, advantages, targets, rng)
+                return update_state, total_loss
+
+
+            update_state, loss_info = jax.lax.scan(
+                _update_epoch, update_state, None, config["UPDATE_EPOCHS"]
+            )
 
         # Initialize the models on multiple GPUs with the same params
         replicated_params = jax.tree_map(lambda x: jnp.array([x] * n_devices), model_params)
@@ -178,4 +293,5 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         rng_step = jax.random.split(rng, n_devices)
         total_loss, grads = _individual_gradients(env, env_cfgs, rng_step, train_state)
         print(grads.shape())
+
     _update_step()

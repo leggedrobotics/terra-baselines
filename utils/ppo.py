@@ -306,7 +306,6 @@ class RolloutManager(object):
     ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jax.random.PRNGKey]:
         # Prepare policy input from Terra State
         obs = obs_to_model_input(obs)
-
         value, pi = policy(train_state.apply_fn, train_state.params, obs, action_mask)
         action = pi.sample(seed=rng)
         log_prob = pi.log_prob(action)
