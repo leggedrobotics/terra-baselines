@@ -387,7 +387,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     map_min_max: Sequence[int]
     local_map_min_max: Sequence[int]
     loaded_max: int
-    action_type: Union[TrackedAction, WheeledAction] = TrackedAction
+    action_type: Union[TrackedAction, WheeledAction] = TrackedAction()
     hidden_dim_pi: Sequence[int] = (128, 32)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
     mlp_use_layernorm: bool = False

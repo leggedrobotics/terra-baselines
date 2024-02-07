@@ -91,7 +91,7 @@ if __name__ == "__main__":
         "-env",
         "--env_name",
         type=str,
-        default="Terra",
+        default="Terra2",
         help="Environment name.",
     )
     parser.add_argument(
