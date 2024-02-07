@@ -169,7 +169,6 @@ def _update_minbatch(t_state, batch_info):
     total_loss, grads = grad_fn(
         train_state.params, traj_batch, advantages, targets, unvectorized_step_state
     )
-    print("grads", grads)
     return (train_state, unvectorized_step_state), grads
 def _update_epoch(update_state, unused):
     (train_state, unvectorized_step_state), traj_batch, advantages, targets, rng = update_state
@@ -197,8 +196,8 @@ def _update_epoch(update_state, unused):
         _update_minbatch, (train_state, unvectorized_step_state), minibatches
     )
     update_state = ((train_state, unvectorized_step_state), traj_batch, advantages, targets, rng)
-    print("internal grads: ", grads.shape)
-    return update_state, jax.numpy.sum(grads)
+    summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.sum(xs, 0), grads)
+    return update_state, summed_grads
 
 
 def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str,
@@ -254,6 +253,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
 
         @partial(jax.pmap, axis_name="data", static_broadcasted_argnums=(0,))
         def _individual_gradients(_envBatch: TerraEnvBatch, _env_config: EnvConfig, _rng, _train_state: TrainState):
+            print("in _individual_gradients")
 
             current_1, current_2, current_3, next_rng = jax.random.split(_rng, 4)
             # Init batch over multiple devices with different env seeds
@@ -273,7 +273,6 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
                                                             reward_normalizer, _env_config, current_2, config)
             carry, progress = jax.lax.scan(generateObservation, (step_state, step_state_unvectorized), None,
                                            length=config["n_steps"])
-            print(progress[0])
             last_step_state, last_unvectorized_step_state = carry
             log_prob, value, wrapped_action = forward(last_step_state, last_unvectorized_step_state, current_3)
 
@@ -301,7 +300,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
             tx=tx,
         )
         rng_step = jax.random.split(rng, n_devices)
-
+        print("Here")
         something, grads = _individual_gradients(env, env_cfgs, rng_step, train_state)
         print("grads", grads.shape)
         avg_grads = jax.lax.pmean(grads, axis_name="data")
