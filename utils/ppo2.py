@@ -116,8 +116,6 @@ def forward(_step_state: StepState, _unvectorized_step_state: StepStateUnvectori
     obs = _step_state.obs
     _train_state: TrainState = _unvectorized_step_state.train_state
     model_input_obs = obs_to_model_input(obs)
-
-    print("input obs shape", model_input_obs[1].shape)
     value, logits_pi = _train_state.apply_fn(_train_state.params, model_input_obs,
                                              _unvectorized_step_state.action_mask)
     pi = tfp.distributions.Categorical(logits=logits_pi)
@@ -421,10 +419,10 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
             update_state, grads = jax.lax.scan(
                 _update_epoch, update_state, None, converted_config.epoch_ppo
             )
-            next_train_state = update_state[0]
+            (next_train_state, next_unvectorized_step_state) = update_state[0]
             avg_grads = jax.lax.pmean(grads, axis_name="data")
-            next_train_state[0].apply_gradients(avg_grads)
-            return (_env, _env_config, next_rng, next_train_state), grads
+            updated_train_state = next_train_state.apply_gradients(grads=avg_grads)
+            return (_env, _env_config, next_rng, updated_train_state), grads
 
         # Initialize the models on multiple GPUs with the same params
         replicated_params = jax.tree_map(lambda x: jnp.array([x] * n_devices), model_params)
