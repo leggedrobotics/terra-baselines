@@ -53,7 +53,7 @@ train_config:
   network_name: "SimplifiedCoupledCategoricalNet" # "SimplifiedDecoupledCategoricalNet"
 
   n_evals_save: 9
-  profile: True
+  profile: False
   save_episode_for_replay: False
 
 log_config:

@@ -151,9 +151,9 @@ if __name__ == "__main__":
     )
     args, _ = parser.parse_known_args()
     config = load_config(args.config_fname, args.seed_env, args.seed_model, args.lrate, args.wandb, args.run_name, args.model_path)
-    with jax.disable_jit():
-        main(
-            config["train_config"],
-            mle_log=None,
-            log_ext=str(args.lrate) if args.lrate != 5e-04 else "",
-        )
+    # with jax.disable_jit():
+    main(
+        config["train_config"],
+        mle_log=None,
+        log_ext=str(args.lrate) if args.lrate != 5e-04 else "",
+    )
