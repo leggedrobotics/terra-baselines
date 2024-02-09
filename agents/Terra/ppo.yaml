@@ -56,6 +56,8 @@ train_config:
   profile: False
   save_episode_for_replay: False
 
+  wandb: False
+
 log_config:
   time_to_track: ["num_steps"]
   what_to_track: ["return"]

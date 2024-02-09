@@ -210,7 +210,7 @@ class Curriculum:
         dofs_count_dict = self._get_dofs_count_dict()
         return env_cfgs, dofs_count_dict
 
-    def get_cfgs_init(self,):
+    def get_cfgs_init(self):
         map_widths = [self.curriculum_dicts[0]["map_width"] for _ in self.dofs]
         map_heights = [self.curriculum_dicts[0]["map_height"] for _ in self.dofs]
         max_steps_in_episodes = [self.curriculum_dicts[0]["max_steps_in_episode"] for _ in self.dofs]
@@ -231,8 +231,7 @@ class Curriculum:
         env_cfgs = jax.tree_map(
             lambda x: jax.numpy.reshape(x, (self.n_devices, x.shape[0] // self.n_devices, *x.shape[1:])), env_cfgs
         )
-        dofs_count_dict = self._get_dofs_count_dict()
-        return env_cfgs, dofs_count_dict
+        return env_cfgs
     
     def get_cfgs_eval(self,):
         map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs_eval]

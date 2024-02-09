@@ -30,7 +30,16 @@ from typing import NamedTuple
 from utils.ppo import ConstantRewardNormalizer, AdaptiveRewardNormalizer, AdaptiveScaledRewardNormalizer, \
     obs_to_model_input, loss_actor_and_critic, clip_action_maps_in_obs, cut_local_map_layers, wrap_action, update
 
+def create_env_cfg(params, apply_fn, tx):
+    @jax.pmap
+    def _create_train_state(p):
+        return TrainState.create(
+            apply_fn=apply_fn,
+            params=p,
+            tx=tx,
+        )
 
+    return _create_train_state(params)
 def create_train_state(params, apply_fn, tx):
     @jax.pmap
     def _create_train_state(p):
@@ -340,7 +349,7 @@ def loop_body(carry, _, converted_config: TrainingConfig):
     # Init batch over multiple devices with different env seeds
     k_dev_envs = jax.random.split(current_1, converted_config.num_train_envs)
 
-    vectorized_env_reset = jax.vmap(reset_env, in_axes=(None, 0, 0))
+    vectorized_env_reset = jax.vmap(reset_env, in_axes=(None, 0, 1))
     env_state, obs, maps_buffer_keys = vectorized_env_reset(maps_buffer, k_dev_envs, _env_config)
     # Vectorized reset
     # env_state, obs, maps_buffer_keys = _envBatch.reset(k_dev_envs, _env_config)
@@ -387,9 +396,11 @@ def loop_body(carry, _, converted_config: TrainingConfig):
     updated_carry = (_env, _env_config, next_rng, updated_train_state, maps_buffer, batch_config, reward_normalizer)
     return updated_carry, None  # Replace `None` with actual values you want to track, if any.
 
-@partial(jax.jit, static_argnums=(6,))
+@partial(jax.jit, static_argnums=(1,6,))
 def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
                           maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config, reward_normalizer):
+
+    print("_individual_gradients:", _env_config)
     initial_carry = (_env, _env_config, _rng, _train_state, maps_buffer, batch_config, reward_normalizer)
     loop_body_fixed = partial(loop_body, converted_config=converted_config)
     final_carry, _ = jax.lax.scan(loop_body_fixed, initial_carry, None, length=converted_config.num_train_cycles)
@@ -430,7 +441,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
     )
     num_steps_warm_up = int(
         converted_config.num_train_cycles * converted_config.lr_warmup * converted_config.n_steps * converted_config.num_train_envs)
-    env_cfgs, dofs_count_dict = curriculum.get_cfgs_init()
+    env_cfgs = curriculum.get_cfgs_init()
     schedule_fn = optax.linear_schedule(
         init_value=-float(converted_config.lr_begin),
         end_value=-float(converted_config.lr_end),
@@ -459,8 +470,12 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         apply_fn=model.apply,
         tx=tx,
     )
+
+
+
     rng_step = jax.random.split(rng, n_devices)
     print("Here")
+    print(env_cfgs)
     parallel_gradients = jax.pmap(_individual_gradients, axis_name="data", static_broadcasted_argnums=(0, 1, 4, 5, 6, 7))
     something, grads = parallel_gradients(env.terra_env,
                                           env_cfgs,
