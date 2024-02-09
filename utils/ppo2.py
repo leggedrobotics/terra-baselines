@@ -30,16 +30,6 @@ from typing import NamedTuple
 from utils.ppo import ConstantRewardNormalizer, AdaptiveRewardNormalizer, AdaptiveScaledRewardNormalizer, \
     obs_to_model_input, loss_actor_and_critic, clip_action_maps_in_obs, cut_local_map_layers, wrap_action, update
 
-def create_env_cfg(params, apply_fn, tx):
-    @jax.pmap
-    def _create_train_state(p):
-        return TrainState.create(
-            apply_fn=apply_fn,
-            params=p,
-            tx=tx,
-        )
-
-    return _create_train_state(params)
 def create_train_state(params, apply_fn, tx):
     @jax.pmap
     def _create_train_state(p):
@@ -127,7 +117,6 @@ def forward(_step_state: StepState, _unvectorized_step_state: StepStateUnvectori
     obs = _step_state.obs
     _train_state: TrainState = _unvectorized_step_state.train_state
     model_input_obs = obs_to_model_input(obs)
-    print(_train_state.params["params"]["agent_state_net"]["embedding"]["embedding"].shape)
     value, logits_pi = _train_state.apply_fn(_train_state.params, model_input_obs,
                                              _unvectorized_step_state.action_mask)
     pi = tfp.distributions.Categorical(logits=logits_pi)
@@ -239,7 +228,6 @@ def _update_minbatch(t_state, batch_info):
 
 def _update_epoch(update_state, unused):
     (train_state, unvectorized_step_state), traj_batch, advantages, targets, rng = update_state
-    print("start epoch", train_state.params["params"]["agent_state_net"]["embedding"]["embedding"].shape)
 
     rng, _rng = jax.random.split(rng)
     batch_size = unvectorized_step_state.train_config.minibatch_size * unvectorized_step_state.train_config.n_minibatch
@@ -264,7 +252,6 @@ def _update_epoch(update_state, unused):
         _update_minbatch, (train_state, unvectorized_step_state), minibatches
     )
     update_state = ((next_train_state, unvectorized_step_state), traj_batch, advantages, targets, rng)
-    print("pre epoch summing", next_train_state.params["params"]["agent_state_net"]["embedding"]["embedding"].shape)
 
     summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.sum(xs, 0), grads)
     return update_state, summed_grads
@@ -303,7 +290,6 @@ def _state_to_obs_dict(state: State) -> dict[str, Array]:
 
 @partial(jax.jit, static_argnums=(2,))
 def reset_env(maps_buffer: MapsBuffer, seed: jax.random.PRNGKey, env_config: EnvConfig):
-    print(env_config)
     key_1, key_2 = jax.random.split(seed)
     target_map, padding_mask, trench_axes, trench_type, dumpability_mask_init, maps_buffer_keys = maps_buffer.get_map_init(
         key_1, env_config)
@@ -378,7 +364,6 @@ def loop_body(carry, _, converted_config: TrainingConfig):
     train_state = last_unvectorized_step_state.train_state
     update_state = ((train_state, last_unvectorized_step_state), progress, advantages, targets, current_4)
 
-    print("loop body 0", train_state.params["params"]["agent_state_net"]["embedding"]["embedding"].shape)
 
     # UPDATE NETWORK
     update_state, grads = jax.lax.scan(
@@ -388,19 +373,19 @@ def loop_body(carry, _, converted_config: TrainingConfig):
 
     (next_train_state, next_unvectorized_step_state) = update_state[0]
 
-    print("loop body 1", next_train_state.params["params"]["agent_state_net"]["embedding"]["embedding"].shape)
-    avg_grads = jax.lax.pmean(summed_grads, axis_name="data")
-    updated_train_state = next_train_state.apply_gradients(grads=avg_grads)
-    print("loop body 2", updated_train_state.params["params"]["agent_state_net"]["embedding"]["embedding"].shape)
+    # avg_grads = jax.lax.pmean(summed_grads, axis_name="data")
+    # updated_train_state = next_train_state.apply_gradients(grads=avg_grads)
 
-    updated_carry = (_env, _env_config, next_rng, updated_train_state, maps_buffer, batch_config, reward_normalizer)
+
+    updated_train_state = next_train_state.apply_gradients(grads=summed_grads)
+
+    updated_carry = (_env, next_rng, updated_train_state, maps_buffer, batch_config, reward_normalizer)
     return updated_carry, None  # Replace `None` with actual values you want to track, if any.
 
-@partial(jax.jit, static_argnums=(1,6,))
+@partial(jax.jit, static_argnums=(6,))
 def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
                           maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config, reward_normalizer):
 
-    print("_individual_gradients:", _env_config)
     initial_carry = (_env, _env_config, _rng, _train_state, maps_buffer, batch_config, reward_normalizer)
     loop_body_fixed = partial(loop_body, converted_config=converted_config)
     final_carry, _ = jax.lax.scan(loop_body_fixed, initial_carry, None, length=converted_config.num_train_cycles)
@@ -441,7 +426,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
     )
     num_steps_warm_up = int(
         converted_config.num_train_cycles * converted_config.lr_warmup * converted_config.n_steps * converted_config.num_train_envs)
-    env_cfgs = curriculum.get_cfgs_init()
+    env_cfgs, dof = curriculum.get_cfgs_init()
     schedule_fn = optax.linear_schedule(
         init_value=-float(converted_config.lr_begin),
         end_value=-float(converted_config.lr_end),
@@ -474,10 +459,17 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
 
 
     rng_step = jax.random.split(rng, n_devices)
-    print("Here")
-    print(env_cfgs)
-    parallel_gradients = jax.pmap(_individual_gradients, axis_name="data", static_broadcasted_argnums=(0, 1, 4, 5, 6, 7))
-    something, grads = parallel_gradients(env.terra_env,
+    # parallel_gradients = jax.pmap(_individual_gradients, axis_name="data", static_broadcasted_argnums=(0,1, 4, 5, 6, 7))
+    # something, grads = parallel_gradients(env.terra_env,
+    #                                       env_cfgs,
+    #                                       rng_step,
+    #                                       train_state,
+    #                                       env.maps_buffer,
+    #                                       env.batch_cfg,
+    #                                       converted_config,
+    #                                       reward_normalizer)
+    #
+    something, grads = _individual_gradients(env.terra_env,
                                           env_cfgs,
                                           rng_step,
                                           train_state,

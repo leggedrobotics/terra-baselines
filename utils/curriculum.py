@@ -231,7 +231,8 @@ class Curriculum:
         env_cfgs = jax.tree_map(
             lambda x: jax.numpy.reshape(x, (self.n_devices, x.shape[0] // self.n_devices, *x.shape[1:])), env_cfgs
         )
-        return env_cfgs
+        dofs_count_dict = self._get_dofs_count_dict()
+        return env_cfgs, dofs_count_dict
     
     def get_cfgs_eval(self,):
         map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs_eval]
