@@ -15,7 +15,7 @@ class Curriculum:
         The Curriculum provides a list of EnvConfig based on a given state of the training.
         The idea is that each environment has its own config and is independed from the others.
         
-        You can define you curriculum down here setting self.curriculum_dicts.
+        You can define your curriculum down here setting self.curriculum_dicts.
 
         Notes:
         - self.dofs is the list of degrees of freedom (curriculum milestones) per environment

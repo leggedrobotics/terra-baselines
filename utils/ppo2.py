@@ -333,6 +333,7 @@ def loop_body(carry, _, converted_config: TrainingConfig):
 
     current_1, current_2, current_3, current_4, next_rng = jax.random.split(_rng, 5)
     # Init batch over multiple devices with different env seeds
+
     k_dev_envs = jax.random.split(current_1, converted_config.num_train_envs)
 
     vectorized_env_reset = jax.vmap(reset_env, in_axes=(None, 0, 1))
@@ -459,17 +460,8 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
 
 
     rng_step = jax.random.split(rng, n_devices)
-    # parallel_gradients = jax.pmap(_individual_gradients, axis_name="data", static_broadcasted_argnums=(0,1, 4, 5, 6, 7))
-    # something, grads = parallel_gradients(env.terra_env,
-    #                                       env_cfgs,
-    #                                       rng_step,
-    #                                       train_state,
-    #                                       env.maps_buffer,
-    #                                       env.batch_cfg,
-    #                                       converted_config,
-    #                                       reward_normalizer)
-    #
-    something, grads = _individual_gradients(env.terra_env,
+    parallel_gradients = jax.pmap(_individual_gradients, axis_name="data", static_broadcasted_argnums=(0, 1, 4, 5, 6, 7))
+    something, grads = parallel_gradients(env.terra_env,
                                           env_cfgs,
                                           rng_step,
                                           train_state,
@@ -477,11 +469,15 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
                                           env.batch_cfg,
                                           converted_config,
                                           reward_normalizer)
-    # avg_grads = jax.lax.pmean(grads, axis_name="data")
-    # temp_ts = TrainState.create(
-    #     apply_fn=model.apply,
-    #     params=model_params,
-    #     tx=tx,
-    # )
-    # temp_ts = temp_ts.apply_gradients(avg_grads)
+
+
+    # something, grads = _individual_gradients(env.terra_env,
+    #                                       env_cfgs,
+    #                                       rng,
+    #                                       train_state,
+    #                                       env.maps_buffer,
+    #                                       env.batch_cfg,
+    #                                       converted_config,
+    #                                       reward_normalizer)
+
     return something

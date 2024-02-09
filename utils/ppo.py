@@ -562,6 +562,7 @@ def train_ppo(rng, config, model, params, mle_log, env: TerraEnvBatch, curriculu
     # Init batch over multiple devices with different env seeds
     k_dev_envs = jax.random.split(rng_reset, config["num_train_envs"])
     seeds = k_dev_envs.reshape((1,k_dev_envs.shape[0],k_dev_envs.shape[1]))
+    print("seedsshape:", seeds.shape)
     state, obs, maps_buffer_keys = rollout_manager.batch_reset(
         seeds, env_cfgs
     )
