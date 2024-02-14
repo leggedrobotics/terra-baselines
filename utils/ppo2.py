@@ -305,9 +305,11 @@ def reset_env(maps_buffer: MapsBuffer, rng: jax.random.PRNGKey, env_config: EnvC
     key_1, key_2 = jax.random.split(rng)
     k_dev_envs = jax.random.split(key_1, num_train_envs)
     k_dev_envs_2 = jax.random.split(key_2, num_train_envs)
+    print(f"3. {env_config=}")
 
+    gugus = partial(maps_buffer.get_map_init, env_cfg=env_config)
     target_map, padding_mask, trench_axes, trench_type, dumpability_mask_init, maps_buffer_keys = jax.vmap(
-        maps_buffer.get_map_init, in_axes=(0,1))(k_dev_envs, env_config)
+        gugus, in_axes=(0,))(k_dev_envs)
 
     state, observation = jax.vmap(_reset)(
         k_dev_envs_2,
@@ -342,10 +344,11 @@ def _calculate_gae(traj_batch, last_val, converted_config: TrainingConfig):
     return advantages, advantages + traj_batch.value
 
 
-def loop_body(carry, _, converted_config: TrainingConfig):
-    (_env, _env_config, _rng, _train_state, maps_buffer, batch_config, reward_normalizer) = carry
+def loop_body(carry, _, converted_config: TrainingConfig, _env_config: EnvConfig):
+    (_env, _rng, _train_state, maps_buffer, batch_config, reward_normalizer) = carry
 
     print("cycle")
+    print(f"2. {_env_config=}")
 
     current_1, current_2, current_3, current_4, next_rng = jax.random.split(_rng, 5)
     # Init batch over multiple devices with different env seeds
@@ -361,6 +364,7 @@ def loop_body(carry, _, converted_config: TrainingConfig):
 
     multi_stepstate = jax.vmap(StepState, in_axes=(0, 0, 0, 0))
     step_state = multi_stepstate(env_state, obs, maps_buffer_keys, _env_config)
+    print(f"{step_state=}")
     step_state_unvectorized = StepStateUnvectorized(_train_state,
                                                     None,
                                                     _env,
@@ -395,15 +399,15 @@ def loop_body(carry, _, converted_config: TrainingConfig):
     return updated_carry, None  # Replace `None` with actual values you want to track, if any.
 
 
-@partial(jax.jit, static_argnums=(6,))
+@partial(jax.jit, static_argnums=(1,6))
 def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
                           maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config, reward_normalizer):
-    initial_carry = (_env, _env_config, _rng, _train_state, maps_buffer, batch_config, reward_normalizer)
-    loop_body_fixed = partial(loop_body, converted_config=converted_config)
+    initial_carry = (_env, _rng, _train_state, maps_buffer, batch_config, reward_normalizer)
+    loop_body_fixed = partial(loop_body, converted_config=converted_config, _env_config=_env_config)
     final_carry, _ = jax.lax.scan(loop_body_fixed, initial_carry, None, length=converted_config.num_train_cycles)
 
     # Extract the final state from `final_carry`.
-    (_env, _env_config, next_rng, updated_train_state, _, _, _) = final_carry
+    (_env, next_rng, updated_train_state, _, _, _) = final_carry
 
     return (_env, _env_config, next_rng, updated_train_state), None
 
@@ -438,7 +442,8 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
     )
     num_steps_warm_up = int(
         converted_config.num_train_cycles * converted_config.lr_warmup * converted_config.n_steps * converted_config.num_train_envs)
-    env_cfgs, dof = curriculum.get_cfgs_init()
+    env_cfgs, dof = curriculum.get_cfg_init()
+    print(f"{env_cfgs=}")
     schedule_fn = optax.linear_schedule(
         init_value=-float(converted_config.lr_begin),
         end_value=-float(converted_config.lr_end),
@@ -471,6 +476,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
     rng_step = jax.random.split(rng, n_devices)
     parallel_gradients = jax.pmap(_individual_gradients, axis_name="data",
                                   static_broadcasted_argnums=(0, 1, 4, 5, 6, 7))
+    print(converted_config.num_train_cycles)
     something, grads = parallel_gradients(env.terra_env,
                                           env_cfgs,
                                           rng_step,

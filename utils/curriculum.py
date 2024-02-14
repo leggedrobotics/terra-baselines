@@ -233,6 +233,27 @@ class Curriculum:
         )
         dofs_count_dict = self._get_dofs_count_dict()
         return env_cfgs, dofs_count_dict
+
+    def get_cfg_init(self):
+        map_widths = self.curriculum_dicts[0]["map_width"]
+        map_heights = self.curriculum_dicts[0]["map_height"]
+        max_steps_in_episodes = self.curriculum_dicts[0]["max_steps_in_episode"]
+        map_types = self.curriculum_dicts[0]["map_type"]
+        rewards_type = self.curriculum_dicts[0]["rewards_type"]
+        apply_trench_rewards = self.curriculum_dicts[0]["map_type"] == MapType.TRENCHES
+
+        env_cfgs = EnvConfig.parametrized(
+            np.array(map_widths),
+            np.array(map_heights),
+            np.array(max_steps_in_episodes),
+            np.array(self.dofs),
+            np.array(map_types),
+            np.array(rewards_type),
+            np.array(apply_trench_rewards),
+        )
+
+        dofs_count_dict = self._get_dofs_count_dict()
+        return env_cfgs, dofs_count_dict
     
     def get_cfgs_eval(self,):
         map_widths = [self.curriculum_dicts[dof]["map_width"] for dof in self.dofs_eval]
