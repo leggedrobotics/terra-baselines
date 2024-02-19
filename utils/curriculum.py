@@ -54,7 +54,6 @@ class Curriculum:
         self.curriculum_len = len(self.curriculum_dicts)
         self.idx_sparse_rewards_levels = [i for i, level in enumerate(self.curriculum_dicts) if level["rewards_type"] == RewardsType.SPARSE]
         self.n_sparse_levels = len(self.idx_sparse_rewards_levels)
-        print(f"{self.idx_sparse_rewards_levels=}")
 
         # Get even eval dofs
         n_eval_each = rl_config["num_test_rollouts"] // self.curriculum_len
@@ -66,7 +65,6 @@ class Curriculum:
 
         # Compute the minimum number of embedding length for the one-hot features
         self.num_embeddings_agent_min = max([max([el["map_width"], el["map_height"]]) for el in self.curriculum_dicts])
-        print(f"{self.num_embeddings_agent_min=}")
 
         # For each main env, the number of updates since the last done
         self.max_episodes_no_dones = rl_config["max_episodes_no_dones"]
@@ -231,27 +229,6 @@ class Curriculum:
         env_cfgs = jax.tree_map(
             lambda x: jax.numpy.reshape(x, (self.n_devices, x.shape[0] // self.n_devices, *x.shape[1:])), env_cfgs
         )
-        dofs_count_dict = self._get_dofs_count_dict()
-        return env_cfgs, dofs_count_dict
-
-    def get_cfg_init(self):
-        map_widths = self.curriculum_dicts[0]["map_width"]
-        map_heights = self.curriculum_dicts[0]["map_height"]
-        max_steps_in_episodes = self.curriculum_dicts[0]["max_steps_in_episode"]
-        map_types = self.curriculum_dicts[0]["map_type"]
-        rewards_type = self.curriculum_dicts[0]["rewards_type"]
-        apply_trench_rewards = self.curriculum_dicts[0]["map_type"] == MapType.TRENCHES
-
-        env_cfgs = EnvConfig.parametrized(
-            np.array(map_widths),
-            np.array(map_heights),
-            np.array(max_steps_in_episodes),
-            np.array(self.dofs),
-            np.array(map_types),
-            np.array(rewards_type),
-            np.array(apply_trench_rewards),
-        )
-
         dofs_count_dict = self._get_dofs_count_dict()
         return env_cfgs, dofs_count_dict
     
