@@ -1,6 +1,6 @@
 train_config:
   train_type: "PPO"
-  num_train_steps: 512
+  num_train_steps: 8192
   evaluate_every_epochs: 1000
 
   env_name: "Terra"
@@ -13,7 +13,7 @@ train_config:
   mask_out_arm_extension: True  # Note: this also removes features from arm extension in the local maps
 
   num_train_envs: 8  # Number of parallel env workers
-  epoch_ppo: 2  # "Number of PPO epochs on a single batch"
+  epoch_ppo: 1  # "Number of PPO epochs on a single batch"
   n_steps: 32 # "GAE n-steps"
   n_minibatch: 8 # "Number of PPO minibatches" -> Note: compile time scales with it!
   minibatch_size: 32

@@ -209,7 +209,7 @@ def _loss_fn(params, traj_batch, gae, targets, unvectorized_step_state):
             + unvectorized_step_state.train_config.max_grad_norm * value_loss
             - unvectorized_step_state.train_config.entropy_coeff * entropy
     )
-    return total_loss, (value_loss, loss_actor, entropy, unvectorized_step_state.action_mask)
+    return total_loss, (value_loss, loss_actor, entropy)
 
 
 def _update_minbatch(t_state, batch_info):
@@ -253,11 +253,10 @@ def _update_epoch(update_state, unused, train_config: TrainingConfig):
 
     summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.sum(xs, 0), grads)
 
-    avg_loss = loss
-    # avg_loss = jax.tree_util.tree_map(
-    #     lambda xs: jax.numpy.mean(xs, axis=0),
-    #     loss
-    # )
+    avg_loss = jax.tree_util.tree_map(
+        lambda xs: jax.numpy.mean(xs, axis=0),
+        loss
+    )
 
     return update_state, (summed_grads, avg_loss)
 
@@ -395,10 +394,10 @@ def loop_body(carry, _, converted_config: TrainingConfig, batch_config: BatchCon
         update_epoch_prefilled, update_state, None, converted_config.epoch_ppo
     )
     summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.sum(xs, 0), summed_grads)
-    # avg_loss = jax.tree_util.tree_map(
-    #     lambda xs: jax.numpy.mean(xs, axis=0),
-    #     avg_loss
-    # )
+    avg_loss = jax.tree_util.tree_map(
+        lambda xs: jax.numpy.mean(xs, axis=0),
+        avg_loss
+    )
     (next_train_state, next_unvectorized_step_state) = update_state[0]
 
     avg_grads = jax.lax.pmean(summed_grads, axis_name="data")
@@ -407,7 +406,7 @@ def loop_body(carry, _, converted_config: TrainingConfig, batch_config: BatchCon
     # updated_train_state = next_train_state.apply_gradients(grads=summed_grads)
 
     updated_carry = (_env, _env_config, next_rng, updated_train_state, maps_buffer, reward_normalizer)
-    return updated_carry, avg_loss  # Replace `None` with actual values you want to track, if any.
+    return updated_carry, avg_loss
 
 
 def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
@@ -417,14 +416,9 @@ def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_s
     final_carry, loss = jax.lax.scan(loop_body_fixed, initial_carry, None, length=converted_config.num_train_cycles)
     # Extract the final state from `final_carry`.
 
-    avg_loss = loss
-    # avg_loss = jax.tree_util.tree_map(
-    #     lambda xs: jax.numpy.mean(xs, axis=0),
-    #     loss
-    # )
 
     (_env, _env_config, next_rng, updated_train_state, _, _) = final_carry
-    return (_env, _env_config, next_rng, updated_train_state), avg_loss
+    return (_env, _env_config, next_rng, updated_train_state), loss
 
 
 def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str,
@@ -501,7 +495,16 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
                                           rng_step,
                                           train_state,
                                           env.maps_buffer)
-    print(loss)
+
+    avg_loss = jax.tree_util.tree_map(
+        lambda xs: jax.numpy.mean(xs, axis=0),
+        loss
+    )
+
+    print("Total: ",avg_loss[0])
+    print("value:",avg_loss[1][0])
+    print("Actor:",avg_loss[1][1])
+    print("Entropy:",avg_loss[1][2])
 
     # something, grads = _individual_gradients(env.terra_env,
     #                                       env_cfgs,
