@@ -45,7 +45,9 @@ def create_train_state(params, apply_fn, tx):
 
 
 class TrainingConfig(NamedTuple):
-    num_train_cycles: int
+    ppo2_num_training_cycles: int
+    ppo2_num_epochs: int
+    ppo2_num_env_started: int
     lr_warmup: float
     lr_begin: float
     lr_end: float
@@ -53,14 +55,12 @@ class TrainingConfig(NamedTuple):
     reward_normalizer: int  # constant:0, adaptive:1, adaptive-scaled": 2
     gamma: float
     gae_lambda: float
-    num_train_envs: int
+    num_training_envs: int
     clip_action_maps: bool
     mask_out_arm_extension: bool
-    n_steps: int
-    epoch_ppo: int
+    ppo2_num_steps: int
     max_reward: int
-    minibatch_size: int
-    n_minibatch: int
+    ppo2_minibatch_size: int
     clip_eps: int
     entropy_coeff: int
 
@@ -227,22 +227,22 @@ def _update_epoch(update_state, unused, train_config: TrainingConfig):
     (train_state, unvectorized_step_state), traj_batch, advantages, targets, rng = update_state
 
     rng, _rng = jax.random.split(rng)
-    batch_size = train_config.minibatch_size * train_config.n_minibatch
 
     # assert (
     #         batch_size == unvectorized_step_state.train_config.n_steps * unvectorized_step_state.train_config.num_train_envs
     # ), "batch size must be equal to number of steps * number of envs"
-    permutation = jax.random.permutation(_rng, batch_size)
+    num_obs = train_config.ppo2_num_steps * train_config.num_training_envs
+    permutation = jax.random.permutation(_rng, train_config.ppo2_minibatch_size)
     batch = (traj_batch, advantages, targets)
     batch = jax.tree_util.tree_map(
-        lambda x: x.reshape((batch_size,) + x.shape[2:]), batch
+        lambda x: x.reshape((num_obs,) + x.shape[2:]), batch
     )
     shuffled_batch = jax.tree_util.tree_map(
         lambda x: jnp.take(x, permutation, axis=0), batch
     )
     minibatches = jax.tree_util.tree_map(
         lambda x: jnp.reshape(
-            x, [train_config.n_minibatch, -1] + list(x.shape[1:])
+            x, [num_obs // train_config.ppo2_minibatch_size, -1] + list(x.shape[1:])
         ),
         shuffled_batch,
     )
@@ -352,14 +352,14 @@ def conv_obs(obs, clip: bool, mask: bool):
 
 
 @partial(jax.jit, static_argnums=(2,3))
-def loop_body(carry, _, converted_config: TrainingConfig, batch_config: BatchConfig):
+def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: BatchConfig):
     (_env, _env_config, _rng, _train_state, maps_buffer, reward_normalizer) = carry
 
     print("cycle")
 
     current_1, current_2, current_3, current_4, next_rng = jax.random.split(_rng, 5)
     # Init batch over multiple devices with different env seeds
-    env_state, obs, maps_buffer_keys = reset_env(maps_buffer, current_1, _env_config, converted_config.num_train_envs)
+    env_state, obs, maps_buffer_keys = reset_env(maps_buffer, current_1, _env_config, converted_config.num_training_envs)
     # Vectorized reset
     # env_state, obs, maps_buffer_keys = _envBatch.reset(k_dev_envs, _env_config)
     conv_obs_filled = partial(conv_obs, clip=converted_config.clip_action_maps, mask=converted_config.mask_out_arm_extension)
@@ -379,8 +379,9 @@ def loop_body(carry, _, converted_config: TrainingConfig, batch_config: BatchCon
                                                     maps_buffer)
     generateObservationPartial = partial(generateObservation, obs_conv=conv_obs_filled)
 
+    ## STEPPING ##
     carry, progress = jax.lax.scan(generateObservationPartial, (step_state, step_state_unvectorized), None,
-                                   length=converted_config.n_steps)
+                                   length=converted_config.ppo2_num_steps)
     last_step_state, last_unvectorized_step_state = carry
     log_prob, value, wrapped_action = forward(last_step_state, last_unvectorized_step_state, current_3)
 
@@ -391,7 +392,7 @@ def loop_body(carry, _, converted_config: TrainingConfig, batch_config: BatchCon
     update_epoch_prefilled = partial(_update_epoch, train_config=converted_config)
     # UPDATE NETWORK
     update_state, (summed_grads, avg_loss) = jax.lax.scan(
-        update_epoch_prefilled, update_state, None, converted_config.epoch_ppo
+        update_epoch_prefilled, update_state, None, converted_config.ppo2_num_epochs
     )
     summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.sum(xs, 0), summed_grads)
     avg_loss = jax.tree_util.tree_map(
@@ -410,11 +411,10 @@ def loop_body(carry, _, converted_config: TrainingConfig, batch_config: BatchCon
 
 
 def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
-                          maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config, reward_normalizer):
+                          maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config: TrainingConfig, reward_normalizer):
     initial_carry = (_env, _env_config, _rng, _train_state, maps_buffer, reward_normalizer)
-    loop_body_fixed = partial(loop_body, converted_config=converted_config, batch_config=batch_config)
-    final_carry, loss = jax.lax.scan(loop_body_fixed, initial_carry, None, length=converted_config.num_train_cycles)
-    # Extract the final state from `final_carry`.
+    step_through_env_fixed = partial(step_through_env, converted_config=converted_config, batch_config=batch_config)
+    final_carry, loss = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
 
 
     (_env, _env_config, next_rng, updated_train_state, _, _) = final_carry
@@ -430,7 +430,9 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
     if config["reward_normalizer"] == "adaptive-scaled":
         reward_normalizer_nr = 2
     converted_config = TrainingConfig(
-        config["num_train_steps"] // config["n_steps"] // config["num_train_envs"],
+        config["ppo2_num_training_cycles"],
+        config["ppo2_num_epochs"],
+        config["ppo2_num_env_started"],
         config["lr_warmup"],
         config["lr_begin"],
         config["lr_end"],
@@ -441,16 +443,15 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         config["num_train_envs"],
         config["clip_action_maps"],
         config["mask_out_arm_extension"],
-        config["n_steps"],
-        config["epoch_ppo"],
+        config["ppo2_num_steps"],
         config["max_reward"],
-        config["minibatch_size"],
-        config["n_minibatch"],
+        config["ppo2_minibatch_size"],
         config["clip_eps"],
         config["entropy_coeff"],
     )
+    print(f"Launching {converted_config.ppo2_num_training_cycles} training cycles")
     num_steps_warm_up = int(
-        converted_config.num_train_cycles * converted_config.lr_warmup * converted_config.n_steps * converted_config.num_train_envs)
+        converted_config.ppo2_num_training_cycles * converted_config.lr_warmup * converted_config.ppo2_num_steps * converted_config.num_training_envs)
     env_cfgs, dof = curriculum.get_cfgs_init()
     schedule_fn = optax.linear_schedule(
         init_value=-float(converted_config.lr_begin),
@@ -490,21 +491,30 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
 
     parallel_gradients = jax.pmap(prefiled_individual_gradients, axis_name="data",
                                   static_broadcasted_argnums=(0, 4))
-    something, loss = parallel_gradients(env.terra_env,
-                                          env_cfgs,
-                                          rng_step,
-                                          train_state,
-                                          env.maps_buffer)
 
-    avg_loss = jax.tree_util.tree_map(
-        lambda xs: jax.numpy.mean(xs, axis=0),
-        loss
-    )
-
-    print("Total: ",avg_loss[0])
-    print("value:",avg_loss[1][0])
-    print("Actor:",avg_loss[1][1])
-    print("Entropy:",avg_loss[1][2])
+    timer = time.time()
+    for i in range(converted_config.ppo2_num_training_cycles):
+        something, loss = parallel_gradients(env.terra_env,
+                                              env_cfgs,
+                                              rng_step,
+                                              train_state,
+                                              env.maps_buffer)
+        avg_loss = jax.tree_util.tree_map(
+            lambda xs: jax.numpy.mean(xs, axis=0),
+            loss
+        )
+        done = time.time()
+        train_state = something[3]
+        rng_step = something[2]
+        print(f"---Cycle {i}/{converted_config.ppo2_num_training_cycles - 1}:---")
+        num_steps = config['num_train_envs'] * config['ppo2_num_env_started'] * config['ppo2_num_steps']
+        secs = done - timer
+        print(f"{num_steps} steps in {secs:.2f} seconds: {num_steps/secs:.4f} steps/sec")
+        print("Total:  ",avg_loss[0])
+        print("Value:  ",avg_loss[1][0])
+        print("Actor:  ",avg_loss[1][1])
+        print("Entropy:",avg_loss[1][2])
+        timer = done
 
     # something, grads = _individual_gradients(env.terra_env,
     #                                       env_cfgs,
@@ -515,4 +525,4 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
     #                                       converted_config,
     #                                       reward_normalizer)
 
-    return something
+    return (None, None, train_state.params, None)

@@ -331,8 +331,7 @@ class RolloutManager(object):
     def batch_reset(self, seeds, env_cfgs):
         return self.env.reset(seeds, env_cfgs)
 
-    def batch_reset_eval(self, keys, env_cfgs):
-        seeds = jnp.array([k[0] for k in keys])
+    def batch_reset_eval(self, seeds, env_cfgs):
         return self.env.reset(seeds, env_cfgs)
 
     @partial(jax.jit, static_argnums=(0,))
@@ -366,10 +365,10 @@ class RolloutManager(object):
             )
             action_mask = transition.infos["action_mask"]
             new_cum_reward = cum_reward + transition.reward * valid_mask
-            new_valid_mask = valid_mask * (1 - done)
+            new_valid_mask = valid_mask * (1 - transition.done)
 
             # Update episode length
-            episode_done_once = episode_done_once | done
+            episode_done_once = episode_done_once | transition.done
             episode_length += ~episode_done_once
 
             carry, y = [
@@ -379,7 +378,7 @@ class RolloutManager(object):
                 rng,
                 new_cum_reward,
                 new_valid_mask,
-                done,
+                transition.done,
                 action_mask,
                 maps_buffer_keys,
                 episode_length,

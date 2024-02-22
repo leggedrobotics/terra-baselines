@@ -1,6 +1,7 @@
 """
 Partially from https://github.com/RobertTLange/gymnax-blines
 """
+import time
 
 import numpy as np
 import jax
@@ -34,7 +35,7 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
 
 
     rng, *rng_reset = jax.random.split(rng, rl_config["num_test_rollouts"] + 1)
-    reset_seeds = jnp.array([r[0] for r in rng_reset])
+    reset_seeds = jnp.array([r for r in rng_reset])
     env_state, obs, maps_buffer_keys = env.reset(reset_seeds, env_cfgs)
 
     t_counter = 0
@@ -55,7 +56,11 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
             action = pi.sample(seed=rng_act)
         else:
             raise RuntimeError("Model is None!")
-        next_env_state, (next_obs, reward, done, info), maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys)
+        transition, maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys)
+        reward = transition.reward
+        done = transition.done
+        next_env_state = transition.next_state
+        next_obs = transition.obs
         reward_seq.append(reward)
         print(t_counter, reward, action, done)
         print(10 * "=")
@@ -156,4 +161,4 @@ if __name__ == "__main__":
     for o in tqdm(obs_seq, desc="Rendering"):
         env.terra_env.render_obs_pygame(o, generate_gif=True)
     
-    env.terra_env.rendering_engine.create_gif()
+    env.terra_env.rendering_engine.create_gif(f"agents/gifs/{time.strftime('%Y%m%d-%H%M')}.gif")
