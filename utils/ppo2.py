@@ -232,7 +232,8 @@ def _update_epoch(update_state, unused, train_config: TrainingConfig):
     #         batch_size == unvectorized_step_state.train_config.n_steps * unvectorized_step_state.train_config.num_train_envs
     # ), "batch size must be equal to number of steps * number of envs"
     num_obs = train_config.ppo2_num_steps * train_config.num_training_envs
-    permutation = jax.random.permutation(_rng, train_config.ppo2_minibatch_size)
+
+    permutation = jax.random.permutation(_rng, num_obs)
     batch = (traj_batch, advantages, targets)
     batch = jax.tree_util.tree_map(
         lambda x: x.reshape((num_obs,) + x.shape[2:]), batch
@@ -242,7 +243,7 @@ def _update_epoch(update_state, unused, train_config: TrainingConfig):
     )
     minibatches = jax.tree_util.tree_map(
         lambda x: jnp.reshape(
-            x, [num_obs // train_config.ppo2_minibatch_size, -1] + list(x.shape[1:])
+            x, [train_config.ppo2_minibatch_size, -1] + list(x.shape[1:])
         ),
         shuffled_batch,
     )
