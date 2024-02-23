@@ -808,7 +808,7 @@ def update(
     obs, action_mask, action, log_pi_old, value, target, gae, rewards, dones = batch
     idxes_init = jnp.arange(num_envs * n_steps)
     
-    def _epochs_scan(train_state: TrainState, subkey: jax.random.PRNGPRNGKey):
+    def _epochs_scan(train_state: TrainState, subkey: jax.random.PRNGKey):
         idxes = jax.random.permutation(subkey, idxes_init)
         idxes = idxes.reshape(n_minibatch, -1)
 
