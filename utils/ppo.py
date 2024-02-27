@@ -403,7 +403,7 @@ class RolloutManager(object):
         dones = carry_out[6].squeeze()
         episode_length = carry_out[9].squeeze()
         obs_log = scan_out[0]
-        return jnp.mean(cum_return), dones, obs_log, episode_length
+        return jnp.nanmean(cum_return), dones, obs_log, episode_length
     
     
     def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs, clip_action_maps, mask_out_arm_extension):
