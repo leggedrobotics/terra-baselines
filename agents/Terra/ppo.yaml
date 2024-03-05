@@ -1,7 +1,7 @@
 train_config:
   train_type: "PPO"
   num_train_steps: 3000000000
-  evaluate_every_epochs: 5000
+  evaluate_every_epochs: 1000
 
   env_name: "Terra"
   env_kwargs: {}
@@ -28,12 +28,12 @@ train_config:
 
 
   ### PPO2 Config
-  ppo2_num_training_cycles: 4
+  ppo2_num_training_cycles: 8
   ppo2_num_epochs: 4
   ppo2_num_steps: 64
   ppo2_minibatch_size: 256
-  ppo2_num_env_started: 512
-
+  ppo2_num_env_started: 16
+  ppo2_num_env_started_eval: 8
 
   # Rewards
   reward_normalizer: "constant"  # ["adaptive", "constant", "adaptive-scaled"]

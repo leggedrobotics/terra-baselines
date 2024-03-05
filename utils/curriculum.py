@@ -43,7 +43,7 @@ class Curriculum:
                 "map_width": -1,  # in meters
                 "map_height": -1,  # in meters
                 "max_steps_in_episode": 300,
-                "map_type": MapType.TRENCHES,
+                "map_type": MapType.FOUNDATIONS,
                 "rewards_type": RewardsType.DENSE,
             },
         ]

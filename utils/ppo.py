@@ -410,7 +410,7 @@ class RolloutManager(object):
         dones = carry_out[6].squeeze()
         episode_length = carry_out[9].squeeze()
         obs_log = scan_out[0]
-        return jnp.mean(cum_return), dones, obs_log, episode_length
+        return jnp.nanmean(cum_return), dones, obs_log, episode_length
 
     def batch_evaluate(self, rng_input, train_state, num_envs, step, action_mask_init, n_evals_save, env_cfgs,
                        clip_action_maps, mask_out_arm_extension):
@@ -837,7 +837,7 @@ def update(
     obs, action_mask, action, log_pi_old, value, target, gae, rewards, dones = batch
     idxes_init = jnp.arange(num_envs * n_steps)
 
-    def _epochs_scan(train_state: TrainState, subkey: jax.random.PRNGKeyArray):
+    def _epochs_scan(train_state: TrainState, subkey: jax.random.PRNGKey):
         idxes = jax.random.permutation(subkey, idxes_init)
         idxes = idxes.reshape(n_minibatch, -1)
 
