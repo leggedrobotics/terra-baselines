@@ -568,6 +568,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         num_steps = config['num_train_envs'] * config['ppo2_num_env_started']
         secs = done - timer
         print(f"{num_steps} steps in {secs:.2f} seconds: {num_steps/secs:.4f} steps/sec")
+
         rewards, avg, max_reward, min_reward = prefilled_parallel_eval(env.terra_env,
                                              env_cfgs,
                                              rng_step,
