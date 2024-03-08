@@ -353,48 +353,6 @@ def conv_obs(obs, clip: bool, mask: bool):
         obs = cut_local_map_layers(obs)
     return obs
 
-
-@partial(jax.jit, static_argnums=(1,2))
-def eval_training(carry, converted_config: TrainingConfig, batch_config: BatchConfig):
-    (_env, _env_config, _rng, _train_state, maps_buffer, reward_normalizer) = carry
-
-    print("Eval")
-
-    current_1, current_2, current_3, current_4, next_rng = jax.random.split(_rng, 5)
-    # Init batch over multiple devices with different env seeds
-    env_state, obs, maps_buffer_keys = reset_env(maps_buffer, current_1, _env_config,
-                                                 converted_config.num_training_envs)
-    # Vectorized reset
-    # env_state, obs, maps_buffer_keys = _envBatch.reset(k_dev_envs, _env_config)
-    conv_obs_filled = partial(conv_obs, clip=converted_config.clip_action_maps,
-                              mask=converted_config.mask_out_arm_extension)
-    obs = conv_obs_filled(obs)
-    initial_action_mask = jax.vmap(State._get_action_mask, in_axes=(0, None))(env_state, batch_config.action_type)
-    multi_stepstate = jax.vmap(StepState, in_axes=(0, 0, 0, 0))
-    step_state = multi_stepstate(env_state, obs, maps_buffer_keys, _env_config)
-    step_state_unvectorized = StepStateUnvectorized(_train_state,
-                                                    initial_action_mask,
-                                                    _env,
-                                                    reward_normalizer,
-                                                    current_2,
-                                                    converted_config,
-                                                    batch_config,
-                                                    maps_buffer)
-    generateObservationPartial = partial(generateObservation, obs_conv=conv_obs_filled)
-
-    ## STEPPING ##
-    carry, progress = jax.lax.scan(generateObservationPartial, (step_state, step_state_unvectorized), None,
-                                   length=converted_config.ppo2_num_steps)
-
-    def accumulate_rewards(cumulative_reward, transition):
-        # Update the cumulative reward with the reward from the current transition
-        new_cumulative_reward = cumulative_reward + transition.reward
-        return new_cumulative_reward, transition.reward  # Return updated total and current reward
-
-    initial_reward_sum = jnp.zeros((converted_config.num_training_envs,), dtype=jnp.float32)
-    final_reward_sum, _ = jax.lax.scan(accumulate_rewards, initial_reward_sum, progress)
-    return final_reward_sum
-
 @partial(jax.jit, static_argnums=(2,3))
 def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: BatchConfig):
     (_env, _env_config, _rng, _train_state, maps_buffer, reward_normalizer) = carry
@@ -441,6 +399,14 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
         lambda xs: jax.numpy.mean(xs, axis=0),
         avg_loss
     )
+
+    def accumulate_rewards(cumulative_reward, transition):
+            new_cumulative_reward = cumulative_reward + transition.reward
+            return new_cumulative_reward, transition.reward  # Return updated total and current reward
+
+    initial_reward_sum = jnp.zeros((converted_config.num_training_envs,), dtype=jnp.float32)
+    final_reward_sum, _ = jax.lax.scan(accumulate_rewards, initial_reward_sum, progress)
+
     (next_train_state, next_unvectorized_step_state) = update_state[0]
 
     avg_grads = jax.lax.pmean(summed_grads, axis_name="data")
@@ -449,28 +415,18 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
     # updated_train_state = next_train_state.apply_gradients(grads=summed_grads)
 
     updated_carry = (_env, _env_config, next_rng, updated_train_state, maps_buffer, reward_normalizer)
-    return updated_carry, avg_loss
-
-def _individual_eval(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
-                          maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config: TrainingConfig, reward_normalizer):
-    initial_carry = (_env, _env_config, _rng, _train_state, maps_buffer, reward_normalizer)
-    rewards = jnp.zeros((converted_config.ppo2_num_env_started_eval,), dtype=jnp.float32)
-    for test in range(converted_config.ppo2_num_env_started_eval):
-        rewards[test] = eval_training(initial_carry, converted_config=converted_config, batch_config=batch_config)
-    return rewards, jnp.average(rewards), jnp.max(rewards), jnp.min(rewards)
-
-
+    return updated_carry, (avg_loss, final_reward_sum)
 
 
 def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
                           maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config: TrainingConfig, reward_normalizer):
     initial_carry = (_env, _env_config, _rng, _train_state, maps_buffer, reward_normalizer)
     step_through_env_fixed = partial(step_through_env, converted_config=converted_config, batch_config=batch_config)
-    final_carry, loss = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
+    final_carry, (loss, final_reward) = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
 
 
     (_env, _env_config, next_rng, updated_train_state, _, _) = final_carry
-    return (_env, _env_config, next_rng, updated_train_state), loss
+    return (_env, _env_config, next_rng, updated_train_state), (loss, final_reward)
 
 
 def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str,
@@ -545,17 +501,10 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
     parallel_gradients = jax.pmap(prefilled_individual_gradients, axis_name="data",
                                   static_broadcasted_argnums=(0, 4))
 
-    prefilled_individual_eval = partial(_individual_eval,
-                                            batch_config=env.batch_cfg,
-                                            converted_config=converted_config,
-                                            reward_normalizer=reward_normalizer)
-
-    prefilled_parallel_eval = jax.pmap(prefilled_individual_eval, axis_name="data",
-                                  static_broadcasted_argnums=(0, 4))
-
     timer = time.time()
+    total_progression = []
     for i in range(converted_config.ppo2_num_training_cycles):
-        something, loss = parallel_gradients(env.terra_env,
+        something, (loss, final_reward) = parallel_gradients(env.terra_env,
                                               env_cfgs,
                                               rng_step,
                                               train_state,
@@ -565,19 +514,19 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         train_state = something[3]
         rng_step = something[2]
         print(f"---Cycle {i}/{converted_config.ppo2_num_training_cycles - 1}:---")
-        num_steps = config['num_train_envs'] * config['ppo2_num_env_started']
+        num_steps = config['num_train_envs'] * config['ppo2_num_env_started'] * config['ppo2_num_steps']
         secs = done - timer
         print(f"{num_steps} steps in {secs:.2f} seconds: {num_steps/secs:.4f} steps/sec")
-
-        rewards, avg, max_reward, min_reward = prefilled_parallel_eval(env.terra_env,
-                                             env_cfgs,
-                                             rng_step,
-                                             train_state,
-                                             env.maps_buffer)
-        # print(f"reward: {reward}")
-        print(f"done: {avg}")
+        max_reward = jnp.max(final_reward)
+        min_reward = jnp.min(final_reward)
+        print(f"{max_reward=}")
+        print(f"{min_reward=}")
+        reward_progression = jnp.mean(final_reward, axis=(0,2))
+        print(f"rewards: {reward_progression}")
+        total_progression.extend([x.item() for x in reward_progression])
+        # print(f"done: {avg}")
         timer = done
-
+        print(total_progression)
 
 
     # something, grads = _individual_gradients(env.terra_env,
