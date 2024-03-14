@@ -488,7 +488,7 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
             return new_cumulative_reward, transition.reward  # Return updated total and current reward
 
     initial_reward_sum = jnp.zeros((converted_config.num_training_envs,), dtype=jnp.float32)
-    final_reward_sum, _ = jax.lax.scan(accumulate_rewards, initial_reward_sum, progress)
+    summed_rewards, _ = jax.lax.scan(accumulate_rewards, initial_reward_sum, progress)
 
     (next_train_state, next_unvectorized_step_state) = update_state[0]
 
@@ -498,18 +498,18 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
     # updated_train_state = next_train_state.apply_gradients(grads=summed_grads)
 
     updated_carry = (_env, _env_config, next_rng, updated_train_state, maps_buffer, reward_normalizer)
-    return updated_carry, (avg_loss, final_reward_sum)
+    return updated_carry, (avg_loss, summed_rewards)
 
 
 def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
                           maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config: TrainingConfig, reward_normalizer):
     initial_carry = (_env, _env_config, _rng, _train_state, maps_buffer, reward_normalizer)
     step_through_env_fixed = partial(step_through_env, converted_config=converted_config, batch_config=batch_config)
-    final_carry, (loss, final_reward) = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
+    final_carry, (loss, summed_rewards) = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
 
 
     (_env, _env_config, next_rng, updated_train_state, _, _) = final_carry
-    return (_env, _env_config, next_rng, updated_train_state), (loss, final_reward)
+    return (_env, _env_config, next_rng, updated_train_state), (loss, summed_rewards)
 
 
 def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str,
@@ -600,6 +600,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         num_steps = config['num_train_envs'] * config['ppo2_num_env_started'] * config['n_steps']
         secs = done - timer
         print(f"{num_steps} steps in {secs:.2f} seconds: {num_steps/secs:.4f} steps/sec")
+        print(f"rewards: {', '.join(final_reward[0][0])}")
         # max_reward = jnp.max(final_reward)
         # min_reward = jnp.min(final_reward)
         # print(f"{max_reward=}")
