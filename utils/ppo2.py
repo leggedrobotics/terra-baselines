@@ -600,19 +600,18 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         num_steps = config['num_train_envs'] * config['ppo2_num_env_started'] * config['n_steps']
         secs = done - timer
         print(f"{num_steps} steps in {secs:.2f} seconds: {num_steps/secs:.4f} steps/sec")
-        print(f"rewards: {', '.join(final_reward[0][0])}")
         # max_reward = jnp.max(final_reward)
         # min_reward = jnp.min(final_reward)
         # print(f"{max_reward=}")
         # print(f"{min_reward=}")
         # print(f"{final_reward=}")
-        # reward_progression = jnp.mean(final_reward, axis=(0,2))
-        # print(f"rewards: {reward_progression}")
+        reward_progression = jnp.mean(final_reward, axis=(0,2))
+        print(f"rewards: {reward_progression}")
         # print(f"progress: {progress}")
         # total_progression.extend([x.item() for x in reward_progression])
         # # print(f"done: {avg}")
-        # timer = done
-        print(total_progression)
+        timer = done
+        # print(total_progression)
 
 
     # something, grads = _individual_gradients(env.terra_env,
