@@ -498,18 +498,18 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
     # updated_train_state = next_train_state.apply_gradients(grads=summed_grads)
 
     updated_carry = (_env, _env_config, next_rng, updated_train_state, maps_buffer, reward_normalizer)
-    return updated_carry, (avg_loss, final_reward_sum, progress)
+    return updated_carry, (avg_loss, final_reward_sum)
 
 
 def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
                           maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config: TrainingConfig, reward_normalizer):
     initial_carry = (_env, _env_config, _rng, _train_state, maps_buffer, reward_normalizer)
     step_through_env_fixed = partial(step_through_env, converted_config=converted_config, batch_config=batch_config)
-    final_carry, (loss, final_reward, progress) = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
+    final_carry, (loss, final_reward) = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
 
 
     (_env, _env_config, next_rng, updated_train_state, _, _) = final_carry
-    return (_env, _env_config, next_rng, updated_train_state), (loss, final_reward, progress)
+    return (_env, _env_config, next_rng, updated_train_state), (loss, final_reward)
 
 
 def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str,
@@ -534,7 +534,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         config["num_train_envs"],
         config["clip_action_maps"],
         config["mask_out_arm_extension"],
-        config["ppo2_num_steps"],
+        config["n_steps"],
         config["max_reward"],
         config["ppo2_minibatch_size"],
         config["clip_eps"],
@@ -587,7 +587,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
     timer = time.time()
     total_progression = []
     for i in range(converted_config.ppo2_num_training_cycles):
-        something, (loss, final_reward, progress) = parallel_gradients(env.terra_env,
+        something, (loss, final_reward) = parallel_gradients(env.terra_env,
                                               env_cfgs,
                                               rng_step,
                                               train_state,
@@ -597,7 +597,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         train_state = something[3]
         rng_step = something[2]
         print(f"---Cycle {i}/{converted_config.ppo2_num_training_cycles - 1}:---")
-        num_steps = config['num_train_envs'] * config['ppo2_num_env_started'] * config['ppo2_num_steps']
+        num_steps = config['num_train_envs'] * config['ppo2_num_env_started'] * config['n_steps']
         secs = done - timer
         print(f"{num_steps} steps in {secs:.2f} seconds: {num_steps/secs:.4f} steps/sec")
         # max_reward = jnp.max(final_reward)
