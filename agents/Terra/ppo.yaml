@@ -12,7 +12,7 @@ train_config:
   use_action_masking: False
   mask_out_arm_extension: True  # Note: this also removes features from arm extension in the local maps
 
-  num_train_envs: 1  # Number of parallel env workers
+  num_train_envs: 2048  # Number of parallel env workers
   epoch_ppo: 3  # "Number of PPO epochs on a single batch"
   n_steps: 64 # "GAE n-steps"
   n_minibatch: 256 # "Number of PPO minibatches" -> Note: compile time scales with it!
@@ -29,7 +29,7 @@ train_config:
 
   ### PPO2 Config
   ppo2_num_training_cycles: 6
-  ppo2_num_epochs: 1
+  ppo2_num_epochs: 4
   ppo2_num_steps: 64
   ppo2_minibatch_size: 1
   ppo2_num_env_started: 1
