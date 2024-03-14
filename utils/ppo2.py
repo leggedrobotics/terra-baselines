@@ -84,14 +84,97 @@ class StepState(NamedTuple):
     env_config: EnvConfig
 
 
+def convert_to_string_done(fixed_structure):
+    # Initialize an empty string
+    result_string = ''
+    # Iterate through the outermost list
+    for i in range(len(fixed_structure[0][0])):
+        # Directly access the boolean value using [0]
+        bool_value = fixed_structure[0][0][i][0]
+        # Append 'x' for True and 'o' for False
+        result_string += '  x  ' if bool_value else '  o  '
+        result_string += '|'
+    return result_string
+
+def convert_to_string_action(fixed_structure):
+    translate_action = {
+        "-1": "-",
+        "0": "↑",
+        "1": "↓",
+        "2": "↻",
+        "3": "↺",
+        "4": "→",
+        "5": "←",
+        "6": "»",
+        "7": "«",
+        "8": "×",
+    }
+    '''
+    DO_NOTHING = -1
+    FORWARD = 0
+    BACKWARD = 1
+    CLOCK = 2
+    ANTICLOCK = 3
+    CABIN_CLOCK = 4
+    CABIN_ANTICLOCK = 5
+    EXTEND_ARM = 6
+    RETRACT_ARM = 7
+    DO = 8
+    '''
+    # Initialize an empty string
+    result_string = ''
+    # Iterate through the outermost list
+    for i in range(len(fixed_structure[0][0])):
+        # Directly access the boolean value using [0]
+        val = fixed_structure[0][0][i][0][0]
+        # Append 'x' for True and 'o' for False
+        translated = translate_action[f"{val}"]
+        result_string += f"  {translated}  |"
+    return result_string
+
+def convert_to_string_reward(fixed_structure):
+    # Initialize an empty string
+    result_string = ''
+    # Iterate through the outermost list
+    for i in range(len(fixed_structure[0][0])):
+        # Directly access the boolean value using [0]
+        reward = fixed_structure[0][0][i][0]
+        # Append 'x' for True and 'o' for False
+        result_string += "{:+05.2f}".format(reward) + '|'
+    return result_string
+
+def convert_to_string_agent_state(fixed_structure):
+    result_string_pos = ''
+    result_string_base = ''
+    result_string_cabin = ''
+    result_string_extension = ''
+    result_string_loaded = ''
+    for i in range(len(fixed_structure[0][0])):
+        pos_basex = fixed_structure[0][0][i][0][0]
+        pos_basey = fixed_structure[0][0][i][0][1]
+        angle_base = fixed_structure[0][0][i][0][2]
+        angle_cabinet = fixed_structure[0][0][i][0][3]
+        arm_extension = fixed_structure[0][0][i][0][4]
+        loaded = fixed_structure[0][0][i][0][5]
+        result_string_pos += f"{pos_basex}/{pos_basey}|"
+        result_string_base +=f"  {angle_base}  |"
+        result_string_cabin +=f"  {angle_cabinet}  |"
+        result_string_extension +=f"  {arm_extension}  |"
+        result_string_loaded +="{:^5d}".format(loaded) + '|'
+    return f"{result_string_pos}\n{result_string_base}\n{result_string_cabin}\n{result_string_extension}\n{result_string_loaded}|"
+
 class Transition2(NamedTuple):
-    done: Any
+    done: Array
     action: Any
     value: Any
     reward: Any
     log_prob: Any
     obs: Any
 
+
+    def __str__(self):
+        # return f"{''.join(['x' if x[0] else 'o' for x in self.done[0]])}\n{''.join(self.action)}\n{''.join(self.value)}\n{''.join(self.reward)}"
+        return f"\n{convert_to_string_done(self.done)}\n{convert_to_string_action(self.action)}\n{convert_to_string_reward(self.reward)}\n{convert_to_string_agent_state(self.obs[0])}"
 
 # info: Any
 
@@ -415,18 +498,18 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
     # updated_train_state = next_train_state.apply_gradients(grads=summed_grads)
 
     updated_carry = (_env, _env_config, next_rng, updated_train_state, maps_buffer, reward_normalizer)
-    return updated_carry, (avg_loss, final_reward_sum)
+    return updated_carry, (avg_loss, final_reward_sum, progress)
 
 
 def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
                           maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config: TrainingConfig, reward_normalizer):
     initial_carry = (_env, _env_config, _rng, _train_state, maps_buffer, reward_normalizer)
     step_through_env_fixed = partial(step_through_env, converted_config=converted_config, batch_config=batch_config)
-    final_carry, (loss, final_reward) = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
+    final_carry, (loss, final_reward, progress) = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
 
 
     (_env, _env_config, next_rng, updated_train_state, _, _) = final_carry
-    return (_env, _env_config, next_rng, updated_train_state), (loss, final_reward)
+    return (_env, _env_config, next_rng, updated_train_state), (loss, final_reward, progress)
 
 
 def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str,
@@ -504,7 +587,7 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
     timer = time.time()
     total_progression = []
     for i in range(converted_config.ppo2_num_training_cycles):
-        something, (loss, final_reward) = parallel_gradients(env.terra_env,
+        something, (loss, final_reward, progress) = parallel_gradients(env.terra_env,
                                               env_cfgs,
                                               rng_step,
                                               train_state,
@@ -521,8 +604,10 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         min_reward = jnp.min(final_reward)
         print(f"{max_reward=}")
         print(f"{min_reward=}")
+        print(f"{final_reward=}")
         reward_progression = jnp.mean(final_reward, axis=(0,2))
         print(f"rewards: {reward_progression}")
+        print(f"progress: {progress}")
         total_progression.extend([x.item() for x in reward_progression])
         # print(f"done: {avg}")
         timer = done
