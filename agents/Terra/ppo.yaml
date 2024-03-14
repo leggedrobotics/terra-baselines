@@ -6,14 +6,13 @@ train_config:
   env_name: "Terra"
   env_kwargs: {}
   env_params: {}
-  num_test_rollouts: 256
+  num_test_rollouts: 64
   # num_steps_test_rollouts: 600  # TODO make it work (tracer problem)
 
   use_action_masking: False
   mask_out_arm_extension: True  # Note: this also removes features from arm extension in the local maps
 
   num_train_envs: 2048  # Number of parallel env workers
-#  epoch_ppo: 3  # "Number of PPO epochs on a single batch"
   n_steps: 64 # "GAE n-steps"
 #  n_minibatch: 256 # "Number of PPO minibatches" -> Note: compile time scales with it!
   lr_begin: 3e-04  # Start PPO learning rate
@@ -30,7 +29,6 @@ train_config:
   ### PPO2 Config
   ppo2_num_training_cycles: 128
   ppo2_num_epochs: 16
-#  ppo2_num_steps: 32
   ppo2_minibatch_size: 256
   ppo2_num_env_started: 1
   ppo2_num_env_started_eval: 1
@@ -64,7 +62,7 @@ train_config:
   profile: False
   save_episode_for_replay: False
 
-  wandb: False
+  wandb: True
 
 log_config:
   time_to_track: ["num_steps"]
