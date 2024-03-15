@@ -17,81 +17,53 @@ from functools import partial
 from jax_resnet.common import Sequential
 
 
-
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     """Instantiate a model according to obs shape of environment."""
-    if config["train_type"] == "PPO":
-        if config["network_name"] == "SimplifiedDecoupledCategoricalNet":
-            num_embeddings_agent = jnp.max(jnp.array(
-                [
-                 config["num_embeddings_agent_min"],
-                 env.batch_cfg.maps.max_height,
-                 env.batch_cfg.maps.max_width,
-                 env.batch_cfg.agent.angles_cabin,
-                 env.batch_cfg.agent.angles_base,
-                 ], dtype=jnp.int16)
-                ).item()
-            jax.debug.print("num_embeddings_agent = {x}", x=num_embeddings_agent)
-            jax.debug.print("config.use_action_masking={x}", x=config["use_action_masking"])
-            map_min_max = tuple(config["maps_net_normalization_bounds"]) if not config["clip_action_maps"] else (-1, 1)
-            jax.debug.print("map normalization min max = {x}", x=map_min_max)
-            model = SimplifiedDecoupledCategoricalNet(
-                use_action_masking=config["use_action_masking"],
-                mask_out_arm_extension=config["mask_out_arm_extension"],
-                num_embeddings_agent=num_embeddings_agent,
-                map_min_max=map_min_max,
-                local_map_min_max=tuple(config["local_map_normalization_bounds"]),
-                loaded_max=config["loaded_max"],
-            )
-        elif config["network_name"] == "SimplifiedCoupledCategoricalNet":
-            num_embeddings_agent = jnp.max(jnp.array(
-                [
-                 config["num_embeddings_agent_min"],
-                 env.batch_cfg.maps.max_height,
-                 env.batch_cfg.maps.max_width,
-                 env.batch_cfg.agent.angles_cabin,
-                 env.batch_cfg.agent.angles_base,
-                 ], dtype=jnp.int16)
-                ).item()
-            jax.debug.print("num_embeddings_agent = {x}", x=num_embeddings_agent)
-            jax.debug.print("config.use_action_masking={x}", x=config["use_action_masking"])
-            map_min_max = tuple(config["maps_net_normalization_bounds"]) if not config["clip_action_maps"] else (-1, 1)
-            jax.debug.print("map normalization min max = {x}", x=map_min_max)
-            model = SimplifiedCoupledCategoricalNet(
-                use_action_masking=config["use_action_masking"],
-                mask_out_arm_extension=config["mask_out_arm_extension"],
-                num_embeddings_agent=num_embeddings_agent,
-                map_min_max=map_min_max,
-                local_map_min_max=tuple(config["local_map_normalization_bounds"]),
-                loaded_max=config["loaded_max"],
-            )
+    num_embeddings_agent = jnp.max(jnp.array(
+        [
+            config["num_embeddings_agent_min"],
+            env.batch_cfg.maps.max_height,
+            env.batch_cfg.maps.max_width,
+            env.batch_cfg.agent.angles_cabin,
+            env.batch_cfg.agent.angles_base,
+            ], dtype=jnp.int16)
+        ).item()
+    jax.debug.print("num_embeddings_agent = {x}", x=num_embeddings_agent)
+    map_min_max = tuple(config["maps_net_normalization_bounds"]) if not config["clip_action_maps"] else (-1, 1)
+    jax.debug.print("map normalization min max = {x}", x=map_min_max)
+    model = SimplifiedCoupledCategoricalNet(
+        mask_out_arm_extension=config["mask_out_arm_extension"],
+        num_embeddings_agent=num_embeddings_agent,
+        map_min_max=map_min_max,
+        local_map_min_max=tuple(config["local_map_normalization_bounds"]),
+        loaded_max=config["loaded_max"],
+    )
 
-    if config["network_name"] == "Categorical-MLP":
-        obs_shape_cumsum = sum([reduce(lambda x, y: x*y, value) for value in env.observation_shapes.values()])
-        params = model.init(rng, jnp.zeros((obs_shape_cumsum,)), rng=rng)
-    elif config["network_name"] in ("CategoricalNet", "SimplifiedCategoricalNet", "SimplifiedDecoupledCategoricalNet", "SimplifiedCoupledCategoricalNet"):
-        map_width = env.batch_cfg.maps.max_width
-        map_height = env.batch_cfg.maps.max_height
-        n_local_maps_layers = env.batch_cfg.agent.max_arm_extension + 1 if not config["mask_out_arm_extension"] else 1
-        obs = [
-            jnp.zeros((config["num_train_envs"], 6,)),
-            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
-            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
-            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
-            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
-            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
-            jnp.zeros((config["num_train_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
-            jnp.zeros((config["num_train_envs"], map_width, map_height)),
-            jnp.zeros((config["num_train_envs"], map_width, map_height)),
-            jnp.zeros((config["num_train_envs"], map_width, map_height)),
-            jnp.zeros((config["num_train_envs"], map_width, map_height)),
-            jnp.zeros((config["num_train_envs"], map_width, map_height)),
-            jnp.zeros((config["num_train_envs"], map_width, map_height)),
-        ]
-        action_mask = jnp.ones((config["num_train_envs"], env.batch_cfg.action_type.get_num_actions(),), dtype=jnp.bool_)
-        params = model.init(rng, obs, action_mask)
+    map_width = env.batch_cfg.maps.max_width
+    map_height = env.batch_cfg.maps.max_height
+    
+    # TODO get this to work
+    # n_local_maps_layers = env.batch_cfg.agent.max_arm_extension + 1 if not config["mask_out_arm_extension"] else 1
+    n_local_maps_layers = 2
 
-    print(f"{config['network_name']}: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
+    obs = [
+        jnp.zeros((config["num_envs"], 6,)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+    ]
+    params = model.init(rng, obs)
+
+    print(f"Model: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
     return model, params
 
 def normalize(x: Array, x_min: Array, x_max: Array) -> Array:
@@ -214,6 +186,7 @@ class LocalMapNet(nn.Module):
             -1,
         )
 
+        print(f"x.shape = {x.shape}")
         x = self.mlp(x.reshape(*x.shape[:-3], -1))
         return x
     
@@ -383,7 +356,6 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     obs["dig_map"],
     obs["dumpability_mask"],
     """
-    use_action_masking: bool
     mask_out_arm_extension: bool
     num_embeddings_agent: int
     map_min_max: Sequence[int]
@@ -408,7 +380,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         self.activation = nn.relu
 
-    def __call__(self, obs: Array, action_mask: Array) -> Array:
+    def __call__(self, obs: Array) -> Array:
         x_agent_state = self.agent_state_net(obs)
         
         x_maps = self.maps_net(obs)
@@ -423,16 +395,16 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         xpi = self.mlp_pi(x)
 
         # INVALID ACTION MASKING
-        if self.use_action_masking:
-            action_mask = action_mask.astype(jnp.bool_)
-            # OPTION 1
-            xpi = xpi * action_mask - 1e8 * (~action_mask)
-            # OPTION 2
-            # xpi = jnp.where(
-            #     action_mask,
-            #     xpi,
-            #     -1e8
-            # )
+        # if self.use_action_masking:
+        #     action_mask = action_mask.astype(jnp.bool_)
+        #     # OPTION 1
+        #     xpi = xpi * action_mask - 1e8 * (~action_mask)
+        #     # OPTION 2
+        #     # xpi = jnp.where(
+        #     #     action_mask,
+        #     #     xpi,
+        #     #     -1e8
+        #     # )
 
         if self.mask_out_arm_extension:
             xpi = xpi.at[..., -2].set(-1e8)
