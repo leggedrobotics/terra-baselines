@@ -229,8 +229,15 @@ def generateObservation(step_state_tuple: (StepState, StepStateUnvectorized), _,
                                                        unvectorized_step_state.map_buffer,
                                                        _step_state.env_config)
 
-    # Todo Vectorization needed?
+    transition = Transition(
+        next_state=transition.next_state,
+        obs=transition.obs,
+        reward=unvectorized_step_state.reward_normalizer.normalize(transition.reward),
+        done=transition.done,
+        infos=transition.infos,
+    )
     reward_normalizer = unvectorized_step_state.reward_normalizer.update(transition.reward)
+
     new_unvectorized_step_state = StepStateUnvectorized(unvectorized_step_state.train_state,
                                                         transition.infos["action_mask"],
                                                         unvectorized_step_state.env,
@@ -246,6 +253,7 @@ def generateObservation(step_state_tuple: (StepState, StepStateUnvectorized), _,
                                next_map_buffer_keys,
                                _step_state.env_config)
     terminated = transition.infos["done_task"]
+    # TODO is _step_state.obs right or we need obs?
     record = Transition2(terminated, wrapped_action.action, value, transition.reward, log_prob,
                          obs_to_model_input(_step_state.obs))
     return (new_step_state, new_unvectorized_step_state), record
@@ -257,6 +265,7 @@ def _loss_fn(params, traj_batch, gae, targets, unvectorized_step_state):
                                                  action_mask)
         pi = tfp.distributions.Categorical(logits=logits_pi)
         log_prob = pi.log_prob(action)
+        # TODO indexing here?
         value = value[:, 0]
         return log_prob, value, pi.entropy()
 
@@ -335,16 +344,21 @@ def _update_epoch(update_state, unused, train_config: TrainingConfig):
     (next_train_state, unvectorized_step_state), (grads, loss) = jax.lax.scan(
         _update_minbatch, (train_state, unvectorized_step_state), minibatches
     )
-    update_state = ((next_train_state, unvectorized_step_state), traj_batch, advantages, targets, rng)
 
-    summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.average(xs, 0), grads)
+    # TODO: summing grdients across minibatches
+    epoch_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.mean(xs, 0), grads)
 
     avg_loss = jax.tree_util.tree_map(
         lambda xs: jax.numpy.mean(xs, axis=0),
         loss
     )
 
-    return update_state, (summed_grads, avg_loss)
+    # TODO update model here
+    avg_grads = jax.lax.pmean(epoch_grads, axis_name="data")
+    updated_train_state = next_train_state.apply_gradients(grads=avg_grads)
+    update_state = ((updated_train_state, unvectorized_step_state), traj_batch, advantages, targets, rng)
+
+    return update_state, avg_loss
 
 
 def _state_to_obs_dict(state: State) -> dict[str, Array]:
@@ -391,6 +405,9 @@ def _reset(key_2, env_config, target_map, padding_mask, trench_axes, trench_type
 
 
 def reset_env(maps_buffer: MapsBuffer, rng: jax.random.PRNGKey, env_config: EnvConfig, num_train_envs: int):
+    """
+    Returns num_train_envs environments with reset
+    """
     key_1, key_2 = jax.random.split(rng)
     k_dev_envs = jax.random.split(key_1, num_train_envs)
     k_dev_envs_2 = jax.random.split(key_2, num_train_envs)
@@ -430,6 +447,7 @@ def _calculate_gae(traj_batch, last_val, converted_config: TrainingConfig):
     return advantages, advantages + traj_batch.value
 
 def conv_obs(obs, clip: bool, mask: bool):
+    # TODO are we applying stuff on the right dimensions?
     if clip:
         obs = clip_action_maps_in_obs(obs)
     if mask:
@@ -444,12 +462,16 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
 
     current_1, current_2, current_3, current_4, next_rng = jax.random.split(_rng, 5)
     # Init batch over multiple devices with different env seeds
+
+    # TODO don't reset
     env_state, obs, maps_buffer_keys = reset_env(maps_buffer, current_1, _env_config, converted_config.num_training_envs)
+
     # Vectorized reset
     # env_state, obs, maps_buffer_keys = _envBatch.reset(k_dev_envs, _env_config)
     conv_obs_filled = partial(conv_obs, clip=converted_config.clip_action_maps, mask=converted_config.mask_out_arm_extension)
     obs = conv_obs_filled(obs)
     initial_action_mask = jax.vmap(State._get_action_mask, in_axes=(0, None))(env_state, batch_config.action_type)
+
     multi_stepstate = jax.vmap(StepState, in_axes=(0, 0, 0, 0))
     step_state = multi_stepstate(env_state, obs, maps_buffer_keys, _env_config)
     step_state_unvectorized = StepStateUnvectorized(_train_state,
@@ -466,6 +488,7 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
     carry, progress = jax.lax.scan(generateObservationPartial, (step_state, step_state_unvectorized), None,
                                    length=converted_config.ppo2_num_steps)
     last_step_state, last_unvectorized_step_state = carry
+    # TODO Why one more forward?
     log_prob, value, wrapped_action = forward(last_step_state, last_unvectorized_step_state, current_3)
 
     advantages, targets = _calculate_gae(progress, value, converted_config)
@@ -474,15 +497,19 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
 
     update_epoch_prefilled = partial(_update_epoch, train_config=converted_config)
     # UPDATE NETWORK
-    update_state, (summed_grads, avg_loss) = jax.lax.scan(
+    # TODO do we need this scan?
+    update_state, avg_loss = jax.lax.scan(
         update_epoch_prefilled, update_state, None, converted_config.ppo2_num_epochs
     )
-    summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.average(xs, 0), summed_grads)
+    # summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.mean(xs, 0), summed_grads)
+    (next_train_state, next_unvectorized_step_state) = update_state[0]
+    updated_carry = (_env, _env_config, next_rng, next_train_state, maps_buffer, reward_normalizer)
+
+    # COMPUTE STATS
     avg_loss = jax.tree_util.tree_map(
         lambda xs: jax.numpy.mean(xs, axis=0),
         avg_loss
     )
-
     def accumulate_rewards(cumulative_reward, transition):
             new_cumulative_reward = cumulative_reward + transition.reward
             return new_cumulative_reward, transition.reward  # Return updated total and current reward
@@ -490,26 +517,31 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
     initial_reward_sum = jnp.zeros((converted_config.num_training_envs,), dtype=jnp.float32)
     summed_rewards, _ = jax.lax.scan(accumulate_rewards, initial_reward_sum, progress)
 
-    (next_train_state, next_unvectorized_step_state) = update_state[0]
-
-    # avg_grads = jax.lax.pmean(summed_grads, axis_name="data")
-    # updated_train_state = next_train_state.apply_gradients(grads=avg_grads)
-
-    updated_train_state = next_train_state.apply_gradients(grads=summed_grads)
-
-    updated_carry = (_env, _env_config, next_rng, updated_train_state, maps_buffer, reward_normalizer)
-    return updated_carry, (avg_loss, summed_rewards)
+    """
+    done: Array
+    action: Any
+    value: Any
+    reward: Any
+    log_prob: Any
+    obs: Any
+    """
+    n_dones = progress.done.reshape(-1).sum()
+    rewards = progress.reward.reshape(-1)
+    max_r = rewards.max()
+    min_r = rewards.min()
+    return updated_carry, (avg_loss, summed_rewards, n_dones, max_r, min_r)
 
 
 def _individual_gradients(_env: TerraEnv, _env_config: EnvConfig, _rng, _train_state: TrainState,
                           maps_buffer: MapsBuffer, batch_config: BatchConfig, converted_config: TrainingConfig, reward_normalizer):
     initial_carry = (_env, _env_config, _rng, _train_state, maps_buffer, reward_normalizer)
     step_through_env_fixed = partial(step_through_env, converted_config=converted_config, batch_config=batch_config)
-    final_carry, (loss, summed_rewards) = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
+    # we step ppo2_num_env_started through num_train_envs envs (vmap happening inside)
+    final_carry, stats = jax.lax.scan(step_through_env_fixed, initial_carry, None, length=converted_config.ppo2_num_env_started)
 
 
     (_env, _env_config, next_rng, updated_train_state, _, _) = final_carry
-    return (_env, _env_config, next_rng, updated_train_state), (loss, summed_rewards)
+    return (_env, _env_config, next_rng, updated_train_state), stats
 
 
 def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, curriculum: Curriculum, run_name: str,
@@ -586,16 +618,28 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
 
     timer = time.time()
     total_progression = []
+    # Needed to log metrics
     for i in range(converted_config.ppo2_num_training_cycles):
-        something, (loss, final_reward) = parallel_gradients(env.terra_env,
+        something, (loss, reward, dones, max_r, min_r) = parallel_gradients(env.terra_env,
                                               env_cfgs,
                                               rng_step,
                                               train_state,
                                               env.maps_buffer)
-
-        done = time.time()
         train_state = something[3]
         rng_step = something[2]
+        done = time.time()
+
+        wandb.log(
+            {
+                "dones": dones.mean(),
+                "max_r": max_r.mean(),
+                "min_r": min_r.mean(),
+                # "loss": loss.mean(),
+                "reward": reward.mean(),
+            }
+        )
+        print(f"{loss=}")
+
         print(f"---Cycle {i}/{converted_config.ppo2_num_training_cycles - 1}:---")
         num_steps = config['num_train_envs'] * config['ppo2_num_env_started'] * config['n_steps']
         secs = done - timer
@@ -605,8 +649,8 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         print(f"{max_reward=}")
         print(f"{min_reward=}")
         # print(f"{final_reward=}")
-        reward_progression = jnp.mean(final_reward, axis=(0,2))
-        print(f"rewards: {reward_progression}")
+        # reward_progression = jnp.mean(final_reward, axis=(0,2))
+        # print(f"rewards: {reward_progression}")
         # print(f"progress: {progress}")
         # total_progression.extend([x.item() for x in reward_progression])
         # # print(f"done: {avg}")
