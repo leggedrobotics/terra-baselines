@@ -27,9 +27,9 @@ train_config:
 
 
   ### PPO2 Config
-  ppo2_num_training_cycles: 128
+  ppo2_num_training_cycles: 512
   ppo2_num_epochs: 16
-  ppo2_minibatch_size: 256
+  ppo2_minibatch_size: 32
   ppo2_num_env_started: 1
   ppo2_num_env_started_eval: 1
 
