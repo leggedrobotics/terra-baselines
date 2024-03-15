@@ -337,7 +337,7 @@ def _update_epoch(update_state, unused, train_config: TrainingConfig):
     )
     update_state = ((next_train_state, unvectorized_step_state), traj_batch, advantages, targets, rng)
 
-    summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.sum(xs, 0), grads)
+    summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.average(xs, 0), grads)
 
     avg_loss = jax.tree_util.tree_map(
         lambda xs: jax.numpy.mean(xs, axis=0),
@@ -477,7 +477,7 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
     update_state, (summed_grads, avg_loss) = jax.lax.scan(
         update_epoch_prefilled, update_state, None, converted_config.ppo2_num_epochs
     )
-    summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.sum(xs, 0), summed_grads)
+    summed_grads = jax.tree_util.tree_map(lambda xs: jax.numpy.average(xs, 0), summed_grads)
     avg_loss = jax.tree_util.tree_map(
         lambda xs: jax.numpy.mean(xs, axis=0),
         avg_loss
@@ -492,10 +492,10 @@ def step_through_env(carry, _, converted_config: TrainingConfig, batch_config: B
 
     (next_train_state, next_unvectorized_step_state) = update_state[0]
 
-    avg_grads = jax.lax.pmean(summed_grads, axis_name="data")
-    updated_train_state = next_train_state.apply_gradients(grads=avg_grads)
+    # avg_grads = jax.lax.pmean(summed_grads, axis_name="data")
+    # updated_train_state = next_train_state.apply_gradients(grads=avg_grads)
 
-    # updated_train_state = next_train_state.apply_gradients(grads=summed_grads)
+    updated_train_state = next_train_state.apply_gradients(grads=summed_grads)
 
     updated_carry = (_env, _env_config, next_rng, updated_train_state, maps_buffer, reward_normalizer)
     return updated_carry, (avg_loss, summed_rewards)
@@ -600,10 +600,10 @@ def train_ppo(rng, config, model, model_params, mle_log, env: TerraEnvBatch, cur
         num_steps = config['num_train_envs'] * config['ppo2_num_env_started'] * config['n_steps']
         secs = done - timer
         print(f"{num_steps} steps in {secs:.2f} seconds: {num_steps/secs:.4f} steps/sec")
-        # max_reward = jnp.max(final_reward)
-        # min_reward = jnp.min(final_reward)
-        # print(f"{max_reward=}")
-        # print(f"{min_reward=}")
+        max_reward = jnp.max(final_reward)
+        min_reward = jnp.min(final_reward)
+        print(f"{max_reward=}")
+        print(f"{min_reward=}")
         # print(f"{final_reward=}")
         reward_progression = jnp.mean(final_reward, axis=(0,2))
         print(f"rewards: {reward_progression}")
