@@ -181,7 +181,6 @@ def make_train(
             def _update_epoch(update_state, _):
                 def _update_minbatch(train_state, batch_info):
                     # TODO randomization here?
-                    rng, _rng_model = jax.random.split(rng)
                     transitions, advantages, targets = batch_info
                     new_train_state, update_info = ppo_update_networks(
                         train_state=train_state,

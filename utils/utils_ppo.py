@@ -154,7 +154,8 @@ def ppo_update_networks(
         value, dist = policy(train_state.apply_fn, params, obs)
         value = value[:, 0]
         # action = dist.sample(seed=rng_model)
-        log_prob = dist.log_prob(transitions.action)
+        transitions_actions_reshaped = jnp.reshape(transitions.action, (-1, *transitions.action.shape[2:]))
+        log_prob = dist.log_prob(transitions_actions_reshaped)
 
         # Terra: Reshape
         value = jnp.reshape(value, transitions.value.shape)
