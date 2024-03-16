@@ -8,8 +8,10 @@ from tensorflow_probability.substrates import jax as tfp
 from typing import NamedTuple
 import numpy as np
 from terra.config import EnvConfig, MapType, RewardsType
+from pathlib import Path
+import pickle
 
-N_ENVS = 1024
+N_ENVS = 2048
 N_ROLLOUT = 100
 
 # Training stuff
@@ -277,3 +279,13 @@ def rollout(
     # final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
     final_carry = jax.lax.fori_loop(0, N_ROLLOUT, lambda i, carry: _body_fn(carry), init_carry)
     return final_carry[1]
+
+def save_pkl_object(obj, filename):
+    """Helper to store pickle objects."""
+    output_file = Path(filename)
+    output_file.parent.mkdir(exist_ok=True, parents=True)
+
+    with open(filename, "wb") as output:
+        pickle.dump(obj, output, pickle.HIGHEST_PROTOCOL)
+
+    print(f"Stored data at {filename}.")

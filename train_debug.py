@@ -17,7 +17,7 @@ import optax
 import wandb
 from flax.jax_utils import replicate, unreplicate
 from flax.training.train_state import TrainState
-from utils.utils_ppo import Transition, calculate_gae, ppo_update_networks, rollout, select_action_ppo, get_cfgs_init, wrap_action
+from utils.utils_ppo import Transition, calculate_gae, ppo_update_networks, rollout, select_action_ppo, get_cfgs_init, wrap_action, save_pkl_object
 from datetime import datetime
 from tqdm import tqdm
 
@@ -25,18 +25,19 @@ from tqdm import tqdm
 jax.config.update("jax_threefry_partitionable", True)
 
 # TODO curriculum
+DT = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
 @dataclass
 class TrainConfig:
     project: str = "excavator-oss"
     group: str = "default"
-    name: str = "foundations-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    name: str = "foundations-733-" + DT
     # training
-    num_envs: int = 1024
-    num_steps: int = 128
+    num_envs: int = 2048
+    num_steps: int = 64
     update_epochs: int = 3
     num_minibatches: int = 8
-    total_timesteps: int = 3_000_000_000
+    total_timesteps: int = 1_000_000_000
     lr: float = 3e-04
     clip_eps: float = 0.5
     gamma: float = 0.995
@@ -55,7 +56,7 @@ class TrainConfig:
     mask_out_arm_extension = True
 
     def __post_init__(self):
-        num_devices = jax.local_device_count()
+        num_devices = 1 # jax.local_device_count()  # TODO revert
         # splitting computation across all available devices
         self.num_envs_per_device = self.num_envs // num_devices
         self.total_timesteps_per_device = self.total_timesteps // num_devices
@@ -268,10 +269,21 @@ def make_train(
 
         runner_state = (rng, train_state, timestep, prev_action, prev_reward)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
+        best_reward = -100
         for i in tqdm(range(config.num_updates)):
             # params_before_update = jax.tree_map(lambda x: x.copy(), train_state.params)
             
             runner_state, loss_info = jax.block_until_ready(_update_step(runner_state, None))
+
+            # Save checkpoint
+            if loss_info["eval/rewards"] > best_reward:
+                checkpoint = {
+                    "model": train_state.params,
+                    "opt_state": train_state.opt_state,
+                    "loss_info": loss_info,
+                }
+                save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
+                best_reward = loss_info["eval/rewards"]
             
             # # DEBUG
             # _, train_state, _, _, _ = runner_state
