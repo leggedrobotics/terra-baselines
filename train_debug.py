@@ -19,6 +19,7 @@ from flax.jax_utils import replicate, unreplicate
 from flax.training.train_state import TrainState
 from utils.utils_ppo import Transition, calculate_gae, ppo_update_networks, rollout, select_action_ppo, get_cfgs_init, wrap_action
 from datetime import datetime
+from tqdm import tqdm
 
 # this will be default in new jax versions anyway
 jax.config.update("jax_threefry_partitionable", True)
@@ -30,29 +31,22 @@ class TrainConfig:
     project: str = "excavator-oss"
     group: str = "default"
     name: str = "single-task-ppo-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    # env_id: str = "MiniGrid-Empty-6x6"
-    # agent
-    # action_emb_dim: int = 16
-    # rnn_hidden_dim: int = 1024
-    # rnn_num_layers: int = 1
-    # head_hidden_dim: int = 256
     # training
-    num_envs: int = 4096
+    num_envs: int = 1024
     num_steps: int = 32
     update_epochs: int = 3
-    num_minibatches: int = 256
+    num_minibatches: int = 8
     total_timesteps: int = 3_000_000_000
     lr: float = 3e-04
     clip_eps: float = 0.5
     gamma: float = 0.995
     gae_lambda: float = 0.95
-    ent_coef: float = 0.01
+    ent_coef: float = 0.0 #0.0001
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 80
     seed: int = 42
-
-    # Model
+    # model
     clip_action_maps = True  # clips the action maps to [-1, 1]
     maps_net_normalization_bounds = [-1, 8]  # automatically set to [-1, 1] if clip_action_maps is True
     local_map_normalization_bounds = [-16, 16]
@@ -103,7 +97,7 @@ def make_train(
     env_params: EnvConfig,
     config: TrainConfig,
 ):
-    @partial(jax.pmap, axis_name="devices")
+    # @partial(jax.pmap, axis_name="devices")
     def train(
         rng: jax.Array,
         train_state: TrainState,
@@ -111,7 +105,6 @@ def make_train(
         # INIT ENV
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config.num_envs_per_device)
-        print(f"{reset_rng[33]}")
 
         # TERRA: Reset envs
         timestep = env.reset(env_params, reset_rng)  # vmapped inside
@@ -119,6 +112,7 @@ def make_train(
         prev_reward = jnp.zeros(config.num_envs_per_device)
 
         # TRAIN LOOP
+        @jax.jit  # TODO remove jit and enable pmap on train function
         def _update_step(runner_state, _):
             # COLLECT TRAJECTORIES
             def _env_step(runner_state, _):
@@ -140,6 +134,7 @@ def make_train(
                 # # squeeze seq_len where possible
                 # action, value, log_prob = action.squeeze(1), value.squeeze(1), log_prob.squeeze(1)
                 # TODO squeeze?
+                print(f"{prev_timestep.observation['agent_state'].shape=}")
                 action, log_prob, value, _ = select_action_ppo(train_state, prev_timestep.observation, _rng_model)
 
                 # STEP ENV
@@ -177,6 +172,7 @@ def make_train(
             # )
             # TODO squeeze?
             rng, _rng = jax.random.split(rng)
+            print(f"last {timestep.observation['agent_state'].shape=}")
             _, _, last_val, _ = select_action_ppo(train_state, timestep.observation, _rng)
             # advantages, targets = calculate_gae(transitions, last_val.squeeze(1), config.gamma, config.gae_lambda)
             advantages, targets = calculate_gae(transitions, last_val, config.gamma, config.gae_lambda)
@@ -211,11 +207,14 @@ def make_train(
                 permutation = jax.random.permutation(_rng, config.num_envs_per_device)
                 # [seq_len, batch_size, ...]
                 batch = (transitions, advantages, targets)
+                print(f"{transitions.reward.shape=}")
+                print(f"{advantages.shape=}")
+                print(f"{targets.shape=}")
                 # [batch_size, seq_len, ...], as our model assumes
                 batch = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
 
                 shuffled_batch = jtu.tree_map(lambda x: jnp.take(x, permutation, axis=0), batch)
-                # [num_minibatches, minibatch_size, ...]
+                # [num_minibatches, minibatch_size, seq_len, ...]
                 minibatches = jtu.tree_map(
                     lambda x: jnp.reshape(x, (config.num_minibatches, -1) + x.shape[1:]), shuffled_batch
                 )
@@ -252,21 +251,47 @@ def make_train(
                 1,
             )
             
-            eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
+            # TODO: pmean
+            # eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
+            n = config.num_envs_per_device * eval_stats.length
             loss_info.update(
                 {
-                    # "eval/returns": eval_stats.reward.mean(0),
-                    # "eval/lengths": eval_stats.length.mean(0),
-                    "eval/returns": eval_stats.reward.mean(),
-                    "eval/lengths": eval_stats.length.mean(),
+                    "eval/rewards": eval_stats.reward / n,
+                    "eval/max_reward": eval_stats.max_reward,
+                    "eval/min_reward": eval_stats.min_reward,
+                    "eval/lengths": eval_stats.length,
                     "lr": train_state.opt_state[-1].hyperparams["learning_rate"],
+
+                    "eval/FORWARD %": eval_stats.action_0 / n,
+                    "eval/BACKWARD %": eval_stats.action_1 / n,
+                    "eval/CLOCK %": eval_stats.action_2 / n,
+                    "eval/ANTICLOCK %": eval_stats.action_3 / n,
+                    "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
+                    "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
+                    "eval/EXTEND_ARM %": eval_stats.action_6 / n,
+                    "eval/RETRACT_ARM %": eval_stats.action_7 / n,
+                    "eval/DO": eval_stats.action_8 / n,
                 }
             )
             runner_state = (rng, train_state, timestep, prev_action, prev_reward)
             return runner_state, loss_info
 
         runner_state = (rng, train_state, timestep, prev_action, prev_reward)
-        runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
+        # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
+        for i in tqdm(range(config.num_updates)):
+            # params_before_update = jax.tree_map(lambda x: x.copy(), train_state.params)
+            
+            runner_state, loss_info = jax.block_until_ready(_update_step(runner_state, None))
+            
+            # # DEBUG
+            # _, train_state, _, _, _ = runner_state
+            # params_after_update = train_state.params
+            # params_changed = jax.tree_map(lambda before, after: jnp.any(before != after), params_before_update, params_after_update)
+            # # print(params_changed)
+            # any_param_changed = any(jax.tree_leaves(params_changed))
+            # print(f"Any parameter changed: {any_param_changed}")
+
+            wandb.log(loss_info)
         return {"runner_state": runner_state, "loss_info": loss_info}
 
     return train
@@ -285,15 +310,14 @@ def train(config: TrainConfig):
 
     rng, env, env_params, train_state = make_states(config)
     # replicating args across devices
-    rng = jax.random.split(rng, num=jax.local_device_count())
-    train_state = replicate(train_state, jax.local_devices())
+    # rng = jax.random.split(rng, num=jax.local_device_count())
+    # train_state = replicate(train_state, jax.local_devices())
 
     print("Compiling...")
     t = time.time()
     train_fn = make_train(env, env_params, config)
-    print(f"{rng=}")
-    train_fn_lowered = train_fn.lower(rng, train_state)
-    train_fn = train_fn_lowered.compile()
+    # train_fn_lowered = train_fn.lower(rng, train_state)
+    # train_fn = train_fn_lowered.compile()
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")
 
@@ -303,21 +327,21 @@ def train(config: TrainConfig):
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s")
 
-    print("Logging...")
-    loss_info = unreplicate(train_info["loss_info"])
+    # print("Logging...")
+    # loss_info = unreplicate(train_info["loss_info"])
 
-    total_transitions = 0
-    for i in range(config.num_updates):
-        # summing total transitions per update from all devices
-        total_transitions += config.num_steps * config.num_envs_per_device * jax.local_device_count()
-        info = jtu.tree_map(lambda x: x[i].item(), loss_info)
-        info["transitions"] = total_transitions
-        wandb.log(info)
+    # total_transitions = 0
+    # for i in range(config.num_updates):
+    #     # summing total transitions per update from all devices
+    #     total_transitions += config.num_steps * config.num_envs_per_device * jax.local_device_count()
+    #     info = jtu.tree_map(lambda x: x[i].item(), loss_info)
+    #     info["transitions"] = total_transitions
+    #     wandb.log(info)
 
-    run.summary["training_time"] = elapsed_time
-    run.summary["steps_per_second"] = (config.total_timesteps_per_device * jax.local_device_count()) / elapsed_time
+    # run.summary["training_time"] = elapsed_time
+    # run.summary["steps_per_second"] = (config.total_timesteps_per_device * jax.local_device_count()) / elapsed_time
 
-    print("Final return: ", float(loss_info["eval/returns"][-1]))
+    # print("Final return: ", float(loss_info["eval/returns"][-1]))
     run.finish()
 
 if __name__ == "__main__":

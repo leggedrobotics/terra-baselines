@@ -1,7 +1,3 @@
-"""
-Partially from https://github.com/RobertTLange/gymnax-blines
-"""
-
 import jax
 import jax.numpy as jnp
 from jax import Array
@@ -186,7 +182,6 @@ class LocalMapNet(nn.Module):
             -1,
         )
 
-        print(f"x.shape = {x.shape}")
         x = self.mlp(x.reshape(*x.shape[:-3], -1))
         return x
     

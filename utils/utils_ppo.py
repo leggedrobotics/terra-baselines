@@ -9,6 +9,9 @@ from typing import NamedTuple
 import numpy as np
 from terra.config import EnvConfig, MapType, RewardsType
 
+N_ENVS = 1024
+N_ROLLOUT = 100
+
 # Training stuff
 class Transition(struct.PyTreeNode):
     done: jax.Array
@@ -27,13 +30,13 @@ def wrap_action(action, action_type):
 
 def get_cfgs_init():      
     # TODO from config
-    n_envs = 4096
+    n_envs = N_ENVS
     # n_devices = 1
 
     env_cfgs = jax.vmap(EnvConfig.parametrized)(
         np.array([60] * n_envs),
         np.array([60] * n_envs),
-        np.array([200] * n_envs),
+        np.array([N_ROLLOUT] * n_envs),
         np.array([0] * n_envs),
         np.array([MapType.FOUNDATIONS] * n_envs),
         np.array([RewardsType.DENSE] * n_envs),
@@ -137,11 +140,22 @@ def ppo_update_networks(
         # log_prob = dist.log_prob(transitions.action)
 
         # Terra: Reshape
+        # TODO should i reshape here?
+        # transitions_obs_reshaped = transitions.obs
+        # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
+        print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
         transitions_obs_reshaped = jax.tree_map(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])), transitions.obs
         )
 
-        _, log_prob, value, dist = select_action_ppo(train_state, transitions_obs_reshaped, rng_model)
+        # TODO make a function
+        # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
+        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
+        obs = obs_to_model_input(transitions_obs_reshaped)
+        value, dist = policy(train_state.apply_fn, params, obs)
+        value = value[:, 0]
+        action = dist.sample(seed=rng_model)
+        log_prob = dist.log_prob(action)
 
         # Terra: Reshape
         value = jnp.reshape(value, transitions.value.shape)
@@ -166,7 +180,8 @@ def ppo_update_networks(
         return total_loss, (value_loss, actor_loss, entropy)
 
     (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(train_state.params)
-    (loss, vloss, aloss, entropy, grads) = jax.lax.pmean((loss, vloss, aloss, entropy, grads), axis_name="devices")
+    # TODO bring back for multi device
+    # (loss, vloss, aloss, entropy, grads) = jax.lax.pmean((loss, vloss, aloss, entropy, grads), axis_name="devices")
     train_state = train_state.apply_gradients(grads=grads)
     update_info = {
         "total_loss": loss,
@@ -180,9 +195,21 @@ def ppo_update_networks(
 # for evaluation (evaluate for N consecutive episodes, sum rewards)
 # N=1 single task, N>1 for meta-RL
 class RolloutStats(NamedTuple):
+    max_reward: jax.Array = jnp.asarray(-100)
+    min_reward: jax.Array = jnp.asarray(100)
     reward: jax.Array = jnp.asarray(0.0)
     length: jax.Array = jnp.asarray(0)
-    episodes: jax.Array = jnp.asarray(0)
+    # episodes: jax.Array = jnp.asarray(0)
+
+    action_0: jax.Array = jnp.asarray(0)
+    action_1: jax.Array = jnp.asarray(0)
+    action_2: jax.Array = jnp.asarray(0)
+    action_3: jax.Array = jnp.asarray(0)
+    action_4: jax.Array = jnp.asarray(0)
+    action_5: jax.Array = jnp.asarray(0)
+    action_6: jax.Array = jnp.asarray(0)
+    action_7: jax.Array = jnp.asarray(0)
+    action_8: jax.Array = jnp.asarray(0)
 
 
 def rollout(
@@ -192,9 +219,9 @@ def rollout(
     train_state: TrainState,
     num_consecutive_episodes: int = 1,
 ) -> RolloutStats:
-    def _cond_fn(carry):
-        rng, stats, timestep = carry
-        return jnp.less(stats.episodes, num_consecutive_episodes)
+    # def _cond_fn(carry):
+    #     rng, stats, timestep = carry
+    #     return jnp.less(stats.episodes, num_consecutive_episodes)
 
     def _body_fn(carry):
         rng, stats, timestep = carry
@@ -211,7 +238,7 @@ def rollout(
         # )
         # action = dist.sample(seed=_rng).squeeze()
         action, _, _, _ = select_action_ppo(train_state, timestep.observation, _rng_model)
-        num_envs_per_device = 4096  # TODO: from config
+        num_envs_per_device = N_ENVS  # TODO: from config
         _rng_step = jax.random.split(_rng_step, num_envs_per_device)
         action_env = wrap_action(action, env.batch_cfg.action_type)
         timestep = env.step(env_params, timestep, action_env, _rng_step) # vmapped inside
@@ -221,22 +248,32 @@ def rollout(
         #     length=stats.length + 1,
         #     episodes=stats.episodes + timestep.last(),
         # )
-        print(f"{timestep.done.any()=}")
         stats = RolloutStats(
-            reward=stats.reward + timestep.reward.mean(),
+            max_reward=jnp.maximum(stats.max_reward, timestep.reward.max()),
+            min_reward=jnp.minimum(stats.min_reward, timestep.reward.min()),
+            reward=stats.reward + timestep.reward.sum(),
             length=stats.length + 1,
-            episodes=stats.episodes + timestep.done.any(),
+            # episodes=stats.episodes + timestep.done.any(),
+
+            action_0=stats.action_0 + (action == 0).sum(),
+            action_1=stats.action_1 + (action == 1).sum(),
+            action_2=stats.action_2 + (action == 2).sum(),
+            action_3=stats.action_3 + (action == 3).sum(),
+            action_4=stats.action_4 + (action == 4).sum(),
+            action_5=stats.action_5 + (action == 5).sum(),
+            action_6=stats.action_6 + (action == 6).sum(),
+            action_7=stats.action_7 + (action == 7).sum(),
+            action_8=stats.action_8 + (action == 8).sum(),
         )
         carry = (rng, stats, timestep)
         return carry
 
-    num_envs_per_device = 4096  # TODO: from config
+    num_envs_per_device = N_ENVS  # TODO: from config
     rng, _rng_reset = jax.random.split(rng)
     _rng_reset = jax.random.split(_rng_reset, num_envs_per_device)
     timestep = env.reset(env_params, _rng_reset)
     init_carry = (rng, RolloutStats(), timestep)
 
-    print("rollout start")
-    final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
-    print("rollout end")
+    # final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
+    final_carry = jax.lax.fori_loop(0, N_ROLLOUT, lambda i, carry: _body_fn(carry), init_carry)
     return final_carry[1]
