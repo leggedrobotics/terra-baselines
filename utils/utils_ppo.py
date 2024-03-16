@@ -120,7 +120,6 @@ def ppo_update_networks(
     clip_eps: float,
     vf_coef: float,
     ent_coef: float,
-    rng_model: jax.random.PRNGKey,
 ):
     # NORMALIZE ADVANTAGES
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
@@ -154,8 +153,8 @@ def ppo_update_networks(
         obs = obs_to_model_input(transitions_obs_reshaped)
         value, dist = policy(train_state.apply_fn, params, obs)
         value = value[:, 0]
-        action = dist.sample(seed=rng_model)
-        log_prob = dist.log_prob(action)
+        # action = dist.sample(seed=rng_model)
+        log_prob = dist.log_prob(transitions.action)
 
         # Terra: Reshape
         value = jnp.reshape(value, transitions.value.shape)

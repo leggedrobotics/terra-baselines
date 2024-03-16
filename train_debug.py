@@ -179,10 +179,7 @@ def make_train(
 
             # UPDATE NETWORK
             def _update_epoch(update_state, _):
-
-                def _update_minbatch(init, batch_info):
-                    train_state, rng = init
-
+                def _update_minbatch(train_state, batch_info):
                     # TODO randomization here?
                     rng, _rng_model = jax.random.split(rng)
                     transitions, advantages, targets = batch_info
@@ -194,11 +191,8 @@ def make_train(
                         clip_eps=config.clip_eps,
                         vf_coef=config.vf_coef,
                         ent_coef=config.ent_coef,
-                        rng_model=_rng_model,
                     )
-
-                    new_init = (new_train_state, rng)
-                    return new_init, update_info
+                    return new_train_state, update_info
 
                 rng, train_state, transitions, advantages, targets = update_state
 
@@ -207,9 +201,6 @@ def make_train(
                 permutation = jax.random.permutation(_rng, config.num_envs_per_device)
                 # [seq_len, batch_size, ...]
                 batch = (transitions, advantages, targets)
-                print(f"{transitions.reward.shape=}")
-                print(f"{advantages.shape=}")
-                print(f"{targets.shape=}")
                 # [batch_size, seq_len, ...], as our model assumes
                 batch = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
 
@@ -218,7 +209,7 @@ def make_train(
                 minibatches = jtu.tree_map(
                     lambda x: jnp.reshape(x, (config.num_minibatches, -1) + x.shape[1:]), shuffled_batch
                 )
-                (train_state, rng), update_info = jax.lax.scan(_update_minbatch, (train_state, rng), minibatches)
+                train_state, update_info = jax.lax.scan(_update_minbatch, train_state, minibatches)
 
                 update_state = (rng, train_state, transitions, advantages, targets)
                 return update_state, update_info
