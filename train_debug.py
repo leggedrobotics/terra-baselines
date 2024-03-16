@@ -291,6 +291,7 @@ def make_train(
 def train(config: TrainConfig):
     # logging to wandb
     run = wandb.init(
+        entity="operators",
         project=config.project,
         group=config.group,
         name=config.name,
