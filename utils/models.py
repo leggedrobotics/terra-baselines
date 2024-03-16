@@ -6,11 +6,8 @@ from functools import reduce
 from typing import Sequence, Union
 from terra.actions import TrackedAction, WheeledAction
 from terra.env import TerraEnvBatch
-from jax_resnet import ModuleDef
-from jax_resnet import ConvBlock
 from typing import Optional, Callable
 from functools import partial
-from jax_resnet.common import Sequential
 
 
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
@@ -202,46 +199,6 @@ class AtariCNN(nn.Module):
         x = nn.relu(x)
         x = nn.Dense(features=32)(x)
         return x
-
-# NOTE: MyResNet is not used
-def MyResNet(
-    block_cls: ModuleDef,
-    *,
-    stage_sizes: Sequence[int],
-    n_classes: int,
-    hidden_sizes: Sequence[int],
-    global_avg_pool: bool,
-    normalize_fn: Optional[Callable],
-    pool_fn: Optional[Callable],
-    conv_cls: ModuleDef = nn.Conv,
-    norm_cls: Optional[ModuleDef] = partial(nn.BatchNorm, momentum=0.9),
-    conv_block_cls: ModuleDef = ConvBlock,
-) -> Sequential:
-    conv_block_cls = partial(conv_block_cls, conv_cls=conv_cls, norm_cls=norm_cls)
-    block_cls = partial(block_cls, conv_block_cls=conv_block_cls)
-
-    if pool_fn is not None:
-        # NOTE: we apply pooling before normalization
-        layers = [pool_fn,]
-    else:
-        layers = []
-    
-    if normalize_fn is not None:
-        layers.append(normalize_fn)
-
-    for i, (hsize, n_blocks) in enumerate(zip(hidden_sizes, stage_sizes)):
-        for b in range(n_blocks):
-            strides = (1, 1) if i == 0 or b != 0 else (2, 2)  # TODO is this (2, 2) an issue?
-            layers.append(block_cls(n_hidden=hsize, strides=strides))
-
-    if global_avg_pool:
-        layers.append(partial(jnp.mean, axis=(1, 2)))  # global average pool
-    else:
-        layers.append(lambda x: x.reshape(x.shape[0], -1))  # no pooling
-    
-    layers.append(nn.Dense(n_classes))
-    
-    return Sequential(layers)
 
 @jax.jit
 def min_pool(x):
