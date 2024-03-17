@@ -52,7 +52,7 @@ class TrainConfig:
     mask_out_arm_extension = True
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
-    num_rollouts = 100  # max length of an episode in Terra
+    num_rollouts = 300  # max length of an episode in Terra
     
     def __post_init__(self):
         self.num_devices = jax.local_device_count() if self.num_devices == 0 else self.num_devices
