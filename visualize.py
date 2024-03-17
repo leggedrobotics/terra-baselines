@@ -43,11 +43,6 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
         obs_seq.append(timestep.observation)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
-            # TODO reintroduce
-            # if rl_config["clip_action_maps"]:
-            #     obs = clip_action_maps_in_obs(obs)
-            # if rl_config["mask_out_arm_extension"]:
-            #     obs = cut_local_map_layers(obs)
             obs = obs_to_model_input(timestep.observation)
             v, logits_pi = model.apply(model_params, obs)
             pi = tfp.distributions.Categorical(logits=logits_pi)
