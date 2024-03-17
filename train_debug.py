@@ -21,6 +21,7 @@ from tqdm import tqdm
 jax.config.update("jax_threefry_partitionable", True)
 
 # TODO curriculum
+# TODO reintroduce clip_action_maps_in_obs and cut_local_map_layers
 
 @dataclass
 class TrainConfig:
@@ -67,7 +68,7 @@ class TrainConfig:
 
 def make_states(config: TrainConfig):
     env = TerraEnvBatch()
-    env_params = get_cfgs_init()
+    env_params = get_cfgs_init(config)
     print(f"{env_params.tile_size.shape=}")
 
     rng = jax.random.PRNGKey(config.seed)

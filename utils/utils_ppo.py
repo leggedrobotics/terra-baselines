@@ -11,7 +11,8 @@ from terra.config import EnvConfig, MapType, RewardsType
 from pathlib import Path
 import pickle
 
-N_ENVS = 2048
+# TODO from config
+N_ENVS = 6
 N_ROLLOUT = 100
 
 # Training stuff
@@ -30,10 +31,8 @@ def wrap_action(action, action_type):
     action = action_type.new(action[:, None])
     return action
 
-def get_cfgs_init():      
-    # TODO from config
-    n_envs = N_ENVS
-    # n_devices = 1
+def get_cfgs_init(train_cfg):      
+    n_envs = train_cfg.num_envs
 
     env_cfgs = jax.vmap(EnvConfig.parametrized)(
         np.array([60] * n_envs),
