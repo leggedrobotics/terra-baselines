@@ -30,10 +30,10 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
-    num_envs: int = 4096
+    num_envs: int = 16384
     num_steps: int = 32
     update_epochs: int = 3
-    num_minibatches: int = 8
+    num_minibatches: int = 64
     total_timesteps: int = 3_000_000_000
     lr: float = 0.001
     clip_eps: float = 0.5
@@ -280,7 +280,7 @@ def make_train(
 
         # Setup runner state for multiple devices
         rng = jax.random.split(rng, num=config.num_devices)
-        train_state = replicate(train_state, config.num_devices)
+        train_state = replicate(train_state, jax.local_devices()[:config.num_devices])
         runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
 
