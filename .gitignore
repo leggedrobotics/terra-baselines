@@ -166,3 +166,6 @@ wandb/
 agents/Terra/dummy.txt
 
 slurm*
+
+profile-remote/
+tools/

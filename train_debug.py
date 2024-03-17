@@ -14,6 +14,8 @@ from datetime import datetime
 from dataclasses import asdict, dataclass
 import time
 from tqdm import tqdm
+from functools import partial
+from flax.jax_utils import replicate, unreplicate
 
 # jax.config.update("jax_enable_x64", True)
 
@@ -25,15 +27,15 @@ jax.config.update("jax_threefry_partitionable", True)
 @dataclass
 class TrainConfig:
     name: str
+    num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
-    name: str = "foundations-733-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    num_envs: int = 1024
-    num_steps: int = 64
+    num_envs: int = 2024
+    num_steps: int = 32
     update_epochs: int = 3
-    num_minibatches: int = 8
+    num_minibatches: int = 64
     total_timesteps: int = 3_000_000_000
-    lr: float = 0.001
+    lr: float = 3e-4
     clip_eps: float = 0.5
     gamma: float = 0.995
     gae_lambda: float = 0.95
@@ -50,15 +52,16 @@ class TrainConfig:
     mask_out_arm_extension = True
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
+    num_rollouts = 300  # max length of an episode in Terra
     
     def __post_init__(self):
-        num_devices = jax.local_device_count()  # Adjust for device count
-        self.num_envs_per_device = self.num_envs // num_devices
-        self.total_timesteps_per_device = self.total_timesteps // num_devices
-        self.eval_episodes_per_device = self.eval_episodes // num_devices
-        assert self.num_envs % num_devices == 0, "Number of environments must be divisible by the number of devices."
-        self.num_updates = (self.total_timesteps // (self.num_steps * self.num_envs)) // num_devices
-        print(f"Num devices: {num_devices}, Num updates: {self.num_updates}")
+        self.num_devices = jax.local_device_count() if self.num_devices == 0 else self.num_devices
+        self.num_envs_per_device = self.num_envs // self.num_devices
+        self.total_timesteps_per_device = self.total_timesteps // self.num_devices
+        self.eval_episodes_per_device = self.eval_episodes // self.num_devices
+        assert self.num_envs % self.num_devices == 0, "Number of environments must be divisible by the number of devices."
+        self.num_updates = (self.total_timesteps // (self.num_steps * self.num_envs)) // self.num_devices
+        print(f"Num devices: {self.num_devices}, Num updates: {self.num_updates}")
 
     # make object subscriptable
     def __getitem__(self, key):
@@ -67,7 +70,7 @@ class TrainConfig:
 
 def make_states(config: TrainConfig):
     env = TerraEnvBatch()
-    env_params = get_cfgs_init()
+    env_params = get_cfgs_init(config)
     print(f"{env_params.tile_size.shape=}")
 
     rng = jax.random.PRNGKey(config.seed)
@@ -88,22 +91,23 @@ def make_train(
     env_params: EnvConfig,
     config: TrainConfig,
 ):
-    # @partial(jax.pmap, axis_name="devices")
     def train(
         rng: jax.Array,
         train_state: TrainState,
     ):
         # INIT ENV
         rng, _rng = jax.random.split(rng)
-        reset_rng = jax.random.split(_rng, config.num_envs_per_device)
+        reset_rng = jax.random.split(_rng, config.num_envs_per_device * config.num_devices)
+        reset_rng = reset_rng.reshape((config.num_devices, config.num_envs_per_device, -1))
 
         # TERRA: Reset envs
-        timestep = env.reset(env_params, reset_rng)  # vmapped inside
-        prev_action = jnp.zeros(config.num_envs_per_device, dtype=jnp.int32)
-        prev_reward = jnp.zeros(config.num_envs_per_device)
+        reset_fn_p = jax.pmap(env.reset, axis_name="devices") # vmapped inside
+        timestep = reset_fn_p(env_params, reset_rng)
+        prev_action = jnp.zeros((config.num_devices, config.num_envs_per_device), dtype=jnp.int32)
+        prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
 
         # TRAIN LOOP
-        @jax.jit  # TODO remove jit and enable pmap on train function
+        @partial(jax.pmap, axis_name="devices")
         def _update_step(runner_state, _):
             """
             Performs a single update step in the training loop.
@@ -133,11 +137,10 @@ def make_train(
                 - runner_state: Updated runner state after stepping the environment.
                 - transition: A namedtuple containing the transition information (current state, action, reward, next state) for this step.
                 """
-                rng, train_state, prev_timestep, prev_action, prev_reward = runner_state
+                rng, train_state, prev_timestep, prev_action, prev_reward, env_params = runner_state
 
                 # SELECT ACTION
                 rng, _rng_model, _rng_env = jax.random.split(rng, 3)
-                print(f"{prev_timestep.observation['agent_state'].shape=}")
                 action, log_prob, value, _ = select_action_ppo(train_state, prev_timestep.observation, _rng_model)
 
                 # STEP ENV
@@ -155,16 +158,15 @@ def make_train(
                     prev_action=prev_action,
                     prev_reward=prev_reward,
                 )
-                runner_state = (rng, train_state, timestep, action, timestep.reward)
+                runner_state = (rng, train_state, timestep, action, timestep.reward, env_params)
                 return runner_state, transition
 
             # transitions: [seq_len, batch_size, ...]
             runner_state, transitions = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
 
             # CALCULATE ADVANTAGE
-            rng, train_state, timestep, prev_action, prev_reward = runner_state
+            rng, train_state, timestep, prev_action, prev_reward, env_params = runner_state
             rng, _rng = jax.random.split(rng)
-            print(f"last {timestep.observation['agent_state'].shape=}")
             _, _, last_val, _ = select_action_ppo(train_state, timestep.observation, _rng)
             # advantages, targets = calculate_gae(transitions, last_val.squeeze(1), config.gamma, config.gae_lambda)
             advantages, targets = calculate_gae(transitions, last_val, config.gamma, config.gae_lambda)
@@ -247,6 +249,8 @@ def make_train(
                 env,
                 env_params,
                 train_state,
+                config.num_envs_per_device,
+                config.num_rollouts,
             )
             
             # TODO: pmean
@@ -272,37 +276,34 @@ def make_train(
                     "eval/total_terminations": eval_stats.terminations / config.num_envs_per_device,
                 }
             )
-            runner_state = (rng, train_state, timestep, prev_action, prev_reward)
+            runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
             return runner_state, loss_info
 
-        runner_state = (rng, train_state, timestep, prev_action, prev_reward)
+        # Setup runner state for multiple devices
+        rng = jax.random.split(rng, num=config.num_devices)
+        train_state = replicate(train_state, jax.local_devices()[:config.num_devices])
+        runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
 
         for i in tqdm(range(config.num_updates)):
-            # params_before_update = jax.tree_map(lambda x: x.copy(), train_state.params)
-            
             runner_state, loss_info = jax.block_until_ready(_update_step(runner_state, None))
 
             # Save checkpoint
+            loss_info_single = unreplicate(loss_info)
+            runner_state_single = unreplicate(runner_state)
+            env_params_single = unreplicate(env_params)
             if i % config.checkpoint_interval == 0:
                 checkpoint = {
                     "train_config": config,
-                    "env_config": env_params,
-                    "model": runner_state[1].params,
-                    "loss_info": loss_info,
+                    "env_config": env_params_single,
+                    "model": runner_state_single[1].params,
+                    "loss_info": loss_info_single,
                 }
                 save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
             
-            # # DEBUG
-            # _, train_state, _, _, _ = runner_state
-            # params_after_update = train_state.params
-            # params_changed = jax.tree_map(lambda before, after: jnp.any(before != after), params_before_update, params_after_update)
-            # # print(params_changed)
-            # any_param_changed = any(jax.tree_leaves(params_changed))
-            # print(f"Any parameter changed: {any_param_changed}")
             if i % config.log_interval == 0:
-                wandb.log(loss_info)
-        return {"runner_state": runner_state, "loss_info": loss_info}
+                wandb.log(loss_info_single)
+        return {"runner_state": runner_state_single, "loss_info": loss_info_single}
 
     return train
 
@@ -354,7 +355,14 @@ if __name__ == "__main__":
         type=str,
         default="somewhere",
     )
+    parser.add_argument(
+        "-d",
+        "--num_devices",
+        type=int,
+        default=0,
+        help="Number of devices to use. If 0, uses all available devices.",
+    )
     args, _ = parser.parse_known_args()
 
     name = f"{args.name}-{args.machine}-{DT}"
-    train(TrainConfig(name=name))
+    train(TrainConfig(name=name, num_devices=args.num_devices))

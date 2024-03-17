@@ -9,11 +9,12 @@ from utils.models import get_model_ready
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
-from utils.ppo import obs_to_model_input, wrap_action, clip_action_maps_in_obs, cut_local_map_layers
+from utils.utils_ppo import obs_to_model_input, wrap_action, get_cfgs_init
 from terra.state import State
 import matplotlib.animation as animation
-from utils.curriculum import Curriculum
+# from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
+from train_debug import TrainConfig  # needed for unpickling checkpoints
 
 
 def load_neural_network(config, env):
@@ -31,42 +32,36 @@ def _append_to_obs(o, obs_log):
 def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed):
     print(f"Using {seed=}")
     rng = jax.random.PRNGKey(seed)
-
-
-    rng, *rng_reset = jax.random.split(rng, rl_config["num_test_rollouts"] + 1)
-    reset_seeds = jnp.array([r[0] for r in rng_reset])
-    env_state, obs, maps_buffer_keys = env.reset(reset_seeds, env_cfgs)
+    rng, _rng = jax.random.split(rng)
+    rng_reset = jax.random.split(_rng, rl_config.num_test_rollouts)
+    timestep = env.reset(env_cfgs, rng_reset)
 
     t_counter = 0
     reward_seq = []
     obs_seq = []
     while True:
-        obs_seq.append(obs)
+        obs_seq.append(timestep.observation)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
-            if rl_config["clip_action_maps"]:
-                obs = clip_action_maps_in_obs(obs)
-            if rl_config["mask_out_arm_extension"]:
-                obs = cut_local_map_layers(obs)
-            obs = obs_to_model_input(obs)
-            action_mask = jnp.ones((8,), dtype=jnp.bool_)  # TODO implement action masking
-            v, logits_pi = model.apply(model_params, obs, action_mask)
+            obs = obs_to_model_input(timestep.observation)
+            v, logits_pi = model.apply(model_params, obs)
             pi = tfp.distributions.Categorical(logits=logits_pi)
             action = pi.sample(seed=rng_act)
         else:
             raise RuntimeError("Model is None!")
-        next_env_state, (next_obs, reward, done, info), maps_buffer_keys = env.step(env_state, wrap_action(action, env.batch_cfg.action_type), env_cfgs, maps_buffer_keys)
-        reward_seq.append(reward)
-        print(t_counter, reward, action, done)
+        rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
+        timestep = env.step(env_cfgs, timestep, wrap_action(action, env.batch_cfg.action_type), rng_step)
+        reward_seq.append(timestep.reward)
+        print(t_counter, timestep.reward, action, timestep.done)
         print(10 * "=")
         t_counter += 1
         # if done or t_counter == max_frames:
         #     break
         # else:
-        if jnp.all(done).item() or t_counter == max_frames:
+        if jnp.all(timestep.done).item() or t_counter == max_frames:
             break
-        env_state = next_env_state
-        obs = next_obs
+        # env_state = next_env_state
+        # obs = next_obs
     print(f"Terra - Steps: {t_counter}, Return: {np.sum(reward_seq)}")
     return obs_seq, np.cumsum(reward_seq)
 
@@ -134,21 +129,24 @@ if __name__ == "__main__":
 
     log = load_pkl_object(f"{args.run_name}" + ".pkl")
     config = log["train_config"]
-    config["num_test_rollouts"] = n_envs
+    config.num_test_rollouts = n_envs
 
     n_devices = 1
 
-    curriculum = Curriculum(rl_config=config, n_devices=n_devices)
-    env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
+    # curriculum = Curriculum(rl_config=config, n_devices=n_devices)
+    # env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
+    env_cfgs = get_cfgs_init(log["train_config"])
+    env_cfgs = jax.tree_map(lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
     progressive_gif = bool(args.progressive_gif)
     print(f"Using progressive_gif = {progressive_gif}")
     env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, progressive_gif=args.progressive_gif, rendering_engine="pygame")
-    config["num_embeddings_agent_min"] = curriculum.get_num_embeddings_agent_min()
+    config.num_embeddings_agent_min = 60 # curriculum.get_num_embeddings_agent_min()
     
 
     model = load_neural_network(config, env)
-    replicated_params = log['network']
-    model_params = jax.tree_map(lambda x: x[0], replicated_params)
+    model_params = log['model']
+    # replicated_params = log['network']
+    # model_params = jax.tree_map(lambda x: x[0], replicated_params)
     obs_seq, cum_rewards = rollout_episode(
         env, model, model_params, env_cfgs, config, max_frames=args.n_steps, seed=args.seed
     )

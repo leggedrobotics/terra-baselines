@@ -12,14 +12,6 @@ from pathlib import Path
 import pickle
 from jax.experimental import host_callback
 
-N_ENVS = 1024
-N_ROLLOUT = 100
-
-def print_debug(*args):
-    print(*args)
-    return args[0]  # Return the first argument to avoid changing computation.
-
-
 # Training stuff
 class Transition(struct.PyTreeNode):
     done: jax.Array
@@ -36,23 +28,23 @@ def wrap_action(action, action_type):
     action = action_type.new(action[:, None])
     return action
 
-def get_cfgs_init():      
-    # TODO from config
-    n_envs = N_ENVS
-    # n_devices = 1
+def get_cfgs_init(train_cfg):
+    num_devices = train_cfg.num_devices
+    n_envs = train_cfg.num_envs
+    num_rollouts = train_cfg.num_rollouts
 
     env_cfgs = jax.vmap(EnvConfig.parametrized)(
         np.array([60] * n_envs),
         np.array([60] * n_envs),
-        np.array([N_ROLLOUT] * n_envs),
+        np.array([num_rollouts] * n_envs),
         np.array([0] * n_envs),
         np.array([MapType.FOUNDATIONS] * n_envs),
         np.array([RewardsType.DENSE] * n_envs),
         np.array([False] * n_envs),
         )
-    # env_cfgs = jax.tree_map(
-    #     lambda x: jax.numpy.reshape(x, (n_devices, x.shape[0] // n_devices, *x.shape[1:])), env_cfgs
-    # )
+    env_cfgs = jax.tree_map(
+        lambda x: jax.numpy.reshape(x, (num_devices, x.shape[0] // num_devices, *x.shape[1:])), env_cfgs
+    )
     return env_cfgs
 
 def policy(
@@ -64,11 +56,33 @@ def policy(
     pi = tfp.distributions.Categorical(logits=logits_pi)
     return value, pi
 
+def clip_action_maps_in_obs(obs):
+    """Clip action maps to [-1, 1] on the intuition that a binary map is enough for the agent to take decisions."""
+    obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
+    obs["do_preview"] = jnp.clip(obs["do_preview"], a_min=-1, a_max=1)
+    obs["dig_map"] = jnp.clip(obs["dig_map"], a_min=-1, a_max=1)
+    return obs
+
+def cut_local_map_layers(obs):
+    """Only keep the first layer of the local map (makes sense especially if the arm extension action is blocked)"""
+    obs["local_map_action_neg"] = obs["local_map_action_neg"][..., [0]]
+    obs["local_map_action_pos"] = obs["local_map_action_pos"][..., [0]]
+    obs["local_map_target_neg"] = obs["local_map_target_neg"][..., [0]]
+    obs["local_map_target_pos"] = obs["local_map_target_pos"][..., [0]]
+    obs["local_map_dumpability"] = obs["local_map_dumpability"][..., [0]]
+    obs["local_map_obstacles"] = obs["local_map_obstacles"][..., [0]]
+    return obs
+
 def obs_to_model_input(obs):
     """
     Need to convert Dict to List to make it usable by JAX.
     """
-    return [
+    obs = jax.tree_map(lambda x: x.copy(), obs)  # TODO copy is a hack, find a proper solution, it crashes without it, but this makes it slow
+    obs = clip_action_maps_in_obs(obs)
+    # TODO only use the following function if mask_out_arm_extension is True
+    obs = cut_local_map_layers(obs)
+
+    obs = [
         obs["agent_state"],
         obs["local_map_action_neg"],
         obs["local_map_action_pos"],
@@ -83,6 +97,7 @@ def obs_to_model_input(obs):
         obs["dig_map"],
         obs["dumpability_mask"],
     ]
+    return obs
 
 def select_action_ppo(
     train_state: TrainState,
@@ -133,22 +148,7 @@ def ppo_update_networks(
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
     def _loss_fn(params):
-        # RERUN NETWORK
-        # dist, value, _ = train_state.apply_fn(
-        #     params,
-        #     {
-        #         # [batch_size, seq_len, ...]
-        #         "observation": transitions.obs,
-        #         "prev_action": transitions.prev_action,
-        #         "prev_reward": transitions.prev_reward,
-        #     },
-        #     init_hstate,
-        # )
-        # log_prob = dist.log_prob(transitions.action)
-
         # Terra: Reshape
-        # TODO should i reshape here?
-        # transitions_obs_reshaped = transitions.obs
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
         print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
         transitions_obs_reshaped = jax.tree_map(
@@ -188,8 +188,7 @@ def ppo_update_networks(
         return total_loss, (value_loss, actor_loss, entropy)
 
     (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(train_state.params)
-    # TODO bring back for multi device
-    # (loss, vloss, aloss, entropy, grads) = jax.lax.pmean((loss, vloss, aloss, entropy, grads), axis_name="devices")
+    (loss, vloss, aloss, entropy, grads) = jax.lax.pmean((loss, vloss, aloss, entropy, grads), axis_name="devices")
     train_state = train_state.apply_gradients(grads=grads)
     update_info = {
         "total_loss": loss,
@@ -227,6 +226,8 @@ def rollout(
     env,
     env_params,
     train_state: TrainState,
+    num_envs: int,
+    num_rollouts: int,
 ) -> RolloutStats:
     def _cond_fn(carry):
         _, stats, _ = carry
@@ -239,8 +240,7 @@ def rollout(
         rng, _rng_step, _rng_model = jax.random.split(rng, 3)
 
         action, _, _, _ = select_action_ppo(train_state, timestep.observation, _rng_model)
-        num_envs_per_device = N_ENVS  # Adjust this as per your setup
-        _rng_step = jax.random.split(_rng_step, num_envs_per_device)
+        _rng_step = jax.random.split(_rng_step, num_envs)
         action_env = wrap_action(action, env.batch_cfg.action_type)
         timestep = env.step(env_params, timestep, action_env, _rng_step)
 
@@ -278,11 +278,12 @@ def rollout(
         return carry
 
     rng, _rng_reset = jax.random.split(rng)
-    _rng_reset = jax.random.split(_rng_reset, N_ENVS)
+    _rng_reset = jax.random.split(_rng_reset, num_envs)
     timestep = env.reset(env_params, _rng_reset)
     init_carry = (rng, RolloutStats(), timestep)
 
-    final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
+    # final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
+    final_carry = jax.lax.fori_loop(0, num_rollouts, lambda i, carry: _body_fn(carry), init_carry)
     return final_carry[1]
 
 
