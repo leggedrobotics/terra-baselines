@@ -21,11 +21,11 @@ from tqdm import tqdm
 jax.config.update("jax_threefry_partitionable", True)
 
 # TODO curriculum
-# TODO reintroduce clip_action_maps_in_obs and cut_local_map_layers
 
 @dataclass
 class TrainConfig:
     name: str
+    num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
     name: str = "foundations-733-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
@@ -51,9 +51,10 @@ class TrainConfig:
     mask_out_arm_extension = True
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
+    num_rollouts = 100  # max length of an episode in Terra
     
     def __post_init__(self):
-        num_devices = jax.local_device_count()  # Adjust for device count
+        num_devices = jax.local_device_count() if self.num_devices == 0 else self.num_devices
         self.num_envs_per_device = self.num_envs // num_devices
         self.total_timesteps_per_device = self.total_timesteps // num_devices
         self.eval_episodes_per_device = self.eval_episodes // num_devices
@@ -139,7 +140,6 @@ def make_train(
 
                 # SELECT ACTION
                 rng, _rng_model, _rng_env = jax.random.split(rng, 3)
-                print(f"{prev_timestep.observation['agent_state'].shape=}")
                 action, log_prob, value, _ = select_action_ppo(train_state, prev_timestep.observation, _rng_model)
 
                 # STEP ENV
@@ -166,7 +166,6 @@ def make_train(
             # CALCULATE ADVANTAGE
             rng, train_state, timestep, prev_action, prev_reward = runner_state
             rng, _rng = jax.random.split(rng)
-            print(f"last {timestep.observation['agent_state'].shape=}")
             _, _, last_val, _ = select_action_ppo(train_state, timestep.observation, _rng)
             # advantages, targets = calculate_gae(transitions, last_val.squeeze(1), config.gamma, config.gae_lambda)
             advantages, targets = calculate_gae(transitions, last_val, config.gamma, config.gae_lambda)
@@ -249,7 +248,8 @@ def make_train(
                 env,
                 env_params,
                 train_state,
-                1,
+                config.num_envs_per_device,
+                config.num_rollouts,
             )
             
             # TODO: pmean
@@ -355,7 +355,14 @@ if __name__ == "__main__":
         type=str,
         default="somewhere",
     )
+    parser.add_argument(
+        "-d",
+        "--num_devices",
+        type=int,
+        default=0,
+        help="Number of devices to use. If 0, uses all available devices.",
+    )
     args, _ = parser.parse_known_args()
 
     name = f"{args.name}-{args.machine}-{DT}"
-    train(TrainConfig(name=name))
+    train(TrainConfig(name=name, num_devices=args.num_devices))

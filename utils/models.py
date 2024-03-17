@@ -35,9 +35,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     map_width = env.batch_cfg.maps.max_width
     map_height = env.batch_cfg.maps.max_height
     
-    # TODO get this to work
-    # n_local_maps_layers = env.batch_cfg.agent.max_arm_extension + 1 if not config["mask_out_arm_extension"] else 1
-    n_local_maps_layers = 2
+    n_local_maps_layers = env.batch_cfg.agent.max_arm_extension + 1 if not config["mask_out_arm_extension"] else 1
 
     obs = [
         jnp.zeros((config["num_envs"], 6,)),

@@ -11,10 +11,6 @@ from terra.config import EnvConfig, MapType, RewardsType
 from pathlib import Path
 import pickle
 
-# TODO from config
-N_ENVS = 6
-N_ROLLOUT = 100
-
 # Training stuff
 class Transition(struct.PyTreeNode):
     done: jax.Array
@@ -33,11 +29,12 @@ def wrap_action(action, action_type):
 
 def get_cfgs_init(train_cfg):      
     n_envs = train_cfg.num_envs
+    num_rollouts = train_cfg.num_rollouts
 
     env_cfgs = jax.vmap(EnvConfig.parametrized)(
         np.array([60] * n_envs),
         np.array([60] * n_envs),
-        np.array([N_ROLLOUT] * n_envs),
+        np.array([num_rollouts] * n_envs),
         np.array([0] * n_envs),
         np.array([MapType.FOUNDATIONS] * n_envs),
         np.array([RewardsType.DENSE] * n_envs),
@@ -78,8 +75,11 @@ def obs_to_model_input(obs):
     """
     Need to convert Dict to List to make it usable by JAX.
     """
+    obs = jax.tree_map(lambda x: x.copy(), obs)  # TODO copy is a hack, find a proper solution, it crashes without it, but this makes it slow
     obs = clip_action_maps_in_obs(obs)
+    # TODO only use the following function if mask_out_arm_extension is True
     obs = cut_local_map_layers(obs)
+
     obs = [
         obs["agent_state"],
         obs["local_map_action_neg"],
@@ -238,7 +238,8 @@ def rollout(
     env,
     env_params,
     train_state: TrainState,
-    num_consecutive_episodes: int = 1,
+    num_envs: int,
+    num_rollouts: int,
 ) -> RolloutStats:
     # def _cond_fn(carry):
     #     rng, stats, timestep = carry
@@ -250,8 +251,7 @@ def rollout(
         rng, _rng_step, _rng_model = jax.random.split(rng, 3)
 
         action, _, _, _ = select_action_ppo(train_state, timestep.observation, _rng_model)
-        num_envs_per_device = N_ENVS  # TODO: from config
-        _rng_step = jax.random.split(_rng_step, num_envs_per_device)
+        _rng_step = jax.random.split(_rng_step, num_envs)
         action_env = wrap_action(action, env.batch_cfg.action_type)
         timestep = env.step(env_params, timestep, action_env, _rng_step) # vmapped inside
 
@@ -280,14 +280,13 @@ def rollout(
         carry = (rng, stats, timestep)
         return carry
 
-    num_envs_per_device = N_ENVS  # TODO: from config
     rng, _rng_reset = jax.random.split(rng)
-    _rng_reset = jax.random.split(_rng_reset, num_envs_per_device)
+    _rng_reset = jax.random.split(_rng_reset, num_envs)
     timestep = env.reset(env_params, _rng_reset)
     init_carry = (rng, RolloutStats(), timestep)
 
     # final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
-    final_carry = jax.lax.fori_loop(0, N_ROLLOUT, lambda i, carry: _body_fn(carry), init_carry)
+    final_carry = jax.lax.fori_loop(0, num_rollouts, lambda i, carry: _body_fn(carry), init_carry)
     return final_carry[1]
 
 def save_pkl_object(obj, filename):
