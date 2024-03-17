@@ -30,7 +30,7 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
-    num_envs: int = 2024
+    num_envs: int = 2048
     num_steps: int = 32
     update_epochs: int = 3
     num_minibatches: int = 64
