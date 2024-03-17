@@ -35,7 +35,7 @@ class TrainConfig:
     update_epochs: int = 3
     num_minibatches: int = 64
     total_timesteps: int = 3_000_000_000
-    lr: float = 0.001
+    lr: float = 3e-4
     clip_eps: float = 0.5
     gamma: float = 0.995
     gae_lambda: float = 0.95
