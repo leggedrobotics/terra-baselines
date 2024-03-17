@@ -30,8 +30,8 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
-    num_envs: int = 64
-    num_steps: int = 16
+    num_envs: int = 4096
+    num_steps: int = 32
     update_epochs: int = 3
     num_minibatches: int = 8
     total_timesteps: int = 3_000_000_000
@@ -138,7 +138,7 @@ def make_train(
                 - runner_state: Updated runner state after stepping the environment.
                 - transition: A namedtuple containing the transition information (current state, action, reward, next state) for this step.
                 """
-                rng, train_state, prev_timestep, prev_action, prev_reward = runner_state
+                rng, train_state, prev_timestep, prev_action, prev_reward, env_params = runner_state
 
                 # SELECT ACTION
                 rng, _rng_model, _rng_env = jax.random.split(rng, 3)
@@ -159,14 +159,14 @@ def make_train(
                     prev_action=prev_action,
                     prev_reward=prev_reward,
                 )
-                runner_state = (rng, train_state, timestep, action, timestep.reward)
+                runner_state = (rng, train_state, timestep, action, timestep.reward, env_params)
                 return runner_state, transition
 
             # transitions: [seq_len, batch_size, ...]
             runner_state, transitions = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
 
             # CALCULATE ADVANTAGE
-            rng, train_state, timestep, prev_action, prev_reward = runner_state
+            rng, train_state, timestep, prev_action, prev_reward, env_params = runner_state
             rng, _rng = jax.random.split(rng)
             _, _, last_val, _ = select_action_ppo(train_state, timestep.observation, _rng)
             # advantages, targets = calculate_gae(transitions, last_val.squeeze(1), config.gamma, config.gae_lambda)
@@ -275,13 +275,13 @@ def make_train(
                     "eval/DO": eval_stats.action_8 / n,
                 }
             )
-            runner_state = (rng, train_state, timestep, prev_action, prev_reward)
+            runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
             return runner_state, loss_info
 
         # Setup runner state for multiple devices
-        rng = jax.random.split(rng, num=jax.local_device_count())
-        train_state = replicate(train_state, jax.local_devices())
-        runner_state = (rng, train_state, timestep, prev_action, prev_reward)
+        rng = jax.random.split(rng, num=config.num_devices)
+        train_state = replicate(train_state, config.num_devices)
+        runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
 
         for i in tqdm(range(config.num_updates)):
@@ -291,12 +291,11 @@ def make_train(
             loss_info_single = unreplicate(loss_info)
             runner_state_single = unreplicate(runner_state)
             env_params_single = unreplicate(env_params)
-            _, train_state_single, _, _, _ = runner_state_single
             if i % config.checkpoint_interval == 0:
                 checkpoint = {
                     "train_config": config,
                     "env_config": env_params_single,
-                    "model": train_state_single.params,
+                    "model": runner_state_single[1].params,
                     "loss_info": loss_info_single,
                 }
                 save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
