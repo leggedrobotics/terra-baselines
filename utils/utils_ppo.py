@@ -27,7 +27,8 @@ def wrap_action(action, action_type):
     action = action_type.new(action[:, None])
     return action
 
-def get_cfgs_init(train_cfg):      
+def get_cfgs_init(train_cfg):
+    num_devices = train_cfg.num_devices
     n_envs = train_cfg.num_envs
     num_rollouts = train_cfg.num_rollouts
 
@@ -40,9 +41,9 @@ def get_cfgs_init(train_cfg):
         np.array([RewardsType.DENSE] * n_envs),
         np.array([False] * n_envs),
         )
-    # env_cfgs = jax.tree_map(
-    #     lambda x: jax.numpy.reshape(x, (n_devices, x.shape[0] // n_devices, *x.shape[1:])), env_cfgs
-    # )
+    env_cfgs = jax.tree_map(
+        lambda x: jax.numpy.reshape(x, (num_devices, x.shape[0] // num_devices, *x.shape[1:])), env_cfgs
+    )
     return env_cfgs
 
 def policy(
@@ -146,22 +147,7 @@ def ppo_update_networks(
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
     def _loss_fn(params):
-        # RERUN NETWORK
-        # dist, value, _ = train_state.apply_fn(
-        #     params,
-        #     {
-        #         # [batch_size, seq_len, ...]
-        #         "observation": transitions.obs,
-        #         "prev_action": transitions.prev_action,
-        #         "prev_reward": transitions.prev_reward,
-        #     },
-        #     init_hstate,
-        # )
-        # log_prob = dist.log_prob(transitions.action)
-
         # Terra: Reshape
-        # TODO should i reshape here?
-        # transitions_obs_reshaped = transitions.obs
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
         print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
         transitions_obs_reshaped = jax.tree_map(
@@ -201,8 +187,7 @@ def ppo_update_networks(
         return total_loss, (value_loss, actor_loss, entropy)
 
     (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(train_state.params)
-    # TODO bring back for multi device
-    # (loss, vloss, aloss, entropy, grads) = jax.lax.pmean((loss, vloss, aloss, entropy, grads), axis_name="devices")
+    (loss, vloss, aloss, entropy, grads) = jax.lax.pmean((loss, vloss, aloss, entropy, grads), axis_name="devices")
     train_state = train_state.apply_gradients(grads=grads)
     update_info = {
         "total_loss": loss,
