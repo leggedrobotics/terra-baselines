@@ -21,10 +21,10 @@ from tqdm import tqdm
 jax.config.update("jax_threefry_partitionable", True)
 
 # TODO curriculum
-DT = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 
 @dataclass
 class TrainConfig:
+    name: str
     project: str = "excavator-oss"
     group: str = "default"
     name: str = "foundations-733-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
@@ -338,4 +338,23 @@ def train(config: TrainConfig):
         print("wandb session finished.")
 
 if __name__ == "__main__":
-    train(TrainConfig())
+    DT = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-n",
+        "--name",
+        type=str,
+        default="experiment",
+    )
+    parser.add_argument(
+        "-m",
+        "--machine",
+        type=str,
+        default="somewhere",
+    )
+    args, _ = parser.parse_known_args()
+
+    name = f"{args.name}-{args.machine}-{DT}"
+    train(TrainConfig(name=name))
