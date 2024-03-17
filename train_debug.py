@@ -15,7 +15,6 @@ import jax.tree_util as jtu
 import optax
 # import pyrallis
 import wandb
-from flax.jax_utils import replicate, unreplicate
 from flax.training.train_state import TrainState
 from utils.utils_ppo import Transition, calculate_gae, ppo_update_networks, rollout, select_action_ppo, get_cfgs_init, wrap_action, save_pkl_object
 from datetime import datetime
@@ -33,19 +32,19 @@ class TrainConfig:
     group: str = "default"
     name: str = "foundations-733-" + DT
     # training
-    num_envs: int = 2048
+    num_envs: int = 2048 
     num_steps: int = 64
     update_epochs: int = 3
     num_minibatches: int = 8
-    total_timesteps: int = 1_000_000_000
-    lr: float = 3e-04
+    total_timesteps: int = 3_000_000_000
+    lr: float = 0.001
     clip_eps: float = 0.5
     gamma: float = 0.995
     gae_lambda: float = 0.95
-    ent_coef: float = 0.01
+    ent_coef: float = 0.001
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
-    eval_episodes: int = 80
+    eval_episodes: int = 100
     seed: int = 42
     # model
     clip_action_maps = True  # clips the action maps to [-1, 1]
@@ -84,10 +83,13 @@ def make_states(config: TrainConfig):
     rng, _rng = jax.random.split(rng)
 
     network, network_params = get_model_ready(_rng, config, env)
+    # Define the optimizer with gradient clipping and Adam optimization,
+    # where learning rate is adjusted by the linear_schedule function
     tx = optax.chain(
         optax.clip_by_global_norm(config.max_grad_norm),
         optax.inject_hyperparams(optax.adam)(learning_rate=linear_schedule, eps=1e-8),  # eps=1e-5
     )
+    # Initialize training state with model function, parameters, and optimizer
     train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
 
     return rng, env, env_params, train_state
@@ -115,26 +117,38 @@ def make_train(
         # TRAIN LOOP
         @jax.jit  # TODO remove jit and enable pmap on train function
         def _update_step(runner_state, _):
+            """
+            Performs a single update step in the training loop.
+
+            This function orchestrates the collection of trajectories from the environment, calculation of advantages, and updating of the network parameters based on the collected data. It involves stepping through the environment to collect data, calculating the advantage estimates for each step, and performing several epochs of updates on the network parameters using the collected data.
+
+            Parameters:
+            - runner_state: A tuple containing the current state of the RNG, the training state, the previous timestep, the previous action, and the previous reward.
+            - _: Placeholder to match the expected input signature for jax.lax.scan.
+
+            Returns:
+            - runner_state: Updated runner state after performing the update step.
+            - loss_info: A dictionary containing information about the loss and other metrics for this update step.
+            """
             # COLLECT TRAJECTORIES
             def _env_step(runner_state, _):
+                """
+                Executes a step in the environment for all agents.
+
+                This function takes the current state of the runners (agents), selects an action for each agent based on the current observation using the PPO algorithm, and then steps the environment forward using these actions. The environment returns the next state, reward, and whether the episode has ended for each agent. These are then used to create a transition tuple containing the current state, action, reward, and next state, which can be used for training the model.
+
+                Parameters:
+                - runner_state: Tuple containing the current rng state, train_state, previous timestep, previous action, and previous reward.
+                - _: Placeholder to match the expected input signature for jax.lax.scan.
+
+                Returns:
+                - runner_state: Updated runner state after stepping the environment.
+                - transition: A namedtuple containing the transition information (current state, action, reward, next state) for this step.
+                """
                 rng, train_state, prev_timestep, prev_action, prev_reward = runner_state
 
                 # SELECT ACTION
                 rng, _rng_model, _rng_env = jax.random.split(rng, 3)
-                # dist, value, hstate = train_state.apply_fn(
-                #     train_state.params,
-                #     {
-                #         # [batch_size, seq_len=1, ...]
-                #         "observation": prev_timestep.observation[:, None],
-                #         "prev_action": prev_action[:, None],
-                #         "prev_reward": prev_reward[:, None],
-                #     },
-                #     prev_hstate,
-                # )
-                # action, log_prob = dist.sample_and_log_prob(seed=_rng)
-                # # squeeze seq_len where possible
-                # action, value, log_prob = action.squeeze(1), value.squeeze(1), log_prob.squeeze(1)
-                # TODO squeeze?
                 print(f"{prev_timestep.observation['agent_state'].shape=}")
                 action, log_prob, value, _ = select_action_ppo(train_state, prev_timestep.observation, _rng_model)
 
@@ -161,17 +175,6 @@ def make_train(
 
             # CALCULATE ADVANTAGE
             rng, train_state, timestep, prev_action, prev_reward = runner_state
-            # calculate value of the last step for bootstrapping
-            # _, last_val, _ = train_state.apply_fn(
-            #     train_state.params,
-            #     {
-            #         "observation": timestep.observation[:, None],
-            #         "prev_action": prev_action[:, None],
-            #         "prev_reward": prev_reward[:, None],
-            #     },
-            #     hstate,
-            # )
-            # TODO squeeze?
             rng, _rng = jax.random.split(rng)
             print(f"last {timestep.observation['agent_state'].shape=}")
             _, _, last_val, _ = select_action_ppo(train_state, timestep.observation, _rng)
@@ -179,8 +182,34 @@ def make_train(
             advantages, targets = calculate_gae(transitions, last_val, config.gamma, config.gae_lambda)
 
             # UPDATE NETWORK
-            def _update_epoch(update_state, _):
+            def _update_epoch(update_state, _):                
+                """
+                Performs a single epoch of updates on the network parameters.
+
+                This function iterates over minibatches of the collected data and applies updates to the network parameters based on the PPO algorithm. It is called multiple times to perform multiple epochs of updates.
+
+                Parameters:
+                - update_state: A tuple containing the current state of the RNG, the training state, and the collected transitions, advantages, and targets.
+                - _: Placeholder to match the expected input signature for jax.lax.scan.
+
+                Returns:
+                - update_state: Updated state after performing the epoch of updates.
+                - update_info: Information about the updates performed in this epoch.
+                """
                 def _update_minbatch(train_state, batch_info):
+                    """
+                    Updates the network parameters based on a single minibatch of data.
+
+                    This function applies the PPO update rule to the network parameters using the data from a single minibatch. It is called for each minibatch in an epoch.
+
+                    Parameters:
+                    - train_state: The current training state, including the network parameters.
+                    - batch_info: A tuple containing the transitions, advantages, and targets for the minibatch.
+
+                    Returns:
+                    - new_train_state: The training state after applying the updates.
+                    - update_info: Information about the updates performed on this minibatch.
+                    """
                     # TODO randomization here?
                     transitions, advantages, targets = batch_info
                     new_train_state, update_info = ppo_update_networks(
@@ -224,15 +253,6 @@ def make_train(
             rng, train_state = update_state[:2]
             # EVALUATE AGENT
             rng, _rng = jax.random.split(rng)
-            # eval_rng = jax.random.split(_rng, num=config.eval_episodes_per_device)
-            # # vmap only on rngs
-            # eval_stats = jax.vmap(rollout, in_axes=(0, None, None, None, None))(
-            #     eval_rng,
-            #     env,
-            #     env_params,
-            #     train_state,
-            #     1,
-            # )
 
             eval_stats = rollout(
                 _rng,
@@ -300,9 +320,7 @@ def make_train(
     return train
 
 
-# @pyrallis.wrap()
 def train(config: TrainConfig):
-    # logging to wandb
     run = wandb.init(
         entity="operators",
         project=config.project,
@@ -313,40 +331,24 @@ def train(config: TrainConfig):
     )
 
     rng, env, env_params, train_state = make_states(config)
-    # replicating args across devices
-    # rng = jax.random.split(rng, num=jax.local_device_count())
-    # train_state = replicate(train_state, jax.local_devices())
 
     print("Compiling...")
     t = time.time()
     train_fn = make_train(env, env_params, config)
-    # train_fn_lowered = train_fn.lower(rng, train_state)
-    # train_fn = train_fn_lowered.compile()
     elapsed_time = time.time() - t
     print(f"Done in {elapsed_time:.2f}s.")
 
     print("Training...")
-    t = time.time()
-    train_info = jax.block_until_ready(train_fn(rng, train_state))
-    elapsed_time = time.time() - t
-    print(f"Done in {elapsed_time:.2f}s")
-
-    # print("Logging...")
-    # loss_info = unreplicate(train_info["loss_info"])
-
-    # total_transitions = 0
-    # for i in range(config.num_updates):
-    #     # summing total transitions per update from all devices
-    #     total_transitions += config.num_steps * config.num_envs_per_device * jax.local_device_count()
-    #     info = jtu.tree_map(lambda x: x[i].item(), loss_info)
-    #     info["transitions"] = total_transitions
-    #     wandb.log(info)
-
-    # run.summary["training_time"] = elapsed_time
-    # run.summary["steps_per_second"] = (config.total_timesteps_per_device * jax.local_device_count()) / elapsed_time
-
-    # print("Final return: ", float(loss_info["eval/returns"][-1]))
-    run.finish()
+    try:  # Try block starts here
+        t = time.time()
+        train_info = jax.block_until_ready(train_fn(rng, train_state))
+        elapsed_time = time.time() - t
+        print(f"Done in {elapsed_time:.2f}s")
+    except KeyboardInterrupt:  # Catch Ctrl+C
+        print("Training interrupted. Finalizing...")
+    finally:  # Ensure wandb.finish() is called
+        run.finish()
+        print("wandb session finished.")
 
 if __name__ == "__main__":
     train(TrainConfig())

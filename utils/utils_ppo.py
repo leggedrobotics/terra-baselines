@@ -229,16 +229,7 @@ def rollout(
         rng, stats, timestep = carry
 
         rng, _rng_step, _rng_model = jax.random.split(rng, 3)
-        # dist, _, hstate = train_state.apply_fn(
-        #     train_state.params,
-        #     {
-        #         "observation": timestep.observation[None, None, ...],
-        #         "prev_action": prev_action[None, None, ...],
-        #         "prev_reward": prev_reward[None, None, ...],
-        #     },
-        #     hstate,
-        # )
-        # action = dist.sample(seed=_rng).squeeze()
+
         action, _, _, _ = select_action_ppo(train_state, timestep.observation, _rng_model)
         num_envs_per_device = N_ENVS  # TODO: from config
         _rng_step = jax.random.split(_rng_step, num_envs_per_device)
