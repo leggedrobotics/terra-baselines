@@ -127,16 +127,15 @@ if __name__ == "__main__":
     args, _ = parser.parse_known_args()
     n_envs = args.n_envs_x * args.n_envs_y
 
-    log = load_pkl_object(f"{args.run_name}" + ".pkl")
+    log = load_pkl_object(f"{args.run_name}")
     config = log["train_config"]
     config.num_test_rollouts = n_envs
-
-    n_devices = 1
+    config.num_devices = 1
 
     # curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     # env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
-    env_cfgs = get_cfgs_init(log["train_config"])
-    env_cfgs = jax.tree_map(lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
+    env_cfgs = get_cfgs_init(config)
+    env_cfgs = jax.tree_map(lambda x: x[0][0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
     progressive_gif = bool(args.progressive_gif)
     print(f"Using progressive_gif = {progressive_gif}")
     env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, progressive_gif=args.progressive_gif, rendering_engine="pygame")
