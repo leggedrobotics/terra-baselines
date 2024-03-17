@@ -278,8 +278,8 @@ def make_train(
             # Save checkpoint
             if loss_info["eval/rewards"] > best_reward:
                 checkpoint = {
+                    "train_config": config,
                     "model": train_state.params,
-                    "opt_state": train_state.opt_state,
                     "loss_info": loss_info,
                 }
                 save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
