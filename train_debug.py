@@ -24,13 +24,14 @@ jax.config.update("jax_threefry_partitionable", True)
 
 # TODO curriculum
 
+
 @dataclass
 class TrainConfig:
     name: str
     num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
-    num_envs: int = 2048
+    num_envs_per_device: int = 4096
     num_steps: int = 32
     update_epochs: int = 3
     num_minibatches: int = 64
@@ -56,7 +57,7 @@ class TrainConfig:
     
     def __post_init__(self):
         self.num_devices = jax.local_device_count() if self.num_devices == 0 else self.num_devices
-        self.num_envs_per_device = self.num_envs // self.num_devices
+        self.num_envs = self.num_envs_per_device * self.num_devices
         self.total_timesteps_per_device = self.total_timesteps // self.num_devices
         self.eval_episodes_per_device = self.eval_episodes // self.num_devices
         assert self.num_envs % self.num_devices == 0, "Number of environments must be divisible by the number of devices."
@@ -284,14 +285,27 @@ def make_train(
         train_state = replicate(train_state, jax.local_devices()[:config.num_devices])
         runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
-
-        for i in tqdm(range(config.num_updates)):
+        for i in tqdm(range(config.num_updates), desc="Initializing..."):
+            start_time = time.time()  # Start time for measuring iteration speed
             runner_state, loss_info = jax.block_until_ready(_update_step(runner_state, None))
+            end_time = time.time()
+
+            iteration_duration = end_time - start_time
+            iterations_per_second = 1 / iteration_duration
+            steps_per_second = iterations_per_second * config.num_steps * config.num_envs
+            
+            tqdm.write(f"Steps/s: {steps_per_second:.2f}")  # Display steps and iterations per second
 
             # Save checkpoint
             loss_info_single = unreplicate(loss_info)
             runner_state_single = unreplicate(runner_state)
             env_params_single = unreplicate(env_params)
+            
+            if i % config.log_interval == 0:
+                wandb.log({"performance/steps_per_second": steps_per_second, 
+                        "performance/iterations_per_second": iterations_per_second, 
+                        **loss_info_single})
+                    
             if i % config.checkpoint_interval == 0:
                 checkpoint = {
                     "train_config": config,
