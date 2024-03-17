@@ -1,24 +1,21 @@
-# import os
-# os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
-import jax
-from utils.models import get_model_ready
-from terra.env import TerraEnvBatch
-from terra.config import EnvConfig
-
-import time
-from dataclasses import asdict, dataclass
-from functools import partial
-
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-import optax
-# import pyrallis
-import wandb
+from utils.models import get_model_ready
+from terra.env import TerraEnvBatch
+from terra.config import EnvConfig
 from flax.training.train_state import TrainState
-from utils.utils_ppo import Transition, calculate_gae, ppo_update_networks, rollout, select_action_ppo, get_cfgs_init, wrap_action, save_pkl_object
+import optax
+import wandb
+from utils.utils_ppo import (Transition, calculate_gae, ppo_update_networks, 
+                             rollout, select_action_ppo, get_cfgs_init, 
+                             wrap_action, save_pkl_object)
 from datetime import datetime
+from dataclasses import asdict, dataclass
+import time
 from tqdm import tqdm
+
+# jax.config.update("jax_enable_x64", True)
 
 # this will be default in new jax versions anyway
 jax.config.update("jax_threefry_partitionable", True)
@@ -30,9 +27,8 @@ DT = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
 class TrainConfig:
     project: str = "excavator-oss"
     group: str = "default"
-    name: str = "foundations-733-" + DT
-    # training
-    num_envs: int = 2048 
+    name: str = "foundations-733-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+    num_envs: int = 2048
     num_steps: int = 64
     update_epochs: int = 3
     num_minibatches: int = 8
@@ -46,53 +42,46 @@ class TrainConfig:
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
     seed: int = 42
-    # model
+    checkpoint_interval: int = 100  # Number of updates between checkpoints
+    log_interval: int = 1  # Number of updates between logging to wandb
+    # terra 
+    num_embeddings_agent_min = 60  # should be at least as big as the biggest map axis
     clip_action_maps = True  # clips the action maps to [-1, 1]
-    maps_net_normalization_bounds = [-1, 8]  # automatically set to [-1, 1] if clip_action_maps is True
+    mask_out_arm_extension = True
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
-    num_embeddings_agent_min = 60  # should be at least as big as the biggest map axis
-    mask_out_arm_extension = True
-
+    
     def __post_init__(self):
-        num_devices = 1 # jax.local_device_count()  # TODO revert
-        # splitting computation across all available devices
+        num_devices = jax.local_device_count()  # Adjust for device count
         self.num_envs_per_device = self.num_envs // num_devices
         self.total_timesteps_per_device = self.total_timesteps // num_devices
         self.eval_episodes_per_device = self.eval_episodes // num_devices
-        assert self.num_envs % num_devices == 0
-        self.num_updates = self.total_timesteps_per_device // self.num_steps // self.num_envs_per_device
+        assert self.num_envs % num_devices == 0, "Number of environments must be divisible by the number of devices."
+        self.num_updates = (self.total_timesteps // (self.num_steps * self.num_envs)) // num_devices
         print(f"Num devices: {num_devices}, Num updates: {self.num_updates}")
 
     # make object subscriptable
     def __getitem__(self, key):
         return getattr(self, key)
 
-def make_states(config: TrainConfig):
-    # for learning rate scheduling
-    def linear_schedule(count):
-        frac = 1.0 - (count // (config.num_minibatches * config.update_epochs)) / config.num_updates
-        return config.lr * frac
 
+def make_states(config: TrainConfig):
     env = TerraEnvBatch()
     env_params = get_cfgs_init()
     print(f"{env_params.tile_size.shape=}")
 
-    # setup training state
     rng = jax.random.PRNGKey(config.seed)
     rng, _rng = jax.random.split(rng)
 
     network, network_params = get_model_ready(_rng, config, env)
-    # Define the optimizer with gradient clipping and Adam optimization,
-    # where learning rate is adjusted by the linear_schedule function
     tx = optax.chain(
         optax.clip_by_global_norm(config.max_grad_norm),
-        optax.inject_hyperparams(optax.adam)(learning_rate=linear_schedule, eps=1e-8),  # eps=1e-5
+        optax.adam(learning_rate=config.lr, eps=1e-5),
     )
-    # Initialize training state with model function, parameters, and optimizer
     train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
 
     return rng, env, env_params, train_state
+
 
 
 def make_train(
@@ -271,8 +260,7 @@ def make_train(
                     "eval/max_reward": eval_stats.max_reward,
                     "eval/min_reward": eval_stats.min_reward,
                     "eval/lengths": eval_stats.length,
-                    "lr": train_state.opt_state[-1].hyperparams["learning_rate"],
-
+                    "lr": config.lr,
                     "eval/FORWARD %": eval_stats.action_0 / n,
                     "eval/BACKWARD %": eval_stats.action_1 / n,
                     "eval/CLOCK %": eval_stats.action_2 / n,
@@ -289,14 +277,14 @@ def make_train(
 
         runner_state = (rng, train_state, timestep, prev_action, prev_reward)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
-        best_reward = -100
+
         for i in tqdm(range(config.num_updates)):
             # params_before_update = jax.tree_map(lambda x: x.copy(), train_state.params)
             
             runner_state, loss_info = jax.block_until_ready(_update_step(runner_state, None))
 
             # Save checkpoint
-            if loss_info["eval/rewards"] > best_reward:
+            if i % config.checkpoint_interval == 0:
                 checkpoint = {
                     "train_config": config,
                     "env_config": env_params,
@@ -304,7 +292,6 @@ def make_train(
                     "loss_info": loss_info,
                 }
                 save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
-                best_reward = loss_info["eval/rewards"]
             
             # # DEBUG
             # _, train_state, _, _, _ = runner_state
@@ -313,8 +300,8 @@ def make_train(
             # # print(params_changed)
             # any_param_changed = any(jax.tree_leaves(params_changed))
             # print(f"Any parameter changed: {any_param_changed}")
-
-            wandb.log(loss_info)
+            if i % config.log_interval == 0:
+                wandb.log(loss_info)
         return {"runner_state": runner_state, "loss_info": loss_info}
 
     return train
