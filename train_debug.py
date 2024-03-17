@@ -279,6 +279,7 @@ def make_train(
             if loss_info["eval/rewards"] > best_reward:
                 checkpoint = {
                     "train_config": config,
+                    "env_config": env_params,
                     "model": train_state.params,
                     "loss_info": loss_info,
                 }
