@@ -28,7 +28,7 @@ class TrainConfig:
     project: str = "excavator-oss"
     group: str = "default"
     name: str = "foundations-733-" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    num_envs: int = 2048
+    num_envs: int = 1024
     num_steps: int = 64
     update_epochs: int = 3
     num_minibatches: int = 8
@@ -81,7 +81,6 @@ def make_states(config: TrainConfig):
     train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
 
     return rng, env, env_params, train_state
-
 
 
 def make_train(
@@ -248,7 +247,6 @@ def make_train(
                 env,
                 env_params,
                 train_state,
-                1,
             )
             
             # TODO: pmean
@@ -270,6 +268,8 @@ def make_train(
                     "eval/EXTEND_ARM %": eval_stats.action_6 / n,
                     "eval/RETRACT_ARM %": eval_stats.action_7 / n,
                     "eval/DO": eval_stats.action_8 / n,
+                    "eval/positive_terminations": eval_stats.positive_terminations / config.num_envs_per_device,
+                    "eval/total_terminations": eval_stats.terminations / config.num_envs_per_device,
                 }
             )
             runner_state = (rng, train_state, timestep, prev_action, prev_reward)
@@ -288,7 +288,7 @@ def make_train(
                 checkpoint = {
                     "train_config": config,
                     "env_config": env_params,
-                    "model": train_state.params,
+                    "model": runner_state[1].params,
                     "loss_info": loss_info,
                 }
                 save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")

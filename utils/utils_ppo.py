@@ -10,9 +10,15 @@ import numpy as np
 from terra.config import EnvConfig, MapType, RewardsType
 from pathlib import Path
 import pickle
+from jax.experimental import host_callback
 
-N_ENVS = 2048
+N_ENVS = 1024
 N_ROLLOUT = 100
+
+def print_debug(*args):
+    print(*args)
+    return args[0]  # Return the first argument to avoid changing computation.
+
 
 # Training stuff
 class Transition(struct.PyTreeNode):
@@ -201,7 +207,9 @@ class RolloutStats(NamedTuple):
     min_reward: jax.Array = jnp.asarray(100)
     reward: jax.Array = jnp.asarray(0.0)
     length: jax.Array = jnp.asarray(0)
-    # episodes: jax.Array = jnp.asarray(0)
+    episodes: jax.Array = jnp.asarray(0)
+    positive_terminations: jax.Array = jnp.asarray(0)  # Count of positive terminations
+    terminations: jax.Array = jnp.asarray(0)  # Count of terminations
 
     action_0: jax.Array = jnp.asarray(0)
     action_1: jax.Array = jnp.asarray(0)
@@ -219,11 +227,11 @@ def rollout(
     env,
     env_params,
     train_state: TrainState,
-    num_consecutive_episodes: int = 1,
 ) -> RolloutStats:
-    # def _cond_fn(carry):
-    #     rng, stats, timestep = carry
-    #     return jnp.less(stats.episodes, num_consecutive_episodes)
+    def _cond_fn(carry):
+        _, stats, _ = carry
+        # Check if the number of steps has been reached
+        return jnp.less(stats.length, N_ROLLOUT + 1)
 
     def _body_fn(carry):
         rng, stats, timestep = carry
@@ -231,23 +239,31 @@ def rollout(
         rng, _rng_step, _rng_model = jax.random.split(rng, 3)
 
         action, _, _, _ = select_action_ppo(train_state, timestep.observation, _rng_model)
-        num_envs_per_device = N_ENVS  # TODO: from config
+        num_envs_per_device = N_ENVS  # Adjust this as per your setup
         _rng_step = jax.random.split(_rng_step, num_envs_per_device)
         action_env = wrap_action(action, env.batch_cfg.action_type)
-        timestep = env.step(env_params, timestep, action_env, _rng_step) # vmapped inside
+        timestep = env.step(env_params, timestep, action_env, _rng_step)
 
-        # stats = stats.replace(
-        #     reward=stats.reward + timestep.reward,
-        #     length=stats.length + 1,
-        #     episodes=stats.episodes + timestep.last(),
-        # )
+        positive_termination_update = timestep.info['task_done'].sum()
+        
+        terminations_update = timestep.done.sum()
+
+        # Replace jax.debug.print with:
+        # host_callback.id_tap(print_debug, (positive_termination_update, timeout_update), 
+        #                     result=(positive_termination_update, timeout_update))
+
+        # # Replace jax.debug.print with:
+        # host_callback.id_tap(print_debug, (positive_termination_update, timeout_update), 
+        #                     result=(positive_termination_update, timeout_update))
+
         stats = RolloutStats(
             max_reward=jnp.maximum(stats.max_reward, timestep.reward.max()),
             min_reward=jnp.minimum(stats.min_reward, timestep.reward.min()),
-            reward=stats.reward + timestep.reward.sum(),
+            reward=stats.reward + timestep.reward.sum(),  # Ensure correct aggregation
             length=stats.length + 1,
-            # episodes=stats.episodes + timestep.done.any(),
-
+            episodes=stats.episodes + timestep.done.any(),
+            positive_terminations=stats.positive_terminations + positive_termination_update,
+            terminations=stats.terminations + terminations_update,
             action_0=stats.action_0 + (action == 0).sum(),
             action_1=stats.action_1 + (action == 1).sum(),
             action_2=stats.action_2 + (action == 2).sum(),
@@ -261,15 +277,14 @@ def rollout(
         carry = (rng, stats, timestep)
         return carry
 
-    num_envs_per_device = N_ENVS  # TODO: from config
     rng, _rng_reset = jax.random.split(rng)
-    _rng_reset = jax.random.split(_rng_reset, num_envs_per_device)
+    _rng_reset = jax.random.split(_rng_reset, N_ENVS)
     timestep = env.reset(env_params, _rng_reset)
     init_carry = (rng, RolloutStats(), timestep)
 
-    # final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
-    final_carry = jax.lax.fori_loop(0, N_ROLLOUT, lambda i, carry: _body_fn(carry), init_carry)
+    final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
     return final_carry[1]
+
 
 def save_pkl_object(obj, filename):
     """Helper to store pickle objects."""
