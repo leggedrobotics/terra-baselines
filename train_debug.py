@@ -7,22 +7,28 @@ from terra.config import EnvConfig
 from flax.training.train_state import TrainState
 import optax
 import wandb
-from utils.utils_ppo import (Transition, calculate_gae, ppo_update_networks, 
-                             rollout, select_action_ppo, get_cfgs_init, 
-                             wrap_action, save_pkl_object)
+from utils.utils_ppo import (rollout, save_pkl_object)
 from datetime import datetime
 from dataclasses import asdict, dataclass
 import time
 from tqdm import tqdm
 from functools import partial
 from flax.jax_utils import replicate, unreplicate
+import jax
+import jax.numpy as jnp
+from flax import struct
+from flax.training.train_state import TrainState
+# from xminigrid.environment import Environment, EnvParams
+from tensorflow_probability.substrates import jax as tfp
+import numpy as np
+from terra.config import EnvConfig, MapType, RewardsType
+from functools import partial 
+
 
 # jax.config.update("jax_enable_x64", True)
 
 # this will be default in new jax versions anyway
 jax.config.update("jax_threefry_partitionable", True)
-
-# TODO curriculum
 
 
 @dataclass
@@ -85,6 +91,197 @@ def make_states(config: TrainConfig):
     train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
 
     return rng, env, env_params, train_state
+
+class Transition(struct.PyTreeNode):
+    done: jax.Array
+    action: jax.Array
+    value: jax.Array
+    reward: jax.Array
+    log_prob: jax.Array
+    obs: jax.Array
+    # for rnn policy
+    prev_action: jax.Array
+    prev_reward: jax.Array
+
+
+def wrap_action(action, action_type):
+    action = action_type.new(action[:, None])
+    return action
+
+
+def get_cfgs_init(train_cfg):
+    num_devices = train_cfg.num_devices
+    n_envs = train_cfg.num_envs
+    num_rollouts = train_cfg.num_rollouts
+
+    env_cfgs = jax.vmap(EnvConfig.parametrized)(
+        np.array([60] * n_envs),
+        np.array([60] * n_envs),
+        np.array([num_rollouts] * n_envs),
+        np.array([0] * n_envs),
+        np.array([MapType.FOUNDATIONS] * n_envs),
+        np.array([RewardsType.DENSE] * n_envs),
+        np.array([False] * n_envs),
+        )
+    env_cfgs = jax.tree_map(
+        lambda x: jax.numpy.reshape(x, (num_devices, x.shape[0] // num_devices, *x.shape[1:])), env_cfgs
+    )
+    return env_cfgs
+
+
+def policy(
+    apply_fn,
+    params,
+    obs,
+):
+    value, logits_pi = apply_fn(params, obs)
+    pi = tfp.distributions.Categorical(logits=logits_pi)
+    return value, pi
+
+
+def clip_action_maps_in_obs(obs):
+    """Clip action maps to [-1, 1] on the intuition that a binary map is enough for the agent to take decisions."""
+    obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
+    obs["do_preview"] = jnp.clip(obs["do_preview"], a_min=-1, a_max=1)
+    obs["dig_map"] = jnp.clip(obs["dig_map"], a_min=-1, a_max=1)
+    return obs
+
+
+def cut_local_map_layers(obs):
+    """Only keep the first layer of the local map (makes sense especially if the arm extension action is blocked)"""
+    obs["local_map_action_neg"] = obs["local_map_action_neg"][..., [0]]
+    obs["local_map_action_pos"] = obs["local_map_action_pos"][..., [0]]
+    obs["local_map_target_neg"] = obs["local_map_target_neg"][..., [0]]
+    obs["local_map_target_pos"] = obs["local_map_target_pos"][..., [0]]
+    obs["local_map_dumpability"] = obs["local_map_dumpability"][..., [0]]
+    obs["local_map_obstacles"] = obs["local_map_obstacles"][..., [0]]
+    return obs
+
+
+def obs_to_model_input(obs):
+    """
+    Need to convert Dict to List to make it usable by JAX.
+    """
+    # TODO: check performance 
+    obs = jax.tree_map(lambda x: x.copy(), obs)  # TODO copy is a hack, find a proper solution, it crashes without it, but this makes it slow
+    obs = clip_action_maps_in_obs(obs)
+    # TODO only use the following function if mask_out_arm_extension is True
+    obs = cut_local_map_layers(obs)
+
+    obs = [
+        obs["agent_state"],
+        obs["local_map_action_neg"],
+        obs["local_map_action_pos"],
+        obs["local_map_target_neg"],
+        obs["local_map_target_pos"],
+        obs["local_map_dumpability"],
+        obs["local_map_obstacles"],
+        obs["action_map"],
+        obs["target_map"],
+        obs["traversability_mask"],
+        obs["do_preview"],
+        obs["dig_map"],
+        obs["dumpability_mask"],
+    ]
+    return obs
+
+
+def select_action_ppo(
+    train_state: TrainState,
+    obs: jnp.ndarray,
+    rng: jax.random.PRNGKey,
+):
+    # Prepare policy input from Terra State
+    obs = obs_to_model_input(obs)
+
+    value, pi = policy(train_state.apply_fn, train_state.params, obs)
+    action = pi.sample(seed=rng)
+    log_prob = pi.log_prob(action)
+    return action, log_prob, value[:, 0], pi
+
+
+def calculate_gae(
+    transitions: Transition,
+    last_val: jax.Array,
+    gamma: float,
+    gae_lambda: float,
+) -> tuple[jax.Array, jax.Array]:
+    # single iteration for the loop
+    def _get_advantages(gae_and_next_value, transition):
+        gae, next_value = gae_and_next_value
+        delta = transition.reward + gamma * next_value * (1 - transition.done) - transition.value
+        gae = delta + gamma * gae_lambda * (1 - transition.done) * gae
+        return (gae, transition.value), gae
+
+    _, advantages = jax.lax.scan(
+        _get_advantages,
+        (jnp.zeros_like(last_val), last_val),
+        transitions,
+        reverse=True,
+    )
+    # advantages and values (Q)
+    return advantages, advantages + transitions.value
+
+
+def ppo_update_networks(
+    train_state: TrainState,
+    transitions: Transition,
+    advantages: jax.Array,
+    targets: jax.Array,
+    clip_eps: float,
+    vf_coef: float,
+    ent_coef: float,
+):
+    # NORMALIZE ADVANTAGES
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+    def _loss_fn(params):
+        # Terra: Reshape
+        # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
+        print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
+        transitions_obs_reshaped = jax.tree_map(
+            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])), transitions.obs
+        )
+
+        # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
+        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
+        obs = obs_to_model_input(transitions_obs_reshaped)
+        value, dist = policy(train_state.apply_fn, params, obs)
+        value = value[:, 0]
+        # action = dist.sample(seed=rng_model)
+        transitions_actions_reshaped = jnp.reshape(transitions.action, (-1, *transitions.action.shape[2:]))
+        log_prob = dist.log_prob(transitions_actions_reshaped)
+
+        # Terra: Reshape
+        value = jnp.reshape(value, transitions.value.shape)
+        log_prob = jnp.reshape(log_prob, transitions.log_prob.shape)
+
+        # CALCULATE VALUE LOSS
+        value_pred_clipped = transitions.value + (value - transitions.value).clip(-clip_eps, clip_eps)
+        value_loss = jnp.square(value - targets)
+        value_loss_clipped = jnp.square(value_pred_clipped - targets)
+        value_loss = 0.5 * jnp.maximum(value_loss, value_loss_clipped).mean()
+
+        # CALCULATE ACTOR LOSS
+        ratio = jnp.exp(log_prob - transitions.log_prob)
+        actor_loss1 = advantages * ratio
+        actor_loss2 = advantages * jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
+        actor_loss = -jnp.minimum(actor_loss1, actor_loss2).mean()
+        entropy = dist.entropy().mean()
+
+        total_loss = actor_loss + vf_coef * value_loss - ent_coef * entropy
+        return total_loss, (value_loss, actor_loss, entropy)
+
+    (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(train_state.params)
+    (loss, vloss, aloss, entropy, grads) = jax.lax.pmean((loss, vloss, aloss, entropy, grads), axis_name="devices")
+    train_state = train_state.apply_gradients(grads=grads)
+    update_info = {
+        "total_loss": loss,
+        "value_loss": vloss,
+        "actor_loss": aloss,
+        "entropy": entropy,
+    }
+    return train_state, update_info
 
 
 def make_train(
@@ -245,38 +442,6 @@ def make_train(
             # EVALUATE AGENT
             rng, _rng = jax.random.split(rng)
 
-            # eval_stats = rollout(
-            #     _rng,
-            #     env,
-            #     env_params,
-            #     train_state,
-            #     config.num_envs_per_device,
-            #     config.num_rollouts,
-            # )
-            
-            # # TODO: pmean
-            # # eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
-            # n = config.num_envs_per_device * eval_stats.length
-            # loss_info.update(
-            #     {
-            #         "eval/rewards": eval_stats.reward / n,
-            #         "eval/max_reward": eval_stats.max_reward,
-            #         "eval/min_reward": eval_stats.min_reward,
-            #         "eval/lengths": eval_stats.length,
-            #         "lr": config.lr,
-            #         "eval/FORWARD %": eval_stats.action_0 / n,
-            #         "eval/BACKWARD %": eval_stats.action_1 / n,
-            #         "eval/CLOCK %": eval_stats.action_2 / n,
-            #         "eval/ANTICLOCK %": eval_stats.action_3 / n,
-            #         "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
-            #         "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
-            #         "eval/EXTEND_ARM %": eval_stats.action_6 / n,
-            #         "eval/RETRACT_ARM %": eval_stats.action_7 / n,
-            #         "eval/DO": eval_stats.action_8 / n,
-            #         "eval/positive_terminations": eval_stats.positive_terminations / config.num_envs_per_device,
-            #         "eval/total_teminations": eval_stats.terminations / config.num_envs_per_device,
-            #     }
-            # )
             runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
             return runner_state, loss_info
 
@@ -294,7 +459,7 @@ def make_train(
 
             iteration_duration = end_time - start_time
             iterations_per_second = 1 / iteration_duration
-            steps_per_second = iterations_per_second * config.num_steps * config.num_envs
+            steps_per_second = iterations_per_second * config.num_steps * config.num_envs * config.num_devices
             
             tqdm.write(f"Steps/s: {steps_per_second:.2f}")  # Display steps and iterations per second
 
@@ -331,7 +496,7 @@ def make_train(
                 # TODO: pmean
                 # eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
                 n = config.num_envs_per_device * eval_stats.length
-                loss_info.update(
+                loss_info_single.update(
                     {
                         "eval/rewards": eval_stats.reward / n,
                         "eval/max_reward": eval_stats.max_reward,
@@ -387,6 +552,7 @@ def train(config: TrainConfig):
     finally:  # Ensure wandb.finish() is called
         run.finish()
         print("wandb session finished.")
+
 
 if __name__ == "__main__":
     DT = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
