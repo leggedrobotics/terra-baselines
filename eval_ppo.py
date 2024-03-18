@@ -33,9 +33,11 @@ def rollout(
     env,
     env_params,
     train_state: TrainState,
-    num_envs: int,
-    num_rollouts: int,
+    config,
 ) -> RolloutStats:
+    num_envs = config.num_envs_per_device
+    num_rollouts = config.num_rollouts_eval
+
     def _cond_fn(carry):
         _, stats, _ = carry
         # Check if the number of steps has been reached
@@ -46,7 +48,7 @@ def rollout(
 
         rng, _rng_step, _rng_model = jax.random.split(rng, 3)
 
-        action, _, _, _ = select_action_ppo(train_state, timestep.observation, _rng_model)
+        action, _, _, _ = select_action_ppo(train_state, timestep.observation, _rng_model, config)
         _rng_step = jax.random.split(_rng_step, num_envs)
         action_env = wrap_action(action, env.batch_cfg.action_type)
         timestep = env.step(timestep, action_env, _rng_step)

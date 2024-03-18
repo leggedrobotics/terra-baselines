@@ -22,13 +22,6 @@ def load_neural_network(config, env):
     model, _ = get_model_ready(rng, config, env)
     return model
 
-def _append_to_obs(o, obs_log):
-    if obs_log == {}:
-        return {k: v[:, None] for k, v in o.items()}
-    obs_log = {k: jnp.concatenate((v, o[k][:, None]), axis=1) for k, v in obs_log.items()}
-    return obs_log
-
-
 def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed):
     print(f"Using {seed=}")
     rng = jax.random.PRNGKey(seed)

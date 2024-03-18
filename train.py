@@ -14,12 +14,7 @@ import time
 from tqdm import tqdm
 from functools import partial
 from flax.jax_utils import replicate, unreplicate
-import jax
-import jax.numpy as jnp
 from flax import struct
-from flax.training.train_state import TrainState
-from terra.config import EnvConfig
-from functools import partial 
 import utils.helpers as helpers 
 from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, policy
 
@@ -144,10 +139,12 @@ def ppo_update_networks(
     transitions: Transition,
     advantages: jax.Array,
     targets: jax.Array,
-    clip_eps: float,
-    vf_coef: float,
-    ent_coef: float,
+    config,
 ):
+    clip_eps = config.clip_eps
+    vf_coef = config.vf_coef
+    ent_coef = config.ent_coef
+    
     # NORMALIZE ADVANTAGES
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
@@ -161,7 +158,7 @@ def ppo_update_networks(
 
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
         print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
-        obs = obs_to_model_input(transitions_obs_reshaped)
+        obs = obs_to_model_input(transitions_obs_reshaped, config)
         value, dist = policy(train_state.apply_fn, params, obs)
         value = value[:, 0]
         # action = dist.sample(seed=rng_model)
@@ -261,7 +258,7 @@ def make_train(
 
                 # SELECT ACTION
                 rng, _rng_model, _rng_env = jax.random.split(rng, 3)
-                action, log_prob, value, _ = select_action_ppo(train_state, prev_timestep.observation, _rng_model)
+                action, log_prob, value, _ = select_action_ppo(train_state, prev_timestep.observation, _rng_model, config)
 
                 # STEP ENV
                 _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
@@ -287,7 +284,7 @@ def make_train(
             # CALCULATE ADVANTAGE
             rng, train_state, timestep, prev_action, prev_reward = runner_state
             rng, _rng = jax.random.split(rng)
-            _, _, last_val, _ = select_action_ppo(train_state, timestep.observation, _rng)
+            _, _, last_val, _ = select_action_ppo(train_state, timestep.observation, _rng, config)
             # advantages, targets = calculate_gae(transitions, last_val.squeeze(1), config.gamma, config.gae_lambda)
             advantages, targets = calculate_gae(transitions, last_val, config.gamma, config.gae_lambda)
 
@@ -327,9 +324,7 @@ def make_train(
                         transitions=transitions,
                         advantages=advantages,
                         targets=targets,
-                        clip_eps=config.clip_eps,
-                        vf_coef=config.vf_coef,
-                        ent_coef=config.ent_coef,
+                        config=config,
                     )
                     return new_train_state, update_info
 
@@ -414,8 +409,7 @@ def make_train(
                     env,
                     env_params_single,
                     train_state,
-                    config.num_envs_per_device,
-                    config.num_rollouts_eval,
+                    config,
                 )
             
                 # TODO: pmean
