@@ -1,19 +1,12 @@
 # utilities for PPO training and evaluation
 import jax
 import jax.numpy as jnp
-from flax import struct
 from flax.training.train_state import TrainState
-# from xminigrid.environment import Environment, EnvParams
-from tensorflow_probability.substrates import jax as tfp
 from typing import NamedTuple
-import numpy as np
-from terra.config import EnvConfig, MapType, RewardsType
 from pathlib import Path
 import pickle
 from jax.experimental import host_callback
-from functools import partial 
-
-
+from train_debug import select_action_ppo, wrap_action
 
 
 # for evaluation (evaluate for N consecutive episodes, sum rewards)
@@ -69,10 +62,6 @@ def rollout(
         # host_callback.id_tap(print_debug, (positive_termination_update, timeout_update), 
         #                     result=(positive_termination_update, timeout_update))
 
-        # # Replace jax.debug.print with:
-        # host_callback.id_tap(print_debug, (positive_termination_update, timeout_update), 
-        #                     result=(positive_termination_update, timeout_update))
-
         stats = RolloutStats(
             max_reward=jnp.maximum(stats.max_reward, timestep.reward.max()),
             min_reward=jnp.minimum(stats.min_reward, timestep.reward.min()),
@@ -103,13 +92,3 @@ def rollout(
     final_carry = jax.lax.fori_loop(0, num_rollouts, lambda i, carry: _body_fn(carry), init_carry)
     return final_carry[1]
 
-
-def save_pkl_object(obj, filename):
-    """Helper to store pickle objects."""
-    output_file = Path(filename)
-    output_file.parent.mkdir(exist_ok=True, parents=True)
-
-    with open(filename, "wb") as output:
-        pickle.dump(obj, output, pickle.HIGHEST_PROTOCOL)
-
-    print(f"Stored data at {filename}.")

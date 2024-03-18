@@ -7,7 +7,7 @@ from terra.config import EnvConfig
 from flax.training.train_state import TrainState
 import optax
 import wandb
-from utils.utils_ppo import (rollout, save_pkl_object)
+import eval_ppo
 from datetime import datetime
 from dataclasses import asdict, dataclass
 import time
@@ -23,7 +23,7 @@ from tensorflow_probability.substrates import jax as tfp
 import numpy as np
 from terra.config import EnvConfig, MapType, RewardsType
 from functools import partial 
-
+import utils.helpers as helpers 
 
 # jax.config.update("jax_enable_x64", True)
 
@@ -480,11 +480,11 @@ def make_train(
                     "model": runner_state_single[1].params,
                     "loss_info": loss_info_single,
                 }
-                save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
+                helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
             
             if i % config.log_interval == 0:
                 _, train_state = runner_state_single[:2]
-                eval_stats = rollout(
+                eval_stats = eval_ppo.rollout(
                     rng_rollout,
                     env,
                     env_params_single,
