@@ -23,12 +23,12 @@ from tensorflow_probability.substrates import jax as tfp
 from terra.config import EnvConfig
 from functools import partial 
 import utils.helpers as helpers 
+import os
 
-# jax.config.update("jax_enable_x64", True)
-
-# this will be default in new jax versions anyway
-jax.config.update("jax_threefry_partitionable", True)
-
+# Check if the profiler server is already running, if not, start it
+if "JAX_PROFILER_SERVER" not in os.environ:
+    jax.profiler.start_server(5001)
+    os.environ["JAX_PROFILER_SERVER"] = "1"
 
 @dataclass
 class TrainConfig:
@@ -36,8 +36,8 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
-    num_envs_per_device: int = 2048
-    num_steps: int = 32
+    num_envs_per_device: int = 2048 * 4
+    num_steps: int = 16
     update_epochs: int = 1
     num_minibatches: int = 64
     total_timesteps: int = 3_000_000_000
@@ -51,7 +51,7 @@ class TrainConfig:
     eval_episodes: int = 100
     seed: int = 42
     checkpoint_interval: int = 100  # Number of updates between checkpoints
-    log_interval: int = 50  # Number of updates between logging to wandb
+    log_interval: int = 100  # Number of updates between logging to wandb
     # terra 
     num_embeddings_agent_min = 60  # should be at least as big as the biggest map axis
     clip_action_maps = True  # clips the action maps to [-1, 1]
@@ -228,13 +228,13 @@ def ppo_update_networks(
     def _loss_fn(params):
         # Terra: Reshape
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
-        print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
+        # print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
         transitions_obs_reshaped = jax.tree_map(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])), transitions.obs
         )
 
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
-        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
+        # print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
         obs = obs_to_model_input(transitions_obs_reshaped)
         value, dist = policy(train_state.apply_fn, params, obs)
         value = value[:, 0]
@@ -410,6 +410,25 @@ def make_train(
                 rng, train_state, transitions, advantages, targets = update_state
 
                 # MINIBATCHES PREPARATION
+                # rng, _rng = jax.random.split(rng)
+                # permutation = jax.random.permutation(_rng, config.num_envs_per_device).astype(jnp.int32)  # Ensure permutation is int32 to reduce memory footprint
+
+                # batch = (transitions, advantages, targets)
+                # # Swap axes in a memory-efficient manner, ensure operations are compatible with int8
+                # batch = jtu.tree_map(lambda x: x.swapaxes(0, 1).astype(jnp.int8), batch)
+
+                # # Apply permutation with minimal memory impact, ensure data stays as int8
+                # shuffled_batch = jtu.tree_map(lambda x: jnp.take(x, permutation, axis=0).astype(jnp.int8), batch)
+
+                # # Reshape data into minibatches, being mindful of memory usage
+                # minibatches = jtu.tree_map(
+                #     lambda x: jnp.reshape(x, (config.num_minibatches, -1) + x.shape[1:]).astype(jnp.int8), shuffled_batch
+                # )
+
+                # # Use scan for processing minibatches efficiently
+                # train_state, update_info = jax.lax.scan(_update_minbatch, train_state, minibatches)
+
+                # MINIBATCHES PREPARATION
                 rng, _rng = jax.random.split(rng)
                 permutation = jax.random.permutation(_rng, config.num_envs_per_device)
                 # [seq_len, batch_size, ...]
@@ -443,19 +462,44 @@ def make_train(
 
         # Setup runner state for multiple devices
 
+        # Define a new wrapper function for multiple update steps
+        def _update_steps_wrapper(runner_state, num_steps):
+            """
+            Wrapper function to perform multiple update steps.
+            
+            Parameters:
+            - runner_state: Current state of the runner including rng, training state, etc.
+            - num_steps: Number of update steps to perform.
+            
+            Returns:
+            - runner_state: Updated state after performing the update steps.
+            - loss_info: Aggregated loss information over the performed steps.
+            """
+            def step_fn(runner_state, _):
+                runner_state, loss_info = _update_step(runner_state, None)
+                return runner_state, loss_info
+
+            runner_state, loss_info = jax.lax.scan(step_fn, runner_state, None, num_steps)
+            # Aggregate loss_info if necessary, or return last
+            return runner_state, loss_info  # Assuming you want the last step's loss info
+
+
         rng, rng_rollout = jax.random.split(rng)
         rng = jax.random.split(rng, num=config.num_devices)
         train_state = replicate(train_state, jax.local_devices()[:config.num_devices])
         runner_state = (rng, train_state, timestep, prev_action, prev_reward)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
-        for i in tqdm(range(config.num_updates), desc="Training"):
-            start_time = time.time()  # Start time for measuring iteration speed
-            runner_state, loss_info = jax.block_until_ready(_update_step(runner_state, None))
+        num_outer_steps = config.num_updates // config.log_interval
+        for i in tqdm(range(num_outer_steps), desc="Training"):
+            start_time = time.time()
+            runner_state, loss_info = jax.block_until_ready(
+                _update_steps_wrapper(runner_state, config.log_interval)
+            )
             end_time = time.time()
 
             iteration_duration = end_time - start_time
             iterations_per_second = 1 / iteration_duration
-            steps_per_second = iterations_per_second * config.num_steps * config.num_envs * config.num_devices
+            steps_per_second = iterations_per_second * config.num_steps * config.num_envs * config.num_devices * config.log_interval
             
             tqdm.write(f"Steps/s: {steps_per_second:.2f}")  # Display steps and iterations per second
 
