@@ -20,8 +20,7 @@ from flax import struct
 from flax.training.train_state import TrainState
 # from xminigrid.environment import Environment, EnvParams
 from tensorflow_probability.substrates import jax as tfp
-import numpy as np
-from terra.config import EnvConfig, RewardsType
+from terra.config import EnvConfig
 from functools import partial 
 import utils.helpers as helpers 
 
@@ -111,17 +110,11 @@ def wrap_action(action, action_type):
 
 def get_cfgs_init(train_cfg):
     num_devices = train_cfg.num_devices
-    n_envs = train_cfg.num_envs
+    num_envs_per_device = train_cfg.num_envs_per_device
 
-    env_cfgs = jax.vmap(EnvConfig.parametrized)(
-        np.array([60] * n_envs),
-        np.array([60] * n_envs),
-        np.array([0] * n_envs),
-        np.array([RewardsType.DENSE] * n_envs),
-        np.array([False] * n_envs),
-        )
+    env_cfgs = EnvConfig()
     env_cfgs = jax.tree_map(
-        lambda x: jax.numpy.reshape(x, (num_devices, x.shape[0] // num_devices, *x.shape[1:])), env_cfgs
+        lambda x: jnp.array(x)[None, None].repeat(num_devices, 0).repeat(num_envs_per_device, 1), env_cfgs
     )
     return env_cfgs
 
