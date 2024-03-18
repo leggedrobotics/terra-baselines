@@ -21,7 +21,7 @@ from flax.training.train_state import TrainState
 # from xminigrid.environment import Environment, EnvParams
 from tensorflow_probability.substrates import jax as tfp
 import numpy as np
-from terra.config import EnvConfig, MapType, RewardsType
+from terra.config import EnvConfig, RewardsType
 from functools import partial 
 import utils.helpers as helpers 
 
@@ -118,8 +118,7 @@ def get_cfgs_init(train_cfg):
         np.array([60] * n_envs),
         np.array([60] * n_envs),
         np.array([num_rollouts] * n_envs),
-        np.array([0] * n_envs),
-        np.array([MapType.FOUNDATIONS] * n_envs),
+        np.array([0] * n_envs),  # initialize every env to be at the initial curriculum level
         np.array([RewardsType.DENSE] * n_envs),
         np.array([False] * n_envs),
         )
@@ -283,6 +282,12 @@ def ppo_update_networks(
     }
     return train_state, update_info
 
+def get_curriculum_levels(env_cfg, global_curriculum_levels):
+    curriculum_stat = {}
+    curriculum_levels = env_cfg.curriculum.level
+    for i, global_curriculum_level in enumerate(global_curriculum_levels):
+        curriculum_stat[f'Level {i}: {global_curriculum_level["maps_path"]}'] = jnp.sum(curriculum_levels == i).item()
+    return curriculum_stat
 
 def make_train(
     env: TerraEnvBatch,
@@ -335,7 +340,7 @@ def make_train(
                 - runner_state: Updated runner state after stepping the environment.
                 - transition: A namedtuple containing the transition information (current state, action, reward, next state) for this step.
                 """
-                rng, train_state, prev_timestep, prev_action, prev_reward, env_params = runner_state
+                rng, train_state, prev_timestep, prev_action, prev_reward = runner_state
 
                 # SELECT ACTION
                 rng, _rng_model, _rng_env = jax.random.split(rng, 3)
@@ -344,7 +349,7 @@ def make_train(
                 # STEP ENV
                 _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
                 action_env = wrap_action(action, env.batch_cfg.action_type)
-                timestep = env.step(env_params, prev_timestep, action_env, _rng_env) # vmapped inside
+                timestep = env.step(prev_timestep, action_env, _rng_env)
                 transition = Transition(
                     # done=timestep.last(),
                     done=timestep.done,
@@ -356,14 +361,14 @@ def make_train(
                     prev_action=prev_action,
                     prev_reward=prev_reward,
                 )
-                runner_state = (rng, train_state, timestep, action, timestep.reward, env_params)
+                runner_state = (rng, train_state, timestep, action, timestep.reward)
                 return runner_state, transition
 
             # transitions: [seq_len, batch_size, ...]
             runner_state, transitions = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
 
             # CALCULATE ADVANTAGE
-            rng, train_state, timestep, prev_action, prev_reward, env_params = runner_state
+            rng, train_state, timestep, prev_action, prev_reward = runner_state
             rng, _rng = jax.random.split(rng)
             _, _, last_val, _ = select_action_ppo(train_state, timestep.observation, _rng)
             # advantages, targets = calculate_gae(transitions, last_val.squeeze(1), config.gamma, config.gae_lambda)
@@ -442,7 +447,7 @@ def make_train(
             # EVALUATE AGENT
             rng, _rng = jax.random.split(rng)
 
-            runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
+            runner_state = (rng, train_state, timestep, prev_action, prev_reward)
             return runner_state, loss_info
 
         # Setup runner state for multiple devices
@@ -450,9 +455,9 @@ def make_train(
         rng, rng_rollout = jax.random.split(rng)
         rng = jax.random.split(rng, num=config.num_devices)
         train_state = replicate(train_state, jax.local_devices()[:config.num_devices])
-        runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
+        runner_state = (rng, train_state, timestep, prev_action, prev_reward)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
-        for i in tqdm(range(config.num_updates), desc="Initializing..."):
+        for i in tqdm(range(config.num_updates), desc="Training"):
             start_time = time.time()  # Start time for measuring iteration speed
             runner_state, loss_info = jax.block_until_ready(_update_step(runner_state, None))
             end_time = time.time()
@@ -463,10 +468,11 @@ def make_train(
             
             tqdm.write(f"Steps/s: {steps_per_second:.2f}")  # Display steps and iterations per second
 
-            # Save checkpoint
+            # Use data from the first device for stats and eval
             loss_info_single = unreplicate(loss_info)
             runner_state_single = unreplicate(runner_state)
-            env_params_single = unreplicate(env_params)
+            _, train_state, timestep = runner_state_single[:3]
+            env_params_single = timestep.env_cfg
             
             if i % config.log_interval == 0:
                 wandb.log({"performance/steps_per_second": steps_per_second, 
@@ -483,7 +489,7 @@ def make_train(
                 helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
             
             if i % config.log_interval == 0:
-                _, train_state = runner_state_single[:2]
+                curriculum_levels = get_curriculum_levels(env_params_single, env.batch_cfg.curriculum_global.levels)
                 eval_stats = eval_ppo.rollout(
                     rng_rollout,
                     env,
@@ -514,6 +520,7 @@ def make_train(
                         "eval/DO": eval_stats.action_8 / n,
                         "eval/positive_terminations": eval_stats.positive_terminations / config.num_envs_per_device,
                         "eval/total_terminations": eval_stats.terminations / config.num_envs_per_device,
+                        "curriculum_levels": curriculum_levels,
                     }
                 )
 
@@ -535,11 +542,7 @@ def train(config: TrainConfig):
 
     rng, env, env_params, train_state = make_states(config)
 
-    print("Compiling...")
-    t = time.time()
     train_fn = make_train(env, env_params, config)
-    elapsed_time = time.time() - t
-    print(f"Done in {elapsed_time:.2f}s.")
 
     print("Training...")
     try:  # Try block starts here

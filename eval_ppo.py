@@ -3,9 +3,6 @@ import jax
 import jax.numpy as jnp
 from flax.training.train_state import TrainState
 from typing import NamedTuple
-from pathlib import Path
-import pickle
-from jax.experimental import host_callback
 from train_debug import select_action_ppo, wrap_action
 
 
@@ -52,7 +49,7 @@ def rollout(
         action, _, _, _ = select_action_ppo(train_state, timestep.observation, _rng_model)
         _rng_step = jax.random.split(_rng_step, num_envs)
         action_env = wrap_action(action, env.batch_cfg.action_type)
-        timestep = env.step(env_params, timestep, action_env, _rng_step)
+        timestep = env.step(timestep, action_env, _rng_step)
 
         positive_termination_update = timestep.info['task_done'].sum()
         
@@ -82,7 +79,6 @@ def rollout(
         )
         carry = (rng, stats, timestep)
         return carry
-    jax.debug.print("rng shape rollout {} ", rng.shape)
     rng, _rng_reset = jax.random.split(rng)
     _rng_reset = jax.random.split(_rng_reset, num_envs)
     timestep = env.reset(env_params, _rng_reset)
