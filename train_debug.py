@@ -59,7 +59,7 @@ class TrainConfig:
     mask_out_arm_extension = True
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
-    num_rollouts = 300  # max length of an episode in Terra
+    num_rollouts_eval = 300  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)
     
     def __post_init__(self):
         self.num_devices = jax.local_device_count() if self.num_devices == 0 else self.num_devices
@@ -112,13 +112,11 @@ def wrap_action(action, action_type):
 def get_cfgs_init(train_cfg):
     num_devices = train_cfg.num_devices
     n_envs = train_cfg.num_envs
-    num_rollouts = train_cfg.num_rollouts
 
     env_cfgs = jax.vmap(EnvConfig.parametrized)(
         np.array([60] * n_envs),
         np.array([60] * n_envs),
-        np.array([num_rollouts] * n_envs),
-        np.array([0] * n_envs),  # initialize every env to be at the initial curriculum level
+        np.array([0] * n_envs),
         np.array([RewardsType.DENSE] * n_envs),
         np.array([False] * n_envs),
         )
@@ -496,7 +494,7 @@ def make_train(
                     env_params_single,
                     train_state,
                     config.num_envs_per_device,
-                    config.num_rollouts,
+                    config.num_rollouts_eval,
                 )
             
                 # TODO: pmean
