@@ -36,22 +36,23 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
-    num_envs_per_device: int = 2048
+    num_envs_per_device: int = 4096
     num_steps: int = 32
-    update_epochs: int = 1
-    num_minibatches: int = 64
+    update_epochs: int = 3
+    num_minibatches: int = 32
     total_timesteps: int = 3_000_000_000
     lr: float = 3e-4
     clip_eps: float = 0.5
     gamma: float = 0.995
     gae_lambda: float = 0.95
-    ent_coef: float = 0.001
+    ent_coef: float = 0.01
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
     seed: int = 42
-    checkpoint_interval: int = 100  # Number of updates between checkpoints
-    log_interval: int = 50  # Number of updates between logging to wandb
+    log_train_interval: int = 1  # Number of updates between logging train stats
+    log_eval_interval: int = 50  # Number of updates between running eval and syncing with wandb
+    checkpoint_interval: int = 50  # Number of updates between checkpoints
     # terra 
     num_embeddings_agent_min = 60  # should be at least as big as the biggest map axis
     clip_action_maps = True  # clips the action maps to [-1, 1]
@@ -465,9 +466,12 @@ def make_train(
             _, train_state, timestep = runner_state_single[:3]
             env_params_single = timestep.env_cfg
             
-            if i % config.log_interval == 0:
+            if i % config.log_train_interval == 0:
+                curriculum_levels = get_curriculum_levels(env_params_single, env.batch_cfg.curriculum_global.levels)
                 wandb.log({"performance/steps_per_second": steps_per_second, 
-                        "performance/iterations_per_second": iterations_per_second, 
+                        "performance/iterations_per_second": iterations_per_second,
+                        "curriculum_levels": curriculum_levels,
+                        "lr": config.lr,
                         **loss_info_single})
                     
             if i % config.checkpoint_interval == 0:
@@ -479,8 +483,7 @@ def make_train(
                 }
                 helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
             
-            if i % config.log_interval == 0:
-                curriculum_levels = get_curriculum_levels(env_params_single, env.batch_cfg.curriculum_global.levels)
+            if i % config.log_eval_interval == 0:
                 eval_stats = eval_ppo.rollout(
                     rng_rollout,
                     env,
@@ -499,7 +502,6 @@ def make_train(
                         "eval/max_reward": eval_stats.max_reward,
                         "eval/min_reward": eval_stats.min_reward,
                         "eval/lengths": eval_stats.length,
-                        "lr": config.lr,
                         "eval/FORWARD %": eval_stats.action_0 / n,
                         "eval/BACKWARD %": eval_stats.action_1 / n,
                         "eval/CLOCK %": eval_stats.action_2 / n,
@@ -511,7 +513,6 @@ def make_train(
                         "eval/DO": eval_stats.action_8 / n,
                         "eval/positive_terminations": eval_stats.positive_terminations / config.num_envs_per_device,
                         "eval/total_terminations": eval_stats.terminations / config.num_envs_per_device,
-                        "curriculum_levels": curriculum_levels,
                     }
                 )
 
