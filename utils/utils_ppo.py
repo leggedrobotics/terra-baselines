@@ -11,6 +11,7 @@ from terra.config import EnvConfig, MapType, RewardsType
 from pathlib import Path
 import pickle
 from jax.experimental import host_callback
+from functools import partial 
 
 # Training stuff
 class Transition(struct.PyTreeNode):
@@ -77,6 +78,7 @@ def obs_to_model_input(obs):
     """
     Need to convert Dict to List to make it usable by JAX.
     """
+    # TODO: check performance 
     obs = jax.tree_map(lambda x: x.copy(), obs)  # TODO copy is a hack, find a proper solution, it crashes without it, but this makes it slow
     obs = clip_action_maps_in_obs(obs)
     # TODO only use the following function if mask_out_arm_extension is True
@@ -220,7 +222,7 @@ class RolloutStats(NamedTuple):
     action_7: jax.Array = jnp.asarray(0)
     action_8: jax.Array = jnp.asarray(0)
 
-
+# @partial(jax.pmap, axis_name="devices")
 def rollout(
     rng: jax.Array,
     env,
@@ -232,7 +234,7 @@ def rollout(
     def _cond_fn(carry):
         _, stats, _ = carry
         # Check if the number of steps has been reached
-        return jnp.less(stats.length, N_ROLLOUT + 1)
+        return jnp.less(stats.length, num_rollouts + 1)
 
     def _body_fn(carry):
         rng, stats, timestep = carry
@@ -276,7 +278,7 @@ def rollout(
         )
         carry = (rng, stats, timestep)
         return carry
-
+    jax.debug.print("rng shape rollout {} ", rng.shape)
     rng, _rng_reset = jax.random.split(rng)
     _rng_reset = jax.random.split(_rng_reset, num_envs)
     timestep = env.reset(env_params, _rng_reset)

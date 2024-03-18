@@ -31,9 +31,9 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
-    num_envs_per_device: int = 4096
+    num_envs_per_device: int = 2048
     num_steps: int = 32
-    update_epochs: int = 3
+    update_epochs: int = 1
     num_minibatches: int = 64
     total_timesteps: int = 3_000_000_000
     lr: float = 3e-4
@@ -46,7 +46,7 @@ class TrainConfig:
     eval_episodes: int = 100
     seed: int = 42
     checkpoint_interval: int = 100  # Number of updates between checkpoints
-    log_interval: int = 1  # Number of updates between logging to wandb
+    log_interval: int = 50  # Number of updates between logging to wandb
     # terra 
     num_embeddings_agent_min = 60  # should be at least as big as the biggest map axis
     clip_action_maps = True  # clips the action maps to [-1, 1]
@@ -245,42 +245,44 @@ def make_train(
             # EVALUATE AGENT
             rng, _rng = jax.random.split(rng)
 
-            eval_stats = rollout(
-                _rng,
-                env,
-                env_params,
-                train_state,
-                config.num_envs_per_device,
-                config.num_rollouts,
-            )
+            # eval_stats = rollout(
+            #     _rng,
+            #     env,
+            #     env_params,
+            #     train_state,
+            #     config.num_envs_per_device,
+            #     config.num_rollouts,
+            # )
             
-            # TODO: pmean
-            # eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
-            n = config.num_envs_per_device * eval_stats.length
-            loss_info.update(
-                {
-                    "eval/rewards": eval_stats.reward / n,
-                    "eval/max_reward": eval_stats.max_reward,
-                    "eval/min_reward": eval_stats.min_reward,
-                    "eval/lengths": eval_stats.length,
-                    "lr": config.lr,
-                    "eval/FORWARD %": eval_stats.action_0 / n,
-                    "eval/BACKWARD %": eval_stats.action_1 / n,
-                    "eval/CLOCK %": eval_stats.action_2 / n,
-                    "eval/ANTICLOCK %": eval_stats.action_3 / n,
-                    "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
-                    "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
-                    "eval/EXTEND_ARM %": eval_stats.action_6 / n,
-                    "eval/RETRACT_ARM %": eval_stats.action_7 / n,
-                    "eval/DO": eval_stats.action_8 / n,
-                    "eval/positive_terminations": eval_stats.positive_terminations / config.num_envs_per_device,
-                    "eval/total_terminations": eval_stats.terminations / config.num_envs_per_device,
-                }
-            )
+            # # TODO: pmean
+            # # eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
+            # n = config.num_envs_per_device * eval_stats.length
+            # loss_info.update(
+            #     {
+            #         "eval/rewards": eval_stats.reward / n,
+            #         "eval/max_reward": eval_stats.max_reward,
+            #         "eval/min_reward": eval_stats.min_reward,
+            #         "eval/lengths": eval_stats.length,
+            #         "lr": config.lr,
+            #         "eval/FORWARD %": eval_stats.action_0 / n,
+            #         "eval/BACKWARD %": eval_stats.action_1 / n,
+            #         "eval/CLOCK %": eval_stats.action_2 / n,
+            #         "eval/ANTICLOCK %": eval_stats.action_3 / n,
+            #         "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
+            #         "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
+            #         "eval/EXTEND_ARM %": eval_stats.action_6 / n,
+            #         "eval/RETRACT_ARM %": eval_stats.action_7 / n,
+            #         "eval/DO": eval_stats.action_8 / n,
+            #         "eval/positive_terminations": eval_stats.positive_terminations / config.num_envs_per_device,
+            #         "eval/total_teminations": eval_stats.terminations / config.num_envs_per_device,
+            #     }
+            # )
             runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
             return runner_state, loss_info
 
         # Setup runner state for multiple devices
+
+        rng, rng_rollout = jax.random.split(rng)
         rng = jax.random.split(rng, num=config.num_devices)
         train_state = replicate(train_state, jax.local_devices()[:config.num_devices])
         runner_state = (rng, train_state, timestep, prev_action, prev_reward, env_params)
@@ -316,6 +318,40 @@ def make_train(
                 save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
             
             if i % config.log_interval == 0:
+                _, train_state = runner_state_single[:2]
+                eval_stats = rollout(
+                    rng_rollout,
+                    env,
+                    env_params_single,
+                    train_state,
+                    config.num_envs_per_device,
+                    config.num_rollouts,
+                )
+            
+                # TODO: pmean
+                # eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
+                n = config.num_envs_per_device * eval_stats.length
+                loss_info.update(
+                    {
+                        "eval/rewards": eval_stats.reward / n,
+                        "eval/max_reward": eval_stats.max_reward,
+                        "eval/min_reward": eval_stats.min_reward,
+                        "eval/lengths": eval_stats.length,
+                        "lr": config.lr,
+                        "eval/FORWARD %": eval_stats.action_0 / n,
+                        "eval/BACKWARD %": eval_stats.action_1 / n,
+                        "eval/CLOCK %": eval_stats.action_2 / n,
+                        "eval/ANTICLOCK %": eval_stats.action_3 / n,
+                        "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
+                        "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
+                        "eval/EXTEND_ARM %": eval_stats.action_6 / n,
+                        "eval/RETRACT_ARM %": eval_stats.action_7 / n,
+                        "eval/DO": eval_stats.action_8 / n,
+                        "eval/positive_terminations": eval_stats.positive_terminations / config.num_envs_per_device,
+                        "eval/total_terminations": eval_stats.terminations / config.num_envs_per_device,
+                    }
+                )
+
                 wandb.log(loss_info_single)
         return {"runner_state": runner_state_single, "loss_info": loss_info_single}
 
