@@ -6,7 +6,7 @@ from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 from terra.actions import WheeledAction, TrackedAction, WheeledActionType, TrackedActionType
 import jax.numpy as jnp
-from utils.utils_ppo import obs_to_model_input, wrap_action, get_cfgs_init
+from utils.utils_ppo import obs_to_model_input, wrap_action
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
@@ -69,20 +69,17 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
         obs_seq = _append_to_obs(obs, obs_seq)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
+            obs_model = obs_to_model_input(timestep.observation, rl_config)
+            v, logits_pi = model.apply(model_params, obs_model)
             if deterministic:
-                obs_model = obs_to_model_input(obs)
-                v, logits_pi = model.apply(model_params, obs_model)
                 action = np.argmax(logits_pi, axis=-1)
             else:
-                obs_model = obs_to_model_input(obs)
-                v, logits_pi = model.apply(model_params, obs_model)
                 pi = tfp.distributions.Categorical(logits=logits_pi)
                 action = pi.sample(seed=rng_act)
-            
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
-        timestep = env.step(env_cfgs, timestep, wrap_action(action, env.batch_cfg.action_type), rng_step)
+        timestep = env.step(timestep, wrap_action(action, env.batch_cfg.action_type), rng_step)
         reward = timestep.reward
         next_obs = timestep.observation
         done = timestep.done
@@ -246,8 +243,8 @@ if __name__ == "__main__":
 
     # curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     # env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
-    env_cfgs = get_cfgs_init(config)
-    env_cfgs = jax.tree_map(lambda x: x[0][0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
+    env_cfgs = log["env_config"]
+    env_cfgs = jax.tree_map(lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
     env = TerraEnvBatch(rendering=False, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y)
     config.num_embeddings_agent_min = 60
     

@@ -9,12 +9,13 @@ from utils.models import get_model_ready
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
-from utils.utils_ppo import obs_to_model_input, wrap_action, get_cfgs_init
+from utils.utils_ppo import obs_to_model_input, wrap_action
 from terra.state import State
 import matplotlib.animation as animation
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
+from terra.config import EnvConfig
 
 
 def load_neural_network(config, env):
@@ -36,14 +37,14 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
         obs_seq.append(timestep.observation)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
-            obs = obs_to_model_input(timestep.observation)
+            obs = obs_to_model_input(timestep.observation, rl_config)
             v, logits_pi = model.apply(model_params, obs)
             pi = tfp.distributions.Categorical(logits=logits_pi)
             action = pi.sample(seed=rng_act)
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
-        timestep = env.step(env_cfgs, timestep, wrap_action(action, env.batch_cfg.action_type), rng_step)
+        timestep = env.step(timestep, wrap_action(action, env.batch_cfg.action_type), rng_step)
         reward_seq.append(timestep.reward)
         print(t_counter, timestep.reward, action, timestep.done)
         print(10 * "=")
@@ -127,8 +128,8 @@ if __name__ == "__main__":
 
     # curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     # env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
-    env_cfgs = get_cfgs_init(config)
-    env_cfgs = jax.tree_map(lambda x: x[0][0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
+    env_cfgs = log["env_config"]
+    env_cfgs = jax.tree_map(lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
     progressive_gif = bool(args.progressive_gif)
     print(f"Using progressive_gif = {progressive_gif}")
     env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, progressive_gif=args.progressive_gif, rendering_engine="pygame")
