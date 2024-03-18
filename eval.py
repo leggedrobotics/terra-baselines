@@ -9,8 +9,7 @@ import jax.numpy as jnp
 from utils.utils_ppo import obs_to_model_input, wrap_action, get_cfgs_init
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
-from train_debug import TrainConfig  # needed for unpickling checkpoints
-from train_debug import 
+from train import TrainConfig  # needed for unpickling checkpoints
 
 
 def load_neural_network(config, env):

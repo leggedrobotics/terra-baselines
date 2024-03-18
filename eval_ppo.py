@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 from flax.training.train_state import TrainState
 from typing import NamedTuple
-from train_debug import select_action_ppo, wrap_action
+from utils.utils_ppo import select_action_ppo, wrap_action
 
 
 # for evaluation (evaluate for N consecutive episodes, sum rewards)

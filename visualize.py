@@ -14,7 +14,7 @@ from terra.state import State
 import matplotlib.animation as animation
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
-from train_debug import TrainConfig  # needed for unpickling checkpoints
+from train import TrainConfig  # needed for unpickling checkpoints
 
 
 def load_neural_network(config, env):

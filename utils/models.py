@@ -2,11 +2,9 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 import flax.linen as nn
-from functools import reduce
 from typing import Sequence, Union
 from terra.actions import TrackedAction, WheeledAction
 from terra.env import TerraEnvBatch
-from typing import Optional, Callable
 from functools import partial
 
 
@@ -30,6 +28,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         map_min_max=map_min_max,
         local_map_min_max=tuple(config["local_map_normalization_bounds"]),
         loaded_max=config["loaded_max"],
+        action_type=env.batch_cfg.action_type,
     )
 
     map_width = env.batch_cfg.maps.max_width
@@ -311,7 +310,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     map_min_max: Sequence[int]
     local_map_min_max: Sequence[int]
     loaded_max: int
-    action_type: Union[TrackedAction, WheeledAction] = TrackedAction
+    action_type: Union[TrackedAction, WheeledAction]
     hidden_dim_pi: Sequence[int] = (128, 32)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
     mlp_use_layernorm: bool = False
@@ -344,17 +343,6 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         xpi = self.mlp_pi(x)
 
-        # INVALID ACTION MASKING
-        # if self.use_action_masking:
-        #     action_mask = action_mask.astype(jnp.bool_)
-        #     # OPTION 1
-        #     xpi = xpi * action_mask - 1e8 * (~action_mask)
-        #     # OPTION 2
-        #     # xpi = jnp.where(
-        #     #     action_mask,
-        #     #     xpi,
-        #     #     -1e8
-        #     # )
 
         if self.mask_out_arm_extension:
             xpi = xpi.at[..., -2].set(-1e8)
