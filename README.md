@@ -1,4 +1,4 @@
-# Terra Baselines - Training, Evals, and Checkpoints for Terra
+# 🌍🚀 Terra Baselines - Training, Evals, and Checkpoints for Terra
 Terra Baselines provides a set of tools to train and evaluate RL policies on the [Terra](https://github.com/leggedrobotics/Terra) environment. This implementation allows to train an agent capable of planning earthworks in trenches and foundations environments in less than 1 minute on 8 Nvidia RTX-4090 GPUs.
 
 ## Features
