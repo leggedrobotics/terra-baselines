@@ -83,6 +83,7 @@ We train 4 models capable of solving both foundation and trench type of environm
 | `wheeled-sparse.pkl` |       |       |       |            |
 
 Where we define the metrics from [Terenzi et al](https://arxiv.org/abs/2308.11478):
+
 $$
 \begin{equation}
     \text{Completion Rate}= C_{r} = \frac{N_{terminated}}{N_{total}}
