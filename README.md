@@ -1,5 +1,5 @@
 # Terra Baselines - Training, Evals, and Checkpoints for Terra
-Terra Baselines provides a set of tools to train and evaluate RL policies on the [Terra](https://github.com/leggedrobotics/Terra) environment.
+Terra Baselines provides a set of tools to train and evaluate RL policies on the [Terra](https://github.com/leggedrobotics/Terra) environment. This implementation allows to train an agent capable of planning earthworks in trenches and foundations environments in less than 1 minute on 8 Nvidia RTX-4090 GPUs.
 
 ## Features
 - Train on multiple devices using PPO with `train.py` (based on [XLand-MiniGrid](https://github.com/corl-team/xland-minigrid))
@@ -81,3 +81,13 @@ We train 4 models capable of solving both foundation and trench type of environm
 | `tracked-sparse.pkl` |       |       |       |            |
 | `wheeled-dense.pkl`  |       |       |       |            |
 | `wheeled-sparse.pkl` |       |       |       |            |
+
+And these are rollouts of the four policies 😄
+####  `tracked-dense.pkl`
+![img](assets/overview.gif)
+#### `tracked-sparse.pkl`
+![img](assets/overview.gif)
+#### `wheeled-dense.pkl`
+![img](assets/overview.gif)
+#### `wheeled-sparse.pkl`
+![img](assets/overview.gif)
