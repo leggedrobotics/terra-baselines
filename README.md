@@ -85,7 +85,7 @@ We train 4 models capable of solving both foundation and trench type of environm
 Where we define the metrics from [Terenzi et al](https://arxiv.org/abs/2308.11478):
 $$
 \begin{equation}
-    \text{Completion Rate}= C_{r} = \frac{\#terminated}{\#total}
+    \text{Completion Rate}= C_{r} = \frac{N_{terminated}}{N_{total}}
 \end{equation}
 $$
 
@@ -103,7 +103,7 @@ $$
 
 $$
 \begin{equation}
-    \text{Coverage}=\frac{\#tiles\ dug}{\#tiles\ to\ dig}    
+    \text{Coverage}=\frac{N_{tiles\ dug}}{N_{tiles\ to\ dig}}    
 \end{equation}
 $$
 
