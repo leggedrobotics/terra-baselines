@@ -26,15 +26,15 @@ jax.config.update("jax_threefry_partitionable", True)
 
 @dataclass
 class TrainConfig:
-    name: str
+    name: str = "default"
     num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
     num_envs_per_device: int = 4096
     num_steps: int = 32
-    update_epochs: int = 3
+    update_epochs: int = 5
     num_minibatches: int = 32
-    total_timesteps: int = 3_000_000_000
+    total_timesteps: int = 4096 * 32 * 3600 * 2
     lr: float = 3e-4
     clip_eps: float = 0.5
     gamma: float = 0.995
@@ -414,6 +414,7 @@ def make_train(
             
                 # TODO: pmean
                 # eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
+                safe_divide = lambda x, y: x / y if y > 0 else float('nan')
                 n = config.num_envs_per_device * eval_stats.length
                 loss_info_single.update(
                     {
@@ -430,8 +431,8 @@ def make_train(
                         "eval/EXTEND_ARM %": eval_stats.action_6 / n,
                         "eval/RETRACT_ARM %": eval_stats.action_7 / n,
                         "eval/DO": eval_stats.action_8 / n,
-                        "eval/positive_terminations": eval_stats.positive_terminations / (config.num_envs_per_device * eval_stats.terminations),
-                        "eval/total_terminations": eval_stats.terminations / config.num_envs_per_device,
+                        "eval/positive_terminations": safe_divide(eval_stats.positive_terminations, (config.num_envs_per_device * eval_stats.terminations)),
+                        "eval/total_terminations": safe_divide(eval_stats.terminations, config.num_envs_per_device),
                     }
                 )
 
@@ -449,7 +450,14 @@ def train(config: TrainConfig):
         name=config.name,
         config=asdict(config),
         save_code=True,
-    )
+    )    
+    # Update config parameters with wandb.config values
+    config.num_envs = 32 // wandb.config.num_steps_env * 4096
+    config.num_steps = wandb.config.num_steps_env
+    config.num_minibatches = wandb.config.num_minibatches
+    config.gamma = wandb.config.gamma
+    config.ent_coef = wandb.config.ent_coef
+    
 
     rng, env, env_params, train_state = make_states(config)
 
@@ -495,4 +503,30 @@ if __name__ == "__main__":
     args, _ = parser.parse_known_args()
 
     name = f"{args.name}-{args.machine}-{DT}"
-    train(TrainConfig(name=name, num_devices=args.num_devices))
+    sweep_config = {
+        'method': 'grid',  # For example, 'grid', 'random', or 'bayes'
+        'parameters': {
+            'num_steps_env': {
+                'values': [8, 16, 32]
+            },
+            'num_minibatches': {
+                'values': [32, 64, 128]
+            },
+            'gamma': {
+                'values': [0.995, 0.999]
+            },
+            'ent_coef': {
+                'values': [0.01, 0.001]
+            },
+            'lr': {
+                'values': [5e-3, 1e-3, 5e-4]
+            }
+        },
+    }
+
+    # Initialize the sweep
+    # sweep_id = wandb.sweep(sweep_config, project="excavator-oss")
+    sweep_id = "1g03l3br"
+    # Run the sweep agent
+    wandb.agent(sweep_id, function=lambda: train(TrainConfig(name=name, num_devices=args.num_devices)))
+

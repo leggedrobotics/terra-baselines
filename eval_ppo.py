@@ -52,10 +52,10 @@ def rollout(
         _rng_step = jax.random.split(_rng_step, num_envs)
         action_env = wrap_action(action, env.batch_cfg.action_type)
         timestep = env.step(timestep, action_env, _rng_step)
-
-        positive_termination_update = timestep.info['task_done'].sum()
         
         terminations_update = timestep.done.sum()
+        positive_termination_update = timestep.info['task_done'].sum()
+
 
         # Replace jax.debug.print with:
         # host_callback.id_tap(print_debug, (positive_termination_update, timeout_update), 
