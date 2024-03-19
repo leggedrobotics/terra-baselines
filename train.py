@@ -32,10 +32,10 @@ class TrainConfig:
     group: str = "default"
     num_envs_per_device: int = 4096
     num_steps: int = 32
-    update_epochs: int = 3
-    num_minibatches: int = 32
+    update_epochs: int = 5
+    num_minibatches: int = 128
     total_timesteps: int = 3_000_000_000
-    lr: float = 3e-4
+    lr: float = 0.005
     clip_eps: float = 0.5
     gamma: float = 0.995
     gae_lambda: float = 0.95
