@@ -105,6 +105,13 @@ if __name__ == "__main__":
         help="Number of steps.",
     )
     parser.add_argument(
+        "-o",
+        "--out_path",
+        type=str,
+        default=".",
+        help="Output path.",
+    )
+    parser.add_argument(
         "-s",
         "--seed",
         type=int,
@@ -147,4 +154,4 @@ if __name__ == "__main__":
     for o in tqdm(obs_seq, desc="Rendering"):
         env.terra_env.render_obs_pygame(o, generate_gif=True)
     
-    env.terra_env.rendering_engine.create_gif()
+    env.terra_env.rendering_engine.create_gif(args.out_path)

@@ -196,18 +196,11 @@ if __name__ == "__main__":
         help="Environment name.",
     )
     parser.add_argument(
-        "-nx",
-        "--n_envs_x",
+        "-n",
+        "--n_envs",
         type=int,
         default=1,
-        help="Number of environments on x.",
-    )
-    parser.add_argument(
-        "-ny",
-        "--n_envs_y",
-        type=int,
-        default=1,
-        help="Number of environments on y.",
+        help="Number of environments.",
     )
     parser.add_argument(
         "-steps",
@@ -220,8 +213,8 @@ if __name__ == "__main__":
         "-d",
         "--deterministic",
         type=int,
-        default=1,
-        help="Deterministic.",
+        default=0,
+        help="Deterministic. 0 for stochastic, 1 for deterministic.",
     )
     parser.add_argument(
         "-s",
@@ -231,7 +224,7 @@ if __name__ == "__main__":
         help="Random seed for the environment.",
     )
     args, _ = parser.parse_known_args()
-    n_envs = args.n_envs_x * args.n_envs_y
+    n_envs = args.n_envs
 
     log = load_pkl_object(f"{args.run_name}")
     config = log["train_config"]
@@ -245,7 +238,7 @@ if __name__ == "__main__":
     # env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
     env_cfgs = log["env_config"]
     env_cfgs = jax.tree_map(lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
-    env = TerraEnvBatch(rendering=False, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y)
+    env = TerraEnvBatch(rendering=False)
     config.num_embeddings_agent_min = 60
     
 
