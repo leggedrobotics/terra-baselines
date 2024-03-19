@@ -82,7 +82,33 @@ We train 4 models capable of solving both foundation and trench type of environm
 | `wheeled-dense.pkl`  |       |       |       |            |
 | `wheeled-sparse.pkl` |       |       |       |            |
 
-And these are rollouts of the four policies 😄
+Where we define the metrics from [Terenzi et al](https://arxiv.org/abs/2308.11478):
+$$
+\begin{equation}
+    \text{Completion Rate}= C_{r} = \frac{\#terminated}{\#total}
+\end{equation}
+$$
+
+$$
+\begin{equation}
+    \text{Path Efficiency}=S_{p}=\sum_{i=0}^{N-1} \frac{\left(x_{B_{i+1}}-x_{B_{i}}\right)}{\sqrt{A_{d}}}    
+\end{equation}
+$$
+
+$$
+\begin{equation}
+    \text{Workspace Efficiency} = S_{w} = \frac{N_{w} \cdot A_{w}}{A_{d}}    
+\end{equation}
+$$
+
+$$
+\begin{equation}
+    \text{Coverage}=\frac{\#tiles\ dug}{\#tiles\ to\ dig}    
+\end{equation}
+$$
+
+## Policy Rollouts 😄
+Here's a collection of rollouts for the 4 models we train.
 ####  `tracked-dense.pkl`
 ![img](assets/overview.gif)
 #### `tracked-sparse.pkl`
