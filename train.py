@@ -35,11 +35,11 @@ class TrainConfig:
     update_epochs: int = 5
     num_minibatches: int = 128
     total_timesteps: int = 3_000_000_000
-    lr: float = 0.005
+    lr: float = 3e-4
     clip_eps: float = 0.5
     gamma: float = 0.995
     gae_lambda: float = 0.95
-    ent_coef: float = 0.01
+    ent_coef: float = 0.001
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
