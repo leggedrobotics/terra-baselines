@@ -12,8 +12,6 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     """Instantiate a model according to obs shape of environment."""
     num_embeddings_agent = jnp.max(jnp.array(
         [
-            config["num_embeddings_agent_min"],
-            env.batch_cfg.maps_dims.maps_edge_length,
             env.batch_cfg.maps_dims.maps_edge_length,
             env.batch_cfg.agent.angles_cabin,
             env.batch_cfg.agent.angles_base,

@@ -1,7 +1,3 @@
-"""
-Partially from https://github.com/RobertTLange/gymnax-blines
-"""
-
 import numpy as np
 import jax
 from tqdm import tqdm
@@ -141,8 +137,6 @@ if __name__ == "__main__":
     print(f"Using progressive_gif = {progressive_gif}")
     suffle_maps = True
     env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, progressive_gif=args.progressive_gif, rendering_engine="pygame", shuffle_maps=suffle_maps)
-    config.num_embeddings_agent_min = 60 # curriculum.get_num_embeddings_agent_min()
-    
 
     model = load_neural_network(config, env)
     model_params = log['model']

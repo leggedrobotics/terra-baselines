@@ -74,7 +74,6 @@ def make_states(config: TrainConfig):
     num_envs_per_device = config.num_envs_per_device
 
     env_params = EnvConfig()
-    config = augment_train_config(config, env_params)
     env_params = jax.tree_map(
         lambda x: jnp.array(x)[None, None].repeat(num_devices, 0).repeat(num_envs_per_device, 1), env_params
     )
@@ -91,10 +90,6 @@ def make_states(config: TrainConfig):
     train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
 
     return rng, env, env_params, train_state
-
-def augment_train_config(config: TrainConfig, batch_cfg):
-    config.num_embeddings_agent_min = batch_cfg.maps_dims.maps_edge_length
-    return config
 
 
 class Transition(struct.PyTreeNode):

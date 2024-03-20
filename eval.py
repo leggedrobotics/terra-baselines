@@ -240,8 +240,6 @@ if __name__ == "__main__":
     env_cfgs = jax.tree_map(lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
     shuffle_maps = True
     env = TerraEnvBatch(rendering=False, shuffle_maps=shuffle_maps)
-    config.num_embeddings_agent_min = 60
-    
 
     model = load_neural_network(config, env)
     model_params = log['model']
