@@ -108,6 +108,9 @@ $$
 \end{equation}
 $$
 
+### Model Details
+All the models we train share the same structure. We encode the maps with a CNN, and the agent state and local maps with MLPs. The latent features are concatenated and shared by the two MLP heads of the model (value and action). In total, the model has ~130k parameters counting both value and action weights.
+
 ## Policy Rollouts 😄
 Here's a collection of rollouts for the 4 models we train.
 ####  `tracked-dense.pkl`
