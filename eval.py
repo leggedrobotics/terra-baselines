@@ -238,7 +238,8 @@ if __name__ == "__main__":
     # env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
     env_cfgs = log["env_config"]
     env_cfgs = jax.tree_map(lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
-    env = TerraEnvBatch(rendering=False)
+    shuffle_maps = True
+    env = TerraEnvBatch(rendering=False, shuffle_maps=shuffle_maps)
     config.num_embeddings_agent_min = 60
     
 
