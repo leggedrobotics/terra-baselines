@@ -30,11 +30,11 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "excavator-oss"
     group: str = "default"
-    num_envs_per_device: int = 4096
+    num_envs_per_device: int = 1024
     num_steps: int = 32
-    update_epochs: int = 5
-    num_minibatches: int = 128
-    total_timesteps: int = 3_000_000_000
+    update_epochs: int = 1
+    num_minibatches: int = 32
+    total_timesteps: int = 30_000_000_000
     lr: float = 3e-4
     clip_eps: float = 0.5
     gamma: float = 0.995
@@ -74,7 +74,7 @@ def make_states(config: TrainConfig):
     num_envs_per_device = config.num_envs_per_device
 
     env_params = EnvConfig()
-    config = augment_train_config(config, env_params)
+    config = augment_train_config(config, env.batch_cfg)
     env_params = jax.tree_map(
         lambda x: jnp.array(x)[None, None].repeat(num_devices, 0).repeat(num_envs_per_device, 1), env_params
     )
@@ -92,11 +92,8 @@ def make_states(config: TrainConfig):
 
     return rng, env, env_params, train_state
 
-def augment_train_config(config: TrainConfig, env_params: EnvConfig):
-    config.num_embeddings_agent_min = max(
-        env_params.maps.max_width,
-        env_params.maps.max_height,
-    )
+def augment_train_config(config: TrainConfig, batch_cfg):
+    config.num_embeddings_agent_min = batch_cfg.maps_dims.maps_edge_length
     return config
 
 class Transition(struct.PyTreeNode):
@@ -376,7 +373,7 @@ def make_train(
 
             iteration_duration = end_time - start_time
             iterations_per_second = 1 / iteration_duration
-            steps_per_second = iterations_per_second * config.num_steps * config.num_envs * config.num_devices
+            steps_per_second = iterations_per_second * config.num_steps * config.num_envs
             
             tqdm.write(f"Steps/s: {steps_per_second:.2f}")  # Display steps and iterations per second
 

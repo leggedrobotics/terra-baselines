@@ -13,8 +13,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     num_embeddings_agent = jnp.max(jnp.array(
         [
             config["num_embeddings_agent_min"],
-            env.batch_cfg.maps.max_height,
-            env.batch_cfg.maps.max_width,
+            env.batch_cfg.maps_dims.maps_edge_length,
+            env.batch_cfg.maps_dims.maps_edge_length,
             env.batch_cfg.agent.angles_cabin,
             env.batch_cfg.agent.angles_base,
             ], dtype=jnp.int16)
@@ -31,8 +31,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         action_type=env.batch_cfg.action_type,
     )
 
-    map_width = env.batch_cfg.maps.max_width
-    map_height = env.batch_cfg.maps.max_height
+    map_width = env.batch_cfg.maps_dims.maps_edge_length
+    map_height = env.batch_cfg.maps_dims.maps_edge_length
     
     n_local_maps_layers = env.batch_cfg.agent.max_arm_extension + 1 if not config["mask_out_arm_extension"] else 1
 

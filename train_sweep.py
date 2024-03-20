@@ -92,12 +92,10 @@ def make_states(config: TrainConfig):
 
     return rng, env, env_params, train_state
 
-def augment_train_config(config: TrainConfig, env_params: EnvConfig):
-    config.num_embeddings_agent_min = max(
-        env_params.maps.max_width,
-        env_params.maps.max_height,
-    )
+def augment_train_config(config: TrainConfig, batch_cfg):
+    config.num_embeddings_agent_min = batch_cfg.maps_dims.maps_edge_length
     return config
+
 
 class Transition(struct.PyTreeNode):
     done: jax.Array
@@ -504,7 +502,7 @@ if __name__ == "__main__":
 
     name = f"{args.name}-{args.machine}-{DT}"
     sweep_config = {
-        'method': 'grid',  # For example, 'grid', 'random', or 'bayes'
+        'method': 'random',  # For example, 'grid', 'random', or 'bayes'
         'parameters': {
             'num_steps_env': {
                 'values': [8, 16, 32]
@@ -525,8 +523,8 @@ if __name__ == "__main__":
     }
 
     # Initialize the sweep
-    # sweep_id = wandb.sweep(sweep_config, project="excavator-oss")
-    sweep_id = "1g03l3br"
+    #sweep_id = wandb.sweep(sweep_config, project="excavator-oss")
     # Run the sweep agent
+    sweep_id = "p5353fhl"
     wandb.agent(sweep_id, function=lambda: train(TrainConfig(name=name, num_devices=args.num_devices)))
 
