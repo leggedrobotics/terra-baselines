@@ -56,20 +56,20 @@ Then, setup the curriculum in `config.py` in Terra (making sure the maps are sav
 
 Run a training job with
 ```
-DATASET_SIZE=<num_maps_per_type> python train.py -d <num_devices>
+DATASET_PATH=/path/to/dataset DATASET_SIZE=<num_maps_per_type> python train.py -d <num_devices>
 ```
 and collect your weights in the `checkpoints/` folder.
 
 ## Eval
 Evaluate your checkpoint with standard metrics using
 ```
-DATASET_SIZE=<num_maps_per_type> python eval.py -run <checkpoint_path> -n <num_environments> -steps <num_steps>
+DATASET_PATH=/path/to/dataset DATASET_SIZE=<num_maps_per_type> python eval.py -run <checkpoint_path> -n <num_environments> -steps <num_steps>
 ```
 
 ## Visualize
 Visualize the rollout of your policy with
 ```
-DATASET_SIZE=<num_maps_per_type> python visualize.py -run <checkpoint_path> -nx <num_environments_x> -ny <num_environments_y> -steps <num_steps> -o <output_path.gif>
+DATASET_PATH=/path/to/dataset DATASET_SIZE=<num_maps_per_type> python visualize.py -run <checkpoint_path> -nx <num_environments_x> -ny <num_environments_y> -steps <num_steps> -o <output_path.gif>
 ```
 
 ## Baselines
