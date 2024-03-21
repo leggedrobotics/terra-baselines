@@ -162,3 +162,10 @@ cython_debug/
 *.pkl
 docs/
 wandb/
+
+agents/Terra/dummy.txt
+
+slurm*
+
+profile-remote/
+tools/
