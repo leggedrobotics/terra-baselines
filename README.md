@@ -75,10 +75,12 @@ DATASET_SIZE=<num_maps_per_type> python visualize.py -run <checkpoint_path> -nx 
 ## Baselines
 We train 2 models capable of solving both foundation and trench type of environments. They differentiate themselves based on the type of agent (wheeled or tracked), and the type of curriculum used to train them (dense reward with single level, or sparse reward with curriculum). All models are trained on 64x64 maps and are stored in the `checkpoints/` folder.
 
-| Checkpoint           | $C_r$ | $S_p$ | $S_w$ | $Coverage$ |
-|----------------------|-------|-------|-------|------------|
-| `tracked-dense.pkl`  |       |       |       |            |
-| `wheeled-dense.pkl`  |       |       |       |            |
+| Checkpoint           | Map Type  | $C_r$ | $S_p$ | $S_w$ | $Coverage$ |
+|----------------------|-----------|-------|-------|-------|------------|
+| `tracked-dense.pkl`  |Foundations|97%|5.66 (1.51)|19.06 (2.86)|0.99 (0.04)|
+|                      |Trenches   |94%|7.09 (5.66)|20.57 (5.26)|0.99 (0.10)|
+| `wheeled-dense.pkl`  |Foundations|99%|11.43 (8.96)|22.06 (3.65)|1.00 (0.00)|
+|                      |Trenches   |89%|15.84 (25.10)|21.12 (5.65)|0.96 (0.14)|
 
 Where we define the metrics from [Terenzi et al](https://arxiv.org/abs/2308.11478):
 
@@ -110,7 +112,7 @@ $$
 All the models we train share the same structure. We encode the maps with a CNN, and the agent state and local maps with MLPs. The latent features are concatenated and shared by the two MLP heads of the model (value and action). In total, the model has ~130k parameters counting both value and action weights.
 
 ## Policy Rollouts 😄
-Here's a collection of rollouts for the models.
+Here's a collection of rollouts for the models we trained.
 ####  `tracked-dense.pkl`
 ![img](assets/tracked-dense.gif)
 #### `wheeled-dense.pkl`
