@@ -489,7 +489,7 @@ def make_train(
                         "eval/RETRACT_ARM %": eval_stats.action_7 / n,
                         "eval/DO": eval_stats.action_8 / n,
                         "eval/positive_terminations": eval_stats.positive_terminations
-                        / eval_stats.terminations,
+                        / config.num_envs_per_device,
                         "eval/total_terminations": eval_stats.terminations
                         / config.num_envs_per_device,
                     }
