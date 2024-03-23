@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
 
+
 def clip_action_maps_in_obs(obs):
     """Clip action maps to [-1, 1] on the intuition that a binary map is enough for the agent to take decisions."""
     obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
@@ -13,7 +14,9 @@ def clip_action_maps_in_obs(obs):
 def cut_local_map_layers(obs):
     """Only keep the first layer of the local map (makes sense especially if the arm extension action is blocked)"""
     # TODO: check performance
-    obs = jax.tree_map(lambda x: x.copy(), obs)  # necessary for avoiding in-place operations that change the Array size in a scan loop
+    obs = jax.tree_map(
+        lambda x: x.copy(), obs
+    )  # necessary for avoiding in-place operations that change the Array size in a scan loop
     obs["local_map_action_neg"] = obs["local_map_action_neg"][..., [0]]
     obs["local_map_action_pos"] = obs["local_map_action_pos"][..., [0]]
     obs["local_map_target_neg"] = obs["local_map_target_neg"][..., [0]]
@@ -21,6 +24,7 @@ def cut_local_map_layers(obs):
     obs["local_map_dumpability"] = obs["local_map_dumpability"][..., [0]]
     obs["local_map_obstacles"] = obs["local_map_obstacles"][..., [0]]
     return obs
+
 
 def obs_to_model_input(obs, train_cfg):
     # Feature engineering
@@ -45,6 +49,7 @@ def obs_to_model_input(obs, train_cfg):
         obs["dumpability_mask"],
     ]
     return obs
+
 
 def policy(
     apply_fn,

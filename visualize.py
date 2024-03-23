@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from terra.state import State
 import matplotlib.animation as animation
+
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
@@ -23,7 +24,10 @@ def load_neural_network(config, env):
     model, _ = get_model_ready(rng, config, env)
     return model
 
-def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed):
+
+def rollout_episode(
+    env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed
+):
     print(f"Using {seed=}")
     rng = jax.random.PRNGKey(seed)
     rng, _rng = jax.random.split(rng)
@@ -44,7 +48,9 @@ def rollout_episode(env: TerraEnvBatch, model, model_params, env_cfgs, rl_config
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
-        timestep = env.step(timestep, wrap_action(action, env.batch_cfg.action_type), rng_step)
+        timestep = env.step(
+            timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
+        )
         reward_seq.append(timestep.reward)
         print(t_counter, timestep.reward, action, timestep.done)
         print(10 * "=")
@@ -136,23 +142,38 @@ if __name__ == "__main__":
     # curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     # env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
     env_cfgs = log["env_config"]
-    env_cfgs = jax.tree_map(lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs)  # take first config and replicate
+    env_cfgs = jax.tree_map(
+        lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs
+    )  # take first config and replicate
     progressive_gif = bool(args.progressive_gif)
     print(f"Using progressive_gif = {progressive_gif}")
     suffle_maps = True
-    env = TerraEnvBatch(rendering=True, n_envs_x_rendering=args.n_envs_x, n_envs_y_rendering=args.n_envs_y, display=False, progressive_gif=args.progressive_gif, rendering_engine="pygame", shuffle_maps=suffle_maps)
-    config.num_embeddings_agent_min = 60 # curriculum.get_num_embeddings_agent_min()
-    
+    env = TerraEnvBatch(
+        rendering=True,
+        n_envs_x_rendering=args.n_envs_x,
+        n_envs_y_rendering=args.n_envs_y,
+        display=False,
+        progressive_gif=args.progressive_gif,
+        rendering_engine="pygame",
+        shuffle_maps=suffle_maps,
+    )
+    config.num_embeddings_agent_min = 60  # curriculum.get_num_embeddings_agent_min()
 
     model = load_neural_network(config, env)
-    model_params = log['model']
+    model_params = log["model"]
     # replicated_params = log['network']
     # model_params = jax.tree_map(lambda x: x[0], replicated_params)
     obs_seq, cum_rewards = rollout_episode(
-        env, model, model_params, env_cfgs, config, max_frames=args.n_steps, seed=args.seed
+        env,
+        model,
+        model_params,
+        env_cfgs,
+        config,
+        max_frames=args.n_steps,
+        seed=args.seed,
     )
 
     for o in tqdm(obs_seq, desc="Rendering"):
         env.terra_env.render_obs_pygame(o, generate_gif=True)
-    
+
     env.terra_env.rendering_engine.create_gif(args.out_path)

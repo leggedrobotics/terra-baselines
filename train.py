@@ -15,7 +15,7 @@ from tqdm import tqdm
 from functools import partial
 from flax.jax_utils import replicate, unreplicate
 from flax import struct
-import utils.helpers as helpers 
+import utils.helpers as helpers
 from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, policy
 
 jax.config.update("jax_threefry_partitionable", True)
@@ -42,7 +42,9 @@ class TrainConfig:
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 1  # Number of updates between logging train stats
-    log_eval_interval: int = 50  # Number of updates between running eval and syncing with wandb
+    log_eval_interval: int = (
+        50  # Number of updates between running eval and syncing with wandb
+    )
     checkpoint_interval: int = 50  # Number of updates between checkpoints
     # model settings
     clip_action_maps = True  # clips the action maps to [-1, 1]
@@ -50,14 +52,20 @@ class TrainConfig:
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
     num_rollouts_eval = 300  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)
-    
+
     def __post_init__(self):
-        self.num_devices = jax.local_device_count() if self.num_devices == 0 else self.num_devices
+        self.num_devices = (
+            jax.local_device_count() if self.num_devices == 0 else self.num_devices
+        )
         self.num_envs = self.num_envs_per_device * self.num_devices
         self.total_timesteps_per_device = self.total_timesteps // self.num_devices
         self.eval_episodes_per_device = self.eval_episodes // self.num_devices
-        assert self.num_envs % self.num_devices == 0, "Number of environments must be divisible by the number of devices."
-        self.num_updates = (self.total_timesteps // (self.num_steps * self.num_envs)) // self.num_devices
+        assert (
+            self.num_envs % self.num_devices == 0
+        ), "Number of environments must be divisible by the number of devices."
+        self.num_updates = (
+            self.total_timesteps // (self.num_steps * self.num_envs)
+        ) // self.num_devices
         print(f"Num devices: {self.num_devices}, Num updates: {self.num_updates}")
 
     # make object subscriptable
@@ -72,7 +80,10 @@ def make_states(config: TrainConfig):
 
     env_params = EnvConfig()
     env_params = jax.tree_map(
-        lambda x: jnp.array(x)[None, None].repeat(num_devices, 0).repeat(num_envs_per_device, 1), env_params
+        lambda x: jnp.array(x)[None, None]
+        .repeat(num_devices, 0)
+        .repeat(num_envs_per_device, 1),
+        env_params,
     )
     print(f"{env_params.tile_size.shape=}")
 
@@ -84,9 +95,12 @@ def make_states(config: TrainConfig):
         optax.clip_by_global_norm(config.max_grad_norm),
         optax.adam(learning_rate=config.lr, eps=1e-5),
     )
-    train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
+    train_state = TrainState.create(
+        apply_fn=network.apply, params=network_params, tx=tx
+    )
 
     return rng, env, env_params, train_state
+
 
 class Transition(struct.PyTreeNode):
     done: jax.Array
@@ -109,7 +123,11 @@ def calculate_gae(
     # single iteration for the loop
     def _get_advantages(gae_and_next_value, transition):
         gae, next_value = gae_and_next_value
-        delta = transition.reward + gamma * next_value * (1 - transition.done) - transition.value
+        delta = (
+            transition.reward
+            + gamma * next_value * (1 - transition.done)
+            - transition.value
+        )
         gae = delta + gamma * gae_lambda * (1 - transition.done) * gae
         return (gae, transition.value), gae
 
@@ -133,7 +151,7 @@ def ppo_update_networks(
     clip_eps = config.clip_eps
     vf_coef = config.vf_coef
     ent_coef = config.ent_coef
-    
+
     # NORMALIZE ADVANTAGES
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
@@ -142,7 +160,8 @@ def ppo_update_networks(
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
         print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
         transitions_obs_reshaped = jax.tree_map(
-            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])), transitions.obs
+            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
+            transitions.obs,
         )
 
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
@@ -151,7 +170,9 @@ def ppo_update_networks(
         value, dist = policy(train_state.apply_fn, params, obs)
         value = value[:, 0]
         # action = dist.sample(seed=rng_model)
-        transitions_actions_reshaped = jnp.reshape(transitions.action, (-1, *transitions.action.shape[2:]))
+        transitions_actions_reshaped = jnp.reshape(
+            transitions.action, (-1, *transitions.action.shape[2:])
+        )
         log_prob = dist.log_prob(transitions_actions_reshaped)
 
         # Terra: Reshape
@@ -159,7 +180,9 @@ def ppo_update_networks(
         log_prob = jnp.reshape(log_prob, transitions.log_prob.shape)
 
         # CALCULATE VALUE LOSS
-        value_pred_clipped = transitions.value + (value - transitions.value).clip(-clip_eps, clip_eps)
+        value_pred_clipped = transitions.value + (value - transitions.value).clip(
+            -clip_eps, clip_eps
+        )
         value_loss = jnp.square(value - targets)
         value_loss_clipped = jnp.square(value_pred_clipped - targets)
         value_loss = 0.5 * jnp.maximum(value_loss, value_loss_clipped).mean()
@@ -174,8 +197,12 @@ def ppo_update_networks(
         total_loss = actor_loss + vf_coef * value_loss - ent_coef * entropy
         return total_loss, (value_loss, actor_loss, entropy)
 
-    (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(train_state.params)
-    (loss, vloss, aloss, entropy, grads) = jax.lax.pmean((loss, vloss, aloss, entropy, grads), axis_name="devices")
+    (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
+        train_state.params
+    )
+    (loss, vloss, aloss, entropy, grads) = jax.lax.pmean(
+        (loss, vloss, aloss, entropy, grads), axis_name="devices"
+    )
     train_state = train_state.apply_gradients(grads=grads)
     update_info = {
         "total_loss": loss,
@@ -185,12 +212,16 @@ def ppo_update_networks(
     }
     return train_state, update_info
 
+
 def get_curriculum_levels(env_cfg, global_curriculum_levels):
     curriculum_stat = {}
     curriculum_levels = env_cfg.curriculum.level
     for i, global_curriculum_level in enumerate(global_curriculum_levels):
-        curriculum_stat[f'Level {i}: {global_curriculum_level["maps_path"]}'] = jnp.sum(curriculum_levels == i).item()
+        curriculum_stat[f'Level {i}: {global_curriculum_level["maps_path"]}'] = jnp.sum(
+            curriculum_levels == i
+        ).item()
     return curriculum_stat
+
 
 def make_train(
     env: TerraEnvBatch,
@@ -203,13 +234,19 @@ def make_train(
     ):
         # INIT ENV
         rng, _rng = jax.random.split(rng)
-        reset_rng = jax.random.split(_rng, config.num_envs_per_device * config.num_devices)
-        reset_rng = reset_rng.reshape((config.num_devices, config.num_envs_per_device, -1))
+        reset_rng = jax.random.split(
+            _rng, config.num_envs_per_device * config.num_devices
+        )
+        reset_rng = reset_rng.reshape(
+            (config.num_devices, config.num_envs_per_device, -1)
+        )
 
         # TERRA: Reset envs
-        reset_fn_p = jax.pmap(env.reset, axis_name="devices") # vmapped inside
+        reset_fn_p = jax.pmap(env.reset, axis_name="devices")  # vmapped inside
         timestep = reset_fn_p(env_params, reset_rng)
-        prev_action = jnp.zeros((config.num_devices, config.num_envs_per_device), dtype=jnp.int32)
+        prev_action = jnp.zeros(
+            (config.num_devices, config.num_envs_per_device), dtype=jnp.int32
+        )
         prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
 
         # TRAIN LOOP
@@ -228,6 +265,7 @@ def make_train(
             - runner_state: Updated runner state after performing the update step.
             - loss_info: A dictionary containing information about the loss and other metrics for this update step.
             """
+
             # COLLECT TRAJECTORIES
             def _env_step(runner_state, _):
                 """
@@ -247,7 +285,9 @@ def make_train(
 
                 # SELECT ACTION
                 rng, _rng_model, _rng_env = jax.random.split(rng, 3)
-                action, log_prob, value, _ = select_action_ppo(train_state, prev_timestep.observation, _rng_model, config)
+                action, log_prob, value, _ = select_action_ppo(
+                    train_state, prev_timestep.observation, _rng_model, config
+                )
 
                 # STEP ENV
                 _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
@@ -268,17 +308,23 @@ def make_train(
                 return runner_state, transition
 
             # transitions: [seq_len, batch_size, ...]
-            runner_state, transitions = jax.lax.scan(_env_step, runner_state, None, config.num_steps)
+            runner_state, transitions = jax.lax.scan(
+                _env_step, runner_state, None, config.num_steps
+            )
 
             # CALCULATE ADVANTAGE
             rng, train_state, timestep, prev_action, prev_reward = runner_state
             rng, _rng = jax.random.split(rng)
-            _, _, last_val, _ = select_action_ppo(train_state, timestep.observation, _rng, config)
+            _, _, last_val, _ = select_action_ppo(
+                train_state, timestep.observation, _rng, config
+            )
             # advantages, targets = calculate_gae(transitions, last_val.squeeze(1), config.gamma, config.gae_lambda)
-            advantages, targets = calculate_gae(transitions, last_val, config.gamma, config.gae_lambda)
+            advantages, targets = calculate_gae(
+                transitions, last_val, config.gamma, config.gae_lambda
+            )
 
             # UPDATE NETWORK
-            def _update_epoch(update_state, _):                
+            def _update_epoch(update_state, _):
                 """
                 Performs a single epoch of updates on the network parameters.
 
@@ -292,6 +338,7 @@ def make_train(
                 - update_state: Updated state after performing the epoch of updates.
                 - update_info: Information about the updates performed in this epoch.
                 """
+
                 def _update_minbatch(train_state, batch_info):
                     """
                     Updates the network parameters based on a single minibatch of data.
@@ -326,19 +373,28 @@ def make_train(
                 # [batch_size, seq_len, ...], as our model assumes
                 batch = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
 
-                shuffled_batch = jtu.tree_map(lambda x: jnp.take(x, permutation, axis=0), batch)
+                shuffled_batch = jtu.tree_map(
+                    lambda x: jnp.take(x, permutation, axis=0), batch
+                )
                 # [num_minibatches, minibatch_size, seq_len, ...]
                 minibatches = jtu.tree_map(
-                    lambda x: jnp.reshape(x, (config.num_minibatches, -1) + x.shape[1:]), shuffled_batch
+                    lambda x: jnp.reshape(
+                        x, (config.num_minibatches, -1) + x.shape[1:]
+                    ),
+                    shuffled_batch,
                 )
-                train_state, update_info = jax.lax.scan(_update_minbatch, train_state, minibatches)
+                train_state, update_info = jax.lax.scan(
+                    _update_minbatch, train_state, minibatches
+                )
 
                 update_state = (rng, train_state, transitions, advantages, targets)
                 return update_state, update_info
 
             # [seq_len, batch_size, num_layers, hidden_dim]
             update_state = (rng, train_state, transitions, advantages, targets)
-            update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, config.update_epochs)
+            update_state, loss_info = jax.lax.scan(
+                _update_epoch, update_state, None, config.update_epochs
+            )
 
             # averaging over minibatches then over epochs
             loss_info = jtu.tree_map(lambda x: x.mean(-1).mean(-1), loss_info)
@@ -354,34 +410,49 @@ def make_train(
 
         rng, rng_rollout = jax.random.split(rng)
         rng = jax.random.split(rng, num=config.num_devices)
-        train_state = replicate(train_state, jax.local_devices()[:config.num_devices])
+        train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
         runner_state = (rng, train_state, timestep, prev_action, prev_reward)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
         for i in tqdm(range(config.num_updates), desc="Training"):
             start_time = time.time()  # Start time for measuring iteration speed
-            runner_state, loss_info = jax.block_until_ready(_update_step(runner_state, None))
+            runner_state, loss_info = jax.block_until_ready(
+                _update_step(runner_state, None)
+            )
             end_time = time.time()
 
             iteration_duration = end_time - start_time
             iterations_per_second = 1 / iteration_duration
-            steps_per_second = iterations_per_second * config.num_steps * config.num_envs * config.num_devices
-            
-            tqdm.write(f"Steps/s: {steps_per_second:.2f}")  # Display steps and iterations per second
+            steps_per_second = (
+                iterations_per_second
+                * config.num_steps
+                * config.num_envs
+                * config.num_devices
+            )
+
+            tqdm.write(
+                f"Steps/s: {steps_per_second:.2f}"
+            )  # Display steps and iterations per second
 
             # Use data from the first device for stats and eval
             loss_info_single = unreplicate(loss_info)
             runner_state_single = unreplicate(runner_state)
             _, train_state, timestep = runner_state_single[:3]
             env_params_single = timestep.env_cfg
-            
+
             if i % config.log_train_interval == 0:
-                curriculum_levels = get_curriculum_levels(env_params_single, env.batch_cfg.curriculum_global.levels)
-                wandb.log({"performance/steps_per_second": steps_per_second, 
+                curriculum_levels = get_curriculum_levels(
+                    env_params_single, env.batch_cfg.curriculum_global.levels
+                )
+                wandb.log(
+                    {
+                        "performance/steps_per_second": steps_per_second,
                         "performance/iterations_per_second": iterations_per_second,
                         "curriculum_levels": curriculum_levels,
                         "lr": config.lr,
-                        **loss_info_single})
-                    
+                        **loss_info_single,
+                    }
+                )
+
             if i % config.checkpoint_interval == 0:
                 checkpoint = {
                     "train_config": config,
@@ -390,7 +461,7 @@ def make_train(
                     "loss_info": loss_info_single,
                 }
                 helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
-            
+
             if i % config.log_eval_interval == 0:
                 eval_stats = eval_ppo.rollout(
                     rng_rollout,
@@ -399,7 +470,7 @@ def make_train(
                     train_state,
                     config,
                 )
-            
+
                 # eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
                 n = config.num_envs_per_device * eval_stats.length
                 loss_info_single.update(
@@ -417,8 +488,10 @@ def make_train(
                         "eval/EXTEND_ARM %": eval_stats.action_6 / n,
                         "eval/RETRACT_ARM %": eval_stats.action_7 / n,
                         "eval/DO": eval_stats.action_8 / n,
-                        "eval/positive_terminations": eval_stats.positive_terminations / eval_stats.terminations,
-                        "eval/total_terminations": eval_stats.terminations / config.num_envs_per_device,
+                        "eval/positive_terminations": eval_stats.positive_terminations
+                        / eval_stats.terminations,
+                        "eval/total_terminations": eval_stats.terminations
+                        / config.num_envs_per_device,
                     }
                 )
 

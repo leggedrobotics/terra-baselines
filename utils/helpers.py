@@ -1,6 +1,7 @@
 import pickle
 from pathlib import Path
 
+
 def load_pkl_object(filename: str):
     """Helper to reload pickle objects."""
     import pickle
@@ -9,6 +10,7 @@ def load_pkl_object(filename: str):
         obj = pickle.load(input)
     print(f"Loaded data from {filename}.")
     return obj
+
 
 def save_pkl_object(obj, filename):
     """Helper to store pickle objects."""
