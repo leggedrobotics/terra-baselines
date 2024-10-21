@@ -79,7 +79,7 @@ if __name__ == "__main__":
         "-run",
         "--run_name",
         type=str,
-        default="ppo_2023_05_09_10_01_23",
+        default="checkpoints/experiment-local-2024-10-20-11-39-03.pkl",
         help="es/ppo trained agent.",
     )
     parser.add_argument(
@@ -93,21 +93,21 @@ if __name__ == "__main__":
         "-nx",
         "--n_envs_x",
         type=int,
-        default=1,
+        default=16,
         help="Number of environments on x.",
     )
     parser.add_argument(
         "-ny",
         "--n_envs_y",
         type=int,
-        default=1,
+        default=8,
         help="Number of environments on y.",
     )
     parser.add_argument(
         "-steps",
         "--n_steps",
         type=int,
-        default=10,
+        default=301,
         help="Number of steps.",
     )
     parser.add_argument(
@@ -176,4 +176,4 @@ if __name__ == "__main__":
     for o in tqdm(obs_seq, desc="Rendering"):
         env.terra_env.render_obs_pygame(o, generate_gif=True)
 
-    env.terra_env.rendering_engine.create_gif(args.out_path)
+    env.terra_env.rendering_engine.create_gif("visualize.gif'")

@@ -16,6 +16,7 @@ from utils.utils_ppo import obs_to_model_input, wrap_action
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
+from MCTS_inference import get_best_action
 
 
 def load_neural_network(config, env):
@@ -48,7 +49,7 @@ def rollout_episode(
     """
     print(f"Using {seed=}")
     rng = jax.random.PRNGKey(seed)
-    rng, _rng = jax.random.split(rng)
+    rng_origin, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, rl_config.num_test_rollouts)
     timestep = env.reset(env_cfgs, rng_reset)
 
@@ -56,6 +57,7 @@ def rollout_episode(
     move_tiles = env_cfgs.agent.move_tiles[0].item()
 
     action_type = env.batch_cfg.action_type
+    print(action_type)
     if action_type == TrackedAction:
         move_actions = (TrackedActionType.FORWARD, TrackedActionType.BACKWARD)
         l_actions = ()
@@ -91,16 +93,16 @@ def rollout_episode(
     while True:
         obs_seq = _append_to_obs(obs, obs_seq)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
-        if model is not None:
-            obs_model = obs_to_model_input(timestep.observation, rl_config)
-            v, logits_pi = model.apply(model_params, obs_model)
-            if deterministic:
-                action = np.argmax(logits_pi, axis=-1)
-            else:
-                pi = tfp.distributions.Categorical(logits=logits_pi)
-                action = pi.sample(seed=rng_act)
-        else:
-            raise RuntimeError("Model is None!")
+        
+        action = get_best_action(
+            env,
+            model,
+            model_params,
+            timestep,
+            rl_config=rl_config,
+            rng=rng_origin
+        )
+
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
         timestep = env.step(
             timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
@@ -236,7 +238,7 @@ if __name__ == "__main__":
         "-n",
         "--n_envs",
         type=int,
-        default=128,
+        default=8,
         help="Number of environments.",
     )
     parser.add_argument(

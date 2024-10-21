@@ -25,9 +25,9 @@ jax.config.update("jax_threefry_partitionable", True)
 class TrainConfig:
     name: str
     num_devices: int = 0
-    project: str = "excavator-oss"
+    project: str = "terra-baseline"
     group: str = "default"
-    num_envs_per_device: int = 4096
+    num_envs_per_device: int = 32
     num_steps: int = 32
     update_epochs: int = 5
     num_minibatches: int = 32
@@ -503,7 +503,6 @@ def make_train(
 
 def train(config: TrainConfig):
     run = wandb.init(
-        entity="operators",
         project=config.project,
         group=config.group,
         name=config.name,
@@ -531,6 +530,9 @@ def train(config: TrainConfig):
 if __name__ == "__main__":
     DT = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     import argparse
+    # wandb.login(relogin=True)
+
+
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
