@@ -33,7 +33,6 @@ def _append_to_obs(o, obs_log):
     }
     return obs_log
 
-
 def rollout_episode(
     env: TerraEnvBatch,
     model,
@@ -43,6 +42,7 @@ def rollout_episode(
     max_frames,
     deterministic,
     seed,
+    env_cfgs_1
 ):
     """
     NOTE: this function assumes it's a tracked agent in the way it computes the stats.
@@ -100,7 +100,9 @@ def rollout_episode(
             model_params,
             timestep,
             rl_config=rl_config,
-            rng=rng_origin
+            rng=rng_origin,
+            n_envs=n_envs,
+            env_cfgs_1=env_cfgs_1
         )
 
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
@@ -238,14 +240,14 @@ if __name__ == "__main__":
         "-n",
         "--n_envs",
         type=int,
-        default=8,
+        default=128,
         help="Number of environments.",
     )
     parser.add_argument(
         "-steps",
         "--n_steps",
         type=int,
-        default=301,
+        default=305,
         help="Number of steps.",
     )
     parser.add_argument(
@@ -298,6 +300,7 @@ if __name__ == "__main__":
         max_frames=args.n_steps,
         deterministic=deterministic,
         seed=args.seed,
+        env_cfgs_1=log["env_config"]
     )
 
     print_stats(stats)

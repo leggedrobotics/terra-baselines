@@ -52,7 +52,7 @@ def rollout_episode(
             timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
         )
         reward_seq.append(timestep.reward)
-        print(t_counter, timestep.reward, action, timestep.done)
+        print(t_counter, timestep.done)
         print(10 * "=")
         t_counter += 1
         # if done or t_counter == max_frames:
@@ -79,7 +79,7 @@ if __name__ == "__main__":
         "-run",
         "--run_name",
         type=str,
-        default="checkpoints/experiment-local-2024-10-20-11-39-03.pkl",
+        default="checkpoints/experiment-local-2024-10-24-11-24-16.pkl",
         help="es/ppo trained agent.",
     )
     parser.add_argument(
@@ -107,7 +107,7 @@ if __name__ == "__main__":
         "-steps",
         "--n_steps",
         type=int,
-        default=301,
+        default=305,
         help="Number of steps.",
     )
     parser.add_argument(
@@ -176,4 +176,4 @@ if __name__ == "__main__":
     for o in tqdm(obs_seq, desc="Rendering"):
         env.terra_env.render_obs_pygame(o, generate_gif=True)
 
-    env.terra_env.rendering_engine.create_gif("visualize.gif'")
+    env.terra_env.rendering_engine.create_gif("visualize.gif")

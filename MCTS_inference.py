@@ -4,60 +4,73 @@ import tensorflow_probability as tfp
 from terra.env import TerraEnvBatch
 import jax
 from utils.utils_ppo import obs_to_model_input, wrap_action
+from Monte_Carlo_Tree import Node
+
+def init_timestep_mcts(timestep, n_env_per_step):
+    # Apply a custom function to each element in the nested structure of timestep
+    timestep_expanded = jax.tree_map(
+        lambda x: jnp.concatenate([x[[i], ...].repeat(n_env_per_step, axis=0) for i in range(x.shape[0])], axis=0),
+        timestep
+    )
+    return timestep_expanded
+
+
+def total_nodes_in_k_ary_tree(levels, children_per_node):
+    if levels < 1:
+        return 0
+    # Calculate the total using the sum of a geometric series:
+    # Sum = a * (r^n - 1) / (r - 1) where a = 1, r = children_per_node, n = levels
+    total = (children_per_node**levels - 1) // (children_per_node - 1)
+    return total
 
 def get_best_action(
-    env_mcts: TerraEnvBatch,
+    env_origin: TerraEnvBatch,
     model,
     model_params,
-    timestep_mcts,
+    timestep_origin,
     rng, 
     rl_config,
+    env_cfgs_1,
     epsilon=0.9,  # Probability of choosing a random action
     num_rollouts=10,  # Number of rollouts to perform for each action decision
     n_steps=4,  # Number of future steps to simulate
     n_envs=8
     ):
-    obs = timestep_mcts.observation
+    obs = timestep_origin.observation
     best_action = np.full(n_envs, -1, dtype=np.int32)  # Initialize with -1 (invalid action)
     best_total_reward = -np.inf * np.ones(n_envs)
 
-    def simulate_action_sequence(current_timestep, rng, depth):
-        if depth == n_steps:  # This is the first step
-            rng, rng_act, rng_step = jax.random.split(rng, 3)
-            obs_model = obs_to_model_input(current_timestep.observation, rl_config)
-            _, logits_pi = model.apply(model_params, obs_model)
-            if np.random.rand() < epsilon:
-                # Explore: choose a random action for each environment
-                action = np.random.randint(logits_pi.shape[-1], size=n_envs)
-            else:
-                # Exploit: choose the best action based on model prediction
-                action = np.argmax(logits_pi, axis=-1)
-            first_action = action
-        else:
-            first_action = None  # We only care about the first action
-            action = np.argmax(model.apply(model_params, obs_to_model_input(current_timestep.observation, rl_config))[1], axis=-1)
+    # create new env buffer to search tree of possibilites
+    n_actions = 4
+    depth = 3 # how many step in the future
+    n_env_per_tree = total_nodes_in_k_ary_tree(depth, n_actions)
+    n_envs_mmcts = n_envs*n_env_per_tree # n_action^depth ?
+    env_cfgs = jax.tree_map(
+        lambda x: x[0][None, ...].repeat(n_envs_mmcts, 0), env_cfgs_1
+    )  # take first config and replicate
+    print(env_cfgs)
+    shuffle_maps = True
+    env_mcts = TerraEnvBatch(rendering=False, shuffle_maps=shuffle_maps)
 
-        if depth == 0:
-            return 0, first_action  # No more rewards beyond this depth
+    # initial monte carlo tree env buffer time steps
+    timestep_mcts = init_timestep_mcts(timestep_origin,n_env_per_tree)
+    print("LETSGOO")
 
-        # Simulate the action
-        rng, rng_act, rng_step = jax.random.split(rng, 3)
-        rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
-        next_timestep = env_mcts.step(
-            current_timestep, wrap_action(action, env_mcts.batch_cfg.action_type), rng_step
-        )
-        immediate_reward = next_timestep.reward
-        future_reward, _ = simulate_action_sequence(next_timestep, rng, depth - 1)
+    # init MC trees for each env
+    roots = [Node(env_buffer_idx=i*n_env_per_step) for i in range(0, n_envs)]
+    
+    # expand to all possible states the root node to create initial tree
+    for r in roots:
+        r.explore_childs()
+        
 
-        return immediate_reward + future_reward, first_action
 
-    for _ in range(num_rollouts):
-        rng, rng_sim = jax.random.split(rng)
-        total_reward, action = simulate_action_sequence(timestep_mcts, rng_sim, n_steps)
-        # Update best action and reward for each environment
-        for i in range(n_envs):
-            if total_reward[i] > best_total_reward[i]:
-                best_total_reward[i] = total_reward[i]
-                best_action[i] = action[i]
+    # SELECTION
+
+    # EXPANSION
+
+    # BACK UP
+    
+
 
     return best_action

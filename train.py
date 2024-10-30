@@ -43,7 +43,7 @@ class TrainConfig:
     seed: int = 42
     log_train_interval: int = 1  # Number of updates between logging train stats
     log_eval_interval: int = (
-        50  # Number of updates between running eval and syncing with wandb
+        10  # Number of updates between running eval and syncing with wandb
     )
     checkpoint_interval: int = 50  # Number of updates between checkpoints
     # model settings

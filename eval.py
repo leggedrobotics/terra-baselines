@@ -94,6 +94,10 @@ def rollout_episode(
         if model is not None:
             obs_model = obs_to_model_input(timestep.observation, rl_config)
             v, logits_pi = model.apply(model_params, obs_model)
+            action_probabilities = jnp.exp(logits_pi)
+            row_sums = action_probabilities.sum(axis=1, keepdims=True)
+            action_probabilities = action_probabilities / row_sums
+            # print("Action probabilities:", action_probabilities.tolist())
             if deterministic:
                 action = np.argmax(logits_pi, axis=-1)
             else:
@@ -102,14 +106,25 @@ def rollout_episode(
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
+        # print("Timestep attributes:")
+        # for attr in dir(timestep):
+        #     if not attr.startswith('_'):  # Skip private attributes
+        #         print(f"{attr}")
+        
+        # print("Timestep attributes:")
+        # for attr in dir(timestep.state):
+        #     if not attr.startswith('_'):  # Skip private attributes
+        #         print(f"{attr}")
+
         timestep = env.step(
             timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
         )
         reward = timestep.reward
         next_obs = timestep.observation
         done = timestep.done
-        # print(f"Reward: {reward}")
-        # print(f"Done: {done}")
+        print("AAAA", timestep.info)
+        print(f"Reward: {reward}")
+        print(f"Done: {done}")
         # print(f"Max frames: {max_frames}")
 
         reward_seq.append(reward)
@@ -146,6 +161,7 @@ def rollout_episode(
         do_cumsum += (action == do_action) * (~episode_done_once)
 
     # Path efficiency -- only include finished envs
+    print("Episode done", episode_done_once)
     move_cumsum *= episode_done_once
     path_efficiency = (move_cumsum / jnp.sqrt(areas))[episode_done_once]
     path_efficiency_std = path_efficiency.std()
@@ -222,7 +238,7 @@ if __name__ == "__main__":
         "-run",
         "--run_name",
         type=str,
-        default="checkpoints/experiment-local-2024-10-20-11-39-03.pkl",
+        default="checkpoints/tracked-dense.pkl",
         help="es/ppo trained agent.",
     )
     parser.add_argument(
@@ -236,14 +252,14 @@ if __name__ == "__main__":
         "-n",
         "--n_envs",
         type=int,
-        default=128,
+        default=64,
         help="Number of environments.",
     )
     parser.add_argument(
         "-steps",
         "--n_steps",
         type=int,
-        default=301,
+        default=405,
         help="Number of steps.",
     )
     parser.add_argument(
@@ -274,9 +290,11 @@ if __name__ == "__main__":
     # curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     # env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
     env_cfgs = log["env_config"]
+    print(env_cfgs)
     env_cfgs = jax.tree_map(
         lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs
     )  # take first config and replicate
+    print(env_cfgs)
     shuffle_maps = True
     env = TerraEnvBatch(rendering=False, shuffle_maps=shuffle_maps)
     config.num_embeddings_agent_min = 60
