@@ -99,22 +99,21 @@ def rollout_episode(
             model,
             model_params,
             timestep,
-            rl_config=rl_config,
-            rng=rng_origin,
-            n_envs=n_envs,
-            env_cfgs_1=env_cfgs_1
+            rng_origin,
+            rl_config
         )
 
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
+        print(action)
         timestep = env.step(
             timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
         )
         reward = timestep.reward
         next_obs = timestep.observation
         done = timestep.done
-        # print(f"Reward: {reward}")
-        # print(f"Done: {done}")
-        # print(f"Max frames: {max_frames}")
+        print(f"Reward: {reward}")
+        print(f"Done: {done}")
+        print(f"Max frames: {max_frames}")
 
         reward_seq.append(reward)
         print(t_counter)
@@ -190,6 +189,7 @@ def rollout_episode(
             "std": coverage_score_std,
         },
     }
+    
     return np.cumsum(reward_seq), stats, obs_seq
 
 
@@ -226,7 +226,7 @@ if __name__ == "__main__":
         "-run",
         "--run_name",
         type=str,
-        default="checkpoints/experiment-local-2024-10-20-11-39-03.pkl",
+        default="checkpoints/tracked-dense.pkl",
         help="es/ppo trained agent.",
     )
     parser.add_argument(
@@ -240,7 +240,7 @@ if __name__ == "__main__":
         "-n",
         "--n_envs",
         type=int,
-        default=128,
+        default=1,
         help="Number of environments.",
     )
     parser.add_argument(
@@ -261,7 +261,7 @@ if __name__ == "__main__":
         "-s",
         "--seed",
         type=int,
-        default=0,
+        default=42,
         help="Random seed for the environment.",
     )
     args, _ = parser.parse_known_args()

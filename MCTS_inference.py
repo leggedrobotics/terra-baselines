@@ -3,8 +3,8 @@ import numpy as np
 import tensorflow_probability as tfp
 from terra.env import TerraEnvBatch
 import jax
-from utils.utils_ppo import obs_to_model_input, wrap_action
-from Monte_Carlo_Tree import Node
+from Monte_Carlo_Tree import Node, GAME_ACTIONS, GAME_ACTIONS_LABELS
+from copy import deepcopy
 
 def init_timestep_mcts(timestep, n_env_per_step):
     # Apply a custom function to each element in the nested structure of timestep
@@ -23,54 +23,77 @@ def total_nodes_in_k_ary_tree(levels, children_per_node):
     total = (children_per_node**levels - 1) // (children_per_node - 1)
     return total
 
+import pydot
+
+def add_node_edges(graph, node, parent=None):
+    """ Recursively add nodes and edges to the graph. """
+    prob = 0
+    if node.parent is not None:
+        prob = node.parent.nn_p[node.action_index]
+    
+    node_label = f"Action: {GAME_ACTIONS_LABELS[node.action_index]}\nProb: {prob:.2f}\nVisits: {node.N}\nReward: {node.immediate_reward}\nUCB: {node.ucb}"
+    node_id = id(node)  # Unique identifier for the node in the graph
+    graph_node = pydot.Node(node_id, label=node_label, shape="ellipse", style="filled", fillcolor="lightblue")
+    graph.add_node(graph_node)
+
+    if parent:
+        # Connect this node to its parent
+        parent_id = id(parent)
+        edge = pydot.Edge(parent_id, node_id)
+        graph.add_edge(edge)
+
+    # Recurse on child nodes
+    if node.children:
+        for child in node.children:
+            add_node_edges(graph, child, node)
+
+def visualize_mcts(root_node):
+    """ Visualize the MCTS using PyDot. """
+    graph = pydot.Dot(graph_type='digraph', fontname="Helvetica", fontsize="10")
+    add_node_edges(graph, root_node)
+
+    # Create PNG image
+    graph.write_png('mcts_tree.png')  # Save to file
+    # from IPython.display import Image, display
+    # display(Image(graph.create_png()))  # Display in Jupyter Notebook or similar environment
+
+
 def get_best_action(
-    env_origin: TerraEnvBatch,
+    env_origin,
     model,
     model_params,
     timestep_origin,
-    rng, 
-    rl_config,
-    env_cfgs_1,
-    epsilon=0.9,  # Probability of choosing a random action
-    num_rollouts=10,  # Number of rollouts to perform for each action decision
-    n_steps=4,  # Number of future steps to simulate
-    n_envs=8
+    rng,
+    rl_config
     ):
-    obs = timestep_origin.observation
-    best_action = np.full(n_envs, -1, dtype=np.int32)  # Initialize with -1 (invalid action)
-    best_total_reward = -np.inf * np.ones(n_envs)
 
-    # create new env buffer to search tree of possibilites
-    n_actions = 4
-    depth = 3 # how many step in the future
-    n_env_per_tree = total_nodes_in_k_ary_tree(depth, n_actions)
-    n_envs_mmcts = n_envs*n_env_per_tree # n_action^depth ?
-    env_cfgs = jax.tree_map(
-        lambda x: x[0][None, ...].repeat(n_envs_mmcts, 0), env_cfgs_1
-    )  # take first config and replicate
-    print(env_cfgs)
-    shuffle_maps = True
-    env_mcts = TerraEnvBatch(rendering=False, shuffle_maps=shuffle_maps)
+    env_mcts = deepcopy(env_origin) 
+    mcts_tree = Node(
+        env=env_mcts, 
+        done=False, 
+        parent=None, 
+        timestep=timestep_origin, 
+        action_index=0, 
+        rng=rng, 
+        model=model, 
+        model_params=model_params, 
+        rl_config=rl_config,
+        immediate_reward=-1
+    )
 
-    # initial monte carlo tree env buffer time steps
-    timestep_mcts = init_timestep_mcts(timestep_origin,n_env_per_tree)
-    print("LETSGOO")
+    MCTS_POLICY_EXPLORE = 100
+    for i in range(MCTS_POLICY_EXPLORE):
+        mcts_tree.explore()
 
-    # init MC trees for each env
-    roots = [Node(env_buffer_idx=i*n_env_per_step) for i in range(0, n_envs)]
     
-    # expand to all possible states the root node to create initial tree
-    for r in roots:
-        r.explore_childs()
-        
+    visualize_mcts(mcts_tree)
 
+    action_idx, probs = mcts_tree.next()
+    action = GAME_ACTIONS[action_idx]
+    print("action", action)
+    print("probs", probs)
 
-    # SELECTION
-
-    # EXPANSION
-
-    # BACK UP
-    
-
-
-    return best_action
+    # destroy mcts tree and env
+    del mcts_tree
+    del env_mcts
+    return jnp.array([action])

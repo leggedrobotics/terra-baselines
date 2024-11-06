@@ -1,6 +1,12 @@
 import jax
 import jax.numpy as jnp
 
+seed = 43
+rng = jax.random.PRNGKey(seed)
+rng, rng_step = jax.random.split(rng, 2)
+print(rng_step)
+print(rng)
+
 def custom_dot(x,y):
     return x+y
 

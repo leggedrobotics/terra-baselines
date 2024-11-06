@@ -97,7 +97,7 @@ def rollout_episode(
             action_probabilities = jnp.exp(logits_pi)
             row_sums = action_probabilities.sum(axis=1, keepdims=True)
             action_probabilities = action_probabilities / row_sums
-            # print("Action probabilities:", action_probabilities.tolist())
+            print("Action probabilities:", action_probabilities.tolist())
             if deterministic:
                 action = np.argmax(logits_pi, axis=-1)
             else:
@@ -115,14 +115,13 @@ def rollout_episode(
         # for attr in dir(timestep.state):
         #     if not attr.startswith('_'):  # Skip private attributes
         #         print(f"{attr}")
-
         timestep = env.step(
             timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
         )
+        print(action)
         reward = timestep.reward
         next_obs = timestep.observation
         done = timestep.done
-        print("AAAA", timestep.info)
         print(f"Reward: {reward}")
         print(f"Done: {done}")
         # print(f"Max frames: {max_frames}")
@@ -252,14 +251,14 @@ if __name__ == "__main__":
         "-n",
         "--n_envs",
         type=int,
-        default=64,
+        default=1,
         help="Number of environments.",
     )
     parser.add_argument(
         "-steps",
         "--n_steps",
         type=int,
-        default=405,
+        default=305,
         help="Number of steps.",
     )
     parser.add_argument(
@@ -273,7 +272,7 @@ if __name__ == "__main__":
         "-s",
         "--seed",
         type=int,
-        default=0,
+        default=42,
         help="Random seed for the environment.",
     )
     args, _ = parser.parse_known_args()

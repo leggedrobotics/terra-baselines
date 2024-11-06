@@ -38,7 +38,7 @@ def get_best_action(
 
         if depth == 0:
             return 0, first_action  # No more rewards beyond this depth
-
+        
         # Simulate the action
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)

@@ -93,14 +93,14 @@ if __name__ == "__main__":
         "-nx",
         "--n_envs_x",
         type=int,
-        default=16,
+        default=1,
         help="Number of environments on x.",
     )
     parser.add_argument(
         "-ny",
         "--n_envs_y",
         type=int,
-        default=8,
+        default=1,
         help="Number of environments on y.",
     )
     parser.add_argument(
@@ -121,7 +121,7 @@ if __name__ == "__main__":
         "-s",
         "--seed",
         type=int,
-        default=0,
+        default=42,
         help="Random seed for the environment.",
     )
     parser.add_argument(
