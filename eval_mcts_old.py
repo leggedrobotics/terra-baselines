@@ -16,6 +16,7 @@ from utils.utils_ppo import obs_to_model_input, wrap_action
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
+from MCTS_inference import get_best_action
 
 
 def load_neural_network(config, env):
@@ -32,7 +33,6 @@ def _append_to_obs(o, obs_log):
     }
     return obs_log
 
-
 def rollout_episode(
     env: TerraEnvBatch,
     model,
@@ -42,13 +42,14 @@ def rollout_episode(
     max_frames,
     deterministic,
     seed,
+    env_cfgs_1
 ):
     """
     NOTE: this function assumes it's a tracked agent in the way it computes the stats.
     """
     print(f"Using {seed=}")
     rng = jax.random.PRNGKey(seed)
-    rng, _rng = jax.random.split(rng)
+    rng_origin, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, rl_config.num_test_rollouts)
     timestep = env.reset(env_cfgs, rng_reset)
 
@@ -56,6 +57,7 @@ def rollout_episode(
     move_tiles = env_cfgs.agent.move_tiles[0].item()
 
     action_type = env.batch_cfg.action_type
+    print(action_type)
     if action_type == TrackedAction:
         move_actions = (TrackedActionType.FORWARD, TrackedActionType.BACKWARD)
         l_actions = ()
@@ -91,43 +93,35 @@ def rollout_episode(
     while True:
         obs_seq = _append_to_obs(obs, obs_seq)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
-        if model is not None:
-            obs_model = obs_to_model_input(timestep.observation, rl_config)
-            v, logits_pi = model.apply(model_params, obs_model)
-            action_probabilities = jnp.exp(logits_pi)
-            row_sums = action_probabilities.sum(axis=1, keepdims=True)
-            action_probabilities = action_probabilities / row_sums
-            if deterministic:
-                action = np.argmax(logits_pi, axis=-1)
-            else:
-                pi = tfp.distributions.Categorical(logits=logits_pi)
-                action = pi.sample(seed=rng_act)
-            
-            print("Action probabilities:", action_probabilities.tolist(), "Action:", action)
-        else:
-            raise RuntimeError("Model is None!")
-        rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
-        # print("Timestep attributes:")
-        # for attr in dir(timestep):
-        #     if not attr.startswith('_'):  # Skip private attributes
-        #         print(f"{attr}")
-        
-        # print("Timestep attributes:")
-        # for attr in dir(timestep.state):
-        #     if not attr.startswith('_'):  # Skip private attributes
-        #         print(f"{attr}")
 
-        print("!!!!!!!!action", action)
+        obs_model = obs_to_model_input(timestep.observation, rl_config)
+        v, logits_pi = model.apply(model_params, obs_model)
+        action_probabilities = jnp.exp(logits_pi)
+        row_sums = action_probabilities.sum(axis=1, keepdims=True)
+        action_probabilities = action_probabilities / row_sums
+        action = np.argmax(logits_pi, axis=-1)
+        print("Action probabilities:", action_probabilities.tolist(), "Action:", action)
+        
+        action = get_best_action(
+            env,
+            model,
+            model_params,
+            timestep,
+            rng_origin,
+            rl_config
+        )
+
+        rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
+
         timestep = env.step(
             timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
         )
-        print(action)
         reward = timestep.reward
         next_obs = timestep.observation
         done = timestep.done
         print(f"Reward: {reward}")
         print(f"Done: {done}")
-        # print(f"Max frames: {max_frames}")
+        print(f"Max frames: {max_frames}")
 
         reward_seq.append(reward)
         print(t_counter)
@@ -163,7 +157,6 @@ def rollout_episode(
         do_cumsum += (action == do_action) * (~episode_done_once)
 
     # Path efficiency -- only include finished envs
-    print("Episode done", episode_done_once)
     move_cumsum *= episode_done_once
     path_efficiency = (move_cumsum / jnp.sqrt(areas))[episode_done_once]
     path_efficiency_std = path_efficiency.std()
@@ -204,6 +197,7 @@ def rollout_episode(
             "std": coverage_score_std,
         },
     }
+    
     return np.cumsum(reward_seq), stats, obs_seq
 
 
@@ -254,7 +248,7 @@ if __name__ == "__main__":
         "-n",
         "--n_envs",
         type=int,
-        default=32,
+        default=1,
         help="Number of environments.",
     )
     parser.add_argument(
@@ -292,12 +286,10 @@ if __name__ == "__main__":
     # curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     # env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
     env_cfgs = log["env_config"]
-    print(env_cfgs)
     env_cfgs = jax.tree_map(
         lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs
     )  # take first config and replicate
-    print(env_cfgs)
-    shuffle_maps = False
+    shuffle_maps = True
     env = TerraEnvBatch(rendering=False, shuffle_maps=shuffle_maps)
     config.num_embeddings_agent_min = 60
 
@@ -316,6 +308,7 @@ if __name__ == "__main__":
         max_frames=args.n_steps,
         deterministic=deterministic,
         seed=args.seed,
+        env_cfgs_1=log["env_config"]
     )
 
     print_stats(stats)

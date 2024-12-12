@@ -68,11 +68,12 @@ def get_best_action(
     ):
 
     env_mcts = deepcopy(env_origin) 
+    timestep_init = deepcopy(timestep_origin)
     mcts_tree = Node(
         env=env_mcts, 
         done=False, 
         parent=None, 
-        timestep=timestep_origin, 
+        timestep=timestep_init, 
         action_index=0, 
         rng=rng, 
         model=model, 
@@ -86,14 +87,15 @@ def get_best_action(
         mcts_tree.explore()
 
     
-    visualize_mcts(mcts_tree)
+    # visualize_mcts(mcts_tree)
 
     action_idx, probs = mcts_tree.next()
     action = GAME_ACTIONS[action_idx]
-    print("action", action)
+    print("action idx", action_idx)
     print("probs", probs)
 
     # destroy mcts tree and env
     del mcts_tree
     del env_mcts
-    return jnp.array([action])
+    jax.clear_caches()    # Add this line
+    return jnp.array([action_idx])

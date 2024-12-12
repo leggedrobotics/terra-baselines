@@ -16,7 +16,7 @@ from utils.utils_ppo import obs_to_model_input, wrap_action
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
-
+from MCTS_inference import get_best_action
 
 def load_neural_network(config, env):
     rng = jax.random.PRNGKey(0)
@@ -98,12 +98,26 @@ def rollout_episode(
             row_sums = action_probabilities.sum(axis=1, keepdims=True)
             action_probabilities = action_probabilities / row_sums
             if deterministic:
-                action = np.argmax(logits_pi, axis=-1)
+                action_temp = np.argmax(logits_pi, axis=-1)
             else:
                 pi = tfp.distributions.Categorical(logits=logits_pi)
-                action = pi.sample(seed=rng_act)
+                action_temp = pi.sample(seed=rng_act)
             
-            print("Action probabilities:", action_probabilities.tolist(), "Action:", action)
+            action_probabilities = action_probabilities.tolist()[0]
+            if max(action_probabilities) < 0.9:
+                print("Using MCTS")
+                action = get_best_action(
+                    env,
+                    model,
+                    model_params,
+                    timestep,
+                    rng,
+                    rl_config
+                )
+            else:
+                action = action_temp
+            
+            print("Action probabilities:", action_probabilities, "Action:", action_temp, "Action MCTS:", action)
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
@@ -116,12 +130,9 @@ def rollout_episode(
         # for attr in dir(timestep.state):
         #     if not attr.startswith('_'):  # Skip private attributes
         #         print(f"{attr}")
-
-        print("!!!!!!!!action", action)
         timestep = env.step(
             timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
         )
-        print(action)
         reward = timestep.reward
         next_obs = timestep.observation
         done = timestep.done
@@ -254,7 +265,7 @@ if __name__ == "__main__":
         "-n",
         "--n_envs",
         type=int,
-        default=32,
+        default=1,
         help="Number of environments.",
     )
     parser.add_argument(
@@ -297,7 +308,7 @@ if __name__ == "__main__":
         lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs
     )  # take first config and replicate
     print(env_cfgs)
-    shuffle_maps = False
+    shuffle_maps = True
     env = TerraEnvBatch(rendering=False, shuffle_maps=shuffle_maps)
     config.num_embeddings_agent_min = 60
 

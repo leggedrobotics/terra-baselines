@@ -9,9 +9,11 @@ from utils.models import get_model_ready
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
-from utils.utils_ppo import obs_to_model_input, wrap_action
+from utils.utils_ppo import obs_to_model_input, wrap_action, policy
 from terra.state import State
 import matplotlib.animation as animation
+import mctx
+import jax.random as jrandom
 
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
@@ -24,11 +26,55 @@ def load_neural_network(config, env):
     model, _ = get_model_ready(rng, config, env)
     return model
 
+def root_fn(apply_fn, params, timestep, config):
+    obs = timestep.observation
+    inp = obs_to_model_input(obs, config)
+    value, dist = apply_fn(params, inp)
+    return mctx.RootFnOutput(
+        prior_logits=dist.logits,  # unnormalized action logits
+        value=value[:, 0],         # value of the root state
+        embedding=timestep,        # embedding = current timestep
+    )
+
+def make_recurrent_fn(env, apply_fn, config):
+    def recurrent_fn(params, rng, actions, embedding):
+        # embedding is the current timestep
+        timestep = embedding
+        rng, rng_env = jrandom.split(rng)
+        rng_envs = jrandom.split(rng_env, config.num_test_rollouts)  # adapt if needed
+
+        actions = actions.astype(jnp.int32)
+        terra_actions = wrap_action(actions, env.batch_cfg.action_type)
+        next_timestep = env.step(timestep, terra_actions, rng_envs)
+        next_obs = next_timestep.observation
+
+        inp = obs_to_model_input(next_obs, config)
+        value, dist = apply_fn(params, inp)
+
+        reward = next_timestep.reward
+        done = next_timestep.done
+        discount = (1.0 - done) * config.gamma
+
+        return mctx.RecurrentFnOutput(
+            reward=reward,
+            discount=discount,
+            prior_logits=dist.logits,
+            value=value[:,0],
+        ), next_timestep
+    return recurrent_fn
 
 def rollout_episode(
     env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed
-):
+):  
     print(f"Using {seed=}")
+
+    def apply_model(params, inp):
+        val, logits_pi = model.apply(params, inp)
+        pi = tfp.distributions.Categorical(logits=logits_pi)
+        return val, pi
+
+    recurrent = make_recurrent_fn(env, apply_model, rl_config)
+
     rng = jax.random.PRNGKey(seed)
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, rl_config.num_test_rollouts)
@@ -39,17 +85,23 @@ def rollout_episode(
     obs_seq = []
     while True:
         obs_seq.append(timestep.observation)
-        rng, rng_act, rng_step = jax.random.split(rng, 3)
-        if model is not None:
-            obs = obs_to_model_input(timestep.observation, rl_config)
-            v, logits_pi = model.apply(model_params, obs)
-            pi = tfp.distributions.Categorical(logits=logits_pi)
-            action = pi.sample(seed=rng_act)
-        else:
-            raise RuntimeError("Model is None!")
+        # Run MCTS from the current state
+        root = root_fn(apply_model, model_params, timestep, rl_config)
+
+        rng, rng_mcts = jrandom.split(rng)
+        policy_output = mctx.gumbel_muzero_policy(
+            params=model_params,
+            rng_key=rng_mcts,
+            root=root,
+            recurrent_fn=recurrent,
+            num_simulations=rl_config.num_simulations,
+        )
+
+        actions = policy_output.action.astype(jnp.int32)
+        rng, rng_step = jrandom.split(rng)
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
         timestep = env.step(
-            timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
+            timestep, wrap_action(actions, env.batch_cfg.action_type), rng_step
         )
         reward_seq.append(timestep.reward)
         print(t_counter, timestep.done)
@@ -158,7 +210,8 @@ if __name__ == "__main__":
         shuffle_maps=suffle_maps,
     )
     config.num_embeddings_agent_min = 60  # curriculum.get_num_embeddings_agent_min()
-
+    if not hasattr(config, 'num_simulations'):
+        config.num_simulations = 32
     model = load_neural_network(config, env)
     model_params = log["model"]
     # replicated_params = log['network']

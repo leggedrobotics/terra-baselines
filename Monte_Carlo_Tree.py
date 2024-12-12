@@ -173,13 +173,13 @@ class Node:
             
         if current.N < 1:
             current.nn_v, current.nn_p = current.rollout()
-            # current.T = current.T + current.nn_v
+            current.T = current.T + current.nn_v
         else:
             current.create_child()
             if current.child:
                 current = random.choice(current.child)
             current.nn_v, current.nn_p = current.rollout()
-            # current.T = current.T + current.nn_v 
+            current.T = current.T + current.nn_v 
             
         current.N += 1      
                 
