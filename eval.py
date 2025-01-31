@@ -103,7 +103,7 @@ def rollout_episode(
                 pi = tfp.distributions.Categorical(logits=logits_pi)
                 action = pi.sample(seed=rng_act)
             
-            print("Action probabilities:", action_probabilities.tolist(), "Action:", action)
+            # print("Action probabilities:", action_probabilities.tolist(), "Action:", action)
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)

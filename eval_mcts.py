@@ -7,6 +7,7 @@ from utils.models import get_model_ready
 from utils.helpers import load_pkl_object
 from utils.utils_ppo import obs_to_model_input, wrap_action, policy
 import mctx
+from copy import deepcopy
 
 from train import TrainConfig  # needed for unpickling checkpoints
 from tensorflow_probability.substrates import jax as tfp
@@ -130,7 +131,7 @@ def rollout_episode(
     obs_seq = {}
 
     while True:
-        obs_seq = _append_to_obs(obs, obs_seq)
+        # obs_seq = _append_to_obs(obs, obs_seq)
         # Run MCTS from the current state
         root = root_fn(apply_model, model_params, timestep, rl_config)
 
@@ -144,6 +145,7 @@ def rollout_episode(
         )
 
         actions = policy_output.action.astype(jnp.int32)
+        
         # print ppo action without mcts
         obs_model = obs_to_model_input(timestep.observation, rl_config)
         v, logits_pi = model.apply(model_params, obs_model)
@@ -191,8 +193,10 @@ def rollout_episode(
 
         do_cumsum += (actions == do_action) & (~episode_done_once)
         print("t_counter:", t_counter)
-        print("done:", episode_done_once)
+        print("done:", done)
         print("reward:", reward)
+        if t_counter % 10 == 0:
+            jax.clear_caches()  # Clear JAX/XLA caches
 
     # Compute final stats
     move_cumsum *= episode_done_once
@@ -233,6 +237,7 @@ def rollout_episode(
             "std": coverage_score_std,
         },
     }
+    
     return np.cumsum(np.array(reward_seq)), stats, obs_seq
 
 def print_stats(stats):
@@ -280,7 +285,7 @@ if __name__ == "__main__":
         "-steps",
         "--n_steps",
         type=int,
-        default=80,
+        default=305,
         help="Number of steps to run.",
     )
     parser.add_argument(

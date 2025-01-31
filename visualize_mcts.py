@@ -173,7 +173,7 @@ if __name__ == "__main__":
         "-s",
         "--seed",
         type=int,
-        default=42,
+        default=12,
         help="Random seed for the environment.",
     )
     parser.add_argument(
@@ -229,4 +229,4 @@ if __name__ == "__main__":
     for o in tqdm(obs_seq, desc="Rendering"):
         env.terra_env.render_obs_pygame(o, generate_gif=True)
 
-    env.terra_env.rendering_engine.create_gif("visualize.gif")
+    env.terra_env.rendering_engine.create_gif("visualize_mcts3.gif")
