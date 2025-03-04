@@ -12,7 +12,6 @@
 module load eth_proxy
 
 # Activate your conda environment (adjust the path and env name as needed)
-source ~/miniconda3/etc/profile.d/conda.sh
 conda activate terra
 
 # Set environment variables and run training
