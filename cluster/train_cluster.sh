@@ -11,6 +11,7 @@
 
 # Load required modules
 module load eth_proxy
+module load stack/2024-06 cuda/12.1.1
 
 # Set paths to conda
 CONDA_ROOT=/cluster/home/lterenzi/miniconda3
