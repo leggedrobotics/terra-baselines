@@ -17,6 +17,7 @@ from flax.jax_utils import replicate, unreplicate
 from flax import struct
 import utils.helpers as helpers
 from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, policy
+import os
 
 jax.config.update("jax_threefry_partitionable", True)
 
@@ -510,6 +511,24 @@ def train(config: TrainConfig):
         config=asdict(config),
         save_code=True,
     )
+    
+    # Log config.py and train.py files to wandb
+    train_py_path = os.path.abspath(__file__)  # Path to current train.py file
+    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "terra", "terra", "config.py")
+    
+    code_artifact = wandb.Artifact(name="source_code", type="code")
+    
+    # Add train.py
+    if os.path.exists(train_py_path):
+        code_artifact.add_file(train_py_path, name="train.py")
+    
+    # Add config.py
+    if os.path.exists(config_path):
+        code_artifact.add_file(config_path, name="config.py")
+    
+    # Log the artifact if any files were added
+    if code_artifact.files:
+        run.log_artifact(code_artifact)
 
     rng, env, env_params, train_state = make_states(config)
 
