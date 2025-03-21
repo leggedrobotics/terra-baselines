@@ -26,7 +26,7 @@ jax.config.update("jax_threefry_partitionable", True)
 class TrainConfig:
     name: str
     num_devices: int = 0
-    project: str = "excavator-oss"
+    project: str = "better-discretization"
     group: str = "default"
     num_envs_per_device: int = 4096
     num_steps: int = 32
@@ -504,7 +504,7 @@ def make_train(
 
 def train(config: TrainConfig):
     run = wandb.init(
-        entity="operators",
+        entity="terra-sp-thesis",
         project=config.project,
         group=config.group,
         name=config.name,
