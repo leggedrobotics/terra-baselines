@@ -16,6 +16,7 @@ class RolloutStats(NamedTuple):
     episodes: jax.Array = jnp.asarray(0)
     positive_terminations: jax.Array = jnp.asarray(0)  # Count of positive terminations
     terminations: jax.Array = jnp.asarray(0)  # Count of terminations
+    positive_terminations_steps: jax.Array = jnp.asarray(0)
 
     action_0: jax.Array = jnp.asarray(0)
     action_1: jax.Array = jnp.asarray(0)
@@ -58,6 +59,7 @@ def rollout(
 
         terminations_update = timestep.done.sum()
         positive_termination_update = timestep.info["task_done"].sum()
+        positive_termination_steps_update = (stats.length + 1) * positive_termination_update
 
         # Replace jax.debug.print with:
         # host_callback.id_tap(print_debug, (positive_termination_update, timeout_update),
@@ -72,6 +74,8 @@ def rollout(
             positive_terminations=stats.positive_terminations
             + positive_termination_update,
             terminations=stats.terminations + terminations_update,
+            positive_terminations_steps=stats.positive_terminations_steps
+            + positive_termination_steps_update,
             action_0=stats.action_0 + (action == 0).sum(),
             action_1=stats.action_1 + (action == 1).sum(),
             action_2=stats.action_2 + (action == 2).sum(),
