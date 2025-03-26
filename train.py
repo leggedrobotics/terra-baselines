@@ -476,8 +476,8 @@ def make_train(
                 n = config.num_envs_per_device * eval_stats.length
                 avg_positive_episode_length = jnp.where(
                     eval_stats.positive_terminations > 0,
-                    eval_stats.successful_episode_steps / eval_stats.positive_terminations,
-                    jnp.zeros_like(eval_stats.successful_episode_steps)
+                    eval_stats.positive_terminations_steps / eval_stats.positive_terminations,
+                    jnp.zeros_like(eval_stats.positive_terminations_steps)
                 )
                 loss_info_single.update(
                     {
