@@ -474,6 +474,11 @@ def make_train(
 
                 # eval_stats = jax.lax.pmean(eval_stats, axis_name="devices")
                 n = config.num_envs_per_device * eval_stats.length
+                avg_positive_episode_length = jnp.where(
+                    eval_stats.positive_terminations > 0,
+                    eval_stats.successful_episode_steps / eval_stats.positive_terminations,
+                    jnp.zeros_like(eval_stats.successful_episode_steps)
+                )
                 loss_info_single.update(
                     {
                         "eval/rewards": eval_stats.reward / n,
@@ -493,6 +498,7 @@ def make_train(
                         / config.num_envs_per_device,
                         "eval/total_terminations": eval_stats.terminations
                         / config.num_envs_per_device,
+                        "eval/avg_positive_episode_length": avg_positive_episode_length
                     }
                 )
 
