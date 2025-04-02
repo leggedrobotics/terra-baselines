@@ -204,7 +204,7 @@ class LocalMapNet(nn.Module):
             -1,
         )
 
-        x = self.mlp(x.reshape(*x.shape[:-3], -1))
+        x = self.mlp(x.reshape(*x.shape[:-2], -1))
         return x
 
 
