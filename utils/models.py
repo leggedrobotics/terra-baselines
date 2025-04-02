@@ -28,7 +28,6 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     )
     jax.debug.print("map normalization min max = {x}", x=map_min_max)
     model = SimplifiedCoupledCategoricalNet(
-        mask_out_arm_extension=config["mask_out_arm_extension"],
         num_embeddings_agent=num_embeddings_agent,
         map_min_max=map_min_max,
         local_map_min_max=tuple(config["local_map_normalization_bounds"]),
@@ -39,37 +38,14 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     map_width = env.batch_cfg.maps_dims.maps_edge_length
     map_height = env.batch_cfg.maps_dims.maps_edge_length
 
-    n_local_maps_layers = (
-        env.batch_cfg.agent.max_arm_extension + 1
-        if not config["mask_out_arm_extension"]
-        else 1
-    )
-
     obs = [
-        jnp.zeros(
-            (
-                config["num_envs"],
-                6,
-            )
-        ),
-        jnp.zeros(
-            (config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)
-        ),
-        jnp.zeros(
-            (config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)
-        ),
-        jnp.zeros(
-            (config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)
-        ),
-        jnp.zeros(
-            (config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)
-        ),
-        jnp.zeros(
-            (config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)
-        ),
-        jnp.zeros(
-            (config["num_envs"], env.batch_cfg.agent.angles_cabin, n_local_maps_layers)
-        ),
+        jnp.zeros((config["num_envs"], 5)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
@@ -362,7 +338,6 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     obs["dumpability_mask"],
     """
 
-    mask_out_arm_extension: bool
     num_embeddings_agent: int
     map_min_max: Sequence[int]
     local_map_min_max: Sequence[int]
@@ -411,11 +386,6 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         x = self.activation(x)
 
         v = self.mlp_v(x)
-
         xpi = self.mlp_pi(x)
-
-        if self.mask_out_arm_extension:
-            xpi = xpi.at[..., -2].set(-1e8)
-            xpi = xpi.at[..., -3].set(-1e8)
 
         return v, xpi

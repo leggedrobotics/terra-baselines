@@ -49,7 +49,6 @@ class TrainConfig:
     checkpoint_interval: int = 50  # Number of updates between checkpoints
     # model settings
     clip_action_maps = True  # clips the action maps to [-1, 1]
-    mask_out_arm_extension = True
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
     num_rollouts_eval = 300  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)

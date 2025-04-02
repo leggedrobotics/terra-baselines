@@ -47,7 +47,6 @@ class TrainConfig:
     log_eval_interval: int = 50
     checkpoint_interval: int = 50
     clip_action_maps = True
-    mask_out_arm_extension = True
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
     num_rollouts_eval = 300
