@@ -25,8 +25,6 @@ class RolloutStats(NamedTuple):
     action_4: jax.Array = jnp.asarray(0)
     action_5: jax.Array = jnp.asarray(0)
     action_6: jax.Array = jnp.asarray(0)
-    action_7: jax.Array = jnp.asarray(0)
-    action_8: jax.Array = jnp.asarray(0)
 
 
 # @partial(jax.pmap, axis_name="devices")
@@ -83,8 +81,6 @@ def rollout(
             action_4=stats.action_4 + (action == 4).sum(),
             action_5=stats.action_5 + (action == 5).sum(),
             action_6=stats.action_6 + (action == 6).sum(),
-            action_7=stats.action_7 + (action == 7).sum(),
-            action_8=stats.action_8 + (action == 8).sum(),
         )
         carry = (rng, stats, timestep)
         return carry

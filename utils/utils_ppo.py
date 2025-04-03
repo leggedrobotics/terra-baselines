@@ -11,27 +11,10 @@ def clip_action_maps_in_obs(obs):
     return obs
 
 
-def cut_local_map_layers(obs):
-    """Only keep the first layer of the local map (makes sense especially if the arm extension action is blocked)"""
-    # TODO: check performance
-    obs = jax.tree_map(
-        lambda x: x.copy(), obs
-    )  # necessary for avoiding in-place operations that change the Array size in a scan loop
-    obs["local_map_action_neg"] = obs["local_map_action_neg"][..., [0]]
-    obs["local_map_action_pos"] = obs["local_map_action_pos"][..., [0]]
-    obs["local_map_target_neg"] = obs["local_map_target_neg"][..., [0]]
-    obs["local_map_target_pos"] = obs["local_map_target_pos"][..., [0]]
-    obs["local_map_dumpability"] = obs["local_map_dumpability"][..., [0]]
-    obs["local_map_obstacles"] = obs["local_map_obstacles"][..., [0]]
-    return obs
-
-
 def obs_to_model_input(obs, train_cfg):
     # Feature engineering
     if train_cfg.clip_action_maps:
         obs = clip_action_maps_in_obs(obs)
-    if train_cfg.mask_out_arm_extension:
-        obs = cut_local_map_layers(obs)
 
     obs = [
         obs["agent_state"],

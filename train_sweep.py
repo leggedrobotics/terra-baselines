@@ -51,7 +51,6 @@ class TrainConfig:
     checkpoint_interval: int = 50  # Number of updates between checkpoints
     # model settings
     clip_action_maps = True  # clips the action maps to [-1, 1]
-    mask_out_arm_extension = True
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
     num_rollouts_eval = 300  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)
@@ -488,9 +487,7 @@ def make_train(
                         "eval/ANTICLOCK %": eval_stats.action_3 / n,
                         "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
                         "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
-                        "eval/EXTEND_ARM %": eval_stats.action_6 / n,
-                        "eval/RETRACT_ARM %": eval_stats.action_7 / n,
-                        "eval/DO": eval_stats.action_8 / n,
+                        "eval/DO": eval_stats.action_6 / n,
                         "eval/positive_terminations": safe_divide(
                             eval_stats.positive_terminations,
                             (config.num_envs_per_device * eval_stats.terminations),
