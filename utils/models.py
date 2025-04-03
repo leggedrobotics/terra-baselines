@@ -51,7 +51,6 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
-        jnp.zeros((config["num_envs"], map_width, map_height)),
     ]
     params = model.init(rng, obs)
 
@@ -182,7 +181,6 @@ class LocalMapNet(nn.Module):
         obs["action_map"],
         obs["target_map"],
         obs["traversability_mask"],
-        obs["do_preview"],
         obs["dig_map"],
         obs["dumpability_mask"],
         """
@@ -269,18 +267,6 @@ class MapsNet(nn.Module):
     def setup(self) -> None:
         self.cnn = AtariCNN()
 
-    @staticmethod
-    def _generate_delta_map_negative(target_map: Array, action_map: Array):
-        tm_clip = jnp.clip(target_map, a_max=0)
-        am_clip = jnp.clip(action_map, a_max=0)
-        return am_clip - tm_clip
-
-    @staticmethod
-    def _generate_delta_map_positive(target_map: Array, action_map: Array):
-        tm_clip = jnp.clip(target_map, a_min=0)
-        am_clip = jnp.clip(action_map, a_min=0)
-        return am_clip - tm_clip
-
     def __call__(self, obs: dict[str, Array]):
         """
         obs["agent_state"],
@@ -293,21 +279,18 @@ class MapsNet(nn.Module):
         obs["action_map"],
         obs["target_map"],
         obs["traversability_mask"],
-        obs["do_preview"],
         obs["dig_map"],
         obs["dumpability_mask"],
         """
         target_map = obs[8]
         traversability_map = obs[9]
-        do_prediction = obs[10]
-        dig_map = obs[11]
-        dumpability_mask = obs[12]
+        dig_map = obs[10]
+        dumpability_mask = obs[11]
 
         x = jnp.concatenate(
             (
                 traversability_map[..., None],
                 target_map[..., None],
-                do_prediction[..., None],
                 dig_map[..., None],
                 dumpability_mask[..., None],
             ),
@@ -333,7 +316,6 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     obs["action_map"],
     obs["target_map"],
     obs["traversability_mask"],
-    obs["do_preview"],
     obs["dig_map"],
     obs["dumpability_mask"],
     """
