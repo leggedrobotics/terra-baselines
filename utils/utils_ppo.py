@@ -6,7 +6,6 @@ from tensorflow_probability.substrates import jax as tfp
 def clip_action_maps_in_obs(obs):
     """Clip action maps to [-1, 1] on the intuition that a binary map is enough for the agent to take decisions."""
     obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
-    obs["do_preview"] = jnp.clip(obs["do_preview"], a_min=-1, a_max=1)
     obs["dig_map"] = jnp.clip(obs["dig_map"], a_min=-1, a_max=1)
     return obs
 
@@ -27,7 +26,6 @@ def obs_to_model_input(obs, train_cfg):
         obs["action_map"],
         obs["target_map"],
         obs["traversability_mask"],
-        obs["do_preview"],
         obs["dig_map"],
         obs["dumpability_mask"],
     ]
