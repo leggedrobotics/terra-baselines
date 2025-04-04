@@ -154,7 +154,6 @@ if __name__ == "__main__":
         n_envs_y_rendering=args.n_envs_y,
         display=False,
         progressive_gif=args.progressive_gif,
-        rendering_engine="pygame",
         shuffle_maps=suffle_maps,
     )
     config.num_embeddings_agent_min = 60  # curriculum.get_num_embeddings_agent_min()
