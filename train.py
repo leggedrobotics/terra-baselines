@@ -24,9 +24,9 @@ jax.config.update("jax_threefry_partitionable", True)
 
 @dataclass
 class TrainConfig:
-    name: str = "higher-max-steps"
+    name: str
     num_devices: int = 0
-    project: str = "better-discretization"
+    project: str = "bigger-cnn"
     group: str = "default"
     num_envs_per_device: int = 4096
     num_steps: int = 32
@@ -52,7 +52,7 @@ class TrainConfig:
     mask_out_arm_extension = True
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
-    num_rollouts_eval = 600  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)
+    num_rollouts_eval = 400  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)
 
     def __post_init__(self):
         self.num_devices = (
