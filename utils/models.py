@@ -327,7 +327,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     action_type: Union[TrackedAction, WheeledAction]
     hidden_dim_pi: Sequence[int] = (128, 32)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
-    mlp_use_layernorm: bool = False
+    mlp_use_layernorm: bool = True
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
