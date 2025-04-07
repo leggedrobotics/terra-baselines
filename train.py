@@ -448,7 +448,7 @@ def make_train(
             # Use data from the first device for stats and eval
             loss_info_single = unreplicate(loss_info)
             runner_state_single = unreplicate(runner_state)
-            _, train_state, timestep = runner_state_single[:3]
+            _, train_state, timestep, prev_actions = runner_state_single[:4]
             env_params_single = timestep.env_cfg
 
             if i % config.log_train_interval == 0:

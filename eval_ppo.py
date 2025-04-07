@@ -33,6 +33,7 @@ def rollout(
     env,
     env_params,
     train_state: TrainState,
+    prev_actions: jax.Array,
     config,
 ) -> RolloutStats:
     num_envs = config.num_envs_per_device
@@ -49,7 +50,7 @@ def rollout(
         rng, _rng_step, _rng_model = jax.random.split(rng, 3)
 
         action, _, _, _ = select_action_ppo(
-            train_state, timestep.observation, _rng_model, config
+            train_state, timestep.observation, prev_actions, _rng_model, config
         )
         _rng_step = jax.random.split(_rng_step, num_envs)
         action_env = wrap_action(action, env.batch_cfg.action_type)
