@@ -51,6 +51,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], config["num_prev_actions"])),
     ]
     params = model.init(rng, obs)
 
@@ -323,8 +324,8 @@ class PreviousActionsNet(nn.Module):
 
         self.activation = nn.relu
 
-    def __call__(self, prev_actions: Array):
-        x_actions = prev_actions.astype(jnp.int32)
+    def __call__(self, obs: dict[str, Array]):
+        x_actions = obs[-1].astype(jnp.int32)
         x_actions = self.embedding(x_actions)
 
         x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
@@ -403,7 +404,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         x_local_map = self.local_map_net(obs)
 
-        x_actions = self.actions_net(obs[..., -1])
+        x_actions = self.actions_net(obs)
 
         x = jnp.concatenate((x_agent_state, x_maps, x_local_map, x_actions), axis=-1)
         x = self.activation(x)
