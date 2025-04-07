@@ -48,6 +48,7 @@ class TrainConfig:
     )
     checkpoint_interval: int = 50  # Number of updates between checkpoints
     # model settings
+    num_prev_actions = 5
     clip_action_maps = True  # clips the action maps to [-1, 1]
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
@@ -110,7 +111,7 @@ class Transition(struct.PyTreeNode):
     log_prob: jax.Array
     obs: jax.Array
     # for rnn policy
-    prev_action: jax.Array
+    prev_actions: jax.Array
     prev_reward: jax.Array
 
 
@@ -166,7 +167,7 @@ def ppo_update_networks(
 
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
         print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
-        obs = obs_to_model_input(transitions_obs_reshaped, config)
+        obs = obs_to_model_input(transitions_obs_reshaped, transitions.prev_actions, config)
         value, dist = policy(train_state.apply_fn, params, obs)
         value = value[:, 0]
         # action = dist.sample(seed=rng_model)
@@ -244,8 +245,8 @@ def make_train(
         # TERRA: Reset envs
         reset_fn_p = jax.pmap(env.reset, axis_name="devices")  # vmapped inside
         timestep = reset_fn_p(env_params, reset_rng)
-        prev_action = jnp.zeros(
-            (config.num_devices, config.num_envs_per_device), dtype=jnp.int32
+        prev_actions = jnp.zeros(
+            (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
         )
         prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
 
@@ -281,12 +282,12 @@ def make_train(
                 - runner_state: Updated runner state after stepping the environment.
                 - transition: A namedtuple containing the transition information (current state, action, reward, next state) for this step.
                 """
-                rng, train_state, prev_timestep, prev_action, prev_reward = runner_state
+                rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
 
                 # SELECT ACTION
                 rng, _rng_model, _rng_env = jax.random.split(rng, 3)
                 action, log_prob, value, _ = select_action_ppo(
-                    train_state, prev_timestep.observation, _rng_model, config
+                    train_state, prev_timestep.observation, prev_actions, _rng_model, config
                 )
 
                 # STEP ENV
@@ -301,10 +302,15 @@ def make_train(
                     reward=timestep.reward,
                     log_prob=log_prob,
                     obs=prev_timestep.observation,
-                    prev_action=prev_action,
+                    prev_actions=prev_actions,
                     prev_reward=prev_reward,
                 )
-                runner_state = (rng, train_state, timestep, action, timestep.reward)
+
+                # UPDATE PREVIOUS ACTIONS
+                prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
+                prev_actions = prev_actions.at[..., 0].set(action)
+
+                runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
                 return runner_state, transition
 
             # transitions: [seq_len, batch_size, ...]
@@ -313,10 +319,10 @@ def make_train(
             )
 
             # CALCULATE ADVANTAGE
-            rng, train_state, timestep, prev_action, prev_reward = runner_state
+            rng, train_state, timestep, prev_actions, prev_reward = runner_state
             rng, _rng = jax.random.split(rng)
             _, _, last_val, _ = select_action_ppo(
-                train_state, timestep.observation, _rng, config
+                train_state, timestep.observation, prev_actions, _rng, config
             )
             # advantages, targets = calculate_gae(transitions, last_val.squeeze(1), config.gamma, config.gae_lambda)
             advantages, targets = calculate_gae(
@@ -403,7 +409,7 @@ def make_train(
             # EVALUATE AGENT
             rng, _rng = jax.random.split(rng)
 
-            runner_state = (rng, train_state, timestep, prev_action, prev_reward)
+            runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
             return runner_state, loss_info
 
         # Setup runner state for multiple devices
@@ -411,7 +417,7 @@ def make_train(
         rng, rng_rollout = jax.random.split(rng)
         rng = jax.random.split(rng, num=config.num_devices)
         train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
-        runner_state = (rng, train_state, timestep, prev_action, prev_reward)
+        runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
         for i in tqdm(range(config.num_updates), desc="Training"):
             start_time = time.time()  # Start time for measuring iteration speed
