@@ -28,6 +28,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     )
     jax.debug.print("map normalization min max = {x}", x=map_min_max)
     model = SimplifiedCoupledCategoricalNet(
+        num_prev_actions=config["num_prev_actions"],
         num_embeddings_agent=num_embeddings_agent,
         map_min_max=map_min_max,
         local_map_min_max=tuple(config["local_map_normalization_bounds"]),

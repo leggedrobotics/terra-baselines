@@ -26,7 +26,7 @@ jax.config.update("jax_threefry_partitionable", True)
 class TrainConfig:
     name: str
     num_devices: int = 0
-    project: str = "excavator-oss"
+    project: str = "action-network"
     group: str = "default"
     num_envs_per_device: int = 4096
     num_steps: int = 32
@@ -160,14 +160,20 @@ def ppo_update_networks(
         # Terra: Reshape
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
         print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
+        print(f"ppo_update_networks {transitions.prev_actions.shape=}")
         transitions_obs_reshaped = jax.tree_map(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
             transitions.obs,
         )
+        transitions_actions_reshaped = jax.tree_map(
+            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
+            transitions.prev_actions,
+        )
+        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
+        print(f"ppo_update_networks {transitions_actions_reshaped.shape=}")
 
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
-        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
-        obs = obs_to_model_input(transitions_obs_reshaped, transitions.prev_actions, config)
+        obs = obs_to_model_input(transitions_obs_reshaped, transitions_actions_reshaped, config)
         value, dist = policy(train_state.apply_fn, params, obs)
         value = value[:, 0]
         # action = dist.sample(seed=rng_model)
@@ -513,7 +519,7 @@ def make_train(
 
 def train(config: TrainConfig):
     run = wandb.init(
-        entity="operators",
+        entity="terra-sp-thesis",
         project=config.project,
         group=config.group,
         name=config.name,
