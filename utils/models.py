@@ -301,6 +301,39 @@ class MapsNet(nn.Module):
         return x
 
 
+class PreviousActionsNet(nn.Module):
+    """
+    Pre-processes the sequence of previous actions.
+    """
+    num_actions: int
+    mlp_use_layernorm: bool
+    num_embedding_features: int = 8
+    hidden_dim_layers_mlp: Sequence[int] = (16, 32)
+
+    def setup(self) -> None:
+        self.embedding = nn.Embed(
+            num_embeddings=self.num_actions,
+            features=self.num_embedding_features
+        )
+
+        self.mlp = MLP(
+            hidden_dim_layers=self.hidden_dim_layers_mlp,
+            use_layer_norm=self.mlp_use_layernorm,
+        )
+
+        self.activation = nn.relu
+
+    def __call__(self, prev_actions: Array):
+        x_actions = prev_actions.astype(jnp.int32)
+        x_actions = self.embedding(x_actions)
+
+        x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
+        x_flattened = self.mlp(x_flattened)
+
+        x = self.activation(x_flattened)
+        return x
+
+
 class SimplifiedCoupledCategoricalNet(nn.Module):
     """
     The full net.
@@ -320,6 +353,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     obs["dumpability_mask"],
     """
 
+    num_prev_actions: int
     num_embeddings_agent: int
     map_min_max: Sequence[int]
     local_map_min_max: Sequence[int]
@@ -355,6 +389,11 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         self.maps_net = MapsNet(self.map_min_max)
 
+        self.actions_net = PreviousActionsNet(
+            num_actions=num_actions,
+            mlp_use_layernorm=self.mlp_use_layernorm,
+        )
+
         self.activation = nn.relu
 
     def __call__(self, obs: Array) -> Array:
@@ -364,7 +403,9 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         x_local_map = self.local_map_net(obs)
 
-        x = jnp.concatenate((x_agent_state, x_maps, x_local_map), axis=-1)
+        x_actions = self.actions_net(obs[..., -1])
+
+        x = jnp.concatenate((x_agent_state, x_maps, x_local_map, x_actions), axis=-1)
         x = self.activation(x)
 
         v = self.mlp_v(x)
