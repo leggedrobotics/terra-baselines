@@ -10,7 +10,7 @@ def clip_action_maps_in_obs(obs):
     return obs
 
 
-def obs_to_model_input(obs, train_cfg):
+def obs_to_model_input(obs, prev_actions, train_cfg):
     # Feature engineering
     if train_cfg.clip_action_maps:
         obs = clip_action_maps_in_obs(obs)
@@ -28,6 +28,7 @@ def obs_to_model_input(obs, train_cfg):
         obs["traversability_mask"],
         obs["dig_map"],
         obs["dumpability_mask"],
+        prev_actions,
     ]
     return obs
 
@@ -45,11 +46,12 @@ def policy(
 def select_action_ppo(
     train_state,
     obs: jnp.ndarray,
+    prev_actions: jnp.ndarray,
     rng: jax.random.PRNGKey,
     config,
 ):
     # Prepare policy input from Terra State
-    obs = obs_to_model_input(obs, config)
+    obs = obs_to_model_input(obs, prev_actions, config)
 
     value, pi = policy(train_state.apply_fn, train_state.params, obs)
     action = pi.sample(seed=rng)

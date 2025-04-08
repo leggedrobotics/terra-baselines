@@ -51,6 +51,10 @@ def rollout_episode(
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, rl_config.num_test_rollouts)
     timestep = env.reset(env_cfgs, rng_reset)
+    prev_actions = jnp.zeros(
+        (rl_config.num_test_rollouts, rl_config.num_prev_actions),
+        dtype=jnp.int32
+    )
 
     tile_size = env_cfgs.tile_size[0].item()
     move_tiles = env_cfgs.agent.move_tiles[0].item()
@@ -92,13 +96,15 @@ def rollout_episode(
         obs_seq = _append_to_obs(obs, obs_seq)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
-            obs_model = obs_to_model_input(timestep.observation, rl_config)
+            obs_model = obs_to_model_input(timestep.observation, prev_actions, rl_config)
             v, logits_pi = model.apply(model_params, obs_model)
             if deterministic:
                 action = np.argmax(logits_pi, axis=-1)
             else:
                 pi = tfp.distributions.Categorical(logits=logits_pi)
                 action = pi.sample(seed=rng_act)
+            prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+            prev_actions = prev_actions.at[:, 0].set(action)
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
