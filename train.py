@@ -26,7 +26,7 @@ jax.config.update("jax_threefry_partitionable", True)
 class TrainConfig:
     name: str
     num_devices: int = 0
-    project: str = "excavator-oss"
+    project: str = "main-new-maps"
     group: str = "default"
     num_envs_per_device: int = 4096
     num_steps: int = 32
@@ -51,7 +51,7 @@ class TrainConfig:
     clip_action_maps = True  # clips the action maps to [-1, 1]
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
-    num_rollouts_eval = 300  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)
+    num_rollouts_eval = 400  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)
 
     def __post_init__(self):
         self.num_devices = (
@@ -507,7 +507,7 @@ def make_train(
 
 def train(config: TrainConfig):
     run = wandb.init(
-        entity="operators",
+        entity="terra-sp-thesis",
         project=config.project,
         group=config.group,
         name=config.name,
