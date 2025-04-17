@@ -39,7 +39,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     map_height = env.batch_cfg.maps_dims.maps_edge_length
 
     obs = [
-        jnp.zeros((config["num_envs"], 5)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.num_state_obs)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
