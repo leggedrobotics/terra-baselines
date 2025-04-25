@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -n 1
 #SBATCH --cpus-per-task=8
-#SBATCH --gpus=rtx_4090:4
+#SBATCH --gpus=rtx_4090:2
 #SBATCH --time=12:00:00
 #SBATCH --mem-per-cpu=4048
 #SBATCH --mail-type=END
@@ -23,7 +23,7 @@ conda activate $CONDA_ENV
 
 # Set environment variables and run training
 export DATASET_PATH=/cluster/home/spiasecki/terra/data/
-export DATASET_SIZE=500
+export DATASET_SIZE=1000
 
 # Add the terra package to the Python path
 export PYTHONPATH=$PYTHONPATH:/cluster/home/lterenzi/terra_jax
