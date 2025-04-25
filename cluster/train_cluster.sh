@@ -23,7 +23,7 @@ conda activate $CONDA_ENV
 
 # Set environment variables and run training
 export DATASET_PATH=/cluster/home/spiasecki/terra/data/
-export DATASET_SIZE=200
+export DATASET_SIZE=1000
 
 # Add the terra package to the Python path
 export PYTHONPATH=$PYTHONPATH:/cluster/home/lterenzi/terra_jax

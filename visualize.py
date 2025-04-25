@@ -33,6 +33,10 @@ def rollout_episode(
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, rl_config.num_test_rollouts)
     timestep = env.reset(env_cfgs, rng_reset)
+    prev_actions = jnp.zeros(
+        (rl_config.num_test_rollouts, rl_config.num_prev_actions),
+        dtype=jnp.int32
+    )
 
     t_counter = 0
     reward_seq = []
@@ -41,10 +45,12 @@ def rollout_episode(
         obs_seq.append(timestep.observation)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
-            obs = obs_to_model_input(timestep.observation, rl_config)
+            obs = obs_to_model_input(timestep.observation, prev_actions, rl_config)
             v, logits_pi = model.apply(model_params, obs)
             pi = tfp.distributions.Categorical(logits=logits_pi)
             action = pi.sample(seed=rng_act)
+            prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+            prev_actions = prev_actions.at[:, 0].set(action)
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
