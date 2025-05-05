@@ -113,7 +113,7 @@ def rollout_episode(
         )
         reward = timestep.reward
         next_obs = timestep.observation
-        done = timestep.done
+        done = timestep.info["task_done"]
 
         reward_seq.append(reward)
         print(t_counter)
