@@ -480,7 +480,6 @@ def make_train(
                     env,
                     env_params_single,
                     train_state,
-                    prev_actions,
                     config,
                 )
 

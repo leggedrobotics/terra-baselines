@@ -33,7 +33,6 @@ def rollout(
     env,
     env_params,
     train_state: TrainState,
-    prev_actions: jax.Array,
     config,
 ) -> RolloutStats:
     num_envs = config.num_envs_per_device
@@ -45,7 +44,7 @@ def rollout(
         return jnp.less(stats.length, num_rollouts + 1)
 
     def _body_fn(carry):
-        rng, stats, timestep = carry
+        rng, stats, timestep, prev_actions = carry
 
         rng, _rng_step, _rng_model = jax.random.split(rng, 3)
 
@@ -56,13 +55,12 @@ def rollout(
         action_env = wrap_action(action, env.batch_cfg.action_type)
         timestep = env.step(timestep, action_env, _rng_step)
 
+        prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
+        prev_actions = prev_actions.at[..., 0].set(action)
+
         terminations_update = timestep.done.sum()
         positive_termination_update = timestep.info["task_done"].sum()
         positive_termination_steps_update = (stats.length + 1) * positive_termination_update
-
-        # Replace jax.debug.print with:
-        # host_callback.id_tap(print_debug, (positive_termination_update, timeout_update),
-        #                     result=(positive_termination_update, timeout_update))
 
         stats = RolloutStats(
             max_reward=jnp.maximum(stats.max_reward, timestep.reward.max()),
@@ -83,13 +81,14 @@ def rollout(
             action_5=stats.action_5 + (action == 5).sum(),
             action_6=stats.action_6 + (action == 6).sum(),
         )
-        carry = (rng, stats, timestep)
+        carry = (rng, stats, timestep, prev_actions)
         return carry
 
     rng, _rng_reset = jax.random.split(rng)
     _rng_reset = jax.random.split(_rng_reset, num_envs)
     timestep = env.reset(env_params, _rng_reset)
-    init_carry = (rng, RolloutStats(), timestep)
+    prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
+    init_carry = (rng, RolloutStats(), timestep, prev_actions)
 
     # final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
     final_carry = jax.lax.fori_loop(
