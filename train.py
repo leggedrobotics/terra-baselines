@@ -284,7 +284,7 @@ def make_train(
                 """
                 Executes a step in the environment for all agents.
 
-                This function takes the current state of the runners (agents),selects an
+                This function takes the current state of the runners (agents), selects an
                 action for each agent based on the current observation using the PPO
                 algorithm, and then steps the environment forward using these actions.
                 The environment returns the next state, reward, and whether the episode
