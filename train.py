@@ -262,15 +262,21 @@ def make_train(
             """
             Performs a single update step in the training loop.
 
-            This function orchestrates the collection of trajectories from the environment, calculation of advantages, and updating of the network parameters based on the collected data. It involves stepping through the environment to collect data, calculating the advantage estimates for each step, and performing several epochs of updates on the network parameters using the collected data.
+            This function orchestrates the collection of trajectories from the environment,
+            calculation of advantages, and updating of the network parameters based on the
+            collected data. It involves stepping through the environment to collect data,
+            calculating the advantage estimates for each step, and performing several epochs
+            of updates on the network parameters using the collected data.
 
             Parameters:
-            - runner_state: A tuple containing the current state of the RNG, the training state, the previous timestep, the previous action, and the previous reward.
+            - runner_state: A tuple containing the current state of the RNG, the training state,
+                            the previous timestep, the previous action, and the previous reward.
             - _: Placeholder to match the expected input signature for jax.lax.scan.
 
             Returns:
             - runner_state: Updated runner state after performing the update step.
-            - loss_info: A dictionary containing information about the loss and other metrics for this update step.
+            - loss_info: A dictionary containing information about the loss and other
+                         metrics for this update step.
             """
 
             # COLLECT TRAJECTORIES
@@ -278,15 +284,23 @@ def make_train(
                 """
                 Executes a step in the environment for all agents.
 
-                This function takes the current state of the runners (agents), selects an action for each agent based on the current observation using the PPO algorithm, and then steps the environment forward using these actions. The environment returns the next state, reward, and whether the episode has ended for each agent. These are then used to create a transition tuple containing the current state, action, reward, and next state, which can be used for training the model.
+                This function takes the current state of the runners (agents),selects an
+                action for each agent based on the current observation using the PPO
+                algorithm, and then steps the environment forward using these actions.
+                The environment returns the next state, reward, and whether the episode
+                has ended for each agent. These are then used to create a transition tuple
+                containing the current state, action, reward, and next state, which can
+                be used for training the model.
 
                 Parameters:
-                - runner_state: Tuple containing the current rng state, train_state, previous timestep, previous action, and previous reward.
+                - runner_state: Tuple containing the current rng state, train_state,
+                                previous timestep, previous action, and previous reward.
                 - _: Placeholder to match the expected input signature for jax.lax.scan.
 
                 Returns:
                 - runner_state: Updated runner state after stepping the environment.
-                - transition: A namedtuple containing the transition information (current state, action, reward, next state) for this step.
+                - transition: A namedtuple containing the transition information
+                              (current state, action, reward, next state) for this step.
                 """
                 rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
 
@@ -340,10 +354,14 @@ def make_train(
                 """
                 Performs a single epoch of updates on the network parameters.
 
-                This function iterates over minibatches of the collected data and applies updates to the network parameters based on the PPO algorithm. It is called multiple times to perform multiple epochs of updates.
+                This function iterates over minibatches of the collected data and
+                applies updates to the network parameters based on the PPO algorithm.
+                It is called multiple times to perform multiple epochs of updates.
 
                 Parameters:
-                - update_state: A tuple containing the current state of the RNG, the training state, and the collected transitions, advantages, and targets.
+                - update_state: A tuple containing the current state of the RNG,
+                                the training state, and the collected transitions,
+                                advantages, and targets.
                 - _: Placeholder to match the expected input signature for jax.lax.scan.
 
                 Returns:
@@ -355,7 +373,9 @@ def make_train(
                     """
                     Updates the network parameters based on a single minibatch of data.
 
-                    This function applies the PPO update rule to the network parameters using the data from a single minibatch. It is called for each minibatch in an epoch.
+                    This function applies the PPO update rule to the network
+                    parameters using the data from a single minibatch. It is
+                    called for each minibatch in an epoch.
 
                     Parameters:
                     - train_state: The current training state, including the network parameters.
