@@ -344,7 +344,6 @@ def make_train(
             _, _, last_val, _ = select_action_ppo(
                 train_state, timestep.observation, prev_actions, _rng, config
             )
-            # advantages, targets = calculate_gae(transitions, last_val.squeeze(1), config.gamma, config.gae_lambda)
             advantages, targets = calculate_gae(
                 transitions, last_val, config.gamma, config.gae_lambda
             )
