@@ -3,7 +3,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus=rtx_4090:2
 #SBATCH --time=12:00:00
-#SBATCH --mem-per-cpu=4048
+#SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
 #SBATCH --mail-user=name@mail
 #SBATCH --job-name="training-$(date +"%Y-%m-%dT%H:%M")"
