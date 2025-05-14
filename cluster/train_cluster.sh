@@ -25,9 +25,6 @@ conda activate $CONDA_ENV
 export DATASET_PATH=/cluster/home/spiasecki/terra/data/
 export DATASET_SIZE=1000
 
-# Add the terra package to the Python path
-export PYTHONPATH=$PYTHONPATH:/cluster/home/lterenzi/terra_jax
-
 # Change to the directory containing train.py or use the full path
 cd /cluster/home/spiasecki/terra-baselines
 python train.py
