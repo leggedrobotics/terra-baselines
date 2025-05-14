@@ -11,7 +11,7 @@ from train import make_states, make_train, TrainConfig
 class TrainConfigSweep(TrainConfig):
     # Training config
     project: str = "sweep"
-    total_timesteps: int = 3_000_000
+    total_timesteps: int = 3_000_000_000
 
     # Rewards
     existence: float = -0.1
