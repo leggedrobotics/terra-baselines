@@ -1,5 +1,6 @@
 import jax
 import time
+import sys
 import wandb
 from dataclasses import asdict, dataclass
 
@@ -74,25 +75,28 @@ def sweep_train():
     train(train_config)
 
 if __name__ == "__main__":
-    sweep_config = {
-        "method": "grid",
-        "metric": {
-            "name": "eval/rewards",
-            "goal": "maximize",
-        },
-        "parameters": {
-            "existence": {"values": [-0.1, 0.0]},
-            "collision_move": {"values": [-0.5, 0.0]},
-            "move": {"values": [-0.2, 0.0]},
-            "cabin_turn": {"values": [-0.2, 0.0]},
-            "wheel_turn": {"values": [-0.2, 0.0]},
-            "dig_wrong": {"values": [-1.0, 0.0]},
-            "dump_wrong": {"values": [-1.0, 0.0]},
-            "dig_correct": {"values": [0.0, 5.0]},
-            "dump_correct": {"values": [0.0, 10.0]},
-            "terminal": {"values": [10.0, 150.0]},
+    # If called with "create" argument, create the sweep and print the ID
+    if len(sys.argv) > 1 and sys.argv[1] == "create":
+        sweep_config = {
+            "method": "grid",
+            "metric": {
+                "name": "eval/rewards",
+                "goal": "maximize",
+            },
+            "parameters": {
+                "existence": {"values": [-0.1, 0.0]},
+                "collision_move": {"values": [-0.5, 0.0]},
+                "move": {"values": [-0.2, 0.0]},
+                "cabin_turn": {"values": [-0.2, 0.0]},
+                "wheel_turn": {"values": [-0.2, 0.0]},
+                "dig_wrong": {"values": [-1.0, 0.0]},
+                "dump_wrong": {"values": [-1.0, 0.0]},
+                "dig_correct": {"values": [0.0, 5.0]},
+                "dump_correct": {"values": [0.0, 10.0]},
+                "terminal": {"values": [10.0, 150.0]},
+            }
         }
-    }
-
-    sweep_id = wandb.sweep(sweep_config, project="terra-sp-thesis")
-    wandb.agent(sweep_id, function=sweep_train)
+        sweep_id = wandb.sweep(sweep_config, project="terra-sp-thesis")
+    else:
+        # Called by wandb agent
+        sweep_train()
