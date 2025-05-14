@@ -10,7 +10,7 @@ from train import make_states, make_train, TrainConfig
 @dataclass
 class TrainConfigSweep(TrainConfig):
     # Training config
-    project: str = "sweep"
+    project: str = "terra-sp-thesis"
     total_timesteps: int = 3_000_000_000
 
     # Rewards
@@ -85,6 +85,7 @@ if __name__ == "__main__":
                 "goal": "maximize",
             },
             "parameters": {
+                "project": {"value": "terra-sp-thesis"},
                 "existence": {"values": [-0.1, 0.0]},
                 "collision_move": {"values": [-0.5, 0.0]},
                 "move": {"values": [-0.2, 0.0]},
@@ -97,7 +98,7 @@ if __name__ == "__main__":
                 "terminal": {"values": [10.0, 150.0]},
             }
         }
-        sweep_id = wandb.sweep(sweep_config, project="sweep")
+        sweep_id = wandb.sweep(sweep_config, project="terra-sp-thesis")
     else:
         # Called by wandb agent
         sweep_train()
