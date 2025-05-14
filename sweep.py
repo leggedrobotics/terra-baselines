@@ -107,6 +107,10 @@ def sweep_train():
 if __name__ == "__main__":
     sweep_config = {
         "method": "grid",
+        "metric": {
+            "name": "eval/rewards",
+            "goal": "maximize",
+        },
         "parameters": {
             "existence": {"values": [-0.1, 0.0]},
             "collision_move": {"values": [-0.5, 0.0]},
