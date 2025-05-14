@@ -9,7 +9,7 @@ from flax.training.train_state import TrainState
 
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
-from train import make_train, TrainConfig
+from train import make_states, make_train, TrainConfig
 from utils.models import get_model_ready
 
 @dataclass
@@ -29,12 +29,18 @@ class TrainConfigSweep(TrainConfig):
     dump_correct: float = 3.0
     terminal: float = 100.0
 
-def make_states(config: TrainConfigSweep):
-    env = TerraEnvBatch()
-    num_devices = config.num_devices
-    num_envs_per_device = config.num_envs_per_device
 
-    # Replace the rewards witht the sweep values
+def train(config: TrainConfigSweep):
+    run = wandb.init(
+        entity="terra-sp-thesis",
+        project=config.project,
+        group=config.group,
+        name=config.name,
+        config=asdict(config),
+        save_code=True,
+    )
+
+    # Replace the rewards with the sweep values
     env_params = EnvConfig()
     env_params = env_params._replace(
         rewards=env_params.rewards._replace(
@@ -50,38 +56,7 @@ def make_states(config: TrainConfigSweep):
             terminal=config.terminal,
         )
     )
-    env_params = jax.tree_map(
-        lambda x: jnp.array(x)[None, None]
-        .repeat(num_devices, 0)
-        .repeat(num_envs_per_device, 1),
-        env_params,
-    )
-    print(f"{env_params.tile_size.shape=}")
-
-    rng = jax.random.PRNGKey(config.seed)
-    rng, _rng = jax.random.split(rng)
-
-    network, network_params = get_model_ready(_rng, config, env)
-    tx = optax.chain(
-        optax.clip_by_global_norm(config.max_grad_norm),
-        optax.adam(learning_rate=config.lr, eps=1e-5),
-    )
-    train_state = TrainState.create(
-        apply_fn=network.apply, params=network_params, tx=tx
-    )
-
-    return rng, env, env_params, train_state
-
-def train(config: TrainConfigSweep):
-    run = wandb.init(
-        entity="terra-sp-thesis",
-        project=config.project,
-        group=config.group,
-        name=config.name,
-        config=asdict(config),
-        save_code=True,
-    )
-    rng, env, env_params, train_state = make_states(config)
+    rng, env, env_params, train_state = make_states(config, env_params)
     train_fn = make_train(env, env_params, config)
 
     print("Training...")
