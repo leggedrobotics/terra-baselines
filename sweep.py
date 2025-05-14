@@ -79,13 +79,13 @@ if __name__ == "__main__":
     # If called with "create" argument, create the sweep and print the ID
     if len(sys.argv) > 1 and sys.argv[1] == "create":
         sweep_config = {
+            "program": "train.py",
             "method": "grid",
             "metric": {
                 "name": "eval/rewards",
                 "goal": "maximize",
             },
             "parameters": {
-                "project": {"value": "terra-sp-thesis"},
                 "existence": {"values": [-0.1, 0.0]},
                 "collision_move": {"values": [-0.5, 0.0]},
                 "move": {"values": [-0.2, 0.0]},
