@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import optax
 import time
 import wandb
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from flax.training.train_state import TrainState
 
@@ -12,12 +12,45 @@ from terra.config import EnvConfig
 from train import make_train, TrainConfig
 from utils.models import get_model_ready
 
-def make_states(config: TrainConfig):
+@dataclass
+class TrainConfigSweep(TrainConfig):
+    existence: float = -0.1
+    collision_move: float = -0.1
+    move: float = -0.05
+    collision_turn: float = -0.1
+    cabin_turn: float = -0.01
+    wheel_turn: float = -0.01
+    dig_wrong: float = -0.3
+    dump_wrong: float = -0.3
+    dump_no_dump_area: float = -3.0
+    dump_close_to_dug_area: float = -0.15
+    dig_correct: float = 3.0
+    dump_correct: float = 3.0
+    terminal: float = 100.0
+
+def make_states(config: TrainConfigSweep):
     env = TerraEnvBatch()
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
 
-    env_params = EnvConfig()
+    # Replace the rewards witht the sweep values
+    env_params = env_params._replace(
+        rewards=env_params.rewards._replace(
+            existence=config.reward_existence,
+            collision_move=config.reward_collision_move,
+            move=config.reward_move,
+            collision_turn=config.reward_collision_turn,
+            cabin_turn=config.reward_cabin_turn,
+            wheel_turn=config.reward_wheel_turn,
+            dig_wrong=config.reward_dig_wrong,
+            dump_wrong=config.reward_dump_wrong,
+            dump_no_dump_area=config.reward_dump_no_dump_area,
+            dump_close_to_dug_area=config.reward_dump_close_to_dug_area,
+            dig_correct=config.reward_dig_correct,
+            dump_correct=config.reward_dump_correct,
+            terminal=config.reward_terminal,
+        )
+    )
     env_params = jax.tree_map(
         lambda x: jnp.array(x)[None, None]
         .repeat(num_devices, 0)
@@ -40,7 +73,7 @@ def make_states(config: TrainConfig):
 
     return rng, env, env_params, train_state
 
-def train(config: TrainConfig):
+def train(config: TrainConfigSweep):
     run = wandb.init(
         entity="terra-sp-thesis",
         project=config.project,
