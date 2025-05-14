@@ -92,6 +92,13 @@ def train(config: TrainConfigSweep):
         run.finish()
         print("wandb session finished.")
 
+def sweep_train():
+    config = wandb.config
+    if "name" not in config:
+        config["name"] = f"sweep-{wandb.run.id}"
+    # Convert wandb.config to TrainConfigSweep
+    train_config = TrainConfigSweep(**dict(config))
+    train(train_config)
 
 if __name__ == "__main__":
     DT = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
@@ -135,5 +142,5 @@ if __name__ == "__main__":
         }
     }
 
-    name = f"{args.name}-{args.machine}-{DT}"
-    train(TrainConfigSweep(name=name, num_devices=args.num_devices))
+    sweep_id = wandb.sweep(sweep_config, project="terra-sp-thesis")
+    wandb.agent(sweep_id, function=sweep_train)
