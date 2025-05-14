@@ -24,7 +24,7 @@ export DATASET_SIZE=1000
 cd /cluster/home/spiasecki/terra-baselines
 
 # Create the sweep and capture the sweep ID
-SWEEP_ID=$(python sweep.py create)
+SWEEP_ID=$(python sweep.py create | grep 'Create sweep with ID:' | awk '{print $5}')
 
 # Run two agents in parallel
 wandb agent $SWEEP_ID &  # Agent 1
