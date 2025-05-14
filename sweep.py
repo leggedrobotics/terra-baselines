@@ -17,13 +17,10 @@ class TrainConfigSweep(TrainConfig):
     existence: float = -0.1
     collision_move: float = -0.1
     move: float = -0.05
-    collision_turn: float = -0.1
     cabin_turn: float = -0.01
     wheel_turn: float = -0.01
     dig_wrong: float = -0.3
     dump_wrong: float = -0.3
-    dump_no_dump_area: float = -3.0
-    dump_close_to_dug_area: float = -0.15
     dig_correct: float = 3.0
     dump_correct: float = 3.0
     terminal: float = 100.0
@@ -40,13 +37,10 @@ def make_states(config: TrainConfigSweep):
             existence=config.existence,
             collision_move=config.collision_move,
             move=config.move,
-            collision_turn=config.collision_turn,
             cabin_turn=config.cabin_turn,
             wheel_turn=config.wheel_turn,
             dig_wrong=config.dig_wrong,
             dump_wrong=config.dump_wrong,
-            dump_no_dump_area=config.dump_no_dump_area,
-            dump_close_to_dug_area=config.dump_close_to_dug_area,
             dig_correct=config.dig_correct,
             dump_correct=config.dump_correct,
             terminal=config.terminal,
@@ -125,5 +119,21 @@ if __name__ == "__main__":
     )
     args, _ = parser.parse_known_args()
 
+    sweep_config = {
+        "method": "grid",
+        "parameters": {
+            "existence": {"values": [-0.1, 0.0]},
+            "collision_move": {"values": [-0.5, 0.0]},
+            "move": {"values": [-0.2, 0.0]},
+            "cabin_turn": {"values": [-0.2, 0.0]},
+            "wheel_turn": {"values": [-0.2, 0.0]},
+            "dig_wrong": {"values": [-1.0, 0.0]},
+            "dump_wrong": {"values": [-1.0, 0.0]},
+            "dig_correct": {"values": [0.0, 5.0]},
+            "dump_correct": {"values": [0.0, 10.0]},
+            "terminal": {"values": [10.0, 150.0]},
+        }
+    }
+
     name = f"{args.name}-{args.machine}-{DT}"
-    train(TrainConfig(name=name, num_devices=args.num_devices))
+    train(TrainConfigSweep(name=name, num_devices=args.num_devices))
