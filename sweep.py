@@ -15,7 +15,7 @@ from utils.models import get_model_ready
 @dataclass
 class TrainConfigSweep(TrainConfig):
     # Training config
-    total_timesteps: int = 5_000_000
+    total_timesteps: int = 3_000_000
 
     # Rewards
     existence: float = -0.1
