@@ -97,7 +97,7 @@ if __name__ == "__main__":
                 "terminal": {"values": [10.0, 150.0]},
             }
         }
-        sweep_id = wandb.sweep(sweep_config, project=TrainConfigSweep().project)
+        sweep_id = wandb.sweep(sweep_config, project="sweep")
     else:
         # Called by wandb agent
         sweep_train()
