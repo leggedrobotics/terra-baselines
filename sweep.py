@@ -1,16 +1,10 @@
 import jax
-import jax.numpy as jnp
-import optax
 import time
 import wandb
 from dataclasses import asdict, dataclass
-from datetime import datetime
-from flax.training.train_state import TrainState
 
-from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
 from train import make_states, make_train, TrainConfig
-from utils.models import get_model_ready
 
 @dataclass
 class TrainConfigSweep(TrainConfig):
