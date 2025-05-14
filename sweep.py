@@ -10,6 +10,7 @@ from train import make_states, make_train, TrainConfig
 @dataclass
 class TrainConfigSweep(TrainConfig):
     # Training config
+    project: str = "sweep"
     total_timesteps: int = 3_000_000
 
     # Rewards
@@ -96,7 +97,7 @@ if __name__ == "__main__":
                 "terminal": {"values": [10.0, 150.0]},
             }
         }
-        sweep_id = wandb.sweep(sweep_config, project="sweep")
+        sweep_id = wandb.sweep(sweep_config, project=TrainConfigSweep().project)
     else:
         # Called by wandb agent
         sweep_train()
