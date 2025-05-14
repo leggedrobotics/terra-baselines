@@ -101,31 +101,6 @@ def sweep_train():
     train(train_config)
 
 if __name__ == "__main__":
-    DT = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-n",
-        "--name",
-        type=str,
-        default="experiment",
-    )
-    parser.add_argument(
-        "-m",
-        "--machine",
-        type=str,
-        default="local",
-    )
-    parser.add_argument(
-        "-d",
-        "--num_devices",
-        type=int,
-        default=0,
-        help="Number of devices to use. If 0, uses all available devices.",
-    )
-    args, _ = parser.parse_known_args()
-
     sweep_config = {
         "method": "grid",
         "parameters": {
