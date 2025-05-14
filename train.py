@@ -53,6 +53,7 @@ class TrainConfig:
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
     num_rollouts_eval = 500  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)
+    cache_clear_interval = 100  # Number of updates between clearing caches
 
     def __post_init__(self):
         self.num_devices = (
@@ -531,6 +532,27 @@ def make_train(
                 )
 
                 wandb.log(loss_info_single)
+
+            if i % config.cache_clear_interval == 0:
+                # Get current memory usage before clearing
+                try:
+                    before_mem = jax.devices()[0].memory_stats()['bytes_in_use'] / (1024 ** 3)
+                    print(f"Memory before clearing: {before_mem:.2f} GB")
+                except:
+                    pass
+
+                # Clear JAX caches
+                jax.clear_caches()
+                import gc
+                gc.collect()
+
+                # Check memory after clearing
+                try:
+                    after_mem = jax.devices()[0].memory_stats()['bytes_in_use'] / (1024 ** 3)
+                    print(f"Memory after clearing: {after_mem:.2f} GB, freed {before_mem - after_mem:.2f} GB")
+                except:
+                    pass
+
         return {"runner_state": runner_state_single, "loss_info": loss_info_single}
 
     return train
