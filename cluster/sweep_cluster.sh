@@ -26,10 +26,10 @@ cd /cluster/home/spiasecki/terra-baselines
 # Create the sweep and capture the sweep ID
 SWEEP_ID=$(python sweep.py create | grep 'Create sweep with ID:' | awk '{print $5}')
 
-# Run two agents in parallel
-wandb agent $SWEEP_ID &  # Agent 1
-wandb agent $SWEEP_ID &  # Agent 2
-wandb agent $SWEEP_ID &  # Agent 3
-wandb agent $SWEEP_ID &  # Agent 4
+# Run agents in parallel
+wandb agent terra-sp-thesis/sweep/$SWEEP_ID &  # Agent 1
+wandb agent terra-sp-thesis/sweep/$SWEEP_ID &  # Agent 2
+wandb agent terra-sp-thesis/sweep/$SWEEP_ID &  # Agent 3
+wandb agent terra-sp-thesis/sweep/$SWEEP_ID &  # Agent 4
 
 wait
