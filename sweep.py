@@ -34,21 +34,22 @@ def make_states(config: TrainConfigSweep):
     num_envs_per_device = config.num_envs_per_device
 
     # Replace the rewards witht the sweep values
+    env_params = EnvConfig()
     env_params = env_params._replace(
         rewards=env_params.rewards._replace(
-            existence=config.reward_existence,
-            collision_move=config.reward_collision_move,
-            move=config.reward_move,
-            collision_turn=config.reward_collision_turn,
-            cabin_turn=config.reward_cabin_turn,
-            wheel_turn=config.reward_wheel_turn,
-            dig_wrong=config.reward_dig_wrong,
-            dump_wrong=config.reward_dump_wrong,
-            dump_no_dump_area=config.reward_dump_no_dump_area,
-            dump_close_to_dug_area=config.reward_dump_close_to_dug_area,
-            dig_correct=config.reward_dig_correct,
-            dump_correct=config.reward_dump_correct,
-            terminal=config.reward_terminal,
+            existence=config.existence,
+            collision_move=config.collision_move,
+            move=config.move,
+            collision_turn=config.collision_turn,
+            cabin_turn=config.cabin_turn,
+            wheel_turn=config.wheel_turn,
+            dig_wrong=config.dig_wrong,
+            dump_wrong=config.dump_wrong,
+            dump_no_dump_area=config.dump_no_dump_area,
+            dump_close_to_dug_area=config.dump_close_to_dug_area,
+            dig_correct=config.dig_correct,
+            dump_correct=config.dump_correct,
+            terminal=config.terminal,
         )
     )
     env_params = jax.tree_map(
