@@ -93,8 +93,8 @@ if __name__ == "__main__":
                 "wheel_turn": {"values": [-0.2, 0.0]},
                 "dig_wrong": {"values": [-1.0, 0.0]},
                 "dump_wrong": {"values": [-1.0, 0.0]},
-                "dig_correct": {"values": [0.0, 5.0]},
-                "dump_correct": {"values": [0.0, 10.0]},
+                "dig_correct": {"values": [1.0, 5.0]},
+                "dump_correct": {"values": [1.0, 10.0]},
                 "terminal": {"values": [10.0, 150.0]},
             }
         }
