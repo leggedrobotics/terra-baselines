@@ -2,7 +2,7 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=8
 #SBATCH --gpus=rtx_4090:8
-#SBATCH --time=128:00:00
+#SBATCH --time=120:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
 #SBATCH --mail-user=name@mail
