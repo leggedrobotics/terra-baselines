@@ -75,12 +75,11 @@ class TrainConfig:
         return getattr(self, key)
 
 
-def make_states(config: TrainConfig):
+def make_states(config: TrainConfig, env_params: EnvConfig = EnvConfig()):
     env = TerraEnvBatch()
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
 
-    env_params = EnvConfig()
     env_params = jax.tree_map(
         lambda x: jnp.array(x)[None, None]
         .repeat(num_devices, 0)
