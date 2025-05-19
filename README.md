@@ -59,6 +59,45 @@ DATASET_PATH=/path/to/dataset DATASET_SIZE=<num_maps_per_type> python train.py -
 ```
 and collect your weights in the `checkpoints/` folder.
 
+## Sweep
+
+You can run a hyperparameter sweep over reward settings using [Weights & Biases Sweeps](https://docs.wandb.ai/guides/sweeps). This allows you to efficiently grid search or random search over reward parameters and compare results.
+
+### 1. Define the Sweep
+
+The sweep configuration is defined in `sweep.py`. It includes a grid over reward parameters such as `existence`, `collision_move`, `move`, etc. The sweep uses the `TrainConfigSweep` dataclass, which extends the standard training config with sweepable reward parameters.
+
+### 2. Create the Sweep
+
+To create a new sweep on wandb, run:
+```bash
+python sweep.py create
+```
+This will print a sweep ID (e.g., `abc123xy`). Copy this ID for the next step.
+
+### 3. Launch Agents
+
+You can launch multiple agents (workers) to run experiments in parallel. Each agent will pick up a different configuration from the sweep and start a training run.
+
+To launch an agent, run:
+```bash
+wandb agent <SWEEP_ID>
+```
+You can run this command multiple times (e.g., in different terminals, or as background jobs in a cluster script) to parallelize the sweep.
+
+#### Example: Running Multiple Agents in a Cluster Script
+
+If you are using a cluster, you can use the provided `sweep_cluster.sh` script. Make sure to set the `SWEEP_ID` variable to your sweep ID:
+```bash
+# In sweep_cluster.sh
+SWEEP_ID=<YOUR_SWEEP_ID>
+wandb agent $SWEEP_ID &
+wandb agent $SWEEP_ID &
+wandb agent $SWEEP_ID &
+wandb agent $SWEEP_ID &
+wait
+```
+
 ## Eval
 Evaluate your checkpoint with standard metrics using
 ```
