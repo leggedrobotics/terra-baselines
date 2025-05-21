@@ -66,10 +66,7 @@ def rollout_episode(
         do_action = TrackedActionType.DO
     elif action_type == WheeledAction:
         move_actions = (WheeledActionType.FORWARD, WheeledActionType.BACKWARD)
-        l_actions = (
-            WheeledActionType.CLOCK,
-            WheeledActionType.ANTICLOCK,
-        )
+        l_actions = (WheeledActionType.CLOCK, WheeledActionType.ANTICLOCK)
         do_action = WheeledActionType.DO
     else:
         raise (ValueError(f"{action_type=}"))
