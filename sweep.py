@@ -86,16 +86,16 @@ if __name__ == "__main__":
                 "goal": "maximize",
             },
             "parameters": {
-                "existence": {"values": [-0.1, 0.0]},
-                "collision_move": {"values": [-0.5, 0.0]},
-                "move": {"values": [-0.2, 0.0]},
-                "cabin_turn": {"values": [-0.2, 0.0]},
-                "wheel_turn": {"values": [-0.2, 0.0]},
-                "dig_wrong": {"values": [-1.0, 0.0]},
-                "dump_wrong": {"values": [-1.0, 0.0]},
-                "dig_correct": {"values": [1.0, 5.0]},
-                "dump_correct": {"values": [1.0, 10.0]},
-                "terminal": {"values": [10.0, 150.0]},
+                "existence": {"values": [-0.1, -0.05, 0.0]},
+                "collision_move": {"values": [-0.2, -0.1, -0.05, 0.0]},
+                "move": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
+                "cabin_turn": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
+                "wheel_turn": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
+                "dig_wrong": {"values": [-2.0, -1.0, -0.5, 0.0]},
+                "dump_wrong": {"values": [-2.0, -1.0, -0.5, 0.0]},
+                "dig_correct": {"values": [0.5, 1.0, 2.0, 3.0]},
+                "dump_correct": {"values": [0.5, 1.0, 2.0, 3.0]},
+                "terminal": {"values": [10.0, 25.0, 50.0]},
             }
         }
         sweep_id = wandb.sweep(sweep_config, project="sweep")
