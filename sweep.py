@@ -17,6 +17,7 @@ class TrainConfigSweep(TrainConfig):
     existence: float = 0.0
     collision_move: float = -0.5
     move: float = -0.2
+    move_with_turned_wheels=-0.2
     cabin_turn: float = -0.2
     wheel_turn: float = -0.2
     dig_wrong: float = -1.0
@@ -89,6 +90,7 @@ if __name__ == "__main__":
                 "existence": {"values": [-0.1, -0.05, 0.0]},
                 "collision_move": {"values": [-0.2, -0.1, -0.05, 0.0]},
                 "move": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
+                "move_with_turned_wheels": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
                 "cabin_turn": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
                 "wheel_turn": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
                 "dig_wrong": {"values": [-2.0, -1.0, -0.5, 0.0]},
