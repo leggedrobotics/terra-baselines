@@ -14,16 +14,16 @@ class TrainConfigSweep(TrainConfig):
     total_timesteps: int = 2_000_000_000
 
     # Rewards
-    existence: float = -0.1
-    collision_move: float = -0.1
-    move: float = -0.05
-    cabin_turn: float = -0.01
-    wheel_turn: float = -0.01
-    dig_wrong: float = -0.3
-    dump_wrong: float = -0.3
-    dig_correct: float = 3.0
-    dump_correct: float = 3.0
-    terminal: float = 100.0
+    existence: float = 0.0
+    collision_move: float = -0.5
+    move: float = -0.2
+    cabin_turn: float = -0.2
+    wheel_turn: float = -0.2
+    dig_wrong: float = -1.0
+    dump_wrong: float = 0.0
+    dig_correct: float = 1.0
+    dump_correct: float = 1.0
+    terminal: float = 50.0
 
 
 def train(config: TrainConfigSweep):
@@ -80,9 +80,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "create":
         sweep_config = {
             "program": "train.py",
-            "method": "grid",
+            "method": "bayes",
             "metric": {
-                "name": "eval/rewards",
+                "name": "eval/positive_terminations",
                 "goal": "maximize",
             },
             "parameters": {
