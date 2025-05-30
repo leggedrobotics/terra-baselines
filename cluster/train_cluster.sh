@@ -23,7 +23,7 @@ conda activate $CONDA_ENV
 
 # Set environment variables and run training
 export DATASET_PATH=/cluster/home/spiasecki/terra/data/
-export DATASET_SIZE=1000
+export DATASET_SIZE=1800
 
 # Change to the directory containing train.py or use the full path
 cd /cluster/home/spiasecki/terra-baselines
