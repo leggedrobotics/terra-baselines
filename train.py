@@ -37,7 +37,7 @@ class TrainConfig:
     clip_eps: float = 0.5
     gamma: float = 0.995
     gae_lambda: float = 0.95
-    ent_coef: float = 0.001
+    ent_coef: float = 0.002
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100

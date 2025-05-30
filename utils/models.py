@@ -183,7 +183,6 @@ class LocalMapNet(nn.Module):
         obs["action_map"],
         obs["target_map"],
         obs["traversability_mask"],
-        obs["dig_map"],
         obs["dumpability_mask"],
         """
         x_action_neg = normalize(obs[1], self.map_min_max[0], self.map_min_max[1])
@@ -281,19 +280,16 @@ class MapsNet(nn.Module):
         obs["action_map"],
         obs["target_map"],
         obs["traversability_mask"],
-        obs["dig_map"],
         obs["dumpability_mask"],
         """
         target_map = obs[8]
         traversability_map = obs[9]
-        dig_map = obs[10]
-        dumpability_mask = obs[11]
+        dumpability_mask = obs[10]
 
         x = jnp.concatenate(
             (
                 traversability_map[..., None],
                 target_map[..., None],
-                dig_map[..., None],
                 dumpability_mask[..., None],
             ),
             axis=-1,
@@ -351,7 +347,6 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     obs["action_map"],
     obs["target_map"],
     obs["traversability_mask"],
-    obs["dig_map"],
     obs["dumpability_mask"],
     """
 
