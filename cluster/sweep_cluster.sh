@@ -19,7 +19,7 @@ eval "$($CONDA_ROOT/bin/conda shell.bash hook)"
 conda activate $CONDA_ENV
 
 export DATASET_PATH=/cluster/home/spiasecki/terra/data/
-export DATASET_SIZE=1000
+export DATASET_SIZE=1500
 
 cd /cluster/home/spiasecki/terra-baselines
 
