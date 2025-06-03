@@ -59,6 +59,13 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     return model, params
 
 
+def load_neural_network(config, env):
+    """Load neural network model based on config and environment."""
+    rng = jax.random.PRNGKey(0)
+    model, _ = get_model_ready(rng, config, env)
+    return model
+
+
 def normalize(x: Array, x_min: Array, x_max: Array) -> Array:
     """
     Normalizes to [-1, 1]

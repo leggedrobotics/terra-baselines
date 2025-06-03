@@ -8,7 +8,7 @@ import jax
 import argparse
 import pickle
 from pathlib import Path
-from utils.models import get_model_ready
+from utils.models import load_neural_network
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 from terra.actions import TrackedAction, WheeledAction, TrackedActionType, WheeledActionType
@@ -16,13 +16,6 @@ import jax.numpy as jnp
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
-
-
-def load_neural_network(config, env):
-    """Load neural network model based on config and environment."""
-    rng = jax.random.PRNGKey(0)
-    model, _ = get_model_ready(rng, config, env)
-    return model
 
 
 def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed):

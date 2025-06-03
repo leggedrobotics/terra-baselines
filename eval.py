@@ -1,7 +1,7 @@
 import numpy as np
 import jax
 import math
-from utils.models import get_model_ready
+from utils.models import load_neural_network
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 from terra.actions import (
@@ -16,12 +16,6 @@ from utils.utils_ppo import obs_to_model_input, wrap_action
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
-
-
-def load_neural_network(config, env):
-    rng = jax.random.PRNGKey(0)
-    model, _ = get_model_ready(rng, config, env)
-    return model
 
 
 def _append_to_obs(o, obs_log):
