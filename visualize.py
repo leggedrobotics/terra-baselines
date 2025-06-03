@@ -5,7 +5,7 @@ Partially from https://github.com/RobertTLange/gymnax-blines
 import numpy as np
 import jax
 from tqdm import tqdm
-from utils.models import get_model_ready
+from utils.models import load_neural_network
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
@@ -17,12 +17,6 @@ import matplotlib.animation as animation
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
 from terra.config import EnvConfig
-
-
-def load_neural_network(config, env):
-    rng = jax.random.PRNGKey(0)
-    model, _ = get_model_ready(rng, config, env)
-    return model
 
 
 def rollout_episode(
