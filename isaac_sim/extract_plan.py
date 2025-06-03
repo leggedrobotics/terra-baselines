@@ -67,14 +67,16 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
         # Check if DO action and record state if it is
         if action[0] == do_action:
             print(f"DO action at step {t_counter}")
+            action_map = jnp.squeeze(timestep.observation["action_map"]).copy()
+            agent_state = jnp.squeeze(timestep.observation["agent_state"]).copy()
             plan_entry = {
                 'step': t_counter,
-                'action_map': timestep.observation["action_map"][0].copy(),
+                'action_map': action_map,
                 'agent_state': {
-                    'pos_base': timestep.observation["agent_state"][0].copy(),
-                    'angle_base': timestep.observation["agent_state"][1].copy(),
-                    'wheel_angle': timestep.observation["agent_state"][3].copy(),
-                    'loaded': timestep.observation["agent_state"][4].copy()
+                    'pos_base': (agent_state[0], agent_state[1]),
+                    'angle_base': agent_state[2],
+                    'wheel_angle': agent_state[4],
+                    'loaded': jnp.bool_(agent_state[5]),
                 }
             }
             plan.append(plan_entry)
