@@ -136,14 +136,10 @@ def main():
     config.num_test_rollouts = 1  # Only one environment
     config.num_devices = 1
 
-    # TODO: Load map
-    # Here you would load the specific map from args.map_path
-    # For now, we'll use the first map from the log
-
     # Create environment
     env_cfgs = log["env_config"]
     env_cfgs = jax.tree_map(lambda x: x[0][None, ...], env_cfgs)
-    env = TerraEnvBatch(rendering=False, shuffle_maps=False)
+    env = TerraEnvBatch(rendering=False, shuffle_maps=False, single_map_path=args.map_path)
 
     # Load neural network
     model = load_neural_network(config, env)
