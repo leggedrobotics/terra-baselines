@@ -10,6 +10,7 @@ from terra.actions import TrackedAction, WheeledAction, TrackedActionType, Wheel
 import jax.numpy as jnp
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from tensorflow_probability.substrates import jax as tfp
+from train import TrainConfig  # needed for unpickling checkpoints
 
 
 def load_neural_network(config, env):
@@ -110,7 +111,7 @@ def main():
         "-steps",
         "--n_steps",
         type=int,
-        default=200,
+        default=500,
         help="Maximum number of steps"
     )
     parser.add_argument(
