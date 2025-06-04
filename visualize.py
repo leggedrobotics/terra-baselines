@@ -124,13 +124,6 @@ if __name__ == "__main__":
         default=0,
         help="Random seed for the environment.",
     )
-    parser.add_argument(
-        "-pg",
-        "--progressive_gif",
-        type=int,
-        default=0,
-        help="Random seed for the environment.",
-    )
     args, _ = parser.parse_known_args()
     n_envs = args.n_envs_x * args.n_envs_y
 
@@ -145,15 +138,12 @@ if __name__ == "__main__":
     env_cfgs = jax.tree_map(
         lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs
     )  # take first config and replicate
-    progressive_gif = bool(args.progressive_gif)
-    print(f"Using progressive_gif = {progressive_gif}")
     suffle_maps = True
     env = TerraEnvBatch(
         rendering=True,
         n_envs_x_rendering=args.n_envs_x,
         n_envs_y_rendering=args.n_envs_y,
         display=False,
-        progressive_gif=args.progressive_gif,
         shuffle_maps=suffle_maps,
     )
     config.num_embeddings_agent_min = 60  # curriculum.get_num_embeddings_agent_min()
