@@ -22,7 +22,7 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs["local_map_target_pos"],
         obs["local_map_dumpability"],
         obs["local_map_obstacles"],
-        obs["action_map"],
+        obs["action_map"], # not used in the model, performance somehow better without it!
         obs["target_map"],
         obs["traversability_mask"],
         obs["dumpability_mask"],

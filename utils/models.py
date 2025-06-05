@@ -50,7 +50,6 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
-        jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], config["num_prev_actions"])),
     ]
     params = model.init(rng, obs)
@@ -288,14 +287,12 @@ class MapsNet(nn.Module):
         obs["traversability_mask"],
         obs["dumpability_mask"],
         """
-        action_map = obs[7]
         target_map = obs[8]
         traversability_map = obs[9]
         dumpability_mask = obs[10]
 
         x = jnp.concatenate(
             (
-                action_map[..., None],
                 traversability_map[..., None],
                 target_map[..., None],
                 dumpability_mask[..., None],
