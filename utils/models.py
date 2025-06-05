@@ -287,9 +287,9 @@ class MapsNet(nn.Module):
         obs["traversability_mask"],
         obs["dumpability_mask"],
         """
-        target_map = obs[8]
-        traversability_map = obs[9]
-        dumpability_mask = obs[10]
+        target_map = obs[7]
+        traversability_map = obs[8]
+        dumpability_mask = obs[9]
 
         x = jnp.concatenate(
             (
