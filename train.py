@@ -28,7 +28,7 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "debug"
     group: str = "default"
-    num_envs_per_device: int = 4096
+    num_envs_per_device: int = 32
     num_steps: int = 32
     update_epochs: int = 5
     num_minibatches: int = 32
@@ -131,10 +131,10 @@ def calculate_gae(
         delta = (
             transition.reward
             + gamma * next_value * (1 - transition.done)
-            - transition.value
+            - transition.value_1  # Changed from transition.value to transition.value_1
         )
         gae = delta + gamma * gae_lambda * (1 - transition.done) * gae
-        return (gae, transition.value), gae
+        return (gae, transition.value_1), gae  # Changed from transition.value to transition.value_1
 
     _, advantages = jax.lax.scan(
         _get_advantages,
@@ -143,7 +143,7 @@ def calculate_gae(
         reverse=True,
     )
     # advantages and values (Q)
-    return advantages, advantages + transitions.value
+    return advantages, advantages + transitions.value_1  # Changed from transitions.value to transitions.value_1
 
 
 def ppo_update_networks(
