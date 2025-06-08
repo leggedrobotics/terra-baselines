@@ -103,15 +103,19 @@ def make_states(config: TrainConfig, env_params: EnvConfig = EnvConfig()):
     return rng, env, env_params, train_state
 
 
+# Modify the Transition class to store both agents' data
 class Transition(struct.PyTreeNode):
     done: jax.Array
-    action: jax.Array
-    value: jax.Array
-    reward: jax.Array
-    log_prob: jax.Array
-    obs: jax.Array
-    # for rnn policy
-    prev_actions: jax.Array
+    action_1: jax.Array  # Agent 1's action
+    action_2: jax.Array  # Agent 2's action
+    value_1: jax.Array   # Agent 1's value
+    value_2: jax.Array   # Agent 2's value
+    reward: jax.Array    # Joint reward
+    log_prob_1: jax.Array  # Agent 1's log prob
+    log_prob_2: jax.Array  # Agent 2's log prob
+    obs: jax.Array       # Original observation
+    prev_actions_1: jax.Array  # Agent 1's previous actions
+    prev_actions_2: jax.Array  # Agent 2's previous actions
     prev_reward: jax.Array
 
 
@@ -145,8 +149,8 @@ def calculate_gae(
 def ppo_update_networks(
     train_state: TrainState,
     transitions: Transition,
-    advantages: jax.Array,
-    targets: jax.Array,
+    advantages: jax.Array,  # This should now be [2, ...] for both agents
+    targets: jax.Array,     # This should now be [2, ...] for both agents
     config,
 ):
     clip_eps = config.clip_eps
@@ -157,63 +161,93 @@ def ppo_update_networks(
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
     def _loss_fn(params):
-        # Terra: Reshape
-        # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
-        print(f"ppo_update_networks {transitions.obs['agent_state_1'].shape=}")
-        print(f"ppo_update_networks {transitions.prev_actions.shape=}")
+        # Process Agent 1's data
         transitions_obs_reshaped = jax.tree_map(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
             transitions.obs,
         )
-        transitions_actions_reshaped = jax.tree_map(
-            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
-            transitions.prev_actions,
+        transitions_actions_1_reshaped = jnp.reshape(
+            transitions.prev_actions_1, (-1, *transitions.prev_actions_1.shape[2:])
         )
-        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state_1'].shape=}")
-        print(f"ppo_update_networks {transitions_actions_reshaped.shape=}")
-
-        # Create dummy prev_actions_2 (all do_nothing)
-        do_nothing_idx = 6  # Assuming DO action index is 6
-        prev_actions_2_dummy = jnp.full_like(transitions_actions_reshaped, do_nothing_idx)
-
-        # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
-        obs = obs_to_model_input(
+        transitions_actions_2_reshaped = jnp.reshape(
+            transitions.prev_actions_2, (-1, *transitions.prev_actions_2.shape[2:])
+        )
+        
+        # Agent 1 perspective (original observation)
+        obs_agent1 = obs_to_model_input(
             transitions_obs_reshaped, 
-            transitions_actions_reshaped, 
-            prev_actions_2_dummy, 
+            transitions_actions_1_reshaped, 
+            transitions_actions_2_reshaped, 
             config
         )
-        value, dist = policy(train_state.apply_fn, params, obs)
-        value = value[:, 0]
+        value1, dist1 = policy(train_state.apply_fn, params, obs_agent1)
+        value1 = value1[:, 0]
+        
+        # Agent 2 perspective (swapped observation)
+        obs_for_agent2 = transitions_obs_reshaped.copy()
+        obs_for_agent2["agent_state_1"] = transitions_obs_reshaped["agent_state_2"]
+        obs_for_agent2["agent_state_2"] = transitions_obs_reshaped["agent_state_1"]
+        
+        local_map_keys_agent1 = [
+            "local_map_action_neg", "local_map_action_pos", "local_map_target_neg", 
+            "local_map_target_pos", "local_map_dumpability", "local_map_obstacles"
+        ]
+        local_map_keys_agent2 = [key + "_2" for key in local_map_keys_agent1]
+        for key1, key2 in zip(local_map_keys_agent1, local_map_keys_agent2):
+            obs_for_agent2[key1] = transitions_obs_reshaped[key2]
+            obs_for_agent2[key2] = transitions_obs_reshaped[key1]
+        
+        obs_agent2 = obs_to_model_input(
+            obs_for_agent2, 
+            transitions_actions_2_reshaped, 
+            transitions_actions_1_reshaped,  # Swapped
+            config
+        )
+        value2, dist2 = policy(train_state.apply_fn, params, obs_agent2)
+        value2 = value2[:, 0]
         
         # Reshape actions for log_prob calculation
-        transitions_actions_reshaped = jnp.reshape(
-            transitions.action, (-1, *transitions.action.shape[2:])
-        )
-        log_prob = dist.log_prob(transitions_actions_reshaped)
-
-        # Terra: Reshape back to original dimensions
-        value = jnp.reshape(value, transitions.value.shape)
-        log_prob = jnp.reshape(log_prob, transitions.log_prob.shape)
-
-        # CALCULATE VALUE LOSS
-        value_pred_clipped = transitions.value + (value - transitions.value).clip(
-            -clip_eps, clip_eps
-        )
-        value_loss = jnp.square(value - targets)
-        value_loss_clipped = jnp.square(value_pred_clipped - targets)
-        value_loss = 0.5 * jnp.maximum(value_loss, value_loss_clipped).mean()
-
-        # CALCULATE ACTOR LOSS
-        ratio = jnp.exp(log_prob - transitions.log_prob)
-        actor_loss1 = advantages * ratio
-        actor_loss2 = advantages * jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
-        actor_loss = -jnp.minimum(actor_loss1, actor_loss2).mean()
-        entropy = dist.entropy().mean()
-
+        action1_reshaped = jnp.reshape(transitions.action_1, (-1, *transitions.action_1.shape[2:]))
+        action2_reshaped = jnp.reshape(transitions.action_2, (-1, *transitions.action_2.shape[2:]))
+        
+        log_prob1 = dist1.log_prob(action1_reshaped)
+        log_prob2 = dist2.log_prob(action2_reshaped)
+        
+        # Reshape back to original dimensions
+        value1 = jnp.reshape(value1, transitions.value_1.shape)
+        value2 = jnp.reshape(value2, transitions.value_2.shape)
+        log_prob1 = jnp.reshape(log_prob1, transitions.log_prob_1.shape)
+        log_prob2 = jnp.reshape(log_prob2, transitions.log_prob_2.shape)
+        
+        # Calculate value losses for both agents
+        value_loss1 = calculate_value_loss(value1, transitions.value_1, targets[0], clip_eps)
+        value_loss2 = calculate_value_loss(value2, transitions.value_2, targets[1], clip_eps)
+        value_loss = 0.5 * (value_loss1 + value_loss2)
+        
+        # Calculate actor losses for both agents
+        actor_loss1 = calculate_actor_loss(log_prob1, transitions.log_prob_1, advantages[0], clip_eps)
+        actor_loss2 = calculate_actor_loss(log_prob2, transitions.log_prob_2, advantages[1], clip_eps)
+        actor_loss = -0.5 * (actor_loss1 + actor_loss2)
+        
+        # Calculate entropy for both distributions
+        entropy = 0.5 * (dist1.entropy().mean() + dist2.entropy().mean())
+        
         total_loss = actor_loss + vf_coef * value_loss - ent_coef * entropy
         return total_loss, (value_loss, actor_loss, entropy)
-
+        
+    # Helper functions for cleaner code    
+    def calculate_value_loss(value, old_value, targets, clip_eps):
+        value_pred_clipped = old_value + (value - old_value).clip(-clip_eps, clip_eps)
+        value_loss = jnp.square(value - targets)
+        value_loss_clipped = jnp.square(value_pred_clipped - targets)
+        return jnp.maximum(value_loss, value_loss_clipped).mean()
+        
+    def calculate_actor_loss(log_prob, old_log_prob, advantages, clip_eps):
+        ratio = jnp.exp(log_prob - old_log_prob)
+        actor_loss1 = advantages * ratio
+        actor_loss2 = advantages * jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
+        return jnp.minimum(actor_loss1, actor_loss2).mean()
+    
     (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
         train_state.params
     )
@@ -319,47 +353,60 @@ def make_train(
                 """
                 rng, train_state, prev_timestep, prev_actions_1, prev_actions_2, prev_reward = runner_state
 
-                # SELECT ACTION using centralized policy
-                rng, _rng_model, _rng_env = jax.random.split(rng, 3)
-                action, log_prob, value, _ = select_action_ppo(
-                    train_state, prev_timestep.observation, prev_actions_1, prev_actions_2, _rng_model, config
-                )
+                # Split RNG key for multiple policy calls and environment step
+                rng_model_1, rng_model_2, rng_env_step, rng_next_step = jax.random.split(rng, 4)
 
-                # STEP ENV - agent 1 gets policy action, agent 2 does nothing
-                _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
-                action_env_1 = wrap_action(action, env.batch_cfg.action_type)
+                obs_current = prev_timestep.observation
                 
-                # Create DO_NOTHING action for agent 2
-                do_nothing_action = env.batch_cfg.action_type.do_nothing()
-                action_env_2 = jax.tree_map(
-                    lambda proto_leaf, fill_val_leaf: jnp.full_like(proto_leaf, fill_val_leaf),
-                    action_env_1,  # Pass action_env_1 as the first tree for prototype leaves
-                    do_nothing_action  # Pass do_nothing_action as the second tree for fill value leaves
+                # --- Action for Agent 1 ---
+                action1_raw, log_prob1, value1, _ = select_action_ppo(
+                    train_state, obs_current, prev_actions_1, prev_actions_2, rng_model_1, config
                 )
+                action_env_1 = wrap_action(action1_raw, env.batch_cfg.action_type)
+
+                # --- Action for Agent 2 (rotated perspective) ---
+                obs_for_agent2_persp = obs_current.copy()
+                obs_for_agent2_persp["agent_state_1"] = obs_current["agent_state_2"]
+                obs_for_agent2_persp["agent_state_2"] = obs_current["agent_state_1"]
+                local_map_keys_agent1 = [
+                    "local_map_action_neg", "local_map_action_pos", "local_map_target_neg", 
+                    "local_map_target_pos", "local_map_dumpability", "local_map_obstacles"
+                ]
+                local_map_keys_agent2 = [key + "_2" for key in local_map_keys_agent1]
+                for key1, key2 in zip(local_map_keys_agent1, local_map_keys_agent2):
+                    obs_for_agent2_persp[key1] = obs_current[key2]
+                    obs_for_agent2_persp[key2] = obs_current[key1]
                 
-                timestep = env.step(prev_timestep, action_env_1, action_env_2, _rng_env)
+                action2_raw, log_prob2, value2, _ = select_action_ppo(
+                    train_state, obs_for_agent2_persp, prev_actions_2, prev_actions_1, rng_model_2, config
+                )
+                action_env_2 = wrap_action(action2_raw, env.batch_cfg.action_type)
                 
+                # Step environment with both agents' actions
+                _rng_env_split = jax.random.split(rng_env_step, config.num_envs_per_device)
+                timestep = env.step(prev_timestep, action_env_1, action_env_2, _rng_env_split)
+                
+                # Store data for both agents
                 transition = Transition(
                     done=timestep.done,
-                    action=action,
-                    value=value,
+                    action_1=action1_raw,
+                    action_2=action2_raw,
+                    value_1=value1,
+                    value_2=value2,
                     reward=timestep.reward,
-                    log_prob=log_prob,
-                    obs=prev_timestep.observation,
-                    prev_actions=prev_actions_1,  # Store agent 1's previous actions
+                    log_prob_1=log_prob1,
+                    log_prob_2=log_prob2,
+                    obs=obs_current,
+                    prev_actions_1=prev_actions_1,
+                    prev_actions_2=prev_actions_2,
                     prev_reward=prev_reward,
                 )
 
-                # UPDATE PREVIOUS ACTIONS for both agents
-                prev_actions_1 = jnp.roll(prev_actions_1, shift=1, axis=-1)
-                prev_actions_1 = prev_actions_1.at[..., 0].set(action)
-                
-                # Agent 2 always does nothing (action = do_nothing index)
-                do_nothing_idx = env.batch_cfg.action_type.do_nothing().action
-                prev_actions_2 = jnp.roll(prev_actions_2, shift=1, axis=-1)
-                prev_actions_2 = prev_actions_2.at[..., 0].set(do_nothing_idx)
+                # Update previous actions for both agents
+                new_prev_actions_1 = jnp.roll(prev_actions_1, shift=1, axis=-1).at[..., 0].set(action1_raw)
+                new_prev_actions_2 = jnp.roll(prev_actions_2, shift=1, axis=-1).at[..., 0].set(action2_raw)
 
-                runner_state = (rng, train_state, timestep, prev_actions_1, prev_actions_2, timestep.reward)
+                runner_state = (rng_next_step, train_state, timestep, new_prev_actions_1, new_prev_actions_2, timestep.reward)
                 return runner_state, transition
 
             # transitions: [seq_len, batch_size, ...]
