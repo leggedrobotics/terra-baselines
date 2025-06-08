@@ -36,17 +36,34 @@ def rollout(
 ) -> RolloutStats:
     """Perform a rollout in the environment using the policy."""
     
-    # Initialize the env
+    # Initialize the env - pass env_params as the first argument
     key_reset, rng = jax.random.split(rng)
-    reset_keys = jax.random.split(key_reset, env.batch_num_envs)
-    timestep = env.reset(reset_keys)
+    num_envs = config.num_envs_per_device
+    reset_keys = jax.random.split(key_reset, num_envs)
+    timestep = env.reset(env_params, reset_keys)
     
     # Initialize previous action arrays
-    prev_actions_1 = jnp.zeros((env.batch_num_envs, config.num_prev_actions))
-    prev_actions_2 = jnp.zeros((env.batch_num_envs, config.num_prev_actions))
+    prev_actions_1 = jnp.zeros((num_envs, config.num_prev_actions))
+    prev_actions_2 = jnp.zeros((num_envs, config.num_prev_actions))
 
-    # Initialize statistics
-    stats = RolloutStats()
+    # Initialize statistics with correct batch dimension to match rewards
+    stats = RolloutStats(
+        max_reward=jnp.full(num_envs, -100.0),
+        min_reward=jnp.full(num_envs, 100.0),
+        reward=jnp.zeros(num_envs),
+        length=jnp.zeros(num_envs),
+        episodes=jnp.zeros(num_envs),
+        positive_terminations=jnp.zeros(num_envs),
+        terminations=jnp.zeros(num_envs),
+        positive_terminations_steps=jnp.zeros(num_envs),
+        action_0=jnp.zeros(num_envs),
+        action_1=jnp.zeros(num_envs),
+        action_2=jnp.zeros(num_envs),
+        action_3=jnp.zeros(num_envs),
+        action_4=jnp.zeros(num_envs),
+        action_5=jnp.zeros(num_envs),
+        action_6=jnp.zeros(num_envs),
+    )
 
     # While loop condition: continue until done
     def _cond_fn(carry):
@@ -69,7 +86,7 @@ def rollout(
             key_action,
             config,
         )
-        action1_raw, action2_raw = actions_tuple  # Unpack actions for each agent
+        action1_raw, action2_raw = actions_tuple
 
         # Wrap actions for environment
         action_env_1 = wrap_action(action1_raw, env.batch_cfg.action_type)
@@ -77,25 +94,53 @@ def rollout(
 
         # Step the environment
         key_step, rng = jax.random.split(rng)
-        env_step_keys = jax.random.split(key_step, env.batch_num_envs)
+        env_step_keys = jax.random.split(key_step, num_envs)
         timestep = env.step(timestep, action_env_1, action_env_2, env_step_keys)
 
-        # Update previous actions for both agents
+        # Update previous actions
         new_prev_actions_1 = jnp.roll(prev_actions_1, shift=1, axis=1).at[:, 0].set(action1_raw)
         new_prev_actions_2 = jnp.roll(prev_actions_2, shift=1, axis=1).at[:, 0].set(action2_raw)
 
-        # Update episode stats
-        new_reward = stats.reward + timestep.reward
-        new_max_reward = jnp.maximum(stats.max_reward, timestep.reward)
-        new_min_reward = jnp.minimum(stats.min_reward, timestep.reward)
-        stats = RolloutStats(
-            reward=new_reward, max_reward=new_max_reward, min_reward=new_min_reward
+        # Update stats with consistent shapes
+        new_stats = RolloutStats(
+            max_reward=jnp.maximum(stats.max_reward, timestep.reward),
+            min_reward=jnp.minimum(stats.min_reward, timestep.reward),
+            reward=stats.reward + timestep.reward,
+            length=stats.length + 1,
+            episodes=stats.episodes,
+            positive_terminations=stats.positive_terminations,
+            terminations=stats.terminations,
+            positive_terminations_steps=stats.positive_terminations_steps,
+            action_0=stats.action_0,
+            action_1=stats.action_1,
+            action_2=stats.action_2,
+            action_3=stats.action_3,
+            action_4=stats.action_4,
+            action_5=stats.action_5,
+            action_6=stats.action_6,
         )
 
-        return rng, env_state, timestep, new_prev_actions_1, new_prev_actions_2, stats
+        return rng, env_state, timestep, new_prev_actions_1, new_prev_actions_2, new_stats
 
     # Run the episode
     carry = (rng, None, timestep, prev_actions_1, prev_actions_2, stats)
     _, _, _, _, _, final_stats = jax.lax.while_loop(_cond_fn, _body_fn, carry)
     
-    return final_stats
+    # Aggregate stats across batch dimension for final output
+    return RolloutStats(
+        max_reward=jnp.max(final_stats.max_reward),
+        min_reward=jnp.min(final_stats.min_reward),
+        reward=jnp.mean(final_stats.reward),
+        length=jnp.mean(final_stats.length),
+        episodes=jnp.sum(final_stats.episodes),
+        positive_terminations=jnp.sum(final_stats.positive_terminations),
+        terminations=jnp.sum(final_stats.terminations),
+        positive_terminations_steps=jnp.sum(final_stats.positive_terminations_steps),
+        action_0=jnp.mean(final_stats.action_0),
+        action_1=jnp.mean(final_stats.action_1),
+        action_2=jnp.mean(final_stats.action_2),
+        action_3=jnp.mean(final_stats.action_3),
+        action_4=jnp.mean(final_stats.action_4),
+        action_5=jnp.mean(final_stats.action_5),
+        action_6=jnp.mean(final_stats.action_6),
+    )

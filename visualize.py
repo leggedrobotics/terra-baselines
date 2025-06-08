@@ -27,7 +27,13 @@ def rollout_episode(
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, rl_config.num_test_rollouts)
     timestep = env.reset(env_cfgs, rng_reset)
-    prev_actions = jnp.zeros(
+    
+    # Initialize previous actions for both agents
+    prev_actions_1 = jnp.zeros(
+        (rl_config.num_test_rollouts, rl_config.num_prev_actions),
+        dtype=jnp.int32
+    )
+    prev_actions_2 = jnp.zeros(
         (rl_config.num_test_rollouts, rl_config.num_prev_actions),
         dtype=jnp.int32
     )
@@ -38,30 +44,46 @@ def rollout_episode(
     while True:
         obs_seq.append(timestep.observation)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
+        
         if model is not None:
-            obs = obs_to_model_input(timestep.observation, prev_actions, rl_config)
+            # Get observations and convert to model input
+            obs = obs_to_model_input(timestep.observation, prev_actions_1, prev_actions_2, rl_config)
+            
+            # Get actions from policy
             v, logits_pi = model.apply(model_params, obs)
             pi = tfp.distributions.Categorical(logits=logits_pi)
-            action = pi.sample(seed=rng_act)
-            prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
-            prev_actions = prev_actions.at[:, 0].set(action)
+            
+            # Sample actions for both agents
+            action_keys = jax.random.split(rng_act, 2)
+            action1 = pi.sample(seed=action_keys[0])
+            action2 = pi.sample(seed=action_keys[1])  # Or use specific logic for second agent
+            
+            # Update previous actions
+            prev_actions_1 = jnp.roll(prev_actions_1, shift=1, axis=1)
+            prev_actions_1 = prev_actions_1.at[:, 0].set(action1)
+            
+            prev_actions_2 = jnp.roll(prev_actions_2, shift=1, axis=1)
+            prev_actions_2 = prev_actions_2.at[:, 0].set(action2)
         else:
             raise RuntimeError("Model is None!")
+        
+        # Wrap actions for environment
+        action_env_1 = wrap_action(action1, env.batch_cfg.action_type)
+        action_env_2 = wrap_action(action2, env.batch_cfg.action_type)
+        
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
         timestep = env.step(
-            timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
+            timestep, action_env_1, action_env_2, rng_step
         )
+        
         reward_seq.append(timestep.reward)
-        print(t_counter, timestep.reward, action, timestep.done)
+        print(t_counter, timestep.reward, action1, action2, timestep.done)
         print(10 * "=")
         t_counter += 1
-        # if done or t_counter == max_frames:
-        #     break
-        # else:
+        
         if jnp.all(timestep.done).item() or t_counter == max_frames:
             break
-        # env_state = next_env_state
-        # obs = next_obs
+    
     print(f"Terra - Steps: {t_counter}, Return: {np.sum(reward_seq)}")
     return obs_seq, np.cumsum(reward_seq)
 
