@@ -402,14 +402,15 @@ class CentralizedTwoAgentNet(nn.Module):
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
 
-        # Value and policy heads - output single action for active agent
+        # Value and policy heads - output actions for both agents
         self.mlp_v = MLP(
             hidden_dim_layers=self.hidden_dim_v,
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=0.01,
         )
+        # Modified to output 2*num_actions (for both agents)
         self.mlp_pi = MLP(
-            hidden_dim_layers=self.hidden_dim_pi + (num_actions,),
+            hidden_dim_layers=self.hidden_dim_pi + (2 * num_actions,),
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=0.01,
         )
@@ -449,11 +450,16 @@ class CentralizedTwoAgentNet(nn.Module):
         x = jnp.concatenate((x_agent_states, x_local_maps, x_global_maps, x_actions), axis=-1)
         x = self.activation(x)
 
-        # Output value and policy for the active agent
+        # Output value and policy for both agents
         v = self.mlp_v(x)
         xpi = self.mlp_pi(x)
-
-        return v, xpi
+        
+        # Split policy logits for each agent
+        num_actions = self.action_type.get_num_actions()
+        agent1_pi = xpi[..., :num_actions]
+        agent2_pi = xpi[..., num_actions:]
+        
+        return v, (agent1_pi, agent2_pi)
 
 
 class AtariCNN(nn.Module):

@@ -28,7 +28,7 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "debug"
     group: str = "default"
-    num_envs_per_device: int = 4096
+    num_envs_per_device: int = 32
     num_steps: int = 32
     update_epochs: int = 5
     num_minibatches: int = 32
@@ -149,16 +149,20 @@ def calculate_gae(
 def ppo_update_networks(
     train_state: TrainState,
     transitions: Transition,
-    advantages: jax.Array,  # This should now be [2, ...] for both agents
-    targets: jax.Array,     # This should now be [2, ...] for both agents
+    advantages: tuple,
+    targets: tuple,
     config,
 ):
     clip_eps = config.clip_eps
     vf_coef = config.vf_coef
     ent_coef = config.ent_coef
 
-    # NORMALIZE ADVANTAGES
-    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    # NORMALIZE ADVANTAGES - update for tuple format
+    advantages_normalized = (
+        (advantages[0] - advantages[0].mean()) / (advantages[0].std() + 1e-8),
+        (advantages[1] - advantages[1].mean()) / (advantages[1].std() + 1e-8)
+    )
+    advantages = advantages_normalized
 
     def _loss_fn(params):
         # Process Agent 1's data
@@ -180,7 +184,8 @@ def ppo_update_networks(
             transitions_actions_2_reshaped, 
             config
         )
-        value1, dist1 = policy(train_state.apply_fn, params, obs_agent1)
+        value1, dists = policy(train_state.apply_fn, params, obs_agent1)
+        pi1, _ = dists  # Extract agent1's distribution
         value1 = value1[:, 0]
         
         # Agent 2 perspective (swapped observation)
@@ -203,15 +208,16 @@ def ppo_update_networks(
             transitions_actions_1_reshaped,  # Swapped
             config
         )
-        value2, dist2 = policy(train_state.apply_fn, params, obs_agent2)
+        value2, dists2 = policy(train_state.apply_fn, params, obs_agent2)
+        _, pi2 = dists2  # Extract agent2's distribution
         value2 = value2[:, 0]
         
         # Reshape actions for log_prob calculation
         action1_reshaped = jnp.reshape(transitions.action_1, (-1, *transitions.action_1.shape[2:]))
         action2_reshaped = jnp.reshape(transitions.action_2, (-1, *transitions.action_2.shape[2:]))
         
-        log_prob1 = dist1.log_prob(action1_reshaped)
-        log_prob2 = dist2.log_prob(action2_reshaped)
+        log_prob1 = pi1.log_prob(action1_reshaped)
+        log_prob2 = pi2.log_prob(action2_reshaped)
         
         # Reshape back to original dimensions
         value1 = jnp.reshape(value1, transitions.value_1.shape)
@@ -230,7 +236,7 @@ def ppo_update_networks(
         actor_loss = -0.5 * (actor_loss1 + actor_loss2)
         
         # Calculate entropy for both distributions
-        entropy = 0.5 * (dist1.entropy().mean() + dist2.entropy().mean())
+        entropy = 0.5 * (pi1.entropy().mean() + pi2.entropy().mean())
         
         total_loss = actor_loss + vf_coef * value_loss - ent_coef * entropy
         return total_loss, (value_loss, actor_loss, entropy)
@@ -353,47 +359,38 @@ def make_train(
                 """
                 rng, train_state, prev_timestep, prev_actions_1, prev_actions_2, prev_reward = runner_state
 
-                # Split RNG key for multiple policy calls and environment step
-                rng_model_1, rng_model_2, rng_env_step, rng_next_step = jax.random.split(rng, 4)
+                # Split RNG key for model policy call and environment step
+                rng_model, rng_env_step, rng_next_step = jax.random.split(rng, 3)
 
                 obs_current = prev_timestep.observation
                 
-                # --- Action for Agent 1 ---
-                action1_raw, log_prob1, value1, _ = select_action_ppo(
-                    train_state, obs_current, prev_actions_1, prev_actions_2, rng_model_1, config
+                # Get actions, log_probs, and value for BOTH agents from a SINGLE policy call
+                # select_action_ppo returns: (actions_tuple, log_probs_tuple), value, dists_tuple
+                actions_tuple, log_probs_tuple, value, _ = select_action_ppo(
+                    train_state, obs_current, prev_actions_1, prev_actions_2, rng_model, config
                 )
-                action_env_1 = wrap_action(action1_raw, env.batch_cfg.action_type)
+                action1_raw, action2_raw = actions_tuple # Unpack actions for each agent
+                log_prob1, log_prob2 = log_probs_tuple   # Unpack log_probs for each agent
+                # 'value' is the single value from the centralized critic
 
-                # --- Action for Agent 2 (rotated perspective) ---
-                obs_for_agent2_persp = obs_current.copy()
-                obs_for_agent2_persp["agent_state_1"] = obs_current["agent_state_2"]
-                obs_for_agent2_persp["agent_state_2"] = obs_current["agent_state_1"]
-                local_map_keys_agent1 = [
-                    "local_map_action_neg", "local_map_action_pos", "local_map_target_neg", 
-                    "local_map_target_pos", "local_map_dumpability", "local_map_obstacles"
-                ]
-                local_map_keys_agent2 = [key + "_2" for key in local_map_keys_agent1]
-                for key1, key2 in zip(local_map_keys_agent1, local_map_keys_agent2):
-                    obs_for_agent2_persp[key1] = obs_current[key2]
-                    obs_for_agent2_persp[key2] = obs_current[key1]
-                
-                action2_raw, log_prob2, value2, _ = select_action_ppo(
-                    train_state, obs_for_agent2_persp, prev_actions_2, prev_actions_1, rng_model_2, config
-                )
+                # Wrap actions for the environment
+                action_env_1 = wrap_action(action1_raw, env.batch_cfg.action_type)
                 action_env_2 = wrap_action(action2_raw, env.batch_cfg.action_type)
                 
                 # Step environment with both agents' actions
                 _rng_env_split = jax.random.split(rng_env_step, config.num_envs_per_device)
+                # Assuming env.step is modified or designed to take prev_timestep and two separate action arguments
                 timestep = env.step(prev_timestep, action_env_1, action_env_2, _rng_env_split)
                 
                 # Store data for both agents
+                # The centralized value is used for both value_1 and value_2
                 transition = Transition(
                     done=timestep.done,
                     action_1=action1_raw,
                     action_2=action2_raw,
-                    value_1=value1,
-                    value_2=value2,
-                    reward=timestep.reward,
+                    value_1=value, # Centralized value
+                    value_2=value, # Centralized value
+                    reward=timestep.reward, # Joint reward
                     log_prob_1=log_prob1,
                     log_prob_2=log_prob2,
                     obs=obs_current,
@@ -414,15 +411,38 @@ def make_train(
                 _env_step, runner_state, None, config.num_steps
             )
 
+            # COLLECT TRAJECTORIES (new version) - This second scan seems redundant if the first one collects num_steps.
+            # If it's intended for a different purpose, ensure runner_state_carry is correctly initialized.
+            # For now, assuming the first scan is the primary trajectory collection.
+            # If this second scan is indeed needed and _env_step is called again,
+            # ensure runner_state_carry is correctly formed.
+            # runner_state_carry = runner_state[-1] # This was problematic, runner_state is not a list of states from scan here.
+            # runner_state_carry = runner_state # runner_state is the final state from the first scan.
+            # runner_state, transitions = jax.lax.scan(
+            #     _env_step, runner_state_carry, None, config.num_steps
+            # )
+
+
             # CALCULATE ADVANTAGE
             rng, train_state, timestep, prev_actions_1, prev_actions_2, prev_reward = runner_state
             rng, _rng = jax.random.split(rng)
-            _, _, last_val, _ = select_action_ppo(
+            
+            # Get last_value from the centralized critic using the final observation
+            # select_action_ppo returns: (actions_tuple, log_probs_tuple), value, dists_tuple
+            _, _, last_val_central, _ = select_action_ppo(
                 train_state, timestep.observation, prev_actions_1, prev_actions_2, _rng, config
             )
-            advantages, targets = calculate_gae(
-                transitions, last_val, config.gamma, config.gae_lambda
+            
+            # Calculate GAE. Since critic is centralized, value_1 and value_2 in Transition are the same.
+            # calculate_gae uses transition.value_1.
+            advantages_central, targets_central = calculate_gae(
+                transitions, last_val_central, config.gamma, config.gae_lambda
             )
+
+            # ppo_update_networks expects advantages and targets for each agent.
+            # Since we have a centralized critic and joint reward, these will be the same for both.
+            advantages_for_update = (advantages_central, advantages_central)
+            targets_for_update = (targets_central, targets_central)
 
             # UPDATE NETWORK
             def _update_epoch(update_state, _):
@@ -460,67 +480,35 @@ def make_train(
                     - new_train_state: The training state after applying the updates.
                     - update_info: Information about the updates performed on this minibatch.
                     """
-                    transitions, advantages, targets = batch_info
+                    transitions, advantages_tuple, targets_tuple = batch_info
                     new_train_state, update_info = ppo_update_networks(
                         train_state=train_state,
                         transitions=transitions,
-                        advantages=advantages,
-                        targets=targets,
+                        advantages=advantages_tuple,
+                        targets=targets_tuple,
                         config=config,
                     )
                     return new_train_state, update_info
 
-                rng, train_state, transitions, advantages, targets = update_state
+                rng, train_state, transitions, advantages_tuple, targets_tuple = update_state
 
                 rng, _rng = jax.random.split(rng)
                 
-                # Original shapes:
-                # transitions.obs: (seq_len, num_envs_per_device, obs_dim)
-                # advantages: (seq_len, num_envs_per_device)
-                # targets: (seq_len, num_envs_per_device)
-
-                # Flatten seq_len and num_envs_per_device dimensions to treat all samples independently
-                # New shape for each leaf: (seq_len * num_envs_per_device, ...)
-                flat_transitions = jtu.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), transitions)
-                flat_advantages = advantages.reshape(-1)
-                flat_targets = targets.reshape(-1)
-
-                total_samples_per_device = config.num_steps * config.num_envs_per_device
-                permutation = jax.random.permutation(_rng, total_samples_per_device)
-
-                shuffled_transitions = jtu.tree_map(lambda x: jnp.take(x, permutation, axis=0), flat_transitions)
-                shuffled_advantages = jnp.take(flat_advantages, permutation, axis=0)
-                shuffled_targets = jnp.take(flat_targets, permutation, axis=0)
-
-                # Each minibatch will have total_samples_per_device // num_minibatches samples
-                minibatch_actual_size = total_samples_per_device // config.num_minibatches
-                if total_samples_per_device % config.num_minibatches != 0:
-                    raise ValueError(
-                        f"Total samples per device ({total_samples_per_device}) must be divisible by "
-                        f"num_minibatches ({config.num_minibatches})"
-                    )
-
-                # Reshape to (num_minibatches, minibatch_actual_size, ...)
-                # For _loss_fn, transitions.obs will be (minibatch_actual_size, obs_dim)
-                # transitions.action will be (minibatch_actual_size, action_dim or empty)
-                # This means _loss_fn needs to be compatible with non-sequential data if this path is taken.
-                
-                # The ppo_update_networks function already reshapes transitions.obs and transitions.prev_actions
-                # from (minibatch_size, seq_len, ...) to (minibatch_size * seq_len, ...).
-                # This implies it expects minibatches to be collections of sequences.
-                # So, Solution 1 (adjusting config) is more appropriate if the RNN structure is to be maintained through PPO updates.
-
-                # Sticking to the original interpretation: minibatches are groups of sequences.
-                # batch elements have shape: (seq_len, num_envs_per_device, ...)
-                batch = (transitions, advantages, targets)
-                
-                # After swapaxes, batch elements have shape: (num_envs_per_device, seq_len, ...)
-                batch_swapped = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
+                # Sticking to the original approach of grouping by sequences
+                # Swap axes to get shape (num_envs_per_device, seq_len, ...)
+                transitions_swapped = jtu.tree_map(lambda x: x.swapaxes(0, 1), transitions)
+                advantages_swapped = (advantages_tuple[0].swapaxes(0, 1), 
+                                      advantages_tuple[1].swapaxes(0, 1))
+                targets_swapped = (targets_tuple[0].swapaxes(0, 1), 
+                                   targets_tuple[1].swapaxes(0, 1))
 
                 # Shuffle along the num_envs_per_device dimension
-                shuffled_batch = jtu.tree_map(
-                    lambda x: jnp.take(x, jax.random.permutation(_rng, config.num_envs_per_device), axis=0), batch_swapped
-                )
+                perm = jax.random.permutation(_rng, config.num_envs_per_device)
+                transitions_shuffled = jtu.tree_map(lambda x: jnp.take(x, perm, axis=0), transitions_swapped)
+                advantages_shuffled = (jnp.take(advantages_swapped[0], perm, axis=0), 
+                                       jnp.take(advantages_swapped[1], perm, axis=0))
+                targets_shuffled = (jnp.take(targets_swapped[0], perm, axis=0), 
+                                     jnp.take(targets_swapped[1], perm, axis=0))
                 
                 minibatch_size_envs = config.num_envs_per_device // config.num_minibatches
                 if config.num_envs_per_device % config.num_minibatches != 0:
@@ -530,26 +518,38 @@ def make_train(
                         f"Consider adjusting these TrainConfig values."
                     )
                 
-                # Each minibatch is (minibatch_size_envs, seq_len, ...)
-                minibatches = jtu.tree_map(
+                # Reshape for minibatches
+                transitions_minibatches = jtu.tree_map(
                     lambda x: jnp.reshape(
                         x, (config.num_minibatches, minibatch_size_envs) + x.shape[1:] 
                     ),
-                    shuffled_batch,
+                    transitions_shuffled,
                 )
-                # Now, when _update_minibatch is called, `transitions` will have leading dims (minibatch_size_envs, seq_len, ...)
-                # Inside ppo_update_networks, transitions.obs is reshaped from (N, S, O) to (N*S, O)
-                # This N is minibatch_size_envs.
+                advantages_minibatches = (
+                    jnp.reshape(advantages_shuffled[0], 
+                               (config.num_minibatches, minibatch_size_envs) + advantages_shuffled[0].shape[1:]),
+                    jnp.reshape(advantages_shuffled[1], 
+                               (config.num_minibatches, minibatch_size_envs) + advantages_shuffled[1].shape[1:])
+                )
+                targets_minibatches = (
+                    jnp.reshape(targets_shuffled[0], 
+                               (config.num_minibatches, minibatch_size_envs) + targets_shuffled[0].shape[1:]),
+                    jnp.reshape(targets_shuffled[1], 
+                               (config.num_minibatches, minibatch_size_envs) + targets_shuffled[1].shape[1:])
+                )
+                
+                # Prepare minibatches for _update_minbatch
+                minibatches = (transitions_minibatches, advantages_minibatches, targets_minibatches)
 
                 train_state, update_info = jax.lax.scan(
                     _update_minbatch, train_state, minibatches
                 )
 
-                update_state = (rng, train_state, transitions, advantages, targets) # these transitions are pre-minibatching
+                update_state = (rng, train_state, transitions, advantages_tuple, targets_tuple)
                 return update_state, update_info
 
             # [seq_len, batch_size, num_layers, hidden_dim]
-            update_state = (rng, train_state, transitions, advantages, targets)
+            update_state = (rng, train_state, transitions, advantages_for_update, targets_for_update)
             update_state, loss_info = jax.lax.scan(
                 _update_epoch, update_state, None, config.update_epochs
             )

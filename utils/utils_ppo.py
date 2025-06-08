@@ -59,9 +59,10 @@ def policy(
     params,
     obs,
 ):
-    value, logits_pi = apply_fn(params, obs)
-    pi = tfp.distributions.Categorical(logits=logits_pi)
-    return value, pi
+    value, (logits_pi1, logits_pi2) = apply_fn(params, obs)
+    pi1 = tfp.distributions.Categorical(logits=logits_pi1)
+    pi2 = tfp.distributions.Categorical(logits=logits_pi2)
+    return value, (pi1, pi2)
 
 
 def select_action_ppo(
@@ -73,16 +74,24 @@ def select_action_ppo(
     config,
 ):
     """
-    Select action using centralized policy that observes both agents.
-    Returns action for the currently active agent.
+    Select actions for both agents simultaneously using centralized policy.
     """
     # Prepare policy input from Terra State
     obs = obs_to_model_input(obs, prev_actions_1, prev_actions_2, config)
 
-    value, pi = policy(train_state.apply_fn, train_state.params, obs)
-    action = pi.sample(seed=rng)
-    log_prob = pi.log_prob(action)
-    return action, log_prob, value[:, 0], pi
+    # Get value and both agent policies
+    rng1, rng2 = jax.random.split(rng)
+    value, (pi1, pi2) = policy(train_state.apply_fn, train_state.params, obs)
+    
+    # Sample actions for both agents
+    action1 = pi1.sample(seed=rng1)
+    action2 = pi2.sample(seed=rng2)
+    
+    # Get log probabilities
+    log_prob1 = pi1.log_prob(action1)
+    log_prob2 = pi2.log_prob(action2)
+    
+    return (action1, action2), (log_prob1, log_prob2), value[:, 0], (pi1, pi2)
 
 
 def wrap_action(action, action_type):
