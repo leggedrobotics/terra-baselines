@@ -28,7 +28,7 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "main"
     group: str = "default"
-    num_envs_per_device: int = 4096
+    num_envs_per_device: int = 32 #4096
     num_steps: int = 32
     update_epochs: int = 5
     num_minibatches: int = 32
@@ -159,7 +159,7 @@ def ppo_update_networks(
     def _loss_fn(params):
         # Terra: Reshape
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
-        print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
+        print(f"ppo_update_networks {transitions.obs['agent_state_1'].shape=}")
         print(f"ppo_update_networks {transitions.prev_actions.shape=}")
         transitions_obs_reshaped = jax.tree_map(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
@@ -169,20 +169,30 @@ def ppo_update_networks(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
             transitions.prev_actions,
         )
-        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
+        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state_1'].shape=}")
         print(f"ppo_update_networks {transitions_actions_reshaped.shape=}")
 
+        # Create dummy prev_actions_2 (all do_nothing)
+        do_nothing_idx = 6  # Assuming DO action index is 6
+        prev_actions_2_dummy = jnp.full_like(transitions_actions_reshaped, do_nothing_idx)
+
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
-        obs = obs_to_model_input(transitions_obs_reshaped, transitions_actions_reshaped, config)
+        obs = obs_to_model_input(
+            transitions_obs_reshaped, 
+            transitions_actions_reshaped, 
+            prev_actions_2_dummy, 
+            config
+        )
         value, dist = policy(train_state.apply_fn, params, obs)
         value = value[:, 0]
-        # action = dist.sample(seed=rng_model)
+        
+        # Reshape actions for log_prob calculation
         transitions_actions_reshaped = jnp.reshape(
             transitions.action, (-1, *transitions.action.shape[2:])
         )
         log_prob = dist.log_prob(transitions_actions_reshaped)
 
-        # Terra: Reshape
+        # Terra: Reshape back to original dimensions
         value = jnp.reshape(value, transitions.value.shape)
         log_prob = jnp.reshape(log_prob, transitions.log_prob.shape)
 
@@ -249,9 +259,14 @@ def make_train(
         )
 
         # TERRA: Reset envs
-        reset_fn_p = jax.pmap(env.reset, axis_name="devices")  # vmapped inside
+        reset_fn_p = jax.pmap(env.reset, axis_name="devices")
         timestep = reset_fn_p(env_params, reset_rng)
-        prev_actions = jnp.zeros(
+        
+        # Track previous actions for both agents
+        prev_actions_1 = jnp.zeros(
+            (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
+        )
+        prev_actions_2 = jnp.zeros(
             (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
         )
         prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
@@ -276,7 +291,7 @@ def make_train(
             Returns:
             - runner_state: Updated runner state after performing the update step.
             - loss_info: A dictionary containing information about the loss and other
-                         metrics for this update step.
+                        metrics for this update step.
             """
 
             # COLLECT TRAJECTORIES
@@ -300,37 +315,51 @@ def make_train(
                 Returns:
                 - runner_state: Updated runner state after stepping the environment.
                 - transition: A namedtuple containing the transition information
-                              (current state, action, reward, next state) for this step.
+                            (current state, action, reward, next state) for this step.
                 """
-                rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
+                rng, train_state, prev_timestep, prev_actions_1, prev_actions_2, prev_reward = runner_state
 
-                # SELECT ACTION
+                # SELECT ACTION using centralized policy
                 rng, _rng_model, _rng_env = jax.random.split(rng, 3)
                 action, log_prob, value, _ = select_action_ppo(
-                    train_state, prev_timestep.observation, prev_actions, _rng_model, config
+                    train_state, prev_timestep.observation, prev_actions_1, prev_actions_2, _rng_model, config
                 )
 
-                # STEP ENV
+                # STEP ENV - agent 1 gets policy action, agent 2 does nothing
                 _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
-                action_env = wrap_action(action, env.batch_cfg.action_type)
-                timestep = env.step(prev_timestep, action_env, _rng_env)
+                action_env_1 = wrap_action(action, env.batch_cfg.action_type)
+                
+                # Create DO_NOTHING action for agent 2
+                do_nothing_action = env.batch_cfg.action_type.do_nothing()
+                action_env_2 = jax.tree_map(
+                    lambda proto_leaf, fill_val_leaf: jnp.full_like(proto_leaf, fill_val_leaf),
+                    action_env_1,  # Pass action_env_1 as the first tree for prototype leaves
+                    do_nothing_action  # Pass do_nothing_action as the second tree for fill value leaves
+                )
+                
+                timestep = env.step(prev_timestep, action_env_1, action_env_2, _rng_env)
+                
                 transition = Transition(
-                    # done=timestep.last(),
                     done=timestep.done,
                     action=action,
                     value=value,
                     reward=timestep.reward,
                     log_prob=log_prob,
                     obs=prev_timestep.observation,
-                    prev_actions=prev_actions,
+                    prev_actions=prev_actions_1,  # Store agent 1's previous actions
                     prev_reward=prev_reward,
                 )
 
-                # UPDATE PREVIOUS ACTIONS
-                prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
-                prev_actions = prev_actions.at[..., 0].set(action)
+                # UPDATE PREVIOUS ACTIONS for both agents
+                prev_actions_1 = jnp.roll(prev_actions_1, shift=1, axis=-1)
+                prev_actions_1 = prev_actions_1.at[..., 0].set(action)
+                
+                # Agent 2 always does nothing (action = do_nothing index)
+                do_nothing_idx = env.batch_cfg.action_type.do_nothing().action
+                prev_actions_2 = jnp.roll(prev_actions_2, shift=1, axis=-1)
+                prev_actions_2 = prev_actions_2.at[..., 0].set(do_nothing_idx)
 
-                runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
+                runner_state = (rng, train_state, timestep, prev_actions_1, prev_actions_2, timestep.reward)
                 return runner_state, transition
 
             # transitions: [seq_len, batch_size, ...]
@@ -339,10 +368,10 @@ def make_train(
             )
 
             # CALCULATE ADVANTAGE
-            rng, train_state, timestep, prev_actions, prev_reward = runner_state
+            rng, train_state, timestep, prev_actions_1, prev_actions_2, prev_reward = runner_state
             rng, _rng = jax.random.split(rng)
             _, _, last_val, _ = select_action_ppo(
-                train_state, timestep.observation, prev_actions, _rng, config
+                train_state, timestep.observation, prev_actions_1, prev_actions_2, _rng, config
             )
             advantages, targets = calculate_gae(
                 transitions, last_val, config.gamma, config.gae_lambda
@@ -396,29 +425,80 @@ def make_train(
 
                 rng, train_state, transitions, advantages, targets = update_state
 
-                # MINIBATCHES PREPARATION
                 rng, _rng = jax.random.split(rng)
-                permutation = jax.random.permutation(_rng, config.num_envs_per_device)
-                # [seq_len, batch_size, ...]
-                batch = (transitions, advantages, targets)
-                # [batch_size, seq_len, ...], as our model assumes
-                batch = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
+                
+                # Original shapes:
+                # transitions.obs: (seq_len, num_envs_per_device, obs_dim)
+                # advantages: (seq_len, num_envs_per_device)
+                # targets: (seq_len, num_envs_per_device)
 
+                # Flatten seq_len and num_envs_per_device dimensions to treat all samples independently
+                # New shape for each leaf: (seq_len * num_envs_per_device, ...)
+                flat_transitions = jtu.tree_map(lambda x: x.reshape(-1, *x.shape[2:]), transitions)
+                flat_advantages = advantages.reshape(-1)
+                flat_targets = targets.reshape(-1)
+
+                total_samples_per_device = config.num_steps * config.num_envs_per_device
+                permutation = jax.random.permutation(_rng, total_samples_per_device)
+
+                shuffled_transitions = jtu.tree_map(lambda x: jnp.take(x, permutation, axis=0), flat_transitions)
+                shuffled_advantages = jnp.take(flat_advantages, permutation, axis=0)
+                shuffled_targets = jnp.take(flat_targets, permutation, axis=0)
+
+                # Each minibatch will have total_samples_per_device // num_minibatches samples
+                minibatch_actual_size = total_samples_per_device // config.num_minibatches
+                if total_samples_per_device % config.num_minibatches != 0:
+                    raise ValueError(
+                        f"Total samples per device ({total_samples_per_device}) must be divisible by "
+                        f"num_minibatches ({config.num_minibatches})"
+                    )
+
+                # Reshape to (num_minibatches, minibatch_actual_size, ...)
+                # For _loss_fn, transitions.obs will be (minibatch_actual_size, obs_dim)
+                # transitions.action will be (minibatch_actual_size, action_dim or empty)
+                # This means _loss_fn needs to be compatible with non-sequential data if this path is taken.
+                
+                # The ppo_update_networks function already reshapes transitions.obs and transitions.prev_actions
+                # from (minibatch_size, seq_len, ...) to (minibatch_size * seq_len, ...).
+                # This implies it expects minibatches to be collections of sequences.
+                # So, Solution 1 (adjusting config) is more appropriate if the RNN structure is to be maintained through PPO updates.
+
+                # Sticking to the original interpretation: minibatches are groups of sequences.
+                # batch elements have shape: (seq_len, num_envs_per_device, ...)
+                batch = (transitions, advantages, targets)
+                
+                # After swapaxes, batch elements have shape: (num_envs_per_device, seq_len, ...)
+                batch_swapped = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
+
+                # Shuffle along the num_envs_per_device dimension
                 shuffled_batch = jtu.tree_map(
-                    lambda x: jnp.take(x, permutation, axis=0), batch
+                    lambda x: jnp.take(x, jax.random.permutation(_rng, config.num_envs_per_device), axis=0), batch_swapped
                 )
-                # [num_minibatches, minibatch_size, seq_len, ...]
+                
+                minibatch_size_envs = config.num_envs_per_device // config.num_minibatches
+                if config.num_envs_per_device % config.num_minibatches != 0:
+                    raise ValueError(
+                        f"num_envs_per_device ({config.num_envs_per_device}) must be divisible by "
+                        f"num_minibatches ({config.num_minibatches}). "
+                        f"Consider adjusting these TrainConfig values."
+                    )
+                
+                # Each minibatch is (minibatch_size_envs, seq_len, ...)
                 minibatches = jtu.tree_map(
                     lambda x: jnp.reshape(
-                        x, (config.num_minibatches, -1) + x.shape[1:]
+                        x, (config.num_minibatches, minibatch_size_envs) + x.shape[1:] 
                     ),
                     shuffled_batch,
                 )
+                # Now, when _update_minibatch is called, `transitions` will have leading dims (minibatch_size_envs, seq_len, ...)
+                # Inside ppo_update_networks, transitions.obs is reshaped from (N, S, O) to (N*S, O)
+                # This N is minibatch_size_envs.
+
                 train_state, update_info = jax.lax.scan(
                     _update_minbatch, train_state, minibatches
                 )
 
-                update_state = (rng, train_state, transitions, advantages, targets)
+                update_state = (rng, train_state, transitions, advantages, targets) # these transitions are pre-minibatching
                 return update_state, update_info
 
             # [seq_len, batch_size, num_layers, hidden_dim]
@@ -434,7 +514,7 @@ def make_train(
             # EVALUATE AGENT
             rng, _rng = jax.random.split(rng)
 
-            runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
+            runner_state = (rng, train_state, timestep, prev_actions_1, prev_actions_2, prev_reward)
             return runner_state, loss_info
 
         # Setup runner state for multiple devices
@@ -442,7 +522,7 @@ def make_train(
         rng, rng_rollout = jax.random.split(rng)
         rng = jax.random.split(rng, num=config.num_devices)
         train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
-        runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
+        runner_state = (rng, train_state, timestep, prev_actions_1, prev_actions_2, prev_reward)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
         for i in tqdm(range(config.num_updates), desc="Training"):
             start_time = time.time()  # Start time for measuring iteration speed
