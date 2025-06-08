@@ -209,7 +209,7 @@ class TwoAgentStateNet(nn.Module):
         agent2_features = self._process_single_agent(obs[1])  # agent_state_2
         
         # Fuse both agent states
-        combined_features = jnp.concatenate([agent1_features, agent2_features], axis=-1)
+        combined_features = agent1_features #jnp.concatenate([agent1_features, agent2_features], axis=-1)
         fused_features = self.fusion_mlp(combined_features)
         
         return fused_features
@@ -294,10 +294,10 @@ class TwoAgentLocalMapNet(nn.Module):
         # Process agent 1 local maps (indices 2-7)
         agent1_local = self._process_maps(obs, 2)
         # Process agent 2 local maps (indices 8-13)  
-        agent2_local = self._process_maps(obs, 8)
+        #agent2_local = self._process_maps(obs, 8)
         
         # Fuse both agents' local map features
-        combined_local = jnp.concatenate([agent1_local, agent2_local], axis=-1)
+        combined_local = agent1_local#jnp.concatenate([agent1_local, agent2_local], axis=-1)
         fused_local = self.fusion_mlp(combined_local)
         
         return fused_local
