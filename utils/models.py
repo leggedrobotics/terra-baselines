@@ -171,7 +171,7 @@ class TwoAgentStateNet(nn.Module):
     num_embedding_features: int = 8
     hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
     hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
-    hidden_dim_fusion: Sequence[int] = (64, 32)
+    hidden_dim_fusion: Sequence[int] = (64, 64)
 
     def setup(self) -> None:
         self.embedding = nn.Embed(
@@ -209,7 +209,7 @@ class TwoAgentStateNet(nn.Module):
         agent2_features = self._process_single_agent(obs[1])  # agent_state_2
         
         # Fuse both agent states
-        combined_features = agent1_features #jnp.concatenate([agent1_features, agent2_features], axis=-1)
+        combined_features = jnp.concatenate([agent1_features, agent2_features], axis=-1)
         fused_features = self.fusion_mlp(combined_features)
         
         return fused_features
@@ -219,7 +219,7 @@ class LocalMapNet(nn.Module):
     """Pre-process local maps (for single agent)."""
     map_min_max: Sequence[int]
     mlp_use_layernorm: bool
-    hidden_dim_layers_mlp: Sequence[int] = (256, 64)
+    hidden_dim_layers_mlp: Sequence[int] = (256, 128)
 
     def setup(self) -> None:
         self.mlp = MLP(
@@ -254,8 +254,8 @@ class TwoAgentLocalMapNet(nn.Module):
     """Pre-process local maps for both agents."""
     map_min_max: Sequence[int]
     mlp_use_layernorm: bool
-    hidden_dim_layers_mlp: Sequence[int] = (256, 64)
-    hidden_dim_fusion: Sequence[int] = (128, 64)
+    hidden_dim_layers_mlp: Sequence[int] = (256, 128)
+    hidden_dim_fusion: Sequence[int] = (128, 128)
 
     def setup(self) -> None:
         self.mlp = MLP(
