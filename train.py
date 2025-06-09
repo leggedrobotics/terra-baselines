@@ -159,7 +159,7 @@ def ppo_update_networks(
     def _loss_fn(params):
         # Terra: Reshape
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
-        print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
+        print(f"ppo_update_networks {transitions.obs['agent_state_1'].shape=}")
         print(f"ppo_update_networks {transitions.prev_actions.shape=}")
         transitions_obs_reshaped = jax.tree_map(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
@@ -169,7 +169,7 @@ def ppo_update_networks(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
             transitions.prev_actions,
         )
-        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
+        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state_1'].shape=}")
         print(f"ppo_update_networks {transitions_actions_reshaped.shape=}")
 
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state

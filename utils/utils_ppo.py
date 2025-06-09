@@ -15,7 +15,7 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs = clip_action_map_in_obs(obs)
 
     obs = [
-        obs["agent_state"],
+        obs["agent_state_1"],
         obs["local_map_action_neg"],
         obs["local_map_action_pos"],
         obs["local_map_target_neg"],
