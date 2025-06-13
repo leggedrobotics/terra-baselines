@@ -367,6 +367,8 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     hidden_dim_pi: Sequence[int] = (128, 32)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
     mlp_use_layernorm: bool = False
+    intermediate_mlp_dim: int = 128
+    intermediate_mlp_layers: Sequence[int] = (256, 128)
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
@@ -399,18 +401,32 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             mlp_use_layernorm=self.mlp_use_layernorm,
         )
 
+        # New intermediate MLP to process concatenated features
+        self.intermediate_mlp = MLP(
+            hidden_dim_layers=self.intermediate_mlp_layers + (self.intermediate_mlp_dim,),
+            use_layer_norm=self.mlp_use_layernorm,
+            last_layer_init_scaling=1.0,
+        )
+
         self.activation = nn.relu
 
     def __call__(self, obs: Array) -> Array:
         x_agent_state = self.agent_state_net(obs)
-
         x_maps = self.maps_net(obs)
-
         x_local_map = self.local_map_net(obs)
-
         x_actions = self.actions_net(obs)
-
-        x = jnp.concatenate((x_agent_state, x_maps, x_local_map, x_actions), axis=-1)
+        
+        # Concatenate LocalMapNet, PrevActionNet(actions_net), and StateNet(agent_state_net)
+        combined_features = jnp.concatenate((x_local_map, x_actions, x_agent_state), axis=-1)
+        
+        # Process through intermediate MLP
+        combined_features = self.intermediate_mlp(combined_features)
+        combined_features = self.activation(combined_features)
+        
+        # Concatenate MLP output with MapNet output
+        x = jnp.concatenate((combined_features, x_maps), axis=-1)
+        
+        # Apply final activation
         x = self.activation(x)
 
         v = self.mlp_v(x)

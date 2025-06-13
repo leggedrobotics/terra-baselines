@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -n 1
 #SBATCH --cpus-per-task=8
-#SBATCH --gpus=rtx_4090:2
+#SBATCH --gpus=rtx_4090:8
 #SBATCH --time=12:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
