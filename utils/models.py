@@ -52,6 +52,14 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], config["num_prev_actions"])),
+        # New agent_2 features
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.num_state_obs)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
     ]
     params = model.init(rng, obs)
 
@@ -342,20 +350,11 @@ class PreviousActionsNet(nn.Module):
 
 class SimplifiedCoupledCategoricalNet(nn.Module):
     """
-    The full net.
-
-    The obs List follows the following order:
-    obs["agent_state"],
-    obs["local_map_action_neg"],
-    obs["local_map_action_pos"],
-    obs["local_map_target_neg"],
-    obs["local_map_target_pos"],
-    obs["local_map_dumpability"],
-    obs["local_map_obstacles"],
-    obs["action_map"],
-    obs["target_map"],
-    obs["traversability_mask"],
-    obs["dumpability_mask"],
+    The full net with shared networks between agents.
+    
+    Both agents share the same networks for state processing, local map processing,
+    and previous action processing. Their features are processed separately through
+    the same intermediate MLP, then concatenated together with map features.
     """
 
     num_prev_actions: int
@@ -373,6 +372,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
 
+        # Final output networks
         self.mlp_v = MLP(
             hidden_dim_layers=self.hidden_dim_v,
             use_layer_norm=self.mlp_use_layernorm,
@@ -384,24 +384,24 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             last_layer_init_scaling=0.01,
         )
 
+        # Shared feature extraction networks for both agents
         self.local_map_net = LocalMapNet(
             map_min_max=self.local_map_min_max, mlp_use_layernorm=self.mlp_use_layernorm
         )
-
         self.agent_state_net = AgentStateNet(
             num_embeddings=self.num_embeddings_agent,
             loaded_max=self.loaded_max,
             mlp_use_layernorm=self.mlp_use_layernorm,
         )
-
-        self.maps_net = MapsNet(self.map_min_max)
-
         self.actions_net = PreviousActionsNet(
             num_actions=num_actions,
             mlp_use_layernorm=self.mlp_use_layernorm,
         )
 
-        # New intermediate MLP to process concatenated features
+        # Global map network
+        self.maps_net = MapsNet(self.map_min_max)
+        
+        # Shared intermediate MLP for processing each agent's features independently
         self.intermediate_mlp = MLP(
             hidden_dim_layers=self.intermediate_mlp_layers + (self.intermediate_mlp_dim,),
             use_layer_norm=self.mlp_use_layernorm,
@@ -411,20 +411,36 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         self.activation = nn.relu
 
     def __call__(self, obs: Array) -> Array:
-        x_agent_state = self.agent_state_net(obs)
+        # Get map features (shared)
         x_maps = self.maps_net(obs)
-        x_local_map = self.local_map_net(obs)
+        
+        # Get shared previous actions
         x_actions = self.actions_net(obs)
         
-        # Concatenate LocalMapNet, PrevActionNet(actions_net), and StateNet(agent_state_net)
-        combined_features = jnp.concatenate((x_local_map, x_actions, x_agent_state), axis=-1)
+        # Process agent_1 features
+        x_agent1_state = self.agent_state_net(self._get_agent1_state_obs(obs))
+        x_agent1_local_map = self.local_map_net(self._get_agent1_local_map_obs(obs))
         
-        # Process through intermediate MLP
-        combined_features = self.intermediate_mlp(combined_features)
-        combined_features = self.activation(combined_features)
+        # Concatenate agent_1 features
+        agent1_features = jnp.concatenate((x_agent1_local_map, x_agent1_state, x_actions), axis=-1)
         
-        # Concatenate MLP output with MapNet output
-        x = jnp.concatenate((combined_features, x_maps), axis=-1)
+        # Process agent_1 features through intermediate MLP
+        agent1_processed = self.intermediate_mlp(agent1_features)
+        agent1_processed = self.activation(agent1_processed)
+        
+        # Process agent_2 features
+        x_agent2_state = self.agent_state_net(self._get_agent2_state_obs(obs))
+        x_agent2_local_map = self.local_map_net(self._get_agent2_local_map_obs(obs))
+        
+        # Concatenate agent_2 features (using same actions)
+        agent2_features = jnp.concatenate((x_agent2_local_map, x_agent2_state, x_actions), axis=-1)
+        
+        # Process agent_2 features through intermediate MLP
+        agent2_processed = self.intermediate_mlp(agent2_features)
+        agent2_processed = self.activation(agent2_processed)
+        
+        # Concatenate processed features from both agents with map features
+        x = jnp.concatenate((agent1_processed, agent2_processed, x_maps), axis=-1)
         
         # Apply final activation
         x = self.activation(x)
@@ -433,3 +449,29 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         xpi = self.mlp_pi(x)
 
         return v, xpi
+    
+    def _get_agent1_state_obs(self, obs):
+        # Create a observation structure for agent 1's state
+        custom_obs = [obs[0]] + [None] * (len(obs) - 1)
+        return custom_obs
+    
+    def _get_agent2_state_obs(self, obs):
+        # Create a observation structure for agent 2's state
+        custom_obs = [obs[12]] + [None] * (len(obs) - 1)
+        return custom_obs
+    
+    def _get_agent1_local_map_obs(self, obs):
+        # Create a observation structure for agent 1's local maps
+        custom_obs = [None]  # Placeholder for state which isn't used by LocalMapNet
+        custom_obs.extend([obs[i] for i in range(1, 7)])  # Local map features
+        custom_obs.extend([None] * (len(obs) - 7))  # Padding
+        return custom_obs
+    
+    def _get_agent2_local_map_obs(self, obs):
+        # Create a observation structure for agent 2's local maps
+        custom_obs = [None]  # Placeholder for state
+        # Map agent 2's features (indices 13-18) to the expected indices (1-6) for LocalMapNet
+        for i in range(6):
+            custom_obs.append(obs[i + 13])
+        custom_obs.extend([None] * (len(obs) - 7))  # Padding
+        return custom_obs
