@@ -43,8 +43,9 @@ def rollout_episode(
             v, logits_pi = model.apply(model_params, obs)
             pi = tfp.distributions.Categorical(logits=logits_pi)
             action = pi.sample(seed=rng_act)
-            prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+            prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
             prev_actions = prev_actions.at[:,0, 0].set(action)
+            prev_actions = jnp.roll(prev_actions, shift=1, axis=-2)
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
