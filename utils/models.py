@@ -51,7 +51,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
-        jnp.zeros((config["num_envs"], config["num_prev_actions"])),
+        jnp.zeros((config["num_envs"], 2, config["num_prev_actions"])),
         # New agent_2 features
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.num_state_obs)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
@@ -427,7 +427,7 @@ class PreviousActionsNet(nn.Module):
         self.activation = nn.relu
 
     def __call__(self, obs: dict[str, Array]):
-        x_actions = obs[11].astype(jnp.int32)
+        x_actions = obs[11][:,0,:].astype(jnp.int32)
         x_actions = self.embedding(x_actions)
 
         x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)

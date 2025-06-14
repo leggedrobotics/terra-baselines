@@ -252,7 +252,7 @@ def make_train(
         reset_fn_p = jax.pmap(env.reset, axis_name="devices")  # vmapped inside
         timestep = reset_fn_p(env_params, reset_rng)
         prev_actions = jnp.zeros(
-            (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
+            (config.num_devices, config.num_envs_per_device, 2,config.num_prev_actions), dtype=jnp.int32
         )
         prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
 
@@ -328,7 +328,8 @@ def make_train(
 
                 # UPDATE PREVIOUS ACTIONS
                 prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
-                prev_actions = prev_actions.at[..., 0].set(action)
+                prev_actions = prev_actions.at[...,0, 0].set(action)
+                prev_actions = jnp.roll(prev_actions, shift=1, axis=-2)
 
                 runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
                 return runner_state, transition
