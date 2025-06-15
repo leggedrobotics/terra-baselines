@@ -40,26 +40,26 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     map_height = env.batch_cfg.maps_dims.maps_edge_length
 
     obs = [
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.num_state_obs)),           # 0: agent_state
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 1: local_map_action_neg
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 2: local_map_action_pos
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 3: local_map_target_neg
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 4: local_map_target_pos
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 5: local_map_dumpability
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 6: local_map_obstacles
-        jnp.zeros((config["num_envs"], map_width, map_height)),                       # 7: action_map
-        jnp.zeros((config["num_envs"], map_width, map_height)),                       # 8: target_map
-        jnp.zeros((config["num_envs"], map_width, map_height)),                       # 9: traversability_mask
-        jnp.zeros((config["num_envs"], map_width, map_height)),                       # 10: dumpability_mask
-        jnp.zeros((config["num_envs"], 2, config["num_prev_actions"])),               # 11: previous_actions
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.num_state_obs)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], 2, config["num_prev_actions"])),
         # New agent_2 features
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.num_state_obs)),           # 12: agent_state_2
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 13: local_map_action_neg_2
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 14: local_map_action_pos_2
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 15: local_map_target_neg_2
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 16: local_map_target_pos_2
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 17: local_map_dumpability_2
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),            # 18: local_map_obstacles_2
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.num_state_obs)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
     ]
     params = model.init(rng, obs)
 
