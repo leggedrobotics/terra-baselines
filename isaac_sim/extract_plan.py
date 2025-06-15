@@ -56,7 +56,7 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
 
         # Update previous actions
         prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
-        prev_actions = prev_actions.at[:,0, 0].set(action)
+        prev_actions = prev_actions.at[:, 0].set(action)
 
         # Take step in environment
         rng_step = jax.random.split(rng_step, 1)

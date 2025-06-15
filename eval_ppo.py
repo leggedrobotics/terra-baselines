@@ -56,9 +56,7 @@ def rollout(
         timestep = env.step(timestep, action_env, _rng_step)
 
         prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
-        prev_actions = prev_actions.at[..., 0,0].set(action)
-        prev_actions = jnp.roll(prev_actions, shift=1, axis=-2)
-
+        prev_actions = prev_actions.at[..., 0].set(action)
 
         terminations_update = timestep.done.sum()
         positive_termination_update = timestep.info["task_done"].sum()
@@ -89,7 +87,7 @@ def rollout(
     rng, _rng_reset = jax.random.split(rng)
     _rng_reset = jax.random.split(_rng_reset, num_envs)
     timestep = env.reset(env_params, _rng_reset)
-    prev_actions = jnp.zeros((num_envs, 2,config.num_prev_actions), dtype=jnp.int32)
+    prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
     init_carry = (rng, RolloutStats(), timestep, prev_actions)
 
     # final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
