@@ -48,7 +48,7 @@ class TrainConfig:
     )
     checkpoint_interval: int = 50  # Number of updates between checkpoints
     # model settings
-    num_prev_actions = 5
+    num_prev_actions = 10
     clip_action_maps = True  # clips the action maps to [-1, 1]
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100
