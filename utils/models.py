@@ -427,7 +427,7 @@ class PreviousActionsNet(nn.Module):
         self.activation = nn.relu
 
     def __call__(self, obs: dict[str, Array]):
-        x_actions = obs[11].astype(jnp.int32)
+        x_actions = obs[11][:,1::2].astype(jnp.int32)
         x_actions = self.embedding(x_actions)
 
         x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
