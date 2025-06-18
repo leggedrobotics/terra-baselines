@@ -29,7 +29,7 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "debug"
     group: str = "default"
-    num_envs_per_device: int = 32
+    num_envs_per_device: int = 4096
     num_steps: int = 32
     update_epochs: int = 5
     num_minibatches: int = 32
