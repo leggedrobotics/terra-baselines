@@ -60,6 +60,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        jnp.zeros((config["num_envs"], config["num_prev_actions"])),
     ]
     params = model.init(rng, obs)
 
@@ -439,20 +440,7 @@ class PreviousActionsNet(nn.Module):
 
 class SimplifiedCoupledCategoricalNet(nn.Module):
     """
-    The full net.
-
-    The obs List follows the following order:
-    obs["agent_state"],
-    obs["local_map_action_neg"],
-    obs["local_map_action_pos"],
-    obs["local_map_target_neg"],
-    obs["local_map_target_pos"],
-    obs["local_map_dumpability"],
-    obs["local_map_obstacles"],
-    obs["action_map"],
-    obs["target_map"],
-    obs["traversability_mask"],
-    obs["dumpability_mask"],
+    The full net for centralized dual-agent policy.
     """
 
     num_prev_actions: int
@@ -469,6 +457,8 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
+        # Double the output size for two agents
+        dual_num_actions = num_actions * 2
 
         self.mlp_v = MLP(
             hidden_dim_layers=self.hidden_dim_v,
@@ -476,7 +466,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             last_layer_init_scaling=0.01,
         )
         self.mlp_pi = MLP(
-            hidden_dim_layers=self.hidden_dim_pi + (num_actions,),
+            hidden_dim_layers=self.hidden_dim_pi + (dual_num_actions,),
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=0.01,
         )
@@ -542,3 +532,36 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         xpi = self.mlp_pi(x)
 
         return v, xpi
+
+
+class PreviousActionsNet2(nn.Module):
+    """
+    Pre-processes the sequence of previous actions for agent 2.
+    """
+    num_actions: int
+    mlp_use_layernorm: bool
+    num_embedding_features: int = 8
+    hidden_dim_layers_mlp: Sequence[int] = (16, 32)
+
+    def setup(self) -> None:
+        self.embedding = nn.Embed(
+            num_embeddings=self.num_actions,
+            features=self.num_embedding_features
+        )
+
+        self.mlp = MLP(
+            hidden_dim_layers=self.hidden_dim_layers_mlp,
+            use_layer_norm=self.mlp_use_layernorm,
+        )
+
+        self.activation = nn.relu
+
+    def __call__(self, obs: dict[str, Array]):
+        x_actions = obs[19].astype(jnp.int32)  # Agent 2 previous actions
+        x_actions = self.embedding(x_actions)
+
+        x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
+        x_flattened = self.mlp(x_flattened)
+
+        x = self.activation(x_flattened)
+        return x

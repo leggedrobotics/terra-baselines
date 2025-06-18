@@ -18,6 +18,7 @@ from flax import struct
 import utils.helpers as helpers
 from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, policy
 import os
+from tensorflow_probability.substrates import jax as tfp
 
 jax.config.update("jax_threefry_partitionable", True)
 
@@ -28,7 +29,7 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "debug"
     group: str = "default"
-    num_envs_per_device: int = 4096
+    num_envs_per_device: int = 32
     num_steps: int = 32
     update_epochs: int = 5
     num_minibatches: int = 32
@@ -105,13 +106,15 @@ def make_states(config: TrainConfig, env_params: EnvConfig = EnvConfig()):
 
 class Transition(struct.PyTreeNode):
     done: jax.Array
-    action: jax.Array
+    action_1: jax.Array
+    action_2: jax.Array
     value: jax.Array
     reward: jax.Array
-    log_prob: jax.Array
+    log_prob_1: jax.Array
+    log_prob_2: jax.Array
     obs: jax.Array
-    # for rnn policy
-    prev_actions: jax.Array
+    prev_actions_1: jax.Array
+    prev_actions_2: jax.Array
     prev_reward: jax.Array
 
 
@@ -148,6 +151,7 @@ def ppo_update_networks(
     advantages: jax.Array,
     targets: jax.Array,
     config,
+    action_type,  # Add action_type parameter
 ):
     clip_eps = config.clip_eps
     vf_coef = config.vf_coef
@@ -157,34 +161,55 @@ def ppo_update_networks(
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
     def _loss_fn(params):
-        # Terra: Reshape
-        # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
-        print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
-        print(f"ppo_update_networks {transitions.prev_actions.shape=}")
+        # Reshape observations and actions
         transitions_obs_reshaped = jax.tree_map(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
             transitions.obs,
         )
-        transitions_actions_reshaped = jax.tree_map(
-            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
-            transitions.prev_actions,
+        transitions_actions_1_reshaped = jnp.reshape(
+            transitions.prev_actions_1, (-1, *transitions.prev_actions_1.shape[2:])
         )
-        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
-        print(f"ppo_update_networks {transitions_actions_reshaped.shape=}")
+        transitions_actions_2_reshaped = jnp.reshape(
+            transitions.prev_actions_2, (-1, *transitions.prev_actions_2.shape[2:])
+        )
 
-        # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
-        obs = obs_to_model_input(transitions_obs_reshaped, transitions_actions_reshaped, config)
+        # Get policy output
+        obs = obs_to_model_input(
+            transitions_obs_reshaped, 
+            transitions_actions_1_reshaped, 
+            transitions_actions_2_reshaped, 
+            config
+        )
         value, dist = policy(train_state.apply_fn, params, obs)
         value = value[:, 0]
-        # action = dist.sample(seed=rng_model)
-        transitions_actions_reshaped = jnp.reshape(
-            transitions.action, (-1, *transitions.action.shape[2:])
-        )
-        log_prob = dist.log_prob(transitions_actions_reshaped)
 
-        # Terra: Reshape
+        # Split logits for two agents
+        num_actions = action_type.get_num_actions()
+        logits_1 = dist.logits[..., :num_actions]
+        logits_2 = dist.logits[..., num_actions:]
+        
+        dist_1 = tfp.distributions.Categorical(logits=logits_1)
+        dist_2 = tfp.distributions.Categorical(logits=logits_2)
+
+        # Reshape actions
+        transitions_action_1_reshaped = jnp.reshape(
+            transitions.action_1, (-1, *transitions.action_1.shape[2:])
+        )
+        transitions_action_2_reshaped = jnp.reshape(
+            transitions.action_2, (-1, *transitions.action_2.shape[2:])
+        )
+
+        log_prob_1 = dist_1.log_prob(transitions_action_1_reshaped)
+        log_prob_2 = dist_2.log_prob(transitions_action_2_reshaped)
+
+        # Reshape back
         value = jnp.reshape(value, transitions.value.shape)
-        log_prob = jnp.reshape(log_prob, transitions.log_prob.shape)
+        log_prob_1 = jnp.reshape(log_prob_1, transitions.log_prob_1.shape)
+        log_prob_2 = jnp.reshape(log_prob_2, transitions.log_prob_2.shape)
+
+        # Combined log probability
+        log_prob = log_prob_1 + log_prob_2
+        old_log_prob = transitions.log_prob_1 + transitions.log_prob_2
 
         # CALCULATE VALUE LOSS
         value_pred_clipped = transitions.value + (value - transitions.value).clip(
@@ -195,11 +220,13 @@ def ppo_update_networks(
         value_loss = 0.5 * jnp.maximum(value_loss, value_loss_clipped).mean()
 
         # CALCULATE ACTOR LOSS
-        ratio = jnp.exp(log_prob - transitions.log_prob)
+        ratio = jnp.exp(log_prob - old_log_prob)
         actor_loss1 = advantages * ratio
         actor_loss2 = advantages * jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
         actor_loss = -jnp.minimum(actor_loss1, actor_loss2).mean()
-        entropy = dist.entropy().mean()
+        
+        # Combined entropy
+        entropy = (dist_1.entropy() + dist_2.entropy()).mean()
 
         total_loss = actor_loss + vf_coef * value_loss - ent_coef * entropy
         return total_loss, (value_loss, actor_loss, entropy)
@@ -251,7 +278,10 @@ def make_train(
         # TERRA: Reset envs
         reset_fn_p = jax.pmap(env.reset, axis_name="devices")  # vmapped inside
         timestep = reset_fn_p(env_params, reset_rng)
-        prev_actions = jnp.zeros(
+        prev_actions_1 = jnp.zeros(
+            (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
+        )
+        prev_actions_2 = jnp.zeros(
             (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
         )
         prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
@@ -302,35 +332,41 @@ def make_train(
                 - transition: A namedtuple containing the transition information
                               (current state, action, reward, next state) for this step.
                 """
-                rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
+                rng, train_state, prev_timestep, prev_actions_1, prev_actions_2, prev_reward = runner_state
 
-                # SELECT ACTION
+                # SELECT ACTIONS FOR BOTH AGENTS
                 rng, _rng_model, _rng_env = jax.random.split(rng, 3)
-                action, log_prob, value, _ = select_action_ppo(
-                    train_state, prev_timestep.observation, prev_actions, _rng_model, config
+                (action_1, action_2), (log_prob_1, log_prob_2), value, _ = select_action_ppo(
+                    train_state, prev_timestep.observation, prev_actions_1, prev_actions_2, _rng_model, config, env.batch_cfg.action_type
                 )
 
-                # STEP ENV
+                # STEP ENV WITH BOTH ACTIONS
                 _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
-                action_env = wrap_action(action, env.batch_cfg.action_type)
-                timestep = env.step(prev_timestep, action_env, _rng_env)
+                action_env_1 = wrap_action(action_1, env.batch_cfg.action_type)
+                action_env_2 = wrap_action(action_2, env.batch_cfg.action_type)
+                timestep = env.step(prev_timestep, action_env_1, action_env_2, _rng_env)
+                
                 transition = Transition(
-                    # done=timestep.last(),
                     done=timestep.done,
-                    action=action,
+                    action_1=action_1,
+                    action_2=action_2,
                     value=value,
                     reward=timestep.reward,
-                    log_prob=log_prob,
+                    log_prob_1=log_prob_1,
+                    log_prob_2=log_prob_2,
                     obs=prev_timestep.observation,
-                    prev_actions=prev_actions,
+                    prev_actions_1=prev_actions_1,
+                    prev_actions_2=prev_actions_2,
                     prev_reward=prev_reward,
                 )
 
-                # UPDATE PREVIOUS ACTIONS
-                prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
-                prev_actions = prev_actions.at[..., 0].set(action)
+                # UPDATE PREVIOUS ACTIONS FOR BOTH AGENTS
+                prev_actions_1 = jnp.roll(prev_actions_1, shift=1, axis=-1)
+                prev_actions_1 = prev_actions_1.at[..., 0].set(action_1)
+                prev_actions_2 = jnp.roll(prev_actions_2, shift=1, axis=-1)
+                prev_actions_2 = prev_actions_2.at[..., 0].set(action_2)
 
-                runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
+                runner_state = (rng, train_state, timestep, prev_actions_1, prev_actions_2, timestep.reward)
                 return runner_state, transition
 
             # transitions: [seq_len, batch_size, ...]
@@ -339,10 +375,10 @@ def make_train(
             )
 
             # CALCULATE ADVANTAGE
-            rng, train_state, timestep, prev_actions, prev_reward = runner_state
+            rng, train_state, timestep, prev_actions_1, prev_actions_2, prev_reward = runner_state
             rng, _rng = jax.random.split(rng)
             _, _, last_val, _ = select_action_ppo(
-                train_state, timestep.observation, prev_actions, _rng, config
+                train_state, timestep.observation, prev_actions_1, prev_actions_2, _rng, config, env.batch_cfg.action_type
             )
             advantages, targets = calculate_gae(
                 transitions, last_val, config.gamma, config.gae_lambda
@@ -391,6 +427,7 @@ def make_train(
                         advantages=advantages,
                         targets=targets,
                         config=config,
+                        action_type=env.batch_cfg.action_type,  # Pass action_type
                     )
                     return new_train_state, update_info
 
@@ -434,7 +471,7 @@ def make_train(
             # EVALUATE AGENT
             rng, _rng = jax.random.split(rng)
 
-            runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
+            runner_state = (rng, train_state, timestep, prev_actions_1, prev_actions_2, prev_reward)
             return runner_state, loss_info
 
         # Setup runner state for multiple devices
@@ -442,7 +479,7 @@ def make_train(
         rng, rng_rollout = jax.random.split(rng)
         rng = jax.random.split(rng, num=config.num_devices)
         train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
-        runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
+        runner_state = (rng, train_state, timestep, prev_actions_1, prev_actions_2, prev_reward)
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
         for i in tqdm(range(config.num_updates), desc="Training"):
             start_time = time.time()  # Start time for measuring iteration speed
@@ -467,7 +504,7 @@ def make_train(
             # Use data from the first device for stats and eval
             loss_info_single = unreplicate(loss_info)
             runner_state_single = unreplicate(runner_state)
-            _, train_state, timestep, prev_actions = runner_state_single[:4]
+            _, train_state, timestep, prev_actions_1, prev_actions_2 = runner_state_single[:5]
             env_params_single = timestep.env_cfg
 
             if i % config.log_train_interval == 0:

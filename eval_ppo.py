@@ -44,24 +44,31 @@ def rollout(
         return jnp.less(stats.length, num_rollouts + 1)
 
     def _body_fn(carry):
-        rng, stats, timestep, prev_actions = carry
+        rng, stats, timestep, prev_actions_1, prev_actions_2 = carry
 
         rng, _rng_step, _rng_model = jax.random.split(rng, 3)
 
-        action, _, _, _ = select_action_ppo(
-            train_state, timestep.observation, prev_actions, _rng_model, config
+        (action_1, action_2), _, _, _ = select_action_ppo(
+            train_state, timestep.observation, prev_actions_1, prev_actions_2, _rng_model, config
         )
+        
         _rng_step = jax.random.split(_rng_step, num_envs)
-        action_env = wrap_action(action, env.batch_cfg.action_type)
-        timestep = env.step(timestep, action_env, _rng_step)
+        action_env_1 = wrap_action(action_1, env.batch_cfg.action_type)
+        action_env_2 = wrap_action(action_2, env.batch_cfg.action_type)
+        timestep = env.step(timestep, action_env_1, action_env_2, _rng_step)
 
-        prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
-        prev_actions = prev_actions.at[..., 0].set(action)
+        prev_actions_1 = jnp.roll(prev_actions_1, shift=1, axis=-1)
+        prev_actions_1 = prev_actions_1.at[..., 0].set(action_1)
+        prev_actions_2 = jnp.roll(prev_actions_2, shift=1, axis=-1)
+        prev_actions_2 = prev_actions_2.at[..., 0].set(action_2)
 
         terminations_update = timestep.done.sum()
         positive_termination_update = timestep.info["task_done"].sum()
         positive_termination_steps_update = (stats.length + 1) * positive_termination_update
 
+        # Update stats (combine actions from both agents)
+        combined_actions = jnp.concatenate([action_1, action_2], axis=0)
+        
         stats = RolloutStats(
             max_reward=jnp.maximum(stats.max_reward, timestep.reward.max()),
             min_reward=jnp.minimum(stats.min_reward, timestep.reward.min()),
@@ -73,22 +80,23 @@ def rollout(
             terminations=stats.terminations + terminations_update,
             positive_terminations_steps=stats.positive_terminations_steps
             + positive_termination_steps_update,
-            action_0=stats.action_0 + (action == 0).sum(),
-            action_1=stats.action_1 + (action == 1).sum(),
-            action_2=stats.action_2 + (action == 2).sum(),
-            action_3=stats.action_3 + (action == 3).sum(),
-            action_4=stats.action_4 + (action == 4).sum(),
-            action_5=stats.action_5 + (action == 5).sum(),
-            action_6=stats.action_6 + (action == 6).sum(),
+            action_0=stats.action_0 + (combined_actions == 0).sum(),
+            action_1=stats.action_1 + (combined_actions == 1).sum(),
+            action_2=stats.action_2 + (combined_actions == 2).sum(),
+            action_3=stats.action_3 + (combined_actions == 3).sum(),
+            action_4=stats.action_4 + (combined_actions == 4).sum(),
+            action_5=stats.action_5 + (combined_actions == 5).sum(),
+            action_6=stats.action_6 + (combined_actions == 6).sum(),
         )
-        carry = (rng, stats, timestep, prev_actions)
+        carry = (rng, stats, timestep, prev_actions_1, prev_actions_2)
         return carry
 
     rng, _rng_reset = jax.random.split(rng)
     _rng_reset = jax.random.split(_rng_reset, num_envs)
     timestep = env.reset(env_params, _rng_reset)
-    prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
-    init_carry = (rng, RolloutStats(), timestep, prev_actions)
+    prev_actions_1 = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
+    prev_actions_2 = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
+    init_carry = (rng, RolloutStats(), timestep, prev_actions_1, prev_actions_2)
 
     # final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
     final_carry = jax.lax.fori_loop(
