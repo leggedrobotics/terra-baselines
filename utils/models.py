@@ -60,7 +60,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], config["num_prev_actions"])),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
     ]
     params = model.init(rng, obs)
 
@@ -291,6 +291,7 @@ class MapsNet(nn.Module):
         target_map = obs[8]
         traversability_map = obs[9]
         dumpability_mask = obs[10]
+        interaction_mask = obs[19]
 
         x = jnp.concatenate(
             (
@@ -298,10 +299,10 @@ class MapsNet(nn.Module):
                 traversability_map[..., None],
                 target_map[..., None],
                 dumpability_mask[..., None],
+                interaction_mask[..., None],
             ),
             axis=-1,
         )
-
         x = self.cnn(x)
         return x
 
