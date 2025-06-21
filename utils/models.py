@@ -406,14 +406,23 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         
         # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
         # Local maps are also included.
-        combined_features = jnp.concatenate(
-            (x_agent_state, x_actions, x_agent_state_2, x_local_map, x_local_map_2), 
+        combined_features_1 = jnp.concatenate(
+            (x_agent_state, x_actions, x_local_map), 
+            axis=-1
+        )
+        combined_features_2 = jnp.concatenate(
+            (x_agent_state_2,x_actions ,x_local_map_2), 
             axis=-1
         )
         
         # Process through intermediate MLP
-        # combined_features = self.intermediate_mlp(combined_features)
-        # combined_features = self.activation(combined_features)
+        combined_features_1 = self.intermediate_mlp(combined_features_1)
+        combined_features_2 = self.intermediate_mlp(combined_features_2)
+        combined_features = jnp.concatenate(
+            (combined_features_1, combined_features_2), 
+            axis=-1
+        )
+        combined_features = self.activation(combined_features)
         
         # Concatenate MLP output with MapNet output
         x = jnp.concatenate((combined_features, x_maps), axis=-1)
