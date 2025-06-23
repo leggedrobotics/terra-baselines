@@ -68,10 +68,12 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
         if action[0] == do_action:
             print(f"DO action at step {t_counter}")
             action_map = jnp.squeeze(timestep.observation["action_map"]).copy()
+            traversability_mask = jnp.squeeze(timestep.observation["traversability_mask"]).copy()
             agent_state = jnp.squeeze(timestep.observation["agent_state"]).copy()
             plan_entry = {
                 'step': t_counter,
                 'action_map': action_map,
+                'traversability_mask': traversability_mask,
                 'agent_state': {
                     'pos_base': (agent_state[0], agent_state[1]),
                     'angle_base': agent_state[2],
