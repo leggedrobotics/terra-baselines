@@ -52,7 +52,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], config["num_prev_actions"])),
-        # New agent_2 features
+        # Agent 2 features
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.num_state_obs)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
@@ -61,6 +61,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], config["num_prev_actions"])),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
     ]
     params = model.init(rng, obs)
 
@@ -158,9 +160,9 @@ class AgentStateNet(nn.Module):
             use_layer_norm=self.mlp_use_layernorm,
         )
 
-    def __call__(self, obs: dict[str, Array]):
-        x_one_hot = obs[0][..., :-1].astype(dtype=jnp.int32)
-        x_loaded = obs[0][..., [-1]].astype(dtype=jnp.int32)
+    def __call__(self, agent_state_obs: Array):
+        x_one_hot = agent_state_obs[..., :-1].astype(dtype=jnp.int32)
+        x_loaded = agent_state_obs[..., [-1]].astype(dtype=jnp.int32)
 
         x_one_hot = self.embedding(x_one_hot)
         x_one_hot = self.mlp_one_hot(x_one_hot.reshape(*x_one_hot.shape[:-2], -1))
@@ -170,44 +172,6 @@ class AgentStateNet(nn.Module):
 
         return jnp.concatenate([x_one_hot, x_continuous], axis=-1)
 
-
-
-class AgentStateNet2(nn.Module):
-    """
-    Pre-process the agent state features.
-    """
-
-    num_embeddings: int
-    loaded_max: int
-    mlp_use_layernorm: bool
-    num_embedding_features: int = 8
-    hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
-    hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
-
-    def setup(self) -> None:
-        self.embedding = nn.Embed(
-            num_embeddings=self.num_embeddings, features=self.num_embedding_features
-        )
-        self.mlp_one_hot = MLP(
-            hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot,
-            use_layer_norm=self.mlp_use_layernorm,
-        )
-        self.mlp_continuous = MLP(
-            hidden_dim_layers=self.hidden_dim_layers_mlp_continuous,
-            use_layer_norm=self.mlp_use_layernorm,
-        )
-
-    def __call__(self, obs: dict[str, Array]):
-        x_one_hot = obs[12][..., :-1].astype(dtype=jnp.int32)
-        x_loaded = obs[12][..., [-1]].astype(dtype=jnp.int32)
-
-        x_one_hot = self.embedding(x_one_hot)
-        x_one_hot = self.mlp_one_hot(x_one_hot.reshape(*x_one_hot.shape[:-2], -1))
-
-        x_loaded = normalize(x_loaded, 0, self.loaded_max)
-        x_continuous = self.mlp_continuous(x_loaded)
-
-        return jnp.concatenate([x_one_hot, x_continuous], axis=-1)
 
 class LocalMapNet(nn.Module):
     """
@@ -224,77 +188,16 @@ class LocalMapNet(nn.Module):
             use_layer_norm=self.mlp_use_layernorm,
         )
 
-    def __call__(self, obs: dict[str, Array]):
+    def __call__(self, local_maps: Sequence[Array]):
         """
-        obs["agent_state"],
-        obs["local_map_action_neg"],
-        obs["local_map_action_pos"],
-        obs["local_map_target_neg"],
-        obs["local_map_target_pos"],
-        obs["local_map_dumpability"],
-        obs["local_map_obstacles"],
-        obs["action_map"],
-        obs["target_map"],
-        obs["traversability_mask"],
-        obs["dumpability_mask"],
+        Processes a sequence of local maps.
         """
-        x_action_neg = normalize(obs[1], self.map_min_max[0], self.map_min_max[1])
-        x_action_pos = normalize(obs[2], self.map_min_max[0], self.map_min_max[1])
-        x_target_neg = normalize(obs[3], self.map_min_max[0], self.map_min_max[1])
-        x_target_pos = normalize(obs[4], self.map_min_max[0], self.map_min_max[1])
-        x_dumpability = obs[5]
-        x_obstacles = obs[6]
-        x = jnp.concatenate(
-            (
-                x_action_neg[..., None],
-                x_action_pos[..., None],
-                x_target_neg[..., None],
-                x_target_pos[..., None],
-                x_dumpability[..., None],
-                x_obstacles[..., None],
-            ),
-            -1,
-        )
-
-        x = self.mlp(x.reshape(*x.shape[:-2], -1))
-        return x
-
-
-class LocalMapNet2(nn.Module):
-    """
-    Pre-process one or multiple maps.
-    """
-
-    map_min_max: Sequence[int]
-    mlp_use_layernorm: bool
-    hidden_dim_layers_mlp: Sequence[int] = (256, 32)
-
-    def setup(self) -> None:
-        self.mlp = MLP(
-            hidden_dim_layers=self.hidden_dim_layers_mlp,
-            use_layer_norm=self.mlp_use_layernorm,
-        )
-
-    def __call__(self, obs: dict[str, Array]):
-        """
-        obs["agent_state"],
-        obs["local_map_action_neg"],
-        obs["local_map_action_pos"],
-        obs["local_map_target_neg"],
-        obs["local_map_target_pos"],
-        obs["local_map_dumpability"],
-        obs["local_map_obstacles"],
-        obs["action_map"],
-        obs["target_map"],
-        obs["traversability_mask"],
-        obs["dumpability_mask"],
-        """
-        x_action_neg = normalize(obs[13], self.map_min_max[0], self.map_min_max[1])
-        x_action_pos = normalize(obs[14], self.map_min_max[0], self.map_min_max[1])
-        x_target_neg = normalize(obs[15], self.map_min_max[0], self.map_min_max[1])
-        x_target_pos = normalize(obs[16], self.map_min_max[0], self.map_min_max[1])
-        x_dumpability = obs[17]
-        x_obstacles = obs[18]
+        x_action_neg = normalize(local_maps[0], self.map_min_max[0], self.map_min_max[1])
+        x_action_pos = normalize(local_maps[1], self.map_min_max[0], self.map_min_max[1])
+        x_target_neg = normalize(local_maps[2], self.map_min_max[0], self.map_min_max[1])
+        x_target_pos = normalize(local_maps[3], self.map_min_max[0], self.map_min_max[1])
+        x_dumpability = local_maps[4]
+        x_obstacles = local_maps[5]
         x = jnp.concatenate(
             (
                 x_action_neg[..., None],
@@ -390,6 +293,8 @@ class MapsNet(nn.Module):
         target_map = obs[8]
         traversability_map = obs[9]
         dumpability_mask = obs[10]
+        interaction_mask_1 = obs[20]
+        interaction_mask_2 = obs[21]
 
         x = jnp.concatenate(
             (
@@ -397,10 +302,11 @@ class MapsNet(nn.Module):
                 traversability_map[..., None],
                 target_map[..., None],
                 dumpability_mask[..., None],
+                interaction_mask_1[..., None],
+                interaction_mask_2[..., None],
             ),
             axis=-1,
         )
-
         x = self.cnn(x)
         return x
 
@@ -427,8 +333,8 @@ class PreviousActionsNet(nn.Module):
 
         self.activation = nn.relu
 
-    def __call__(self, obs: dict[str, Array]):
-        x_actions = obs[11][:,1::2].astype(jnp.int32)
+    def __call__(self, prev_actions: Array):
+        x_actions = prev_actions.astype(jnp.int32)
         x_actions = self.embedding(x_actions)
 
         x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
@@ -440,7 +346,7 @@ class PreviousActionsNet(nn.Module):
 
 class SimplifiedCoupledCategoricalNet(nn.Module):
     """
-    The full net for centralized dual-agent policy.
+    The full net for centralized dual-agent policy with shared parameters.
     """
 
     num_prev_actions: int
@@ -449,7 +355,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     local_map_min_max: Sequence[int]
     loaded_max: int
     action_type: Union[TrackedAction, WheeledAction]
-    hidden_dim_pi: Sequence[int] = (128, 32)
+    hidden_dim_pi: Sequence[int] = (128, 64, 32)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
     mlp_use_layernorm: bool = False
     intermediate_mlp_dim: int = 128
@@ -457,8 +363,6 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
-        # Double the output size for two agents
-        dual_num_actions = num_actions * 2
 
         self.mlp_v = MLP(
             hidden_dim_layers=self.hidden_dim_v,
@@ -466,7 +370,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             last_layer_init_scaling=0.01,
         )
         self.mlp_pi = MLP(
-            hidden_dim_layers=self.hidden_dim_pi + (dual_num_actions,),
+            hidden_dim_layers=self.hidden_dim_pi + (num_actions * 2,),
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=0.01,
         )
@@ -481,16 +385,6 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             mlp_use_layernorm=self.mlp_use_layernorm,
         )
 
-        self.local_map_net_2 = LocalMapNet2(
-            map_min_max=self.local_map_min_max, mlp_use_layernorm=self.mlp_use_layernorm
-        )
-
-        self.agent_state_net_2 = AgentStateNet2(
-            num_embeddings=self.num_embeddings_agent,
-            loaded_max=self.loaded_max,
-            mlp_use_layernorm=self.mlp_use_layernorm,
-        )
-
         self.maps_net = MapsNet(self.map_min_max)
 
         self.actions_net = PreviousActionsNet(
@@ -498,32 +392,31 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             mlp_use_layernorm=self.mlp_use_layernorm,
         )
 
-        # New intermediate MLP to process concatenated features
-        self.intermediate_mlp = MLP(
-            hidden_dim_layers=self.intermediate_mlp_layers + (self.intermediate_mlp_dim,),
-            use_layer_norm=self.mlp_use_layernorm,
-            last_layer_init_scaling=1.0,
-        )
-
         self.activation = nn.relu
 
     def __call__(self, obs: Array) -> Array:
-        x_agent_state = self.agent_state_net(obs)
-        x_agent_state_2 = self.agent_state_net_2(obs)
+        # Process features for both agents using shared networks
+        x_agent_state_1 = self.agent_state_net(obs[0])
+        x_local_map_1 = self.local_map_net(obs[1:7])
+        x_actions_1 = self.actions_net(obs[11])
+
+        x_agent_state_2 = self.agent_state_net(obs[12])
+        x_local_map_2 = self.local_map_net(obs[13:19])
+        x_actions_2 = self.actions_net(obs[19])
+
+        # Process shared map features
         x_maps = self.maps_net(obs)
-        x_local_map = self.local_map_net(obs)
-        x_local_map_2 = self.local_map_net_2(obs)
-        x_actions = self.actions_net(obs)
-        
-        # Concatenate LocalMapNet, PrevActionNet(actions_net), and StateNet(agent_state_net)
-        combined_features = jnp.concatenate((x_local_map, x_actions, x_agent_state,x_agent_state_2,x_local_map_2), axis=-1)
-        
-        # Process through intermediate MLP
-        # combined_features = self.intermediate_mlp(combined_features)
-        # combined_features = self.activation(combined_features)
-        
-        # Concatenate MLP output with MapNet output
-        x = jnp.concatenate((combined_features, x_maps), axis=-1)
+
+        # Concatenate all features into a single vector
+        x = jnp.concatenate([
+            x_agent_state_1,
+            x_local_map_1,
+            x_actions_1,
+            x_agent_state_2,
+            x_local_map_2,
+            x_actions_2,
+            x_maps,
+        ], axis=-1)
         
         # Apply final activation
         x = self.activation(x)
@@ -532,36 +425,3 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         xpi = self.mlp_pi(x)
 
         return v, xpi
-
-
-class PreviousActionsNet2(nn.Module):
-    """
-    Pre-processes the sequence of previous actions for agent 2.
-    """
-    num_actions: int
-    mlp_use_layernorm: bool
-    num_embedding_features: int = 8
-    hidden_dim_layers_mlp: Sequence[int] = (16, 32)
-
-    def setup(self) -> None:
-        self.embedding = nn.Embed(
-            num_embeddings=self.num_actions,
-            features=self.num_embedding_features
-        )
-
-        self.mlp = MLP(
-            hidden_dim_layers=self.hidden_dim_layers_mlp,
-            use_layer_norm=self.mlp_use_layernorm,
-        )
-
-        self.activation = nn.relu
-
-    def __call__(self, obs: dict[str, Array]):
-        x_actions = obs[19].astype(jnp.int32)  # Agent 2 previous actions
-        x_actions = self.embedding(x_actions)
-
-        x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
-        x_flattened = self.mlp(x_flattened)
-
-        x = self.activation(x_flattened)
-        return x

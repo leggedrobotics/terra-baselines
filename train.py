@@ -27,13 +27,13 @@ jax.config.update("jax_threefry_partitionable", True)
 class TrainConfig:
     name: str
     num_devices: int = 0
-    project: str = "debug"
+    project: str = "All_in_all"
     group: str = "default"
     num_envs_per_device: int = 4096
     num_steps: int = 32
     update_epochs: int = 5
     num_minibatches: int = 32
-    total_timesteps: int = 30_000_000_000
+    total_timesteps: int = 200_000_000_000
     lr: float = 3e-4
     clip_eps: float = 0.5
     gamma: float = 0.995
@@ -49,7 +49,7 @@ class TrainConfig:
     )
     checkpoint_interval: int = 50  # Number of updates between checkpoints
     # model settings
-    num_prev_actions = 10
+    num_prev_actions = 5
     clip_action_maps = True  # clips the action maps to [-1, 1]
     local_map_normalization_bounds = [-16, 16]
     loaded_max = 100

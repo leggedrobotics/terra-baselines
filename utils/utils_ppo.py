@@ -36,6 +36,8 @@ def obs_to_model_input(obs, prev_actions_1, prev_actions_2, train_cfg):
         obs["local_map_dumpability_2"],  # [17] - Secondary agent dumpability local map
         obs["local_map_obstacles_2"],    # [18] - Secondary agent obstacles local map
         prev_actions_2,                  # [19] - Agent 2 previous actions history  
+        obs["interaction_mask_1"],  # [20] - Interaction mask for agent 1
+        obs["interaction_mask_2"],  # [21] - Interaction mask for agent
     ]
     return obs
 
