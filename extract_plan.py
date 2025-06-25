@@ -38,6 +38,15 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
 
     # Plan storage
     plan = []
+
+    # Save initial traversability_mask at time 0
+    initial_traversability_mask = jnp.squeeze(timestep.observation["traversability_mask"]).copy()
+    initial_entry = {
+        'step': 0,
+        'traversability_mask': initial_traversability_mask
+    }
+    plan.append(initial_entry)
+
     t_counter = 0
 
     while True:
