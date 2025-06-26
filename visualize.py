@@ -17,6 +17,9 @@ import matplotlib.animation as animation
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
 from terra.config import EnvConfig
+from terra.env import TerraEnvBatch
+from utils.utils_ppo import obs_to_model_input, wrap_action
+from terra.actions import TrackedAction, WheeledAction
 
 
 def rollout_episode(
@@ -27,7 +30,11 @@ def rollout_episode(
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, rl_config.num_test_rollouts)
     timestep = env.reset(env_cfgs, rng_reset)
-    prev_actions = jnp.zeros(
+    prev_actions_1 = jnp.zeros(
+        (rl_config.num_test_rollouts, rl_config.num_prev_actions),
+        dtype=jnp.int32
+    )
+    prev_actions_2 = jnp.zeros(
         (rl_config.num_test_rollouts, rl_config.num_prev_actions),
         dtype=jnp.int32
     )
@@ -39,20 +46,42 @@ def rollout_episode(
         obs_seq.append(timestep.observation)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
-            obs = obs_to_model_input(timestep.observation, prev_actions, rl_config)
+            obs = obs_to_model_input(timestep.observation, prev_actions_1, prev_actions_2, rl_config)
             v, logits_pi = model.apply(model_params, obs)
-            pi = tfp.distributions.Categorical(logits=logits_pi)
-            action = pi.sample(seed=rng_act)
-            prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
-            prev_actions = prev_actions.at[:, 0].set(action)
+            
+            num_actions = env.batch_cfg.action_type.get_num_actions()
+            total_logits = logits_pi.shape[-1]
+
+            if total_logits == 2 * num_actions:
+                logits_1 = logits_pi[..., :num_actions]
+                logits_2 = logits_pi[..., num_actions:]
+                
+                pi_1 = tfp.distributions.Categorical(logits=logits_1)
+                pi_2 = tfp.distributions.Categorical(logits=logits_2)
+                
+                rng_act_1, rng_act_2 = jax.random.split(rng_act)
+                action_1 = pi_1.sample(seed=rng_act_1)
+                action_2 = pi_2.sample(seed=rng_act_2)
+            else:
+                pi = tfp.distributions.Categorical(logits=logits_pi)
+                action = pi.sample(seed=rng_act)
+                action_1 = action
+                action_2 = action
+
+            prev_actions_1 = jnp.roll(prev_actions_1, shift=1, axis=1)
+            prev_actions_1 = prev_actions_1.at[:, 0].set(action_1)
+            prev_actions_2 = jnp.roll(prev_actions_2, shift=1, axis=1)
+            prev_actions_2 = prev_actions_2.at[:, 0].set(action_2)
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
+        action_env_1 = wrap_action(action_1, env.batch_cfg.action_type)
+        action_env_2 = wrap_action(action_2, env.batch_cfg.action_type)
         timestep = env.step(
-            timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
+            timestep, action_env_1, action_env_2, rng_step
         )
         reward_seq.append(timestep.reward)
-        print(t_counter, timestep.reward, action, timestep.done)
+        print(t_counter, timestep.reward, action_1, action_2, timestep.done)
         print(10 * "=")
         t_counter += 1
         # if done or t_counter == max_frames:
