@@ -63,8 +63,14 @@ def select_action_ppo(
 ):
     # Prepare policy input from Terra State
     obs = obs_to_model_input(obs, prev_actions_1, prev_actions_2, config)
-
-    value, pi = policy(train_state.apply_fn, train_state.params, obs)
+    
+    # Handle either TrainState or direct model
+    if hasattr(train_state, 'apply_fn'):
+        value, pi = policy(train_state.apply_fn, train_state.params, obs)
+    else:
+        # If train_state is the model itself
+        value, pi = policy(train_state.apply, model_params, obs)
+    
     action = pi.sample(seed=rng)
     
     # Get action type - try multiple sources
