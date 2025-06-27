@@ -146,28 +146,43 @@ class AgentStateNet(nn.Module):
     hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
 
     def setup(self) -> None:
-        self.embedding = nn.Embed(
+        self.embedding_1 = nn.Embed(
+            num_embeddings=self.num_embeddings, features=self.num_embedding_features
+        )
+        self.embedding_2 = nn.Embed(
             num_embeddings=self.num_embeddings, features=self.num_embedding_features
         )
         self.mlp_one_hot = MLP(
             hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot,
             use_layer_norm=self.mlp_use_layernorm,
         )
+
+        self.mlp_two_hot = MLP(
+            hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot,
+            use_layer_norm=self.mlp_use_layernorm,
+        )
+
         self.mlp_continuous = MLP(
             hidden_dim_layers=self.hidden_dim_layers_mlp_continuous,
             use_layer_norm=self.mlp_use_layernorm,
         )
 
     def __call__(self, agent_state_obs: Array):
-        x_one_hot = agent_state_obs[..., :-1].astype(dtype=jnp.int32)
+        x_one_hot = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)
+        x_two_hot = agent_state_obs[..., 2:5].astype(dtype=jnp.int32)
         x_loaded = agent_state_obs[..., [-1]].astype(dtype=jnp.int32)
 
-        x_one_hot = self.embedding(x_one_hot)
+        x_one_hot = self.embedding_1(x_one_hot)
+        x_two_hot = self.embedding_2(x_two_hot)
+
         x_one_hot = self.mlp_one_hot(x_one_hot.reshape(*x_one_hot.shape[:-2], -1))
+        x_two_hot = self.mlp_two_hot(x_two_hot.reshape(*x_two_hot.shape[:-2], -1))
 
         x_loaded = normalize(x_loaded, 0, self.loaded_max)
         x_continuous = self.mlp_continuous(x_loaded)
-
+        x_one_hot = jnp.concatenate(
+            (x_one_hot, x_two_hot), axis=-1
+        )  # Concatenate one-hot and two-hot embeddings
         return jnp.concatenate([x_one_hot, x_continuous], axis=-1)
 
 
@@ -412,7 +427,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             axis=-1
         )
         combined_features_2 = jnp.concatenate(
-            (x_agent_state_2,x_local_map_2), 
+            (x_agent_state_2, x_local_map_2), 
             axis=-1
         )
         
@@ -423,7 +438,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             (combined_features_1, combined_features_2), 
             axis=-1
         )
-        # combined_features = self.activation(combined_features)
+        combined_features = self.activation(combined_features)
         
         # Concatenate MLP output with MapNet output
         x = jnp.concatenate((combined_features, x_maps), axis=-1)
