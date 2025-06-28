@@ -56,14 +56,14 @@ def rollout_episode(
     action_type = env.batch_cfg.action_type
     if action_type == TrackedAction:
         move_actions = (TrackedActionType.FORWARD, TrackedActionType.BACKWARD)
-        l_actions = ()
+        l_actions = (TrackedActionType.CLOCK, TrackedActionType.ANTICLOCK)
         do_action = TrackedActionType.DO
     elif action_type == WheeledAction:
         move_actions = (WheeledActionType.FORWARD, WheeledActionType.BACKWARD)
-        l_actions = (WheeledActionType.CLOCK, WheeledActionType.ANTICLOCK)
+        l_actions = (WheeledActionType.WHEELS_LEFT, WheeledActionType.WHEELS_RIGHT)
         do_action = WheeledActionType.DO
     else:
-        raise (ValueError(f"{action_type=}"))
+        raise NotImplementedError(f"Action type {action_type} not supported for eval.")
 
     obs = timestep.observation
     areas = (obs["target_map"] == -1).sum(
