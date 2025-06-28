@@ -215,25 +215,23 @@ class LocalMapNet(nn.Module):
 
 
 class AtariCNN(nn.Module):
-    """From https://github.com/deepmind/dqn_zoo/blob/master/dqn_zoo/networks.py, made bigger."""
+    """From https://github.com/deepmind/dqn_zoo/blob/master/dqn_zoo/networks.py"""
 
     @nn.compact
     def __call__(self, x):
-        x = nn.Conv(features=32, kernel_size=(8, 8), strides=(4, 4))(x)
+        x = nn.Conv(features=16, kernel_size=(8, 8), strides=(4, 4))(x)
         x = nn.relu(x)
-        x = nn.Conv(features=64, kernel_size=(4, 4), strides=(2, 2))(x)
+        x = nn.Conv(features=32, kernel_size=(4, 4), strides=(2, 2))(x)
         x = nn.relu(x)
-        x = nn.Conv(features=128, kernel_size=(3, 3), strides=(1, 1))(x)
+        x = nn.Conv(features=32, kernel_size=(3, 3), strides=(1, 1))(x)
         x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
 
-        x = nn.Dense(features=256)(x)
-        x = nn.relu(x)
         x = nn.Dense(features=128)(x)
         x = nn.relu(x)
         x = nn.Dense(features=64)(x)
         x = nn.relu(x)
-        x = nn.Dense(features=32)(x)
+        x = nn.Dense(features=64)(x)
         return x
 
 
