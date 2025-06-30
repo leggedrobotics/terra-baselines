@@ -1,0 +1,256 @@
+Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
+/cluster/home/alesweber/TerraProject/terra-baselines/visualize.py:138: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
+  env_cfgs = jax.tree_map(
+pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loaded data from /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/experiment-local-2025-06-28-21-43-50.pkl.
+Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations', '/cluster/home/alesweber/TerraProject/terra/data/terra/train/trenches/single', '/cluster/home/alesweber/TerraProject/terra/data/terra/train/trenches/double', '/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations'].
+Data Loader:   0%|          | 0/200 [00:00<?, ?it/s]Data Loader:   6%|▋         | 13/200 [00:00<00:01, 124.10it/s]Data Loader:  13%|█▎        | 26/200 [00:00<00:01, 119.56it/s]Data Loader:  20%|█▉        | 39/200 [00:00<00:01, 123.53it/s]Data Loader:  26%|██▌       | 52/200 [00:00<00:01, 123.39it/s]Data Loader:  32%|███▎      | 65/200 [00:00<00:01, 120.04it/s]Data Loader:  40%|███▉      | 79/200 [00:00<00:00, 123.08it/s]Data Loader:  46%|████▋     | 93/200 [00:00<00:00, 126.87it/s]Data Loader:  54%|█████▍    | 108/200 [00:00<00:00, 131.32it/s]Data Loader:  61%|██████    | 122/200 [00:00<00:00, 129.07it/s]Data Loader:  68%|██████▊   | 135/200 [00:01<00:00, 128.46it/s]Data Loader:  74%|███████▍  | 149/200 [00:01<00:00, 131.70it/s]Data Loader:  82%|████████▏ | 163/200 [00:01<00:00, 127.20it/s]Data Loader:  88%|████████▊ | 176/200 [00:01<00:00, 126.42it/s]Data Loader:  94%|█████████▍| 189/200 [00:01<00:00, 119.72it/s]Data Loader: 100%|██████████| 200/200 [00:01<00:00, 124.03it/s]
+Loaded 200 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations.
+Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations.
+Data Loader:   0%|          | 0/200 [00:00<?, ?it/s]Data Loader:   4%|▍         | 9/200 [00:00<00:02, 89.84it/s]Data Loader:  10%|▉         | 19/200 [00:00<00:01, 95.22it/s]Data Loader:  14%|█▍        | 29/200 [00:00<00:01, 96.48it/s]Data Loader:  20%|█▉        | 39/200 [00:00<00:01, 96.64it/s]Data Loader:  24%|██▍       | 49/200 [00:00<00:01, 95.91it/s]Data Loader:  30%|██▉       | 59/200 [00:00<00:01, 96.89it/s]Data Loader:  34%|███▍      | 69/200 [00:00<00:01, 95.14it/s]Data Loader:  40%|███▉      | 79/200 [00:00<00:01, 91.82it/s]Data Loader:  44%|████▍     | 89/200 [00:00<00:01, 93.40it/s]Data Loader:  50%|█████     | 100/200 [00:01<00:01, 97.80it/s]Data Loader:  56%|█████▌    | 111/200 [00:01<00:00, 101.02it/s]Data Loader:  62%|██████▏   | 123/200 [00:01<00:00, 105.48it/s]Data Loader:  67%|██████▋   | 134/200 [00:01<00:00, 104.71it/s]Data Loader:  72%|███████▎  | 145/200 [00:01<00:00, 106.12it/s]Data Loader:  78%|███████▊  | 156/200 [00:01<00:00, 104.98it/s]Data Loader:  84%|████████▍ | 168/200 [00:01<00:00, 107.45it/s]Data Loader:  91%|█████████ | 182/200 [00:01<00:00, 115.36it/s]Data Loader: 100%|██████████| 200/200 [00:01<00:00, 107.42it/s]
+Loaded 200 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/trenches/single.
+Loaded 200 metadata files from /cluster/home/alesweber/TerraProject/terra/data/terra/train/trenches/single.
+Data Loader:   0%|          | 0/200 [00:00<?, ?it/s]Data Loader:   7%|▋         | 14/200 [00:00<00:01, 132.26it/s]Data Loader:  15%|█▌        | 30/200 [00:00<00:01, 145.76it/s]Data Loader:  24%|██▍       | 48/200 [00:00<00:00, 158.54it/s]Data Loader:  32%|███▏      | 64/200 [00:00<00:00, 156.77it/s]Data Loader:  40%|████      | 80/200 [00:00<00:00, 143.50it/s]Data Loader:  48%|████▊     | 95/200 [00:00<00:00, 141.51it/s]Data Loader:  56%|█████▌    | 111/200 [00:00<00:00, 144.72it/s]Data Loader:  64%|██████▎   | 127/200 [00:00<00:00, 147.01it/s]Data Loader:  72%|███████▏  | 143/200 [00:00<00:00, 149.04it/s]Data Loader:  79%|███████▉  | 158/200 [00:01<00:00, 148.71it/s]Data Loader:  87%|████████▋ | 174/200 [00:01<00:00, 151.15it/s]Data Loader:  95%|█████████▌| 190/200 [00:01<00:00, 152.21it/s]Data Loader: 100%|██████████| 200/200 [00:01<00:00, 148.51it/s]
+Loaded 200 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/trenches/double.
+Loaded 200 metadata files from /cluster/home/alesweber/TerraProject/terra/data/terra/train/trenches/double.
+Data Loader:   0%|          | 0/200 [00:00<?, ?it/s]Data Loader:  24%|██▍       | 49/200 [00:00<00:00, 486.78it/s]Data Loader:  49%|████▉     | 98/200 [00:00<00:00, 485.42it/s]Data Loader:  74%|███████▎  | 147/200 [00:00<00:00, 481.69it/s]Data Loader: 100%|█████████▉| 199/200 [00:00<00:00, 496.27it/s]Data Loader: 100%|██████████| 200/200 [00:00<00:00, 492.11it/s]
+2025-06-29 11:48:36.323488: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+Loaded 200 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations.
+Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations.
+Maps width: 64
+Maps height: 64
+Unique shapes of trench_axes_list: {(200, 3, 3)}
+Maps shape: (4, 200, 64, 64).
+Padding mask shape: (4, 200, 64, 64).
+Dumpability mask shape: (4, 200, 64, 64).
+Trench axes shape: (4, 200, 3, 3).
+Trench types shape: (4,).
+Actions shape: (4, 200, 64, 64).
+Shuffling maps between curriculum levels...
+Maps shuffled.
+TerraEnv: disabling display...
+Agent size (in rendering): 9x5
+Tile size (in rendering): 0.6875
+Rendering tile size: 3
+Number of possible base rotations: 12
+Number of possible cabin rotations: 12
+num_embeddings_agent = 64
+map normalization min max = (-1, 1)
+Model: 411,232 parameters
+Using seed=0
+tile_size: 0.6875
+agent_width: 5, agent_height: 9
+0 [-0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002] [2 3 3 2 1 2 3 3 1] [False False False False False False False False False]
+==========
+1 [-0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002] [2 2 2 2 3 2 2 3 3] [False False False False False False False False False]
+==========
+2 [-0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002] [2 3 0 2 2 2 0 3 2] [False False False False False False False False False]
+==========
+3 [-0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002] [2 0 2 2 3 2 0 3 0] [False False False False False False False False False]
+==========
+4 [-0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002] [2 0 2 2 1 0 3 3 2] [False False False False False False False False False]
+==========
+5 [-0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002] [2 2 2 2 0 0 3 1 0] [False False False False False False False False False]
+==========
+6 [-0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.004] [2 3 2 0 1 2 0 0 1] [False False False False False False False False False]
+==========
+7 [-0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.003] [0 0 0 0 2 0 3 1 3] [False False False False False False False False False]
+==========
+8 [-0.002  -0.002  -0.002  -0.002  -0.002  -0.002  -0.002  -0.0015 -0.002 ] [0 0 1 2 3 0 3 4 2] [False False False False False False False False False]
+==========
+9 [-0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002] [0 2 0 0 2 2 2 1 1] [False False False False False False False False False]
+==========
+10 [-0.002  -0.002  -0.002  -0.002  -0.002  -0.002  -0.002   0.0485 -0.004 ] [1 0 3 0 3 3 3 6 1] [False False False False False False False False False]
+==========
+11 [-0.002  -0.002  -0.002  -0.002  -0.002  -0.0015 -0.002  -0.0015 -0.002 ] [0 0 0 0 1 4 0 5 3] [False False False False False False False False False]
+==========
+12 [-0.002 -0.002 -0.002 -0.002 -0.002 -0.002 -0.002  0.038 -0.004] [2 2 0 0 0 3 3 6 1] [False False False False False False False False False]
+==========
+13 [-0.002  -0.0015 -0.002  -0.002  -0.002   0.0265 -0.002   0.0385 -0.002 ] [2 4 3 0 1 6 1 6 3] [False False False False False False False False False]
+==========
+14 [-0.002  -0.0015 -0.002  -0.002  -0.002  -0.002  -0.002  -0.002  -0.002 ] [2 4 2 0 2 1 1 1 1] [False False False False False False False False False]
+==========
+15 [ 0.0385  0.0245 -0.002  -0.002  -0.002   0.0215  0.0925  0.0305 -0.002 ] [6 6 1 0 3 6 6 6 1] [False False False False False False False False False]
+==========
+16 [-0.002   0.117  -0.002  -0.002  -0.002  -0.002  -0.0015 -0.0071 -0.002 ] [1 6 0 3 0 3 4 6 1] [False False False False False False False False False]
+==========
+17 [ 0.0305  0.02   -0.002  -0.002  -0.002  -0.002  -0.011  -0.0015 -0.002 ] [6 6 1 2 0 1 6 4 3] [False False False False False False False False False]
+==========
+18 [-0.002  -0.0015 -0.002  -0.0015 -0.002  -0.002  -0.0015 -0.0015 -0.002 ] [2 5 1 4 0 1 4 5 3] [False False False False False False False False False]
+==========
+19 [-0.002  -0.002  -0.002  -0.002  -0.002   0.0125 -0.011  -0.0015 -0.002 ] [1 1 3 0 2 6 6 4 1] [False False False False False False False False False]
+==========
+20 [-0.002       0.0875     -0.002       0.0125      0.0385     -0.002
+  0.08099999  0.002      -0.002     ] [2 6 1 6 6 3 6 6 2] [False False False False False False False False False]
+==========
+21 [ 0.0465  0.0525 -0.002  -0.002  -0.0015  0.011  -0.0015  0.0405 -0.002 ] [6 6 2 2 4 6 5 6 3] [False False False False False False False False False]
+==========
+22 [-0.002  -0.002  -0.002   0.011   0.0305 -0.002   0.0605 -0.0015 -0.002 ] [0 1 3 6 6 0 6 4 2] [False False False False False False False False False]
+==========
+23 [ 0.0365  0.041  -0.002  -0.0015 -0.0015 -0.002  -0.011  -0.0015 -0.002 ] [6 6 0 4 4 1 6 5 3] [False False False False False False False False False]
+==========
+24 [-0.002  -0.0015 -0.002  -0.002  -0.002  -0.002  -0.002  -0.0015 -0.002 ] [3 4 0 1 1 2 1 4 0] [False False False False False False False False False]
+==========
+25 [-0.002  -0.0015 -0.002   0.0145  0.0525 -0.0035 -0.0015  0.032  -0.002 ] [2 4 2 6 6 6 5 6 1] [False False False False False False False False False]
+==========
+26 [-0.002       0.09649999 -0.002       0.103      -0.0015     -0.002
+ -0.0015      0.0805     -0.002     ] [1 6 3 6 4 0 5 6 2] [False False False False False False False False False]
+==========
+27 [-0.0015  0.029  -0.002   0.0125 -0.0015 -0.0015  0.071  -0.002  -0.002 ] [4 6 3 6 5 5 6 2 1] [False False False False False False False False False]
+==========
+28 [-0.002  -0.0015 -0.002   0.077   0.047  -0.002   0.0245 -0.0015 -0.002 ] [1 5 0 6 6 2 6 5 0] [False False False False False False False False False]
+==========
+29 [ 0.0485 -0.0015 -0.0015 -0.002   0.041  -0.002  -0.002  -0.002  -0.0015] [6 5 4 1 6 2 1 2 4] [False False False False False False False False False]
+==========
+30 [-0.002   0.074  -0.002  -0.0015 -0.0015 -0.002   0.02    0.062  -0.002 ] [1 6 0 4 5 2 6 6 2] [False False False False False False False False False]
+==========
+31 [-0.0015 -0.0015 -0.0015  0.0945 -0.002  -0.002  -0.0015 -0.002   0.0705] [5 5 4 6 1 0 4 2 6] [False False False False False False False False False]
+==========
+32 [-0.002  -0.0015 -0.002  -0.0015  0.035  -0.002  -0.002  -0.002  -0.0015] [2 4 3 4 6 0 1 1 4] [False False False False False False False False False]
+==========
+33 [ 0.038       0.0215      0.0625      0.07250001  0.0305     -0.0053
+ -0.0015     -0.002       0.0545    ] [6 6 6 6 6 6 4 0 6] [False False False False False False False False False]
+==========
+34 [-0.002  -0.0035 -0.002   0.0705 -0.002  -0.002  -0.002  -0.002   0.0525] [0 6 0 6 1 2 2 2 6] [False False False False False False False False False]
+==========
+35 [-0.002  -0.002   0.0485 -0.002  -0.0015 -0.0015  0.0545 -0.0015 -0.002 ] [2 1 6 1 5 5 6 5 1] [False False False False False False False False False]
+==========
+36 [-0.002  -0.0015 -0.0015 -0.0015 -0.0015 -0.002  -0.002   0.0445  0.041 ] [0 5 4 5 4 0 0 6 6] [False False False False False False False False False]
+==========
+37 [-2.00000009e-03 -2.00000009e-03 -2.00000009e-03  5.10000028e-02
+  2.45000031e-02  5.00000024e-04  1.04250002e+00 -8.20000004e-03
+  1.04499996e-01] [2 2 1 6 6 6 6 6 6] [False False False False False False  True False False]
+==========
+38 [-0.002  -0.002  -0.0015 -0.0015  0.0445 -0.002  -0.002  -0.0015 -0.002 ] [0 2 4 5 6 2 2 5 1] [False False False False False False False False False]
+==========
+39 [-0.002   0.0185 -0.0015  0.038  -0.002  -0.002  -0.002  -0.0015 -0.0015] [1 6 5 6 1 2 2 5 5] [False False False False False False False False False]
+==========
+40 [ 0.0585 -0.002   0.0825 -0.0015 -0.0015 -0.002  -0.002   0.035   0.063 ] [6 2 6 5 5 2 2 6 6] [False False False False False False False False False]
+==========
+41 [-0.002  -0.0015  0.053  -0.0015 -0.002  -0.002  -0.002  -0.0015  0.08  ] [3 5 6 4 2 0 2 5 6] [False False False False False False False False False]
+==========
+42 [ 0.0455 -0.0028  0.0635 -0.0015  0.035  -0.004  -0.002  -0.002   0.047 ] [6 6 6 5 6 0 1 2 6] [False False False False False False False False False]
+==========
+43 [-0.002   0.0155  0.0395  0.001  -0.002  -0.002  -0.002   0.005  -0.002 ] [3 6 6 6 0 0 0 6 1] [False False False False False False False False False]
+==========
+44 [-0.002  -0.0015 -0.002   0.0545 -0.002  -0.002  -0.002  -0.002  -0.002 ] [1 5 1 6 1 0 2 2 1] [False False False False False False False False False]
+==========
+45 [-0.002  -0.002  -0.002  -0.0015 -0.002  -0.002  -0.002  -0.002  -0.0015] [1 2 1 5 2 2 2 2 4] [False False False False False False False False False]
+==========
+46 [-0.0015 -0.0015 -0.0015 -0.002  -0.0015 -0.002  -0.002  -0.002   0.0485] [4 5 5 1 4 0 1 2 6] [False False False False False False False False False]
+==========
+47 [-0.002  -0.002  -0.0015 -0.0015 -0.002  -0.002  -0.002  -0.0107  0.027 ] [0 0 5 5 2 0 0 6 6] [False False False False False False False False False]
+==========
+48 [ 0.0645 -0.0015  0.0325 -0.0015  0.0625 -0.002  -0.002  -0.002  -0.0015] [6 5 6 4 6 2 3 0 5] [False False False False False False False False False]
+==========
+49 [-0.002  -0.002   0.057   0.0005 -0.002  -0.002  -0.002  -0.0015  0.02  ] [2 2 6 6 0 3 3 5 6] [False False False False False False False False False]
+==========
+50 [-1.500e-03  5.000e-04  2.600e-02 -1.500e-03 -1.500e-03 -1.500e-03
+ -1.500e-03 -2.000e-03  1.038e+00] [5 6 6 4 5 4 4 3 6] [False False False False False False False False  True]
+==========
+51 [-0.002   0.0025  0.0425 -0.002  -0.0015 -0.0015 -0.002  -0.0015 -0.002 ] [0 6 6 1 5 5 0 5 1] [False False False False False False False False False]
+==========
+52 [ 0.05   -0.002  -0.002   0.0645  0.0485 -0.0035 -0.002  -0.0015 -0.002 ] [6 2 2 6 6 6 1 5 1] [False False False False False False False False False]
+==========
+53 [-0.0015  0.0035 -0.0015 -0.002  -0.0015 -0.002  -0.002  -0.0015 -0.002 ] [5 6 4 2 5 1 3 5 1] [False False False False False False False False False]
+==========
+54 [-0.002  -0.0015  0.0425 -0.0015 -0.002  -0.0015 -0.0015 -0.002  -0.002 ] [1 4 6 5 2 5 4 0 1] [False False False False False False False False False]
+==========
+55 [ 0.0125 -0.002   0.033  -0.002   0.0205 -0.002  -0.002  -0.0015 -0.002 ] [6 1 6 0 6 3 3 5 1] [False False False False False False False False False]
+==========
+56 [-0.002      -0.0035     -0.0015     -0.0015     -0.002      -0.0035
+  0.08849999 -0.0015     -0.002     ] [2 6 5 5 2 6 6 5 1] [False False False False False False False False False]
+==========
+57 [-0.0015 -0.002  -0.0015 -0.002   0.017  -0.0015 -0.002   0.005  -0.002 ] [5 3 5 2 6 4 3 6 1] [False False False False False False False False False]
+==========
+58 [ 0.053  -0.002  -0.0015 -0.0015 -0.0071 -0.0015  0.068  -0.002  -0.0035] [6 1 5 5 6 4 6 3 6] [False False False False False False False False False]
+==========
+59 [ 0.011  -0.0015 -0.0015 -0.0015 -0.002  -0.002  -0.0015 -0.0015 -0.002 ] [6 4 5 5 0 1 4 4 1] [False False False False False False False False False]
+==========
+60 [-0.0015 -0.0015  0.0335  0.05   -0.0015 -0.0035 -0.002  -0.002  -0.002 ] [5 4 6 6 5 6 1 0 1] [False False False False False False False False False]
+==========
+61 [-0.002  -0.002   0.0245 -0.0015 -0.002  -0.002   0.0345 -0.0015 -0.0015] [2 2 6 5 3 3 6 4 4] [False False False False False False False False False]
+==========
+62 [ 0.0395  0.0125 -0.002  -0.0015 -0.0015 -0.002  -0.0015 -0.0015 -0.0035] [6 6 1 4 5 1 5 5 6] [False False False False False False False False False]
+==========
+63 [-0.0035 -0.002  -0.002  -0.002  -0.0046 -0.002   0.0275 -0.0015 -0.002 ] [6 0 1 2 6 0 6 4 1] [False False False False False False False False False]
+==========
+64 [-0.002  -0.0015 -0.0015 -0.0015 -0.0015 -0.0015  0.0165 -0.0015 -0.0015] [2 5 4 4 5 5 6 5 4] [False False False False False False False False False]
+==========
+65 [-0.004  -0.0015 -0.0015 -0.004  -0.0015 -0.0125 -0.002  -0.0015  0.0045] [0 5 4 0 5 6 1 4 6] [False False False False False False False False False]
+==========
+66 [-0.002  -0.0015 -0.0053 -0.0089  0.002  -0.002   0.014  -0.002  -0.0015] [2 5 6 6 6 0 6 3 5] [False False False False False False False False False]
+==========
+67 [-0.0035 -0.0015 -0.0015 -0.002  -0.0015  0.0065 -0.0015  0.0105  0.005 ] [6 5 4 2 5 6 4 6 6] [False False False False False False False False False]
+==========
+68 [ 0.0185  0.011  -0.0015 -0.0015 -0.0015 -0.0015 -0.002   0.029  -0.002 ] [6 6 5 5 4 4 1 6 1] [False False False False False False False False False]
+==========
+69 [-0.002  -0.0015  0.005  -0.002  -0.0015 -0.002   0.0325  0.0095 -0.002 ] [2 5 6 0 5 1 6 6 1] [False False False False False False False False False]
+==========
+70 [ 0.0155 -0.002  -0.0015 -0.0015 -0.0015 -0.0035  0.019   0.0215 -0.002 ] [6 2 5 5 4 6 6 6 2] [False False False False False False False False False]
+==========
+71 [-0.002  -0.0179 -0.0015 -0.002   0.002  -0.0035 -0.0015 -0.0015 -0.0015] [1 6 5 3 6 6 5 4 5] [False False False False False False False False False]
+==========
+72 [-0.002  -0.0015  0.0005  0.0035 -0.0015 -0.0035 -0.0015 -0.002  -0.002 ] [1 4 6 6 4 6 5 2 0] [False False False False False False False False False]
+==========
+73 [-0.002   0.011  -0.0015 -0.004  -0.0015 -0.002   0.026  -0.002   0.0365] [2 6 5 0 4 2 6 2 6] [False False False False False False False False False]
+==========
+74 [-0.002  -0.0035 -0.0015 -0.0015  0.0305 -0.0015  0.014  -0.002   0.055 ] [3 6 4 4 6 5 6 0 6] [False False False False False False False False False]
+==========
+75 [-0.002  -0.002   0.0035 -0.0015 -0.002  -0.002  -0.002  -0.0071  0.029 ] [0 1 6 4 2 0 1 6 6] [False False False False False False False False False]
+==========
+76 [-0.002  -0.002  -0.0015 -0.0015  0.0245 -0.0035 -0.0015 -0.0015  0.041 ] [0 3 4 4 6 6 4 5 6] [False False False False False False False False False]
+==========
+77 [-0.002      -0.002      -0.0015     -0.09890001  0.0025     -0.002
+  0.0365     -0.0015     -0.002     ] [3 2 4 6 6 3 6 5 1] [False False False False False False False False False]
+==========
+78 [-0.002  -0.002   0.0345  0.003  -0.002  -0.002  -0.0064  0.005  -0.002 ] [2 0 6 6 1 2 6 6 1] [False False False False False False False False False]
+==========
+79 [-0.002  -0.002  -0.002  -0.0015  0.0035 -0.004   0.029   0.002   0.0625] [0 0 2 5 6 0 6 6 6] [False False False False False False False False False]
+==========
+80 [-0.002  -0.0035  0.0275  0.002   0.0445 -0.0035  1.0035  0.0035 -0.003 ] [3 6 6 6 6 6 6 6 2] [False False False False False False  True False False]
+==========
+81 [-0.0015 -0.002  -0.0035 -0.0015 -0.0015 -0.0071 -0.002  -0.002   0.0485] [4 3 6 5 4 6 3 2 6] [False False False False False False False False False]
+==========
+82 [-0.0071 -0.002  -0.0015 -0.002  -0.0015 -0.002  -0.004  -0.002  -0.002 ] [6 3 4 1 5 1 0 2 0] [False False False False False False False False False]
+==========
+83 [-0.002  -0.002  -0.0035  0.0785 -0.0046  0.002  -0.002  -0.0071 -0.002 ] [3 0 6 6 6 6 0 6 2] [False False False False False False False False False]
+==========
+84 [-0.0015     -0.09890001 -0.0015     -0.002      -0.0015     -0.002
+ -0.002      -0.002      -0.002     ] [5 6 6 2 5 2 3 0 2] [False False False False False False False False False]
+==========
+85 [-0.002  -0.002  -0.002  -0.004  -0.0015 -0.004  -0.002  -0.0015 -0.002 ] [0 2 2 0 5 0 0 5 2] [False False False False False False False False False]
+==========
+86 [-0.0015 -0.0015  1.0005 -0.0035  0.035  -0.002  -0.002  -0.0015 -0.002 ] [5 5 6 6 6 0 0 4 2] [False False  True False False False False False False]
+==========
+87 [-0.0015 -0.002  -0.002  -0.002  -0.0015 -0.003  -0.002  -0.0015 -0.002 ] [5 1 0 2 5 2 3 5 0] [False False False False False False False False False]
+==========
+88 [ 0.002  -0.0015 -0.002  -0.002  -0.002  -0.0015 -0.004  -0.001  -0.002 ] [6 5 0 2 2 5 0 6 0] [False False False False False False False False False]
+==========
+89 [ 0.0005 -0.0015 -0.002  -0.004   0.002  -0.004  -0.002  -0.0015 -0.002 ] [6 4 0 0 6 0 3 4 3] [False False False False False False False False False]
+==========
+90 [-0.002   0.0785 -0.002  -0.004  -0.0015 -0.0035 -0.004  -0.002  -0.0015] [2 6 3 0 4 6 0 1 5] [False False False False False False False False False]
+==========
+91 [-0.0015 -0.002  -0.002  -0.002  -0.0015 -0.0071 -0.002  -0.0015 -0.0053] [5 3 3 3 4 6 1 4 6] [False False False False False False False False False]
+==========
+92 [-0.002  -0.0015 -0.002  -0.0071 -0.0035 -0.002  -0.004  -0.0015 -0.0015] [2 4 0 6 6 2 0 5 5] [False False False False False False False False False]
+==========
+93 [ 1.002  -0.0015 -0.002  -0.002  -0.002  -0.0015 -0.002   0.002  -0.0015] [6 4 1 1 2 5 3 6 5] [ True False False False False False False False False]
+==========
+94 [-0.002  -0.002  -0.002  -0.0015 -0.002  -0.002  -0.002  -0.0035  0.047 ] [1 2 3 5 0 1 3 6 6] [False False False False False False False False False]
+==========
+95 [-0.002  -0.0015 -0.002  -0.0015 -0.0015  0.002  -0.002  -0.0015 -0.0015] [2 4 3 4 6 6 3 4 5] [False False False False False False False False False]
+==========
+96 [-0.002   0.0005 -0.002   0.002  -0.002  -0.002  -0.002  -0.0015  0.035 ] [3 6 0 6 0 1 0 4 6] [False False False False False False False False False]
+==========
+97 [-0.002  -0.0064 -0.002  -0.002   0.0005 -0.004  -0.002   0.0145 -0.0015] [1 6 2 0 6 0 1 6 5] [False False False False False False False False False]
+==========
+98 [-0.002   0.002  -0.002  -0.002  -0.0015 -0.002  -0.002  -0.002  -0.002 ] [1 6 0 0 5 3 3 0 2] [False False False False False False False False False]
+==========
+99 [-2.0000e-03  1.0035e+00 -2.0000e-03 -2.0000e-03 -4.0000e-03 -1.5000e-03
+ -2.0000e-03 -1.5000e-03  5.0000e-04] [1 6 0 3 0 4 3 5 6] [False  True False False False False False False False]
+==========
+Terra - Steps: 100, Return: 10.30049991607666
+Rendering:   0%|          | 0/100 [00:00<?, ?it/s]Rendering:   1%|          | 1/100 [00:00<01:00,  1.63it/s]Rendering:   2%|▏         | 2/100 [00:01<01:23,  1.17it/s]Rendering:   3%|▎         | 3/100 [00:02<01:02,  1.56it/s]Rendering:   4%|▍         | 4/100 [00:02<00:51,  1.85it/s]Rendering:   5%|▌         | 5/100 [00:02<00:46,  2.05it/s]Rendering:   6%|▌         | 6/100 [00:03<00:42,  2.21it/s]Rendering:   7%|▋         | 7/100 [00:04<00:58,  1.58it/s]Rendering:   8%|▊         | 8/100 [00:04<00:51,  1.80it/s]Rendering:   9%|▉         | 9/100 [00:04<00:45,  1.98it/s]Rendering:  10%|█         | 10/100 [00:05<00:42,  2.13it/s]Rendering:  11%|█         | 11/100 [00:05<00:39,  2.25it/s]Rendering:  12%|█▏        | 12/100 [00:06<00:54,  1.62it/s]Rendering:  13%|█▎        | 13/100 [00:07<00:47,  1.81it/s]Rendering:  14%|█▍        | 14/100 [00:07<00:43,  1.97it/s]Rendering:  15%|█▌        | 15/100 [00:07<00:40,  2.10it/s]Rendering:  16%|█▌        | 16/100 [00:08<00:38,  2.20it/s]Rendering:  17%|█▋        | 17/100 [00:09<00:51,  1.61it/s]Rendering:  18%|█▊        | 18/100 [00:09<00:45,  1.81it/s]Rendering:  19%|█▉        | 19/100 [00:10<00:40,  1.99it/s]Rendering:  20%|██        | 20/100 [00:10<00:37,  2.13it/s]Rendering:  21%|██        | 21/100 [00:10<00:35,  2.25it/s]Rendering:  22%|██▏       | 22/100 [00:11<00:47,  1.63it/s]Rendering:  23%|██▎       | 23/100 [00:12<00:42,  1.83it/s]Rendering:  24%|██▍       | 24/100 [00:12<00:37,  2.00it/s]Rendering:  25%|██▌       | 25/100 [00:13<00:34,  2.15it/s]Rendering:  26%|██▌       | 26/100 [00:13<00:32,  2.26it/s]Rendering:  27%|██▋       | 27/100 [00:13<00:31,  2.32it/s]Rendering:  28%|██▊       | 28/100 [00:14<00:43,  1.65it/s]Rendering:  29%|██▉       | 29/100 [00:15<00:38,  1.85it/s]Rendering:  30%|███       | 30/100 [00:15<00:34,  2.02it/s]Rendering:  31%|███       | 31/100 [00:16<00:32,  2.14it/s]Rendering:  32%|███▏      | 32/100 [00:16<00:30,  2.21it/s]Rendering:  33%|███▎      | 33/100 [00:17<00:41,  1.62it/s]Rendering:  34%|███▍      | 34/100 [00:17<00:36,  1.82it/s]Rendering:  35%|███▌      | 35/100 [00:18<00:32,  2.00it/s]Rendering:  36%|███▌      | 36/100 [00:18<00:30,  2.12it/s]Rendering:  37%|███▋      | 37/100 [00:19<00:28,  2.24it/s]Rendering:  38%|███▊      | 38/100 [00:20<00:38,  1.62it/s]Rendering:  39%|███▉      | 39/100 [00:20<00:33,  1.81it/s]Rendering:  40%|████      | 40/100 [00:20<00:30,  1.99it/s]Rendering:  41%|████      | 41/100 [00:21<00:27,  2.13it/s]Rendering:  42%|████▏     | 42/100 [00:21<00:26,  2.22it/s]Rendering:  43%|████▎     | 43/100 [00:22<00:35,  1.61it/s]Rendering:  44%|████▍     | 44/100 [00:23<00:30,  1.82it/s]Rendering:  45%|████▌     | 45/100 [00:23<00:27,  1.98it/s]Rendering:  46%|████▌     | 46/100 [00:23<00:25,  2.11it/s]Rendering:  47%|████▋     | 47/100 [00:24<00:23,  2.22it/s]Rendering:  48%|████▊     | 48/100 [00:25<00:32,  1.62it/s]Rendering:  49%|████▉     | 49/100 [00:25<00:28,  1.80it/s]Rendering:  50%|█████     | 50/100 [00:26<00:25,  1.97it/s]Rendering:  51%|█████     | 51/100 [00:26<00:23,  2.11it/s]Rendering:  52%|█████▏    | 52/100 [00:26<00:21,  2.22it/s]Rendering:  53%|█████▎    | 53/100 [00:27<00:28,  1.63it/s]Rendering:  54%|█████▍    | 54/100 [00:28<00:25,  1.82it/s]Rendering:  55%|█████▌    | 55/100 [00:28<00:22,  1.96it/s]Rendering:  56%|█████▌    | 56/100 [00:29<00:21,  2.08it/s]Rendering:  57%|█████▋    | 57/100 [00:29<00:19,  2.18it/s]Rendering:  58%|█████▊    | 58/100 [00:29<00:18,  2.27it/s]Rendering:  59%|█████▉    | 59/100 [00:30<00:25,  1.63it/s]Rendering:  60%|██████    | 60/100 [00:31<00:21,  1.82it/s]Rendering:  61%|██████    | 61/100 [00:31<00:19,  1.99it/s]Rendering:  62%|██████▏   | 62/100 [00:32<00:17,  2.13it/s]Rendering:  63%|██████▎   | 63/100 [00:32<00:16,  2.23it/s]Rendering:  64%|██████▍   | 64/100 [00:33<00:22,  1.63it/s]Rendering:  65%|██████▌   | 65/100 [00:33<00:19,  1.82it/s]Rendering:  66%|██████▌   | 66/100 [00:34<00:17,  2.00it/s]Rendering:  67%|██████▋   | 67/100 [00:34<00:15,  2.12it/s]Rendering:  68%|██████▊   | 68/100 [00:35<00:14,  2.24it/s]Rendering:  69%|██████▉   | 69/100 [00:36<00:18,  1.64it/s]Rendering:  70%|███████   | 70/100 [00:36<00:16,  1.83it/s]Rendering:  71%|███████   | 71/100 [00:36<00:14,  1.99it/s]Rendering:  72%|███████▏  | 72/100 [00:37<00:13,  2.12it/s]Rendering:  73%|███████▎  | 73/100 [00:37<00:12,  2.21it/s]Rendering:  74%|███████▍  | 74/100 [00:38<00:16,  1.60it/s]Rendering:  75%|███████▌  | 75/100 [00:39<00:14,  1.78it/s]Rendering:  76%|███████▌  | 76/100 [00:39<00:12,  1.95it/s]Rendering:  77%|███████▋  | 77/100 [00:39<00:10,  2.10it/s]Rendering:  78%|███████▊  | 78/100 [00:40<00:09,  2.21it/s]Rendering:  79%|███████▉  | 79/100 [00:41<00:12,  1.62it/s]Rendering:  80%|████████  | 80/100 [00:41<00:10,  1.82it/s]Rendering:  81%|████████  | 81/100 [00:42<00:09,  1.98it/s]Rendering:  82%|████████▏ | 82/100 [00:42<00:08,  2.11it/s]Rendering:  83%|████████▎ | 83/100 [00:42<00:07,  2.21it/s]Rendering:  84%|████████▍ | 84/100 [00:43<00:06,  2.32it/s]Rendering:  85%|████████▌ | 85/100 [00:44<00:09,  1.65it/s]Rendering:  86%|████████▌ | 86/100 [00:44<00:07,  1.84it/s]Rendering:  87%|████████▋ | 87/100 [00:45<00:06,  1.99it/s]Rendering:  88%|████████▊ | 88/100 [00:45<00:05,  2.11it/s]Rendering:  89%|████████▉ | 89/100 [00:45<00:04,  2.22it/s]Rendering:  90%|█████████ | 90/100 [00:46<00:06,  1.62it/s]Rendering:  91%|█████████ | 91/100 [00:47<00:04,  1.80it/s]Rendering:  92%|█████████▏| 92/100 [00:47<00:04,  1.98it/s]Rendering:  93%|█████████▎| 93/100 [00:48<00:03,  2.10it/s]Rendering:  94%|█████████▍| 94/100 [00:48<00:02,  2.20it/s]Rendering:  95%|█████████▌| 95/100 [00:49<00:03,  1.61it/s]Rendering:  96%|█████████▌| 96/100 [00:49<00:02,  1.80it/s]Rendering:  97%|█████████▋| 97/100 [00:50<00:01,  1.97it/s]Rendering:  98%|█████████▊| 98/100 [00:50<00:00,  2.11it/s]Rendering:  99%|█████████▉| 99/100 [00:51<00:00,  2.22it/s]Rendering: 100%|██████████| 100/100 [00:52<00:00,  1.62it/s]Rendering: 100%|██████████| 100/100 [00:52<00:00,  1.92it/s]
+GIF generated at ./visualize.gif

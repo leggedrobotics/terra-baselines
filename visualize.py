@@ -93,28 +93,28 @@ if __name__ == "__main__":
         "-nx",
         "--n_envs_x",
         type=int,
-        default=1,
+        default=3,
         help="Number of environments on x.",
     )
     parser.add_argument(
         "-ny",
         "--n_envs_y",
         type=int,
-        default=1,
+        default=3,
         help="Number of environments on y.",
     )
     parser.add_argument(
         "-steps",
         "--n_steps",
         type=int,
-        default=10,
+        default=100,
         help="Number of steps.",
     )
     parser.add_argument(
         "-o",
         "--out_path",
         type=str,
-        default=".",
+        default="./visualize2.gif",
         help="Output path.",
     )
     parser.add_argument(

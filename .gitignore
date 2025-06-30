@@ -169,3 +169,8 @@ slurm*
 
 profile-remote/
 tools/
+
+# Ignore all gif files
+#*.gif
+#*.out
+#*.png

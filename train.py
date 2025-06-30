@@ -545,7 +545,7 @@ def make_train(
 
 def train(config: TrainConfig):
     run = wandb.init(
-        entity="Terra_MARL1",
+        #entity="Terra_MARL1",
         project=config.project,
         group=config.group,
         name=config.name,
