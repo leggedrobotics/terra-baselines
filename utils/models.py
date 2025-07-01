@@ -61,6 +61,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], 1)),
     ]
     params = model.init(rng, obs)
 
@@ -380,7 +381,20 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=0.01,
         )
+
+        self.mlp_v_2 = MLP(
+            hidden_dim_layers=self.hidden_dim_v,
+            use_layer_norm=self.mlp_use_layernorm,
+            last_layer_init_scaling=0.01,
+        )
+
         self.mlp_pi = MLP(
+            hidden_dim_layers=self.hidden_dim_pi + (num_actions,),
+            use_layer_norm=self.mlp_use_layernorm,
+            last_layer_init_scaling=0.01,
+        )
+
+        self.mlp_pi_2 = MLP(
             hidden_dim_layers=self.hidden_dim_pi + (num_actions,),
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=0.01,
@@ -414,10 +428,10 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
     def __call__(self, obs: Array) -> Array:
         x_agent_state = self.agent_state_net(obs[0])
-        x_agent_state_2 = self.agent_state_net(obs[12])
+        # x_agent_state_2 = self.agent_state_net(obs[12])
         x_maps = self.maps_net(obs)
         x_local_map = self.local_map_net(obs[1:7])
-        x_local_map_2 = self.local_map_net(obs[13:19])
+        # x_local_map_2 = self.local_map_net(obs[13:19])
         x_actions = self.actions_net(obs)
         
         # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
@@ -426,28 +440,44 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             (x_agent_state, x_actions, x_local_map), 
             axis=-1
         )
-        combined_features_2 = jnp.concatenate(
-            (x_agent_state_2, x_local_map_2), 
-            axis=-1
-        )
+        # combined_features_2 = jnp.concatenate(
+        #     (x_agent_state_2, x_local_map_2), 
+        #     axis=-1
+        # )
         
         # Process through intermediate MLP
         # combined_features_1 = self.intermediate_mlp(combined_features_1)
         # combined_features_2 = self.intermediate_mlp(combined_features_2)
-        combined_features = jnp.concatenate(
-            (combined_features_1, combined_features_2), 
-            axis=-1
-        )
-        combined_features = self.activation(combined_features)
+        # combined_features = jnp.concatenate(
+        #     (combined_features_1, combined_features_2), 
+        #     axis=-1
+        # )
+        combined_features = self.activation(combined_features_1)
         
         # Concatenate MLP output with MapNet output
         x = jnp.concatenate((combined_features, x_maps), axis=-1)
         
+        
         # Apply final activation
         x = self.activation(x)
+        
+        # Get the agent ID from the observation
+        agent_id = obs[20]
 
-        v = self.mlp_v(x)
-        xpi = self.mlp_pi(x)
+        # Define the condition for agent 1
+        is_agent_1 = (agent_id == 0)
+
+        # Compute outputs from both sets of network heads
+        v1 = self.mlp_v(x)
+        pi1 = self.mlp_pi(x)
+
+        v2 = self.mlp_v_2(x)
+        pi2 = self.mlp_pi_2(x)
+
+        # Select the output based on the agent ID
+        # jnp.where(condition, value_if_true, value_if_false)
+        v = jnp.where(is_agent_1, v1, v2)
+        xpi = jnp.where(is_agent_1, pi1, pi2)
 
         return v, xpi
 

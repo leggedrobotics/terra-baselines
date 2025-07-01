@@ -26,7 +26,7 @@ jax.config.update("jax_threefry_partitionable", True)
 class TrainConfig:
     name: str
     num_devices: int = 0
-    project: str = "debug"
+    project: str = "Step_AB"
     group: str = "default"
     num_envs_per_device: int = 4096
     num_steps: int = 32
