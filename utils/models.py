@@ -457,7 +457,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         # Concatenate attended features to agent 1
         combined_features_1_attn = jnp.concatenate(
-            [combined_features_1,combined_features_2, map_attended], axis=-1
+            [combined_features_1, map_attended], axis=-1
         )
 
         # Optionally, process through intermediate MLP
@@ -465,7 +465,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         # Final combined features (agent 1 with attention, actions, agent 2)
         combined_features = jnp.concatenate(
-            (combined_features_1_attn, x_actions, combined_features_2), axis=-1
+            (combined_features_1_attn, x_actions, x_maps ), axis=-1
         )
         combined_features = self.activation(combined_features)
 
