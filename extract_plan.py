@@ -39,14 +39,6 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
     # Plan storage
     plan = []
 
-    # Save initial traversability_mask at time 0
-    initial_traversability_mask = jnp.squeeze(timestep.observation["traversability_mask"]).copy()
-    initial_entry = {
-        'step': 0,
-        'traversability_mask': initial_traversability_mask
-    }
-    plan.append(initial_entry)
-
     t_counter = 0
 
     while True:
@@ -58,17 +50,7 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
         pi = tfp.distributions.Categorical(logits=logits_pi)
         action = pi.sample(seed=rng_act)
 
-        # Update previous actions
-        prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
-        prev_actions = prev_actions.at[:, 0].set(action)
-
-        # Take step in environment
-        rng_step = jax.random.split(rng_step, 1)
-        timestep = env.step(
-            timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
-        )
-
-        # Check if DO action and record state if it is
+        # Check if DO action and record state BEFORE executing the action
         if action[0] == do_action:
             print(f"DO action at step {t_counter}")
             action_map = jnp.squeeze(timestep.observation["action_map"]).copy()
@@ -86,6 +68,16 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
                 }
             }
             plan.append(plan_entry)
+
+        # Update previous actions
+        prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+        prev_actions = prev_actions.at[:, 0].set(action)
+
+        # Take step in environment
+        rng_step = jax.random.split(rng_step, 1)
+        timestep = env.step(
+            timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
+        )
 
         t_counter += 1
         print(f"Step {t_counter}, Action: {action[0]}")
