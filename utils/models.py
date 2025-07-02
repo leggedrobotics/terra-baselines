@@ -243,7 +243,7 @@ class AtariCNN(nn.Module):
 
         x = nn.Dense(features=128)(x)
         x = nn.relu(x)
-        x = nn.Dense(features=32)(x)
+        x = nn.Dense(features=64)(x)
         return x
 
 
@@ -380,7 +380,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     local_map_min_max: Sequence[int]
     loaded_max: int
     action_type: Union[TrackedAction, WheeledAction]
-    hidden_dim_pi: Sequence[int] = (128, 32)
+    hidden_dim_pi: Sequence[int] = (128, 32 ,14)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
     mlp_use_layernorm: bool = False
     intermediate_mlp_dim: int = 128
@@ -428,7 +428,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         # Use our wrapper class instead of the function directly
         self.agent_attention = SimpleDotProductAttention(name="agent_attention")
-        self.map_attention = SimpleDotProductAttention(name="map_attention")
+        #self.map_attention = SimpleDotProductAttention(name="map_attention")
 
     def __call__(self, obs: Array) -> Array:
         x_agent_state = self.agent_state_net(obs[0])      # (batch, D)
@@ -444,33 +444,33 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         # --- Cross-attention: agent 1 attends to agent 2 ---
         # Reshape to (batch, 1, D) for attention
-        q1 = combined_features_2[:, None, :]  # (batch, 1, D)
-        k2 = combined_features_1[:, None, :]  # (batch, 1, D)
-        v2 = combined_features_1[:, None, :]  # (batch, 1, D)
-        combined_features_1 = self.agent_attention(q1, k2, v2).squeeze(axis=1)
+        q1 = combined_features_1[:, None, :]  # (batch, 1, D)
+        k2 = combined_features_2[:, None, :]  # (batch, 1, D)
+        v2 = combined_features_2[:, None, :]  # (batch, 1, D)
+        combined_features_2 = self.agent_attention(q1, k2, v2).squeeze(axis=1)
 
-        # --- Cross-attention: agent 1 attends to map ---
-        q1_map = combined_features_1[:, None, :]  # (batch, 1, D)
-        k_map = x_maps[:, None, :]                # (batch, 1, D_map)
-        v_map = x_maps[:, None, :]                # (batch, 1, D_map)
-        map_attended = self.map_attention(q1_map, k_map, v_map).squeeze(axis=1)
+        # # --- Cross-attention: agent 1 attends to map ---
+        # q1_map = combined_features_1[:, None, :]  # (batch, 1, D)
+        # k_map = x_maps[:, None, :]                # (batch, 1, D_map)
+        # v_map = x_maps[:, None, :]                # (batch, 1, D_map)
+        # map_attended = self.map_attention(q1_map, k_map, v_map).squeeze(axis=1)
 
         # Concatenate attended features to agent 1
-        combined_features_1_attn = jnp.concatenate(
-            [combined_features_1, map_attended], axis=-1
+        combined_features = jnp.concatenate(
+            [combined_features_1, x_actions, combined_features_2, x_maps], axis=-1
         )
 
         # Optionally, process through intermediate MLP
         # combined_features_1_attn = self.intermediate_mlp(combined_features_1_attn)
 
         # Final combined features (agent 1 with attention, actions, agent 2)
-        combined_features = jnp.concatenate(
-            (combined_features_1_attn, x_actions, x_maps ), axis=-1
-        )
-        combined_features = self.activation(combined_features)
+        # combined_features = jnp.concatenate(
+        #     (combined_features_1_attn, x_actions, x_maps ), axis=-1
+        # )
+        x = self.activation(combined_features)
 
         # Concatenate MLP output with MapNet output
-        x = jnp.concatenate((combined_features, x_maps), axis=-1)
+        #x = jnp.concatenate((combined_features, x_maps), axis=-1)
         x = self.activation(x)
 
         v = self.mlp_v(x)
