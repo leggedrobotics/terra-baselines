@@ -6,6 +6,7 @@ from typing import Sequence, Union
 from terra.actions import TrackedAction, WheeledAction
 from terra.env import TerraEnvBatch
 from functools import partial
+from flax.linen import dot_product_attention
 
 
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
@@ -355,6 +356,19 @@ class PreviousActionsNet(nn.Module):
         return x
 
 
+class SimpleDotProductAttention(nn.Module):
+    """Wrapper module for dot product attention with projections."""
+    features: int = 64  # Common dimension for attention
+    
+    @nn.compact
+    def __call__(self, query, key, value, mask=None):
+        # Project query, key, value to the same dimension with uniquely named layers
+        query_proj = nn.Dense(features=self.features, name="query_proj")(query)
+        key_proj = nn.Dense(features=self.features, name="key_proj")(key)
+        value_proj = nn.Dense(features=self.features, name="value_proj")(value)
+        
+        return dot_product_attention(query_proj, key_proj, value_proj, mask=mask)
+
 class SimplifiedCoupledCategoricalNet(nn.Module):
     """
     The full net for centralized dual-agent policy.
@@ -412,38 +426,51 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         self.activation = nn.relu
 
+        # Use our wrapper class instead of the function directly
+        self.agent_attention = SimpleDotProductAttention(name="agent_attention")
+        self.map_attention = SimpleDotProductAttention(name="map_attention")
+
     def __call__(self, obs: Array) -> Array:
-        x_agent_state = self.agent_state_net(obs[0])
-        x_agent_state_2 = self.agent_state_net(obs[12])
-        x_maps = self.maps_net(obs)
+        x_agent_state = self.agent_state_net(obs[0])      # (batch, D)
+        x_agent_state_2 = self.agent_state_net(obs[12])   # (batch, D)
+        x_maps = self.maps_net(obs)                       # (batch, D_map)
         x_local_map = self.local_map_net(obs[1:7])
         x_local_map_2 = self.local_map_net(obs[13:19])
         x_actions = self.actions_net(obs)
-        
-        # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
-        # Local maps are also included.
-        combined_features_1 = jnp.concatenate(
-            (x_agent_state, x_actions, x_local_map), 
-            axis=-1
+
+        # Concatenate agent state and local map
+        combined_features_1 = jnp.concatenate((x_agent_state,  x_local_map), axis=-1)    # agent 1
+        combined_features_2 = jnp.concatenate((x_agent_state_2, x_local_map_2), axis=-1) # agent 2
+
+        # --- Cross-attention: agent 1 attends to agent 2 ---
+        # Reshape to (batch, 1, D) for attention
+        q1 = combined_features_2[:, None, :]  # (batch, 1, D)
+        k2 = combined_features_1[:, None, :]  # (batch, 1, D)
+        v2 = combined_features_1[:, None, :]  # (batch, 1, D)
+        combined_features_1 = self.agent_attention(q1, k2, v2).squeeze(axis=1)
+
+        # --- Cross-attention: agent 1 attends to map ---
+        q1_map = combined_features_1[:, None, :]  # (batch, 1, D)
+        k_map = x_maps[:, None, :]                # (batch, 1, D_map)
+        v_map = x_maps[:, None, :]                # (batch, 1, D_map)
+        map_attended = self.map_attention(q1_map, k_map, v_map).squeeze(axis=1)
+
+        # Concatenate attended features to agent 1
+        combined_features_1_attn = jnp.concatenate(
+            [combined_features_1,combined_features_2, map_attended], axis=-1
         )
-        combined_features_2 = jnp.concatenate(
-            (x_agent_state_2, x_local_map_2), 
-            axis=-1
-        )
-        
-        # Process through intermediate MLP
-        # combined_features_1 = self.intermediate_mlp(combined_features_1)
-        # combined_features_2 = self.intermediate_mlp(combined_features_2)
+
+        # Optionally, process through intermediate MLP
+        # combined_features_1_attn = self.intermediate_mlp(combined_features_1_attn)
+
+        # Final combined features (agent 1 with attention, actions, agent 2)
         combined_features = jnp.concatenate(
-            (combined_features_1, combined_features_2), 
-            axis=-1
+            (combined_features_1_attn, x_actions, combined_features_2), axis=-1
         )
         combined_features = self.activation(combined_features)
-        
+
         # Concatenate MLP output with MapNet output
         x = jnp.concatenate((combined_features, x_maps), axis=-1)
-        
-        # Apply final activation
         x = self.activation(x)
 
         v = self.mlp_v(x)
