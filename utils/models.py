@@ -33,6 +33,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         map_min_max=map_min_max,
         local_map_min_max=tuple(config["local_map_normalization_bounds"]),
         loaded_max=config["loaded_max"],
+        agent_types_max=2,  # Maximum agent type value (0=tracked, 1=wheeled, 2=skidsteer)
         action_type=env.batch_cfg.action_type,
     )
 
@@ -140,10 +141,12 @@ class AgentStateNet(nn.Module):
 
     num_embeddings: int
     loaded_max: int
+    agent_types_max: int  # Maximum number of agent types (0, 1, 2)
     mlp_use_layernorm: bool
     num_embedding_features: int = 8
     hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
     hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
+    hidden_dim_layers_mlp_agent_type: Sequence[int] = (8, 16)  # New MLP for agent type
 
     def setup(self) -> None:
         self.embedding_1 = nn.Embed(
@@ -152,6 +155,11 @@ class AgentStateNet(nn.Module):
         self.embedding_2 = nn.Embed(
             num_embeddings=self.num_embeddings, features=self.num_embedding_features
         )
+        # New embedding for agent type
+        self.embedding_agent_type = nn.Embed(
+            num_embeddings=self.agent_types_max + 1, features=self.num_embedding_features
+        )
+        
         self.mlp_one_hot = MLP(
             hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot,
             use_layer_norm=self.mlp_use_layernorm,
@@ -166,24 +174,46 @@ class AgentStateNet(nn.Module):
             hidden_dim_layers=self.hidden_dim_layers_mlp_continuous,
             use_layer_norm=self.mlp_use_layernorm,
         )
+        
+        # New MLP for agent type features
+        self.mlp_agent_type = MLP(
+            hidden_dim_layers=self.hidden_dim_layers_mlp_agent_type,
+            use_layer_norm=self.mlp_use_layernorm,
+        )
 
     def __call__(self, agent_state_obs: Array):
-        x_one_hot = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)
-        x_two_hot = agent_state_obs[..., 2:5].astype(dtype=jnp.int32)
-        x_loaded = agent_state_obs[..., [-1]].astype(dtype=jnp.int32)
+        # Current agent_state contains: [pos_x, pos_y, angle_base, angle_cabin, wheel_angle, loaded, agent_type, shovel_lifted]
+        x_one_hot = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)  # pos_base (x, y)
+        x_two_hot = agent_state_obs[..., 2:5].astype(dtype=jnp.int32)  # angle_base, angle_cabin, wheel_angle
+        x_loaded = agent_state_obs[..., [5]].astype(dtype=jnp.int32)   # loaded
+        x_agent_type = agent_state_obs[..., [6]].astype(dtype=jnp.int32)  # agent_type
+        x_shovel_lifted = agent_state_obs[..., [7]].astype(dtype=jnp.int32)  # shovel_lifted
 
+        # Process embeddings
         x_one_hot = self.embedding_1(x_one_hot)
         x_two_hot = self.embedding_2(x_two_hot)
+        x_agent_type_emb = self.embedding_agent_type(x_agent_type)
 
+        # Process through MLPs
         x_one_hot = self.mlp_one_hot(x_one_hot.reshape(*x_one_hot.shape[:-2], -1))
         x_two_hot = self.mlp_two_hot(x_two_hot.reshape(*x_two_hot.shape[:-2], -1))
-
+        
+        # Normalize continuous features
         x_loaded = normalize(x_loaded, 0, self.loaded_max)
-        x_continuous = self.mlp_continuous(x_loaded)
-        x_one_hot = jnp.concatenate(
-            (x_one_hot, x_two_hot), axis=-1
-        )  # Concatenate one-hot and two-hot embeddings
-        return jnp.concatenate([x_one_hot, x_continuous], axis=-1)
+        x_shovel_lifted = normalize(x_shovel_lifted, 0, 1)  # Binary feature (0 or 1)
+        
+        # Combine continuous features
+        x_continuous = jnp.concatenate([x_loaded, x_shovel_lifted], axis=-1)
+        x_continuous = self.mlp_continuous(x_continuous)
+        
+        # Process agent type embedding
+        x_agent_type_processed = self.mlp_agent_type(x_agent_type_emb.reshape(*x_agent_type_emb.shape[:-2], -1))
+        
+        # Concatenate all processed features
+        x_combined = jnp.concatenate(
+            (x_one_hot, x_two_hot, x_continuous, x_agent_type_processed), axis=-1
+        )
+        return x_combined
 
 
 class LocalMapNet(nn.Module):
@@ -366,6 +396,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     local_map_min_max: Sequence[int]
     loaded_max: int
     action_type: Union[TrackedAction, WheeledAction]
+    agent_types_max: int = 2  # Maximum agent type value (0=tracked, 1=wheeled, 2=skidsteer)
     hidden_dim_pi: Sequence[int] = (128, 32)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
     mlp_use_layernorm: bool = False
@@ -393,6 +424,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         self.agent_state_net = AgentStateNet(
             num_embeddings=self.num_embeddings_agent,
             loaded_max=self.loaded_max,
+            agent_types_max=self.agent_types_max,
             mlp_use_layernorm=self.mlp_use_layernorm,
         )
 
@@ -420,14 +452,18 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         x_local_map_2 = self.local_map_net(obs[13:19])
         x_actions = self.actions_net(obs)
         
+        # Flatten local map outputs if they have spatial dimensions
+        x_local_map_flat = x_local_map.reshape(x_local_map.shape[0], -1)
+        x_local_map_2_flat = x_local_map_2.reshape(x_local_map_2.shape[0], -1)
+        
         # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
         # Local maps are also included.
         combined_features_1 = jnp.concatenate(
-            (x_agent_state, x_actions, x_local_map), 
+            (x_agent_state, x_actions, x_local_map_flat), 
             axis=-1
         )
         combined_features_2 = jnp.concatenate(
-            (x_agent_state_2, x_local_map_2), 
+            (x_agent_state_2, x_local_map_2_flat), 
             axis=-1
         )
         

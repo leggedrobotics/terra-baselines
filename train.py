@@ -51,6 +51,7 @@ class TrainConfig:
     num_prev_actions = 10
     clip_action_maps = True  # clips the action maps to [-1, 1]
     local_map_normalization_bounds = [-16, 16]
+    maps_net_normalization_bounds = [-10, 10]  # Required field for network initialization
     loaded_max = 100
     num_rollouts_eval = 500  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)
     cache_clear_interval = 1000  # Number of updates between clearing caches
@@ -220,13 +221,83 @@ def ppo_update_networks(
     return train_state, update_info
 
 
-def get_curriculum_levels(env_cfg, global_curriculum_levels):
+def get_curriculum_levels(env_cfg, global_curriculum_levels, timestep=None):
+    """
+    Get curriculum level statistics with enhanced agent type tracking.
+    
+    Args:
+        env_cfg: Environment configuration containing curriculum levels
+        global_curriculum_levels: List of curriculum level configurations
+        timestep: Optional timestep containing observations with agent state info
+    """
     curriculum_stat = {}
     curriculum_levels = env_cfg.curriculum.level
+    
+    # Original curriculum level tracking
     for i, global_curriculum_level in enumerate(global_curriculum_levels):
         curriculum_stat[f'Level {i}: {global_curriculum_level["maps_path"]}'] = jnp.sum(
             curriculum_levels == i
         ).item()
+    
+    # Enhanced: Track agent types at each curriculum level
+    # Extract agent types from observations if available, otherwise use fallback
+    agent_types_1 = None
+    agent_types_2 = None
+    
+    if timestep is not None and hasattr(timestep, 'observation'):
+        obs = timestep.observation
+        if 'agent_state' in obs and 'agent_state_2' in obs:
+            # Agent type is at index 6 in agent_state arrays
+            agent_types_1 = obs['agent_state'][:, 6].astype(jnp.int32)  # Extract agent type column
+            agent_types_2 = obs['agent_state_2'][:, 6].astype(jnp.int32)
+    
+    # Fallback to default mixed agent setup if no observation data
+    if agent_types_1 is None or agent_types_2 is None:
+        num_envs = curriculum_levels.shape[0]
+        # Default: agent 1 = tracked (0), agent 2 = skid steer (2)
+        agent_types_1 = jnp.zeros(num_envs, dtype=jnp.int32)  # All tracked
+        agent_types_2 = jnp.full(num_envs, 2, dtype=jnp.int32)  # All skid steer
+    
+    # Agent type names for logging
+    agent_type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+    
+    # Count agent types at each curriculum level
+    for level_idx in range(len(global_curriculum_levels)):
+        level_mask = curriculum_levels == level_idx
+        num_envs_at_level = jnp.sum(level_mask).item()
+        
+        if num_envs_at_level > 0:  # Only process levels that have environments
+            # Agent 1 types at this level
+            agent1_types_at_level = agent_types_1[level_mask]
+            # Agent 2 types at this level  
+            agent2_types_at_level = agent_types_2[level_mask]
+            
+            # Count each agent type for both agent 1 and agent 2
+            for agent_type_id, agent_name in agent_type_names.items():
+                count_agent1 = jnp.sum(agent1_types_at_level == agent_type_id).item()
+                count_agent2 = jnp.sum(agent2_types_at_level == agent_type_id).item()
+                total_count = count_agent1 + count_agent2
+                
+                if total_count > 0:  # Only log non-zero counts
+                    curriculum_stat[f'Level {level_idx} {agent_name} Agents'] = total_count
+                    if count_agent1 > 0:
+                        curriculum_stat[f'Level {level_idx} Agent1 {agent_name}'] = count_agent1
+                    if count_agent2 > 0:
+                        curriculum_stat[f'Level {level_idx} Agent2 {agent_name}'] = count_agent2
+    
+    # Overall agent type distribution (across all levels)
+    for agent_type_id, agent_name in agent_type_names.items():
+        count_agent1 = jnp.sum(agent_types_1 == agent_type_id).item()
+        count_agent2 = jnp.sum(agent_types_2 == agent_type_id).item()
+        total_count = count_agent1 + count_agent2
+        
+        if total_count > 0:
+            curriculum_stat[f'Total {agent_name} Agents'] = total_count
+            if count_agent1 > 0:
+                curriculum_stat[f'Total Agent1 {agent_name}'] = count_agent1
+            if count_agent2 > 0:
+                curriculum_stat[f'Total Agent2 {agent_name}'] = count_agent2
+    
     return curriculum_stat
 
 
