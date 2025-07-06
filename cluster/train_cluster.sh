@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -n 1
-#SBATCH --cpus-per-task=8
-#SBATCH --gpus=rtx_4090:8
+#SBATCH --cpus-per-task=4
+#SBATCH --gpus=gpu:4
 #SBATCH --time=12:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
@@ -23,9 +23,9 @@ conda activate $CONDA_ENV
 
 # Set environment variables and run training
 export DATASET_PATH=/cluster/home/alesweber/TerraProject/terra/data/terra/train/
-export DATASET_SIZE=200
+export DATASET_SIZE=100
 
 
 # Change to the directory containing train.py or use the full path
 cd /cluster/home/alesweber/TerraProject/terra-baselines
-python train.py
+python train_mixed_agents.py 

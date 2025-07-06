@@ -445,11 +445,32 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         self.activation = nn.relu
 
     def __call__(self, obs: Array) -> Array:
-        x_agent_state = self.agent_state_net(obs[0])
-        x_agent_state_2 = self.agent_state_net(obs[12])
+        # OPTIMIZED: Batched processing for both agents
+        # Batch agent states together for single forward pass
+        agent_states_batch = jnp.concatenate([obs[0], obs[12]], axis=0)
+        x_agent_states_batch = self.agent_state_net(agent_states_batch)
+        # Split back to individual agents
+        x_agent_state, x_agent_state_2 = jnp.split(x_agent_states_batch, 2, axis=0)
+        
+        # OPTIMIZED: Batch local maps for both agents together
+        # Agent 1 local maps: obs[1:7], Agent 2 local maps: obs[13:19]
+        local_maps_1 = [obs[1], obs[2], obs[3], obs[4], obs[5], obs[6]]
+        local_maps_2 = [obs[13], obs[14], obs[15], obs[16], obs[17], obs[18]]
+        
+        # Batch both agents' local maps for more efficient processing
+        local_maps_batch = []
+        for i in range(6):  # 6 local map types
+            # Concatenate corresponding local maps from both agents
+            batched_map = jnp.concatenate([local_maps_1[i], local_maps_2[i]], axis=0)
+            local_maps_batch.append(batched_map)
+        
+        # Single forward pass for both agents' local maps
+        x_local_batch = self.local_map_net(local_maps_batch)
+        # Split back to individual agents
+        x_local_map, x_local_map_2 = jnp.split(x_local_batch, 2, axis=0)
+        
+        # Process global maps and actions (unchanged)
         x_maps = self.maps_net(obs)
-        x_local_map = self.local_map_net(obs[1:7])
-        x_local_map_2 = self.local_map_net(obs[13:19])
         x_actions = self.actions_net(obs)
         
         # Flatten local map outputs if they have spatial dimensions

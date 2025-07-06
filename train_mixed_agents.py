@@ -93,12 +93,12 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 2048  # Reduced for more complex multi-agent setup
+    num_envs_per_device: int = 512  # REDUCED from 2048 for faster compilation
     num_steps: int = 32
     update_epochs: int = 5
     num_minibatches: int = 32
     total_timesteps: int = 50_000_000_000  # More training for mixed agents
-    lr: float = 2e-4  # Slightly lower LR for more stable training
+    lr: float = 3e-4  # Slightly lower LR for more stable training
     clip_eps: float = 0.3  # More conservative clipping
     gamma: float = 0.995
     gae_lambda: float = 0.95
@@ -270,8 +270,8 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     if agent_info['curriculum_active']:
         print(f"📈 Agent Type Curriculum: Phase='{agent_info['phase']}', Switch at timestep {agent_info['switch_timestep']:,}")
     
-    # Store agent manager in train state for later use
-    train_state.agent_manager = agent_manager
+    # Note: agent_manager is not stored in train_state since TrainState is frozen
+    # and agent_manager is not currently used during training
     
     return rng, env, env_params, train_state
 
@@ -370,7 +370,7 @@ if __name__ == "__main__":
         help="Number of environments per device"
     )
     parser.add_argument(
-        "--lr", type=float, default=2e-4,
+        "--lr", type=float, default=3e-4,
         help="Learning rate"
     )
     parser.add_argument(
