@@ -3,17 +3,6 @@
 Training script for mixed agent environments (Tracked Excavators + Skid Steers)
 This uses the unified network with agent type conditioning.
 
-AGENT CONFIGURATION SYSTEM:
-===========================
-
-Terra has 2 agents per environment that alternate control each timestep:
-- agent_state (Agent 1): Primary agent  
-- agent_state_2 (Agent 2): Secondary agent
-
-Agent Types:
-- 0: Tracked Excavator (can dig, dump, rotate base)
-- 1: Wheeled Excavator (can dig, dump, rotate base + cabin, turn wheels)  
-- 2: Skid Steer (can auto-load, manual lift, dump, simple shovel control)
 
 TRAINING MODES:
 ===============
@@ -93,12 +82,12 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 512  # REDUCED from 2048 for faster compilation
-    num_steps: int = 32
-    update_epochs: int = 5
-    num_minibatches: int = 32
-    total_timesteps: int = 50_000_000_000  # More training for mixed agents
-    lr: float = 3e-4  # Slightly lower LR for more stable training
+    num_envs_per_device: int = 512
+    num_steps: int = 16
+    update_epochs: int = 2
+    num_minibatches: int = 8
+    total_timesteps: int = 5_000_000_000  # More training for mixed agents
+    lr: float = 3e-4  
     clip_eps: float = 0.3  # More conservative clipping
     gamma: float = 0.995
     gae_lambda: float = 0.95
@@ -107,9 +96,9 @@ class MixedAgentTrainConfig:
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
     seed: int = 42
-    log_train_interval: int = 1  # Number of updates between logging train stats
-    log_eval_interval: int = 25  # More frequent evaluation for mixed agents
-    checkpoint_interval: int = 25  # More frequent checkpoints
+    log_train_interval: int = 3  # Number of updates between logging train stats
+    log_eval_interval: int = 100  # Less frequent evaluation for speed
+    checkpoint_interval: int = 100  # Less frequent checkpoints for speed
     
     # Model settings optimized for mixed agents
     num_prev_actions = 10
@@ -118,7 +107,8 @@ class MixedAgentTrainConfig:
     maps_net_normalization_bounds = [-10, 10]  # Required field for network initialization
     loaded_max = 100
     num_rollouts_eval = 500  # max length of an episode in Terra for eval
-    cache_clear_interval = 500  # More frequent cache clearing for memory
+    cache_clear_interval = 1000  # Less frequent cache clearing for speed
+    # NOTE: If you have more VRAM, you can try increasing num_envs_per_device further (e.g., 1536 or 2048)
     
     # Agent type configuration - NEW!
     agent1_type: int = 0  # 0=tracked, 1=wheeled, 2=skidsteer
@@ -141,6 +131,8 @@ class MixedAgentTrainConfig:
         self.num_updates = (
             self.total_timesteps // (self.num_steps * self.num_envs)
         ) // self.num_devices
+
+        print(f"Devices: {jax.devices()}")
         print(f"Mixed Agent Training - Devices: {self.num_devices}, Updates: {self.num_updates}")
         
         # Agent type curriculum info
@@ -354,7 +346,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Train mixed agent policies (Tracked + Skid Steer)")
     parser.add_argument(
-        "-n", "--name", type=str, default="mixed-agents-experiment",
+        "-n", "--name", type=str, default="mixed-agents-experiment2",
         help="Experiment name"
     )
     parser.add_argument(
@@ -364,10 +356,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "-d", "--num_devices", type=int, default=0,
         help="Number of devices to use. If 0, uses all available devices."
-    )
-    parser.add_argument(
-        "--envs_per_device", type=int, default=2048,
-        help="Number of environments per device"
     )
     parser.add_argument(
         "--lr", type=float, default=3e-4,
@@ -409,7 +397,6 @@ if __name__ == "__main__":
     config = MixedAgentTrainConfig(
         name=name, 
         num_devices=args.num_devices,
-        num_envs_per_device=args.envs_per_device,
         lr=args.lr,
         agent1_type=agent1_type,
         agent2_type=agent2_type,
