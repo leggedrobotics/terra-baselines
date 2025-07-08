@@ -82,11 +82,11 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 512
+    num_envs_per_device: int = 256
     num_steps: int = 16
     update_epochs: int = 2
     num_minibatches: int = 8
-    total_timesteps: int = 5_000_000_000  # More training for mixed agents
+    total_timesteps: int = 500_000_000  # More training for mixed agents
     lr: float = 3e-4  
     clip_eps: float = 0.2  # Less conservative clipping for escaping local optima
     gamma: float = 0.995
@@ -147,11 +147,14 @@ class MixedAgentTrainConfig:
         return getattr(self, key)
 
 
-def create_mixed_agent_env_config():
+def create_mixed_agent_env_config(agent_types=(0, 2)):
     """Create environment configuration optimized for mixed agent training"""
     
     # Use the existing dense rewards from config - they already include skid steer rewards
     env_config = EnvConfig()  # This automatically uses Rewards.dense() which includes all our skid steer rewards
+    
+    # Set the agent types from the training configuration
+    env_config = env_config._replace(agent_types=agent_types)
     
     # You can override specific settings if needed for mixed agent training
     # env_config = env_config._replace(
@@ -219,9 +222,10 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     # Initialize environment with configurable agents
     env = TerraEnvBatch(batch_cfg=batch_cfg)
     
-    # Get environment parameters
+    # Get environment parameters with agent types from config
     if env_params is None:
-        env_params = create_mixed_agent_env_config()
+        agent_types = agent_manager.get_current_agent_types()
+        env_params = create_mixed_agent_env_config(agent_types=agent_types)
     
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
@@ -299,6 +303,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     # Initialize training components
     rng, env, env_params, train_state = make_mixed_agent_states(config)
 
+    # Create agent manager for displaying current configuration
+    agent_manager = ConfigurableAgentManager(config)
+
     # Use the existing train function (it's already generic)
     train_fn = make_train(env, env_params, config)
 
@@ -310,7 +317,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     print(f"   - Training steps: {config.num_steps}")
     print(f"   - Total timesteps: {config.total_timesteps:,}")
     print(f"   - Learning rate: {config.lr}")
-    print(f"   - Agent types: Tracked (0) + Skid Steer (2)")
+    agent_types = agent_manager.get_current_agent_types()
+    type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+    print(f"   - Agent types: {type_names.get(agent_types[0], 'Unknown')} ({agent_types[0]}) + {type_names.get(agent_types[1], 'Unknown')} ({agent_types[1]})")
     print("=" * 60)
     
     try:
@@ -320,12 +329,16 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         print(f"✅ Mixed agent training completed in {elapsed_time:.2f}s")
         
         # Save final checkpoint with special naming - enhanced metadata
+        agent_types = agent_manager.get_current_agent_types()
+        type_names = {0: "tracked", 1: "wheeled", 2: "skidsteer"}
+        agent_types_str = f"{type_names.get(agent_types[0], 'unknown')}_{type_names.get(agent_types[1], 'unknown')}"
+        
         final_checkpoint = {
             "train_config": config,
             "env_config": train_info["runner_state"][2].env_cfg,  # timestep.env_cfg
             "model": train_info["runner_state"][1].params,
             "loss_info": train_info["loss_info"],
-            "agent_types": "tracked_skidsteer",
+            "agent_types": agent_types_str,
             "network_type": "unified_with_agent_type_conditioning",
             "training_duration": elapsed_time,
             "final_reward": train_info.get("final_reward", None)
@@ -346,7 +359,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Train mixed agent policies (Tracked + Skid Steer)")
     parser.add_argument(
-        "-n", "--name", type=str, default="mixed-agents-experiment2",
+        "-n", "--name", type=str, default="mixed-agents-skidsteer-skidsteer",
         help="Experiment name"
     )
     parser.add_argument(
@@ -383,16 +396,21 @@ if __name__ == "__main__":
         print("🏗️  Training Configuration: Both Excavators (Tracked)")
         
     elif args.agent_config == "mixed":
-        # Mixed: tracked excavator + skid steer
-        agent1_type, agent2_type = 0, 2  
+        
+        # Examples: (0, 2) = tracked + skidsteer, (2, 2) = dual skidsteers, (0, 0) = dual tracked
+        agent1_type, agent2_type = 2, 2  # ← CHANGE THESE VALUES TO TRAIN DIFFERENT AGENT COMBINATIONS
         use_curriculum = False
-        print("🔄 Training Configuration: Mixed Agents (Tracked + Skid Steer)")
+        type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+        print(f"🔄 Training Configuration: Mixed Agents ({type_names.get(agent1_type, 'Unknown')} + {type_names.get(agent2_type, 'Unknown')})")
         
     elif args.agent_config == "curriculum":
         # Curriculum: start with excavators, switch to mixed
-        agent1_type, agent2_type = 0, 2  # Final target types
+        # You can change the final target types here too!
+        agent1_type, agent2_type = 2, 2  # ← CHANGE THESE VALUES FOR DIFFERENT CURRICULUM TARGET
         use_curriculum = True
-        print(f"📈 Training Configuration: Curriculum (Excavators → Mixed at {args.curriculum_switch:,})")
+        type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+        target_config = f"{type_names.get(agent1_type, 'Unknown')} + {type_names.get(agent2_type, 'Unknown')}"
+        print(f"📈 Training Configuration: Curriculum (Excavators → {target_config} at {args.curriculum_switch:,})")
     
     config = MixedAgentTrainConfig(
         name=name, 

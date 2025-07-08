@@ -1,0 +1,20 @@
+Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
+/cluster/home/alesweber/TerraProject/terra-baselines/visualize_mixed.py:144: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
+  env_cfgs = jax.tree_map(replicate_field, env_cfgs)
+pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loaded data from /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-experiment2-local-2025-07-07-15-23-05_FINAL.pkl.
+Traceback (most recent call last):
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/visualize_mixed.py", line 144, in <module>
+    env_cfgs = jax.tree_map(replicate_field, env_cfgs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/jax/_src/tree_util.py", line 321, in tree_map
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/jax/_src/tree_util.py", line 321, in <genexpr>
+    return treedef.unflatten(f(*xs) for xs in zip(*all_leaves))
+                             ^^^^^^
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/visualize_mixed.py", line 142, in replicate_field
+    return x[0][None, ...].repeat(n_envs, 0)
+           ~^^^
+TypeError: 'int' object is not subscriptable

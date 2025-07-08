@@ -1,91 +1,0 @@
-Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
-wandb: Currently logged in as: aless-weber (aless-weber-eth). Use `wandb login --relogin` to force relogin
-ERROR:root:Driver not initialized (amdgpu not found in modules)
-wandb: wandb version 0.21.0 is available!  To upgrade, please run:
-wandb:  $ pip install wandb --upgrade
-wandb: Tracking run with wandb version 0.16.4
-wandb: Run data is saved locally in /cluster/home/alesweber/TerraProject/terra-baselines/wandb/run-20250707_122113-0i88ldn0
-wandb: Run `wandb offline` to turn off syncing.
-wandb: Syncing run mixed-agents-experiment-local-2025-07-07-12-20-54
-wandb: ⭐️ View project at https://wandb.ai/aless-weber-eth/mixed-agents
-wandb: 🚀 View run at https://wandb.ai/aless-weber-eth/mixed-agents/runs/0i88ldn0
-pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
-Hello from the pygame community. https://www.pygame.org/contribute.html
-🔄 Training Configuration: Mixed Agents (Tracked + Skid Steer)
-Mixed Agent Training - Devices: 8, Updates: 11920
-🤖 Fixed Agent Types: Agent1=0, Agent2=2
-Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations', '/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones'].
-Data Loader:   0%|          | 0/100 [00:00<?, ?it/s]Data Loader:   2%|▏         | 2/100 [00:00<00:06, 14.45it/s]Data Loader:   4%|▍         | 4/100 [00:00<00:05, 16.93it/s]Data Loader:   6%|▌         | 6/100 [00:00<00:05, 17.98it/s]Data Loader:   8%|▊         | 8/100 [00:00<00:05, 18.24it/s]Data Loader:  10%|█         | 10/100 [00:00<00:04, 18.56it/s]Data Loader:  12%|█▏        | 12/100 [00:00<00:04, 18.32it/s]Data Loader:  14%|█▍        | 14/100 [00:00<00:04, 17.74it/s]Data Loader:  16%|█▌        | 16/100 [00:00<00:04, 17.89it/s]Data Loader:  18%|█▊        | 18/100 [00:01<00:04, 18.42it/s]Data Loader:  20%|██        | 20/100 [00:01<00:04, 18.81it/s]Data Loader:  22%|██▏       | 22/100 [00:01<00:04, 19.06it/s]Data Loader:  24%|██▍       | 24/100 [00:01<00:04, 18.98it/s]Data Loader:  26%|██▌       | 26/100 [00:01<00:03, 19.00it/s]Data Loader:  28%|██▊       | 28/100 [00:01<00:03, 18.86it/s]Data Loader:  30%|███       | 30/100 [00:01<00:04, 16.38it/s]Data Loader:  32%|███▏      | 32/100 [00:01<00:04, 15.58it/s]Data Loader:  34%|███▍      | 34/100 [00:01<00:04, 16.47it/s]Data Loader:  36%|███▌      | 36/100 [00:02<00:03, 17.21it/s]Data Loader:  38%|███▊      | 38/100 [00:02<00:03, 17.82it/s]Data Loader:  40%|████      | 40/100 [00:02<00:03, 18.17it/s]Data Loader:  42%|████▏     | 42/100 [00:02<00:03, 18.59it/s]Data Loader:  44%|████▍     | 44/100 [00:02<00:02, 18.67it/s]Data Loader:  46%|████▌     | 46/100 [00:02<00:03, 17.32it/s]Data Loader:  48%|████▊     | 48/100 [00:02<00:03, 17.05it/s]Data Loader:  50%|█████     | 50/100 [00:02<00:02, 17.61it/s]Data Loader:  52%|█████▏    | 52/100 [00:02<00:02, 18.12it/s]Data Loader:  54%|█████▍    | 54/100 [00:03<00:02, 18.51it/s]Data Loader:  56%|█████▌    | 56/100 [00:03<00:02, 18.84it/s]Data Loader:  58%|█████▊    | 58/100 [00:03<00:02, 18.88it/s]Data Loader:  60%|██████    | 60/100 [00:03<00:02, 18.89it/s]Data Loader:  62%|██████▏   | 62/100 [00:03<00:02, 18.40it/s]Data Loader:  64%|██████▍   | 64/100 [00:03<00:01, 18.45it/s]Data Loader:  66%|██████▌   | 66/100 [00:03<00:01, 18.13it/s]Data Loader:  68%|██████▊   | 68/100 [00:03<00:01, 18.37it/s]Data Loader:  70%|███████   | 70/100 [00:03<00:01, 18.59it/s]Data Loader:  72%|███████▏  | 72/100 [00:03<00:01, 18.77it/s]Data Loader:  74%|███████▍  | 74/100 [00:04<00:01, 18.91it/s]Data Loader:  76%|███████▌  | 76/100 [00:04<00:01, 18.83it/s]Data Loader:  78%|███████▊  | 78/100 [00:04<00:01, 18.76it/s]Data Loader:  80%|████████  | 80/100 [00:04<00:01, 17.15it/s]Data Loader:  82%|████████▏ | 82/100 [00:04<00:01, 16.11it/s]Data Loader:  84%|████████▍ | 84/100 [00:04<00:00, 16.34it/s]Data Loader:  86%|████████▌ | 86/100 [00:04<00:00, 17.12it/s]Data Loader:  88%|████████▊ | 88/100 [00:04<00:00, 17.77it/s]Data Loader:  90%|█████████ | 90/100 [00:05<00:00, 18.31it/s]Data Loader:  92%|█████████▏| 92/100 [00:05<00:00, 18.67it/s]Data Loader:  94%|█████████▍| 94/100 [00:05<00:00, 18.96it/s]Data Loader:  96%|█████████▌| 96/100 [00:05<00:00, 19.18it/s]Data Loader:  98%|█████████▊| 98/100 [00:05<00:00, 19.25it/s]Data Loader: 100%|██████████| 100/100 [00:05<00:00, 19.28it/s]Data Loader: 100%|██████████| 100/100 [00:05<00:00, 18.11it/s]
-Loaded 100 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations.
-Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations.
-Data Loader:   0%|          | 0/100 [00:00<?, ?it/s]Data Loader:   0%|          | 0/100 [00:00<?, ?it/s]
-Traceback (most recent call last):
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 420, in <module>
-    train_mixed_agents(config)
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 308, in train_mixed_agents
-    rng, env, env_params, train_state = make_mixed_agent_states(config)
-                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 228, in make_mixed_agent_states
-    env = TerraEnvBatch(batch_cfg=batch_cfg)
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/env.py", line 342, in __init__
-    self.maps_buffer, self.batch_cfg = init_maps_buffer(batch_cfg, shuffle_maps, single_map_path)
-                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/maps_buffer.py", line 431, in init_maps_buffer
-    ) = load_maps_from_disk(folder_path)
-        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/maps_buffer.py", line 225, in load_maps_from_disk
-    map = np.load(f"{folder_path}/images/img_{i}.npy")
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/numpy/lib/npyio.py", line 427, in load
-    fid = stack.enter_context(open(os_fspath(file), "rb"))
-                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-FileNotFoundError: [Errno 2] No such file or directory: '/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones/images/img_1.npy'
-wandb: - 0.075 MB of 0.075 MB uploaded (0.018 MB deduped)wandb: \ 0.075 MB of 0.075 MB uploaded (0.018 MB deduped)wandb: | 0.075 MB of 0.075 MB uploaded (0.018 MB deduped)wandb: / 0.075 MB of 0.075 MB uploaded (0.018 MB deduped)wandb: - 0.081 MB of 0.091 MB uploaded (0.020 MB deduped)wandb: \ 0.091 MB of 0.091 MB uploaded (0.020 MB deduped)wandb: 🚀 View run mixed-agents-experiment-local-2025-07-07-12-20-54 at: https://wandb.ai/aless-weber-eth/mixed-agents/runs/0i88ldn0
-wandb: ️⚡ View job at https://wandb.ai/aless-weber-eth/mixed-agents/jobs/QXJ0aWZhY3RDb2xsZWN0aW9uOjY3OTA4ODc2MQ==/version_details/v1
-wandb: Synced 7 W&B file(s), 0 media file(s), 6 artifact file(s) and 1 other file(s)
-wandb: Find logs at: ./wandb/run-20250707_122113-0i88ldn0/logs
-Exception in thread IntMsgThr:
-Exception in thread NetStatThr:
-Traceback (most recent call last):
-Traceback (most recent call last):
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/threading.py", line 1073, in _bootstrap_inner
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/threading.py", line 1073, in _bootstrap_inner
-    self.run()
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/threading.py", line 1010, in run
-    self.run()
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/threading.py", line 1010, in run
-    self._target(*self._args, **self._kwargs)
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/wandb_run.py", line 268, in check_network_status
-    self._target(*self._args, **self._kwargs)
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/wandb_run.py", line 300, in check_internal_messages
-    self._loop_check_status(
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/wandb_run.py", line 224, in _loop_check_status
-    self._loop_check_status(
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/wandb_run.py", line 224, in _loop_check_status
-    local_handle = request()
-                   ^^^^^^^^^
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/interface/interface.py", line 795, in deliver_network_status
-    local_handle = request()
-                   ^^^^^^^^^
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/interface/interface.py", line 803, in deliver_internal_messages
-    return self._deliver_network_status(status)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/interface/interface_shared.py", line 500, in _deliver_network_status
-    return self._deliver_internal_messages(internal_message)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/interface/interface_shared.py", line 506, in _deliver_internal_messages
-    return self._deliver_record(record)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/interface/interface_shared.py", line 449, in _deliver_record
-    return self._deliver_record(record)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    handle = mailbox._deliver_record(record, interface=self)
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/interface/interface_shared.py", line 449, in _deliver_record
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/lib/mailbox.py", line 455, in _deliver_record
-    handle = mailbox._deliver_record(record, interface=self)
-    interface._publish(record)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/interface/interface_sock.py", line 51, in _publish
-  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/wandb/sdk/lib/mailbox.py", line 455, in _deliver_record

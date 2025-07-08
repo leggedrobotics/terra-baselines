@@ -1,0 +1,55 @@
+Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
+/cluster/home/alesweber/TerraProject/terra-baselines/visualize_mixed.py:137: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
+  env_cfgs_replicated = jax.tree_map(
+pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loaded data from /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-experiment2-local-2025-07-07-15-23-05_FINAL.pkl.
+Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations'].
+Data Loader:   0%|          | 0/200 [00:00<?, ?it/s]Data Loader:   1%|          | 2/200 [00:00<00:14, 14.12it/s]Data Loader:   2%|▏         | 4/200 [00:00<00:12, 16.30it/s]Data Loader:   3%|▎         | 6/200 [00:00<00:11, 17.22it/s]Data Loader:   4%|▍         | 8/200 [00:00<00:10, 17.72it/s]Data Loader:   5%|▌         | 10/200 [00:00<00:10, 18.05it/s]Data Loader:   6%|▌         | 12/200 [00:00<00:10, 18.24it/s]Data Loader:   7%|▋         | 14/200 [00:00<00:10, 18.34it/s]Data Loader:   8%|▊         | 16/200 [00:00<00:10, 18.39it/s]Data Loader:   9%|▉         | 18/200 [00:01<00:09, 18.43it/s]Data Loader:  10%|█         | 20/200 [00:01<00:09, 18.55it/s]Data Loader:  11%|█         | 22/200 [00:01<00:09, 18.58it/s]Data Loader:  12%|█▏        | 24/200 [00:01<00:09, 18.59it/s]Data Loader:  13%|█▎        | 26/200 [00:01<00:09, 18.61it/s]Data Loader:  14%|█▍        | 28/200 [00:01<00:09, 18.66it/s]Data Loader:  15%|█▌        | 30/200 [00:01<00:09, 18.56it/s]Data Loader:  16%|█▌        | 32/200 [00:01<00:09, 18.45it/s]Data Loader:  17%|█▋        | 34/200 [00:01<00:08, 18.57it/s]Data Loader:  18%|█▊        | 36/200 [00:01<00:08, 18.59it/s]Data Loader:  19%|█▉        | 38/200 [00:02<00:08, 18.55it/s]Data Loader:  20%|██        | 40/200 [00:02<00:08, 18.61it/s]Data Loader:  21%|██        | 42/200 [00:02<00:08, 18.60it/s]Data Loader:  22%|██▏       | 44/200 [00:02<00:08, 18.56it/s]Data Loader:  23%|██▎       | 46/200 [00:02<00:08, 18.56it/s]Data Loader:  24%|██▍       | 48/200 [00:02<00:08, 18.57it/s]Data Loader:  25%|██▌       | 50/200 [00:02<00:08, 18.59it/s]Data Loader:  26%|██▌       | 52/200 [00:02<00:07, 18.53it/s]Data Loader:  27%|██▋       | 54/200 [00:02<00:07, 18.28it/s]Data Loader:  28%|██▊       | 56/200 [00:03<00:09, 15.66it/s]Data Loader:  29%|██▉       | 58/200 [00:03<00:09, 15.70it/s]Data Loader:  30%|███       | 60/200 [00:03<00:08, 16.50it/s]Data Loader:  31%|███       | 62/200 [00:03<00:08, 17.12it/s]Data Loader:  32%|███▏      | 64/200 [00:03<00:07, 17.57it/s]Data Loader:  33%|███▎      | 66/200 [00:03<00:07, 17.83it/s]Data Loader:  34%|███▍      | 68/200 [00:03<00:07, 18.15it/s]Data Loader:  35%|███▌      | 70/200 [00:03<00:07, 18.34it/s]Data Loader:  36%|███▌      | 72/200 [00:03<00:06, 18.48it/s]Data Loader:  37%|███▋      | 74/200 [00:04<00:06, 18.57it/s]Data Loader:  38%|███▊      | 76/200 [00:04<00:06, 18.60it/s]Data Loader:  39%|███▉      | 78/200 [00:04<00:06, 18.62it/s]Data Loader:  40%|████      | 80/200 [00:04<00:06, 18.67it/s]Data Loader:  41%|████      | 82/200 [00:04<00:06, 18.61it/s]Data Loader:  42%|████▏     | 84/200 [00:04<00:06, 18.54it/s]Data Loader:  43%|████▎     | 86/200 [00:04<00:06, 18.43it/s]Data Loader:  44%|████▍     | 88/200 [00:04<00:06, 18.40it/s]Data Loader:  45%|████▌     | 90/200 [00:04<00:05, 18.46it/s]Data Loader:  46%|████▌     | 92/200 [00:05<00:05, 18.47it/s]Data Loader:  47%|████▋     | 94/200 [00:05<00:05, 18.59it/s]Data Loader:  48%|████▊     | 96/200 [00:05<00:05, 18.67it/s]Data Loader:  49%|████▉     | 98/200 [00:05<00:05, 18.74it/s]Data Loader:  50%|█████     | 100/200 [00:05<00:05, 18.72it/s]Data Loader:  51%|█████     | 102/200 [00:05<00:05, 18.72it/s]Data Loader:  52%|█████▏    | 104/200 [00:05<00:05, 18.76it/s]Data Loader:  53%|█████▎    | 106/200 [00:05<00:05, 18.74it/s]Data Loader:  54%|█████▍    | 108/200 [00:05<00:04, 18.75it/s]Data Loader:  55%|█████▌    | 110/200 [00:06<00:04, 18.68it/s]Data Loader:  56%|█████▌    | 112/200 [00:06<00:04, 18.64it/s]Data Loader:  57%|█████▋    | 114/200 [00:06<00:04, 18.61it/s]Data Loader:  58%|█████▊    | 116/200 [00:06<00:04, 18.58it/s]Data Loader:  59%|█████▉    | 118/200 [00:06<00:04, 18.54it/s]Data Loader:  60%|██████    | 120/200 [00:06<00:04, 18.56it/s]Data Loader:  61%|██████    | 122/200 [00:06<00:04, 18.55it/s]Data Loader:  62%|██████▏   | 124/200 [00:06<00:04, 18.54it/s]Data Loader:  63%|██████▎   | 126/200 [00:06<00:03, 18.55it/s]Data Loader:  64%|██████▍   | 128/200 [00:07<00:03, 18.55it/s]Data Loader:  65%|██████▌   | 130/200 [00:07<00:03, 18.53it/s]Data Loader:  66%|██████▌   | 132/200 [00:07<00:03, 18.53it/s]Data Loader:  67%|██████▋   | 134/200 [00:07<00:03, 18.56it/s]Data Loader:  68%|██████▊   | 136/200 [00:07<00:03, 18.60it/s]Data Loader:  69%|██████▉   | 138/200 [00:07<00:03, 18.61it/s]Data Loader:  70%|███████   | 140/200 [00:07<00:03, 18.61it/s]Data Loader:  71%|███████   | 142/200 [00:07<00:03, 18.58it/s]Data Loader:  72%|███████▏  | 144/200 [00:07<00:03, 18.60it/s]Data Loader:  73%|███████▎  | 146/200 [00:07<00:02, 18.62it/s]Data Loader:  74%|███████▍  | 148/200 [00:08<00:02, 18.56it/s]Data Loader:  75%|███████▌  | 150/200 [00:08<00:02, 18.51it/s]Data Loader:  76%|███████▌  | 152/200 [00:08<00:02, 18.52it/s]Data Loader:  77%|███████▋  | 154/200 [00:08<00:02, 18.59it/s]Data Loader:  78%|███████▊  | 156/200 [00:08<00:02, 18.65it/s]Data Loader:  79%|███████▉  | 158/200 [00:08<00:02, 18.63it/s]Data Loader:  80%|████████  | 160/200 [00:08<00:02, 18.60it/s]Data Loader:  81%|████████  | 162/200 [00:08<00:02, 18.65it/s]Data Loader:  82%|████████▏ | 164/200 [00:08<00:01, 18.65it/s]Data Loader:  83%|████████▎ | 166/200 [00:09<00:01, 18.70it/s]Data Loader:  84%|████████▍ | 168/200 [00:09<00:01, 18.71it/s]Data Loader:  85%|████████▌ | 170/200 [00:09<00:01, 18.73it/s]Data Loader:  86%|████████▌ | 172/200 [00:09<00:01, 18.73it/s]Data Loader:  87%|████████▋ | 174/200 [00:09<00:01, 18.74it/s]Data Loader:  88%|████████▊ | 176/200 [00:09<00:01, 18.72it/s]Data Loader:  89%|████████▉ | 178/200 [00:09<00:01, 18.70it/s]Data Loader:  90%|█████████ | 180/200 [00:09<00:01, 18.70it/s]Data Loader:  91%|█████████ | 182/200 [00:09<00:00, 18.68it/s]Data Loader:  92%|█████████▏| 184/200 [00:10<00:00, 18.72it/s]Data Loader:  93%|█████████▎| 186/200 [00:10<00:00, 18.68it/s]Data Loader:  94%|█████████▍| 188/200 [00:10<00:00, 18.64it/s]Data Loader:  95%|█████████▌| 190/200 [00:10<00:00, 18.62it/s]Data Loader:  96%|█████████▌| 192/200 [00:10<00:00, 18.59it/s]Data Loader:  97%|█████████▋| 194/200 [00:10<00:00, 18.61it/s]Data Loader:  98%|█████████▊| 196/200 [00:10<00:00, 18.62it/s]Data Loader:  99%|█████████▉| 198/200 [00:10<00:00, 18.64it/s]Data Loader: 100%|██████████| 200/200 [00:10<00:00, 18.57it/s]Data Loader: 100%|██████████| 200/200 [00:10<00:00, 18.41it/s]
+Loaded 200 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations.
+Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations.
+Maps width: 64
+Maps height: 64
+Unique shapes of trench_axes_list: {(200, 3, 3)}
+Maps shape: (1, 200, 64, 64).
+Padding mask shape: (1, 200, 64, 64).
+Dumpability mask shape: (1, 200, 64, 64).
+Trench axes shape: (1, 200, 3, 3).
+Trench types shape: (1,).
+Actions shape: (1, 200, 64, 64).
+Shuffling maps between curriculum levels...
+Maps shuffled.
+TerraEnv: disabling display...
+Agent size (in rendering): 9x5
+Tile size (in rendering): 0.6875
+Rendering tile size: 3
+Number of possible base rotations: 12
+Number of possible cabin rotations: 12
+num_embeddings_agent = 64
+map normalization min max = (-1, 1)
+Model: 419,680 parameters
+Using seed=0
+Traceback (most recent call last):
+  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/jax/_src/api.py", line 1260, in _get_axis_size
+    return shape[axis]
+           ~~~~~^^^^^^
+IndexError: tuple index out of range
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/visualize_mixed.py", line 156, in <module>
+    obs_seq, cum_rewards = rollout_episode(
+                           ^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/visualize_mixed.py", line 30, in rollout_episode
+    timestep = env.reset(env_cfgs, rng_reset)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/TerraProject/terra/terra/env.py", line 427, in reset
+    env_cfgs = self.curriculum_manager.reset_cfgs(env_cfgs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/TerraProject/terra/terra/curriculum.py", line 142, in reset_cfgs
+    return jax.vmap(self._reset_single_cfg)(env_cfgs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: vmap was requested to map its argument along axis 0, which implies that its rank should be at least 1, but is only 0 (its shape is ())
+--------------------
+For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.

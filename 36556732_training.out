@@ -1,60 +1,0 @@
-Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
-wandb: Currently logged in as: aless-weber (aless-weber-eth). Use `wandb login --relogin` to force relogin
-ERROR:root:Driver not initialized (amdgpu not found in modules)
-wandb: wandb version 0.21.0 is available!  To upgrade, please run:
-wandb:  $ pip install wandb --upgrade
-wandb: Tracking run with wandb version 0.16.4
-wandb: Run data is saved locally in /cluster/home/alesweber/TerraProject/terra-baselines/wandb/run-20250707_151420-9ekde3zm
-wandb: Run `wandb offline` to turn off syncing.
-wandb: Syncing run mixed-agents-experiment2-local-2025-07-07-15-14-04
-wandb: ⭐️ View project at https://wandb.ai/aless-weber-eth/mixed-agents
-wandb: 🚀 View run at https://wandb.ai/aless-weber-eth/mixed-agents/runs/9ekde3zm
-pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
-Hello from the pygame community. https://www.pygame.org/contribute.html
-🔄 Training Configuration: Mixed Agents (Tracked + Skid Steer)
-Devices: [cuda(id=0), cuda(id=1), cuda(id=2), cuda(id=3), cuda(id=4), cuda(id=5), cuda(id=6), cuda(id=7)]
-Mixed Agent Training - Devices: 8, Updates: 7152
-🤖 Fixed Agent Types: Agent1=0, Agent2=2
-Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations', '/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones'].
-Data Loader:   0%|          | 0/100 [00:00<?, ?it/s]Data Loader:   1%|          | 1/100 [00:00<00:12,  8.04it/s]Data Loader:   3%|▎         | 3/100 [00:00<00:08, 11.47it/s]Data Loader:   5%|▌         | 5/100 [00:00<00:07, 12.09it/s]Data Loader:   7%|▋         | 7/100 [00:00<00:07, 12.81it/s]Data Loader:   9%|▉         | 9/100 [00:00<00:06, 13.25it/s]Data Loader:  11%|█         | 11/100 [00:00<00:06, 13.40it/s]Data Loader:  13%|█▎        | 13/100 [00:01<00:06, 13.07it/s]Data Loader:  15%|█▌        | 15/100 [00:01<00:06, 13.15it/s]Data Loader:  17%|█▋        | 17/100 [00:01<00:06, 13.48it/s]Data Loader:  19%|█▉        | 19/100 [00:01<00:05, 13.70it/s]Data Loader:  21%|██        | 21/100 [00:01<00:05, 13.78it/s]Data Loader:  23%|██▎       | 23/100 [00:01<00:05, 13.35it/s]Data Loader:  25%|██▌       | 25/100 [00:01<00:05, 12.89it/s]Data Loader:  27%|██▋       | 27/100 [00:02<00:05, 13.21it/s]Data Loader:  29%|██▉       | 29/100 [00:02<00:05, 13.47it/s]Data Loader:  31%|███       | 31/100 [00:02<00:05, 13.55it/s]Data Loader:  33%|███▎      | 33/100 [00:02<00:04, 13.59it/s]Data Loader:  35%|███▌      | 35/100 [00:02<00:04, 13.18it/s]Data Loader:  37%|███▋      | 37/100 [00:02<00:04, 13.32it/s]Data Loader:  39%|███▉      | 39/100 [00:02<00:04, 13.56it/s]Data Loader:  41%|████      | 41/100 [00:03<00:04, 13.65it/s]Data Loader:  43%|████▎     | 43/100 [00:03<00:04, 13.65it/s]Data Loader:  45%|████▌     | 45/100 [00:03<00:04, 13.56it/s]Data Loader:  47%|████▋     | 47/100 [00:03<00:03, 13.44it/s]Data Loader:  49%|████▉     | 49/100 [00:03<00:03, 13.63it/s]Data Loader:  51%|█████     | 51/100 [00:03<00:03, 13.80it/s]Data Loader:  53%|█████▎    | 53/100 [00:03<00:03, 13.85it/s]Data Loader:  55%|█████▌    | 55/100 [00:04<00:03, 13.14it/s]Data Loader:  57%|█████▋    | 57/100 [00:04<00:03, 13.11it/s]Data Loader:  59%|█████▉    | 59/100 [00:04<00:03, 13.39it/s]Data Loader:  61%|██████    | 61/100 [00:04<00:02, 13.63it/s]Data Loader:  63%|██████▎   | 63/100 [00:04<00:02, 13.73it/s]Data Loader:  65%|██████▌   | 65/100 [00:04<00:02, 12.79it/s]Data Loader:  67%|██████▋   | 67/100 [00:05<00:02, 12.69it/s]Data Loader:  69%|██████▉   | 69/100 [00:05<00:02, 13.10it/s]Data Loader:  71%|███████   | 71/100 [00:05<00:02, 13.38it/s]Data Loader:  73%|███████▎  | 73/100 [00:05<00:01, 13.56it/s]Data Loader:  75%|███████▌  | 75/100 [00:05<00:01, 13.64it/s]Data Loader:  77%|███████▋  | 77/100 [00:05<00:01, 13.01it/s]Data Loader:  79%|███████▉  | 79/100 [00:05<00:01, 13.15it/s]Data Loader:  81%|████████  | 81/100 [00:06<00:01, 13.43it/s]Data Loader:  83%|████████▎ | 83/100 [00:06<00:01, 13.61it/s]Data Loader:  85%|████████▌ | 85/100 [00:06<00:01, 13.62it/s]Data Loader:  87%|████████▋ | 87/100 [00:06<00:00, 13.29it/s]Data Loader:  89%|████████▉ | 89/100 [00:06<00:00, 13.31it/s]Data Loader:  91%|█████████ | 91/100 [00:06<00:00, 13.42it/s]Data Loader:  93%|█████████▎| 93/100 [00:06<00:00, 13.58it/s]Data Loader:  95%|█████████▌| 95/100 [00:07<00:00, 13.76it/s]Data Loader:  97%|█████████▋| 97/100 [00:07<00:00, 13.85it/s]Data Loader:  99%|█████████▉| 99/100 [00:07<00:00, 13.53it/s]Data Loader: 100%|██████████| 100/100 [00:07<00:00, 13.32it/s]
-Loaded 100 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations.
-Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations.
-Data Loader:   0%|          | 0/100 [00:00<?, ?it/s]Data Loader:   1%|          | 1/100 [00:00<00:10,  9.48it/s]Data Loader:   3%|▎         | 3/100 [00:00<00:07, 13.53it/s]Data Loader:   5%|▌         | 5/100 [00:00<00:07, 13.53it/s]Data Loader:   7%|▋         | 7/100 [00:00<00:06, 13.81it/s]Data Loader:   9%|▉         | 9/100 [00:00<00:06, 14.54it/s]Data Loader:  11%|█         | 11/100 [00:00<00:05, 15.28it/s]Data Loader:  13%|█▎        | 13/100 [00:00<00:05, 15.79it/s]Data Loader:  15%|█▌        | 15/100 [00:01<00:05, 16.05it/s]Data Loader:  17%|█▋        | 17/100 [00:01<00:05, 16.24it/s]Data Loader:  19%|█▉        | 19/100 [00:01<00:05, 15.64it/s]Data Loader:  21%|██        | 21/100 [00:01<00:05, 15.02it/s]Data Loader:  23%|██▎       | 23/100 [00:01<00:05, 14.78it/s]Data Loader:  25%|██▌       | 25/100 [00:01<00:05, 14.55it/s]Data Loader:  27%|██▋       | 27/100 [00:01<00:04, 14.85it/s]Data Loader:  29%|██▉       | 29/100 [00:01<00:04, 14.61it/s]Data Loader:  31%|███       | 31/100 [00:02<00:04, 14.83it/s]Data Loader:  33%|███▎      | 33/100 [00:02<00:04, 14.69it/s]Data Loader:  35%|███▌      | 35/100 [00:02<00:04, 14.15it/s]Data Loader:  37%|███▋      | 37/100 [00:02<00:04, 14.85it/s]Data Loader:  39%|███▉      | 39/100 [00:02<00:03, 15.37it/s]Data Loader:  41%|████      | 41/100 [00:02<00:03, 14.93it/s]Data Loader:  43%|████▎     | 43/100 [00:02<00:03, 15.37it/s]Data Loader:  45%|████▌     | 45/100 [00:03<00:03, 14.73it/s]Data Loader:  47%|████▋     | 47/100 [00:03<00:04, 13.05it/s]Data Loader:  49%|████▉     | 49/100 [00:03<00:04, 11.78it/s]Data Loader:  51%|█████     | 51/100 [00:03<00:04, 12.02it/s]Data Loader:  53%|█████▎    | 53/100 [00:03<00:04, 11.64it/s]Data Loader:  55%|█████▌    | 55/100 [00:03<00:03, 12.21it/s]Data Loader:  57%|█████▋    | 57/100 [00:04<00:03, 12.57it/s]Data Loader:  59%|█████▉    | 59/100 [00:04<00:03, 12.61it/s]Data Loader:  61%|██████    | 61/100 [00:04<00:03, 12.82it/s]Data Loader:  63%|██████▎   | 63/100 [00:04<00:02, 13.21it/s]Data Loader:  65%|██████▌   | 65/100 [00:04<00:02, 13.84it/s]Data Loader:  67%|██████▋   | 67/100 [00:04<00:02, 13.86it/s]Data Loader:  69%|██████▉   | 69/100 [00:04<00:02, 14.16it/s]Data Loader:  71%|███████   | 71/100 [00:05<00:02, 13.46it/s]Data Loader:  73%|███████▎  | 73/100 [00:05<00:02, 13.15it/s]Data Loader:  75%|███████▌  | 75/100 [00:05<00:01, 13.39it/s]Data Loader:  77%|███████▋  | 77/100 [00:05<00:01, 13.67it/s]Data Loader:  79%|███████▉  | 79/100 [00:05<00:01, 13.72it/s]Data Loader:  81%|████████  | 81/100 [00:05<00:01, 14.17it/s]Data Loader:  83%|████████▎ | 83/100 [00:05<00:01, 13.29it/s]Data Loader:  85%|████████▌ | 85/100 [00:06<00:01, 13.49it/s]Data Loader:  87%|████████▋ | 87/100 [00:06<00:00, 13.86it/s]Data Loader:  89%|████████▉ | 89/100 [00:06<00:00, 13.91it/s]Data Loader:  91%|█████████ | 91/100 [00:06<00:00, 13.96it/s]Data Loader:  93%|█████████▎| 93/100 [00:06<00:00, 14.29it/s]Data Loader:  95%|█████████▌| 95/100 [00:06<00:00, 14.23it/s]Data Loader:  97%|█████████▋| 97/100 [00:06<00:00, 13.35it/s]Data Loader:  99%|█████████▉| 99/100 [00:07<00:00, 13.46it/s]Data Loader: 100%|██████████| 100/100 [00:07<00:00, 13.87it/s]
-/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:229: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
-  env_params = jax.tree_map(
-2025-07-07 15:15:16.352376: W external/tsl/tsl/framework/bfc_allocator.cc:291] Allocator (GPU_0_bfc) ran out of memory trying to allocate 5.02GiB with freed_by_count=0. The caller indicates that this is not a failure, but this may mean that there could be performance gains if more memory were available.
-2025-07-07 15:15:18.411050: W external/tsl/tsl/framework/bfc_allocator.cc:291] Allocator (GPU_0_bfc) ran out of memory trying to allocate 4.27GiB with freed_by_count=0. The caller indicates that this is not a failure, but this may mean that there could be performance gains if more memory were available.
-/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:257: DeprecationWarning: jax.tree_leaves is deprecated: use jax.tree.leaves (jax v0.4.25 or newer) or jax.tree_util.tree_leaves (any JAX version).
-  print(f"🤖 Mixed Agent Network: {sum(x.size for x in jax.tree_leaves(network_params)):,} parameters")
-Loaded 100 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
-Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
-Maps width: 64
-Maps height: 64
-Unique shapes of trench_axes_list: {(100, 3, 3)}
-Maps shape: (2, 100, 64, 64).
-Padding mask shape: (2, 100, 64, 64).
-Dumpability mask shape: (2, 100, 64, 64).
-Trench axes shape: (2, 100, 3, 3).
-Trench types shape: (2,).
-Actions shape: (2, 100, 64, 64).
-Mixed Agent Environment - Tile size shape: (8, 2048)
-num_embeddings_agent = 64
-map normalization min max = (-1, 1)
-Model: 419,680 parameters
-🤖 Mixed Agent Network: 419,680 parameters
-🔧 Agent Configuration: Agent1=Tracked (type 0), Agent2=SkidSteer (type 2)
-🧠 Network: Unified with agent type conditioning
-🚀 Starting Mixed Agent Training...
-============================================================
-📊 Configuration:
-   - Environments per device: 2048
-   - Total environments: 16384
-   - Training steps: 32
-   - Total timesteps: 30,000,000,000
-   - Learning rate: 0.0003
-   - Agent types: Tracked (0) + Skid Steer (2)
-============================================================
-tile_size: 0.6875
-agent_width: 5, agent_height: 9
-Training:   0%|          | 0/7152 [00:00<?, ?it/s]2025-07-07 15:16:28.413562: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
-slurmstepd: error: *** JOB 36556732 ON eu-lo-g3-032 CANCELLED AT 2025-07-07T15:17:17 ***

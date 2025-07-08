@@ -128,9 +128,23 @@ if __name__ == "__main__":
     config.num_devices = 1
 
     env_cfgs = log["env_config"]
-    env_cfgs = jax.tree_map(
-        lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs
-    )  # take first config and replicate
+    
+    # Custom handling for different field types
+    def replicate_field(x):
+        if x is None:
+            return None
+        # Handle agent_types tuple specially
+        if isinstance(x, tuple) and len(x) == 2:
+            # Convert tuple to array and replicate for each environment
+            return jnp.array(x)[None, ...].repeat(n_envs, 0)
+        # Handle scalars (int, float, bool) - just replicate the value
+        elif isinstance(x, (int, float, bool)):
+            return jnp.array([x] * n_envs)
+        # Handle arrays - take first element and replicate
+        else:
+            return x[0][None, ...].repeat(n_envs, 0)
+    
+    env_cfgs = jax.tree_map(replicate_field, env_cfgs)
     suffle_maps = True
     env = TerraEnvBatch(
         rendering=True,

@@ -1,8 +1,7 @@
 #!/bin/bash
-#SBATCH -p gpuhe.4h
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
-#SBATCH --gpus=rtx_4090:1
+#SBATCH --gpus=gpu:1
 #SBATCH --time=2:00:00
 #SBATCH --mem-per-cpu=4G
 #SBATCH --job-name="visualization-$(date +"%Y-%m-%dT%H:%M")"
@@ -32,4 +31,4 @@ export DATASET_SIZE=200
 
 # Change to the directory containing visualize.py
 cd /cluster/home/alesweber/TerraProject/terra-baselines
-python visualize.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/experiment-local-2025-06-28-21-43-50.pkl 
+python visualize_mixed.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-experiment2-local-2025-07-07-15-23-05_FINAL.pkl
