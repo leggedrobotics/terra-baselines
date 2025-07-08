@@ -88,10 +88,10 @@ class MixedAgentTrainConfig:
     num_minibatches: int = 8
     total_timesteps: int = 5_000_000_000  # More training for mixed agents
     lr: float = 3e-4  
-    clip_eps: float = 0.3  # More conservative clipping
+    clip_eps: float = 0.2  # Less conservative clipping for escaping local optima
     gamma: float = 0.995
     gae_lambda: float = 0.95
-    ent_coef: float = 0.01  # Higher entropy for exploration of mixed behaviors
+    ent_coef: float = 0.05  # Much higher entropy to escape "do nothing" optima
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
