@@ -82,11 +82,11 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 256
+    num_envs_per_device: int = 512
     num_steps: int = 16
     update_epochs: int = 2
     num_minibatches: int = 8
-    total_timesteps: int = 500_000_000  # More training for mixed agents
+    total_timesteps: int = 1_000_000_000  # More training for mixed agents
     lr: float = 3e-4  
     clip_eps: float = 0.2  # Less conservative clipping for escaping local optima
     gamma: float = 0.995

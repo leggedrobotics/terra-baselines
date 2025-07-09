@@ -36,8 +36,13 @@ def rollout_episode(
     t_counter = 0
     reward_seq = []
     obs_seq = []
+    state_seq = []  # Also collect states
+    
+    # Add initial observation and state (after reset)
+    obs_seq.append(timestep.observation)
+    state_seq.append(timestep.state)
+    
     while True:
-        obs_seq.append(timestep.observation)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
             obs = obs_to_model_input(timestep.observation, prev_actions, rl_config)
@@ -52,14 +57,21 @@ def rollout_episode(
         timestep = env.step(
             timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
         )
+        
+        t_counter += 1
+        
+        # COLLECT OBSERVATION AFTER STEP (includes soil mechanics changes)
+        obs_seq.append(timestep.observation)
+        state_seq.append(timestep.state)
+        
         reward_seq.append(timestep.reward)
         print(t_counter, timestep.reward, action, timestep.done)
         print(10 * "=")
-        t_counter += 1
+        
         if jnp.all(timestep.done).item() or t_counter == max_frames:
             break
     print(f"Terra - Steps: {t_counter}, Return: {np.sum(reward_seq)}")
-    return obs_seq, np.cumsum(reward_seq)
+    return obs_seq, np.cumsum(reward_seq), state_seq
 
 
 def update_render(seq, env: TerraEnvBatch, frame):
@@ -102,14 +114,14 @@ if __name__ == "__main__":
         "-steps",
         "--n_steps",
         type=int,
-        default=100,
+        default=150,
         help="Number of steps.",
     )
     parser.add_argument(
         "-o",
         "--out_path",
         type=str,
-        default="./visualize_mixed.gif",
+        default="./visualize_mixed_skid_skid.gif",
         help="Output path.",
     )
     parser.add_argument(
@@ -157,7 +169,7 @@ if __name__ == "__main__":
 
     model = load_neural_network(config, env)
     model_params = log["model"]
-    obs_seq, cum_rewards = rollout_episode(
+    obs_seq, cum_rewards, state_seq = rollout_episode(
         env,
         model,
         model_params,
@@ -167,7 +179,17 @@ if __name__ == "__main__":
         seed=args.seed,
     )
 
-    for o in tqdm(obs_seq, desc="Rendering"):
-        env.terra_env.render_obs_pygame(o, generate_gif=True)
+    
+    # Render each frame with dirt gradient
+    for i, o in enumerate(tqdm(obs_seq, desc="Rendering")):
+        # Try using state action_map instead of observation action_map
+        if i < len(state_seq):
+            # Create modified observation with raw state action_map
+            modified_obs = dict(o)
+            modified_obs['action_map'] = state_seq[i].world.action_map.map
+            env.terra_env.render_obs_pygame(modified_obs, generate_gif=True)
+        else:
+            env.terra_env.render_obs_pygame(o, generate_gif=True)
 
-    env.terra_env.rendering_engine.create_gif(args.out_path) 
+    env.terra_env.rendering_engine.create_gif(args.out_path)
+    print(f"GIF saved to {args.out_path}") 

@@ -35,8 +35,13 @@ def rollout_episode(
     t_counter = 0
     reward_seq = []
     obs_seq = []
+    state_seq = []  # Also collect states
+    
+    # Add initial observation and state (after reset)
+    obs_seq.append(timestep.observation)
+    state_seq.append(timestep.state)
+    
     while True:
-        obs_seq.append(timestep.observation)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
             obs = obs_to_model_input(timestep.observation, prev_actions, rl_config)
@@ -51,19 +56,38 @@ def rollout_episode(
         timestep = env.step(
             timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
         )
+        
+        t_counter += 1
+        
+        # COLLECT OBSERVATION AFTER STEP (includes soil mechanics changes)
+        obs_seq.append(timestep.observation)
+        state_seq.append(timestep.state)
+        
+        # Debug: Try accessing the raw state action_map as well
+        if t_counter <= 3:
+            action_map = timestep.observation['action_map']
+            state_action_map = timestep.state.world.action_map.map
+            print(f"🔍 Step {t_counter}:")
+            print(f"   obs action_map shape = {action_map.shape}")
+            print(f"   state action_map shape = {state_action_map.shape}")
+            
+            # Compare first environment
+            obs_dirt = action_map[0][action_map[0] > 0] if action_map.shape[0] > 0 else []
+            state_dirt = state_action_map[0][state_action_map[0] > 0] if state_action_map.shape[0] > 0 else []
+            
+            if len(obs_dirt) > 0:
+                print(f"   obs_dirt: min={jnp.min(obs_dirt):.1f}, max={jnp.max(obs_dirt):.1f}, unique={len(jnp.unique(obs_dirt))}")
+            if len(state_dirt) > 0:
+                print(f"   state_dirt: min={jnp.min(state_dirt):.1f}, max={jnp.max(state_dirt):.1f}, unique={len(jnp.unique(state_dirt))}")
+        
         reward_seq.append(timestep.reward)
         print(t_counter, timestep.reward, action, timestep.done)
         print(10 * "=")
-        t_counter += 1
-        # if done or t_counter == max_frames:
-        #     break
-        # else:
+        
         if jnp.all(timestep.done).item() or t_counter == max_frames:
             break
-        # env_state = next_env_state
-        # obs = next_obs
     print(f"Terra - Steps: {t_counter}, Return: {np.sum(reward_seq)}")
-    return obs_seq, np.cumsum(reward_seq)
+    return obs_seq, np.cumsum(reward_seq), state_seq
 
 
 def update_render(seq, env: TerraEnvBatch, frame):
@@ -114,7 +138,7 @@ if __name__ == "__main__":
         "-o",
         "--out_path",
         type=str,
-        default="./visualize2.gif",
+        default="./visualize.gif",
         help="Output path.",
     )
     parser.add_argument(
@@ -152,7 +176,7 @@ if __name__ == "__main__":
     model_params = log["model"]
     # replicated_params = log['network']
     # model_params = jax.tree_map(lambda x: x[0], replicated_params)
-    obs_seq, cum_rewards = rollout_episode(
+    obs_seq, cum_rewards, state_seq = rollout_episode(
         env,
         model,
         model_params,
@@ -162,7 +186,14 @@ if __name__ == "__main__":
         seed=args.seed,
     )
 
-    for o in tqdm(obs_seq, desc="Rendering"):
-        env.terra_env.render_obs_pygame(o, generate_gif=True)
+    for i, o in enumerate(tqdm(obs_seq, desc="Rendering")):
+        # Try using state action_map instead of observation action_map
+        if i < len(state_seq):
+            # Create modified observation with raw state action_map
+            modified_obs = dict(o)
+            modified_obs['action_map'] = state_seq[i].world.action_map.map
+            env.terra_env.render_obs_pygame(modified_obs, generate_gif=True)
+        else:
+            env.terra_env.render_obs_pygame(o, generate_gif=True)
 
     env.terra_env.rendering_engine.create_gif(args.out_path)
