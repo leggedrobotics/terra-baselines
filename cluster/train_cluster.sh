@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH -n 1
 #SBATCH --cpus-per-task=8
-#SBATCH --gpus=rtx_4090:8
-#SBATCH --time=12:00:00
+#SBATCH --gpus=rtx_2080_ti:8
+#SBATCH --time=36:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
 #SBATCH --mail-user=name@mail
@@ -22,8 +22,8 @@ eval "$($CONDA_ROOT/bin/conda shell.bash hook)"
 conda activate $CONDA_ENV
 
 # Set environment variables and run training
-export DATASET_PATH=/cluster/home/galagu/terra/data1/
-export DATASET_SIZE=200
+export DATASET_PATH=/cluster/home/galagu/terra/train4/train/
+export DATASET_SIZE=1000
 
 # Change to the directory containing train.py or use the full path
 cd /cluster/home/galagu/terra-baselines
