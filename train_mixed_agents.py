@@ -86,12 +86,12 @@ class MixedAgentTrainConfig:
     num_steps: int = 16
     update_epochs: int = 2
     num_minibatches: int = 8
-    total_timesteps: int = 1_000_000_000  # More training for mixed agents
-    lr: float = 3e-4  
+    total_timesteps: int = 500_000_000  # More training for mixed agents
+    lr: float = 3.5e-4  
     clip_eps: float = 0.2  # Less conservative clipping for escaping local optima
     gamma: float = 0.995
     gae_lambda: float = 0.95
-    ent_coef: float = 0.05  # Much higher entropy to escape "do nothing" optima
+    ent_coef: float = 0.06  # Much higher entropy to escape "do nothing" optima
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
@@ -108,7 +108,6 @@ class MixedAgentTrainConfig:
     loaded_max = 100
     num_rollouts_eval = 500  # max length of an episode in Terra for eval
     cache_clear_interval = 1000  # Less frequent cache clearing for speed
-    # NOTE: If you have more VRAM, you can try increasing num_envs_per_device further (e.g., 1536 or 2048)
     
     # Agent type configuration - NEW!
     agent1_type: int = 0  # 0=tracked, 1=wheeled, 2=skidsteer
