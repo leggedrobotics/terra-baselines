@@ -20,6 +20,17 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             dtype=jnp.int16,
         )
     ).item()
+    num_embeddings_agent_2 = jnp.max(
+        jnp.array(
+            [
+                env.batch_cfg.agent.angles_cabin,
+                env.batch_cfg.agent.angles_base,
+                env.batch_cfg.agent.max_wheel_angle*2 + 1,
+            ],
+            dtype=jnp.int16,
+        )
+    ).item()
+
     jax.debug.print("num_embeddings_agent = {x}", x=num_embeddings_agent)
     map_min_max = (
         tuple(config["maps_net_normalization_bounds"])
@@ -30,6 +41,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=config["num_prev_actions"],
         num_embeddings_agent=num_embeddings_agent,
+        num_embeddings_agent_2=num_embeddings_agent_2,
         map_min_max=map_min_max,
         local_map_min_max=tuple(config["local_map_normalization_bounds"]),
         loaded_max=config["loaded_max"],
@@ -139,36 +151,67 @@ class AgentStateNet(nn.Module):
     """
 
     num_embeddings: int
+    num_embeddings_2: int 
     loaded_max: int
     mlp_use_layernorm: bool
-    num_embedding_features: int = 8
-    hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
-    hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
+    num_embedding_features: int = 12
+    hidden_dim_layers_mlp_one_hot: Sequence[int] = (32, 64)
+    hidden_dim_layers_mlp_continuous: Sequence[int] = (4, 8)
 
     def setup(self) -> None:
         self.embedding = nn.Embed(
             num_embeddings=self.num_embeddings, features=self.num_embedding_features
         )
-        self.mlp_one_hot = MLP(
+        self.embedding_direction = nn.Embed(
+            num_embeddings=self.num_embeddings_2, features=self.num_embedding_features
+        )
+        self.embedding_3 = nn.Embed(
+            num_embeddings=self.num_embeddings_2, features=self.num_embedding_features
+        )
+
+        self.mlp_positions = MLP(
             hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot,
             use_layer_norm=self.mlp_use_layernorm,
         )
+
+        self.mlp_directions_and_all = MLP(
+            hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot,
+            use_layer_norm=self.mlp_use_layernorm,
+        )
+
         self.mlp_continuous = MLP(
             hidden_dim_layers=self.hidden_dim_layers_mlp_continuous,
             use_layer_norm=self.mlp_use_layernorm,
         )
 
     def __call__(self, agent_state_obs: Array):
-        x_one_hot = agent_state_obs[..., :-1].astype(dtype=jnp.int32)
+        x_position = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)
+        x_cabin = agent_state_obs[..., [2]].astype(dtype=jnp.int32)
+        x_base = agent_state_obs[..., [3]].astype(dtype=jnp.int32)
+        x_wheel_angles = agent_state_obs[..., [4]].astype(dtype=jnp.int32)
+ 
+        x_position= self.embedding(x_position)
         x_loaded = agent_state_obs[..., [-1]].astype(dtype=jnp.int32)
 
-        x_one_hot = self.embedding(x_one_hot)
-        x_one_hot = self.mlp_one_hot(x_one_hot.reshape(*x_one_hot.shape[:-2], -1))
+        #x_one_hot.reshape(*x_one_hot.shape[:-2],-1)
 
+        x_cabin = self.embedding_direction(x_cabin)
+        x_cabin = x_cabin.reshape(*x_cabin.shape[:-2], -1)
+        x_base = self.embedding_direction(x_base)
+        x_base = x_base.reshape(*x_base.shape[:-2], -1)
+        x_wheel_angles = self.embedding_3(x_wheel_angles)
+        x_wheel_angles = x_wheel_angles.reshape(*x_wheel_angles.shape[:-2], -1)
+
+        x_two = jnp.concatenate(
+            (x_cabin, x_base, x_wheel_angles), axis=-1
+        )
+
+        x_one = self.mlp_positions(x_position.reshape(*x_position.shape[:-2], -1))
+        x_two = self.mlp_directions_and_all(x_two)
         x_loaded = normalize(x_loaded, 0, self.loaded_max)
         x_continuous = self.mlp_continuous(x_loaded)
 
-        return jnp.concatenate([x_one_hot, x_continuous], axis=-1)
+        return jnp.concatenate([x_one, x_two, x_continuous], axis=-1)
 
 
 class LocalMapNet(nn.Module):
@@ -354,6 +397,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
     num_prev_actions: int
     num_embeddings_agent: int
+    num_embeddings_agent_2: int
     map_min_max: Sequence[int]
     local_map_min_max: Sequence[int]
     loaded_max: int
@@ -384,6 +428,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         self.agent_state_net = AgentStateNet(
             num_embeddings=self.num_embeddings_agent,
+            num_embeddings_2=self.num_embeddings_agent_2,
             loaded_max=self.loaded_max,
             mlp_use_layernorm=self.mlp_use_layernorm,
         )
