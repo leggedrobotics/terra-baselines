@@ -31,4 +31,4 @@ export DATASET_SIZE=20
 
 # Change to the directory containing visualize.py
 cd /cluster/home/alesweber/TerraProject/terra-baselines
-python visualize_mixed.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-07-09-00-46-25_FINAL.pkl
+python visualize_mixed.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-07-15-21-07-42.pkl

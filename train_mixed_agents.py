@@ -74,6 +74,21 @@ from train import make_train, get_curriculum_levels, calculate_gae, ppo_update_n
 
 jax.config.update("jax_threefry_partitionable", True)
 
+'''
+For 8 devices: 
+    -2048 envs per device
+    -32 steps per env
+    -3 epochs per update
+    -8 minibatches per update
+    -20B total timesteps
+
+For 4 devices: 
+    -2048 envs per device
+    -32 steps per env
+    -3 epochs per update
+    -8 minibatches per update
+    -5B total timesteps
+'''
 
 @dataclass 
 class MixedAgentTrainConfig:
@@ -82,23 +97,23 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 512
-    num_steps: int = 16
-    update_epochs: int = 2
-    num_minibatches: int = 8
-    total_timesteps: int = 500_000_000  # More training for mixed agents
-    lr: float = 3.5e-4  
+    num_envs_per_device: int = 2048  # Increased for better dual skidsteer training 2048
+    num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
+    update_epochs: int = 3  # Reduced from 4 to 2 for faster training
+    num_minibatches: int = 8  # Reduced from 16 to 8 for faster training
+    total_timesteps: int = 5_000_000_000  # Increased from 1B to 5B for sufficient training
+    lr: float = 3e-4  
     clip_eps: float = 0.2  # Less conservative clipping for escaping local optima
     gamma: float = 0.995
     gae_lambda: float = 0.95
-    ent_coef: float = 0.06  # Much higher entropy to escape "do nothing" optima
+    ent_coef: float = 0.06  # 0.1 Higher entropy to escape "do nothing" optima and encourage exploration
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 3  # Number of updates between logging train stats
     log_eval_interval: int = 100  # Less frequent evaluation for speed
-    checkpoint_interval: int = 100  # Less frequent checkpoints for speed
+    checkpoint_interval: int = 400  # Less frequent checkpoints for speed
     
     # Model settings optimized for mixed agents
     num_prev_actions = 10
@@ -319,6 +334,52 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     agent_types = agent_manager.get_current_agent_types()
     type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
     print(f"   - Agent types: {type_names.get(agent_types[0], 'Unknown')} ({agent_types[0]}) + {type_names.get(agent_types[1], 'Unknown')} ({agent_types[1]})")
+    
+    # Print reward values from environment configuration
+    print(f"\n🎯 Reward Configuration:")
+    try:
+        # Try to access rewards safely - handle different possible structures
+        if hasattr(env_params.rewards, 'shape') and len(env_params.rewards.shape) >= 2:
+            rewards = env_params.rewards[0, 0]  # Get rewards from first environment
+        else:
+            rewards = env_params.rewards  # Direct access if not batched
+        
+        # Extract scalar values from JAX arrays
+        def get_scalar(value):
+            if hasattr(value, 'item'):
+                try:
+                    return value.item()
+                except ValueError:
+                    # If it's an array with multiple elements, take the first one
+                    if hasattr(value, 'shape') and value.shape:
+                        return value.ravel()[0].item()
+                    else:
+                        return str(value)
+            elif hasattr(value, '__array__'):
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return str(value)
+            else:
+                return value
+        
+        print(f"   - Existence penalty: {get_scalar(rewards.existence)}")
+        print(f"   - Movement penalty: {get_scalar(rewards.move)}")
+        print(f"   - Holding dirt penalty: {get_scalar(rewards.holding_dirt)}")
+        print(f"   - Skid auto-load reward: {get_scalar(rewards.skid_auto_load)}")
+        print(f"   - Skid dump correct reward: {get_scalar(rewards.skid_dump_correct)}")
+        print(f"   - Skid dump wrong penalty: {get_scalar(rewards.skid_dump_wrong)}")
+        print(f"   - Move to dump zone reward: {get_scalar(rewards.move_to_dump_zone)}")
+        print(f"   - Skid lift shovel with dirt: {get_scalar(rewards.skid_lift_shovel_with_dirt)}")
+        print(f"   - Skid move loaded shovel up: {get_scalar(rewards.skid_move_loaded_shovel_up)}")
+        print(f"   - Auto load dump zone penalty: {get_scalar(rewards.skid_auto_load_from_dumpzone_penalty)}")
+        print(f"   - Reward normalizer: {get_scalar(rewards.normalizer)}")
+        
+    except Exception as e:
+        print(f"   ⚠️  Could not print reward configuration: {e}")
+        print(f"   - Rewards structure: {type(env_params.rewards)}")
+        if hasattr(env_params.rewards, 'shape'):
+            print(f"   - Rewards shape: {env_params.rewards.shape}")
     print("=" * 60)
     
     try:

@@ -1,103 +1,0 @@
-Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
-wandb: Currently logged in as: aless-weber (aless-weber-eth). Use `wandb login --relogin` to force relogin
-ERROR:root:Driver not initialized (amdgpu not found in modules)
-wandb: wandb version 0.21.0 is available!  To upgrade, please run:
-wandb:  $ pip install wandb --upgrade
-wandb: Tracking run with wandb version 0.16.4
-wandb: Run data is saved locally in /cluster/home/alesweber/TerraProject/terra-baselines/wandb/run-20250709_004307-n4160ajo
-wandb: Run `wandb offline` to turn off syncing.
-wandb: Syncing run mixed-agents-skidsteer-skidsteer-local-2025-07-09-00-43-01
-wandb: ⭐️ View project at https://wandb.ai/aless-weber-eth/mixed-agents
-wandb: 🚀 View run at https://wandb.ai/aless-weber-eth/mixed-agents/runs/n4160ajo
-pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
-Hello from the pygame community. https://www.pygame.org/contribute.html
-🔄 Training Configuration: Mixed Agents (SkidSteer + SkidSteer)
-Devices: [cuda(id=0), cuda(id=1), cuda(id=2), cuda(id=3)]
-Mixed Agent Training - Devices: 4, Updates: 7629
-🤖 Fixed Agent Types: Agent1=2, Agent2=2
-Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations'].
-Data Loader:   0%|          | 0/100 [00:00<?, ?it/s]Data Loader:   8%|▊         | 8/100 [00:00<00:01, 76.03it/s]Data Loader:  17%|█▋        | 17/100 [00:00<00:01, 79.68it/s]Data Loader:  26%|██▌       | 26/100 [00:00<00:00, 80.58it/s]Data Loader:  35%|███▌      | 35/100 [00:00<00:00, 80.82it/s]Data Loader:  44%|████▍     | 44/100 [00:00<00:00, 80.11it/s]Data Loader:  53%|█████▎    | 53/100 [00:00<00:00, 80.32it/s]Data Loader:  62%|██████▏   | 62/100 [00:00<00:00, 79.22it/s]Data Loader:  70%|███████   | 70/100 [00:00<00:00, 78.09it/s]Data Loader:  78%|███████▊  | 78/100 [00:00<00:00, 77.86it/s]Data Loader:  86%|████████▌ | 86/100 [00:01<00:00, 78.37it/s]Data Loader:  94%|█████████▍| 94/100 [00:01<00:00, 78.46it/s]Data Loader: 100%|██████████| 100/100 [00:01<00:00, 78.89it/s]
-/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:233: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
-  env_params = jax.tree_map(
-/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:261: DeprecationWarning: jax.tree_leaves is deprecated: use jax.tree.leaves (jax v0.4.25 or newer) or jax.tree_util.tree_leaves (any JAX version).
-  print(f"🤖 Mixed Agent Network: {sum(x.size for x in jax.tree_leaves(network_params)):,} parameters")
-Loaded 100 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations.
-Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations.
-Maps width: 64
-Maps height: 64
-Unique shapes of trench_axes_list: {(100, 3, 3)}
-Maps shape: (1, 100, 64, 64).
-Padding mask shape: (1, 100, 64, 64).
-Dumpability mask shape: (1, 100, 64, 64).
-Trench axes shape: (1, 100, 3, 3).
-Trench types shape: (1,).
-Actions shape: (1, 100, 64, 64).
-Mixed Agent Environment - Tile size shape: (4, 512)
-num_embeddings_agent = 64
-map normalization min max = (-1, 1)
-Model: 419,680 parameters
-🤖 Mixed Agent Network: 419,680 parameters
-🔧 Agent Configuration: Agent1=SkidSteer (type 2), Agent2=SkidSteer (type 2)
-🧠 Network: Unified with agent type conditioning
-🚀 Starting Mixed Agent Training...
-============================================================
-📊 Configuration:
-   - Environments per device: 512
-   - Total environments: 2048
-   - Training steps: 16
-   - Total timesteps: 1,000,000,000
-   - Learning rate: 0.0003
-   - Agent types: SkidSteer (2) + SkidSteer (2)
-============================================================
-tile_size: 0.6875
-agent_width: 5, agent_height: 9
-[TerraEnv.reset] action_map shape: (64, 64), type: <class 'jax._src.interpreters.partial_eval.DynamicJaxprTracer'>
-Training:   0%|          | 0/7629 [00:00<?, ?it/s]2025-07-09 00:44:07.809911: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
-Training:   0%|          | 0/7629 [00:26<?, ?it/s]
-wandb: - 1.559 MB of 1.559 MB uploaded (0.018 MB deduped)wandb: \ 1.559 MB of 1.559 MB uploaded (0.018 MB deduped)wandb: | 1.559 MB of 1.559 MB uploaded (0.018 MB deduped)wandb: / 3.051 MB of 3.060 MB uploaded (0.020 MB deduped)wandb: - 3.051 MB of 3.060 MB uploaded (0.020 MB deduped)wandb: \ 3.060 MB of 3.060 MB uploaded (0.020 MB deduped)wandb:                                                                                
-wandb: 🚀 View run mixed-agents-skidsteer-skidsteer-local-2025-07-09-00-43-01 at: https://wandb.ai/aless-weber-eth/mixed-agents/runs/n4160ajo
-wandb: ️⚡ View job at https://wandb.ai/aless-weber-eth/mixed-agents/jobs/QXJ0aWZhY3RDb2xsZWN0aW9uOjY3OTA4ODc2MQ==/version_details/v7
-wandb: Synced 7 W&B file(s), 0 media file(s), 6 artifact file(s) and 1 other file(s)
-wandb: Find logs at: ./wandb/run-20250709_004307-n4160ajo/logs
-📈 Wandb session finished.
-Traceback (most recent call last):
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 425, in <module>
-    train_mixed_agents(config)
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 327, in train_mixed_agents
-    train_info = jax.block_until_ready(train_fn(rng, train_state))
-                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train.py", line 521, in train
-    _update_step(runner_state, None)
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train.py", line 408, in _update_step
-    runner_state, transitions = jax.lax.scan(
-                                ^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train.py", line 387, in _env_step
-    timestep = env.step(prev_timestep, action_env, _rng_env)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/env.py", line 469, in step
-    timestep = jax.vmap(self.terra_env.step)(
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/env.py", line 200, in step
-    reward = state._get_reward(new_state, action)
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 2356, in _get_reward
-    reward += jax.lax.switch(clamped_agent_type, reward_functions)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 2351, in get_skidsteer_rewards
-    return self._get_rewards_skidsteer(new_state, action)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 2822, in _get_rewards_skidsteer
-    reward += jax.lax.cond(
-              ^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 2824, in <lambda>
-    lambda: self._handle_rewards_skid_steer_auto_load(new_state),
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 2097, in _handle_rewards_skid_steer_auto_load
-    return jax.lax.cond(
-           ^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 2099, in <lambda>
-    lambda: elf.env_cfg.rewards.skid_auto_load, #dirt_gained * s
-            ^^^
-NameError: name 'elf' is not defined
---------------------
-For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.
