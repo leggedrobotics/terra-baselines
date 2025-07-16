@@ -26,13 +26,13 @@ jax.config.update("jax_threefry_partitionable", True)
 class TrainConfig:
     name: str
     num_devices: int = 0
-    project: str = "Step_AB"
+    project: str = "Decen"
     group: str = "default"
     num_envs_per_device: int = 4096
     num_steps: int = 32
     update_epochs: int = 5
     num_minibatches: int = 32
-    total_timesteps: int = 30_000_000_000
+    total_timesteps: int = 300_000_000_000
     lr: float = 3e-4
     clip_eps: float = 0.5
     gamma: float = 0.995
@@ -556,16 +556,19 @@ def train(config: TrainConfig):
     # Log config.py and train.py files to wandb
     train_py_path = os.path.abspath(__file__)  # Path to current train.py file
     config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "terra", "terra", "config.py")
-    
+    model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "terra-baslines", "utils", "models.py")
     code_artifact = wandb.Artifact(name="source_code", type="code")
     
     # Add train.py
     if os.path.exists(train_py_path):
         code_artifact.add_file(train_py_path, name="train.py")
-    
+
     # Add config.py
     if os.path.exists(config_path):
         code_artifact.add_file(config_path, name="config.py")
+
+    if os.path.exists(model_path):
+        code_artifact.add_file(model_path, name="models.py")
     
     # Log the artifact if any files were added
     if code_artifact.files:

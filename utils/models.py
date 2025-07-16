@@ -61,6 +61,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], 1)),
     ]
     params = model.init(rng, obs)
 
@@ -146,28 +147,43 @@ class AgentStateNet(nn.Module):
     hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
 
     def setup(self) -> None:
-        self.embedding = nn.Embed(
+        self.embedding_1 = nn.Embed(
+            num_embeddings=self.num_embeddings, features=self.num_embedding_features
+        )
+        self.embedding_2 = nn.Embed(
             num_embeddings=self.num_embeddings, features=self.num_embedding_features
         )
         self.mlp_one_hot = MLP(
             hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot,
             use_layer_norm=self.mlp_use_layernorm,
         )
+
+        self.mlp_two_hot = MLP(
+            hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot,
+            use_layer_norm=self.mlp_use_layernorm,
+        )
+
         self.mlp_continuous = MLP(
             hidden_dim_layers=self.hidden_dim_layers_mlp_continuous,
             use_layer_norm=self.mlp_use_layernorm,
         )
 
     def __call__(self, agent_state_obs: Array):
-        x_one_hot = agent_state_obs[..., :-1].astype(dtype=jnp.int32)
+        x_one_hot = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)
+        x_two_hot = agent_state_obs[..., 2:5].astype(dtype=jnp.int32)
         x_loaded = agent_state_obs[..., [-1]].astype(dtype=jnp.int32)
 
-        x_one_hot = self.embedding(x_one_hot)
+        x_one_hot = self.embedding_1(x_one_hot)
+        x_two_hot = self.embedding_2(x_two_hot)
+
         x_one_hot = self.mlp_one_hot(x_one_hot.reshape(*x_one_hot.shape[:-2], -1))
+        x_two_hot = self.mlp_two_hot(x_two_hot.reshape(*x_two_hot.shape[:-2], -1))
 
         x_loaded = normalize(x_loaded, 0, self.loaded_max)
         x_continuous = self.mlp_continuous(x_loaded)
-
+        x_one_hot = jnp.concatenate(
+            (x_one_hot, x_two_hot), axis=-1
+        )  # Concatenate one-hot and two-hot embeddings
         return jnp.concatenate([x_one_hot, x_continuous], axis=-1)
 
 
@@ -329,22 +345,25 @@ class PreviousActionsNet(nn.Module):
 
         self.activation = nn.relu
 
-    def __call__(self, obs: dict[str, Array]):
-        x_actions = obs[11][:,1::2].astype(jnp.int32)
-        x_actions_2 = obs[11][:,0::2].astype(jnp.int32)
-
+    def __call__(self, prev_actions: Array):
+        x_actions = prev_actions[:,1::2].astype(jnp.int32)
         x_actions = self.embedding(x_actions)
-        x_actions_2 = self.embedding(x_actions_2)
 
         x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
-        x_flattened_2 = x_actions_2.reshape(*x_actions_2.shape[:-2], -1)
-
         x_flattened = self.mlp(x_flattened)
-        x_flattened_2 = self.mlp(x_flattened_2)
 
-        x = self.activation(x_flattened)
-        x_2 = self.activation(x_flattened_2)
-        return x,x_2
+        x1 = self.activation(x_flattened)
+
+
+        x_actions = prev_actions[:,0::2].astype(jnp.int32)
+        x_actions = self.embedding(x_actions)
+
+        x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
+        x_flattened = self.mlp(x_flattened)
+
+        x2 = self.activation(x_flattened)
+
+        return x1, x2
 
 
 class SimplifiedCoupledCategoricalNet(nn.Module):
@@ -372,7 +391,16 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=0.01,
         )
+
+
+
         self.mlp_pi = MLP(
+            hidden_dim_layers=self.hidden_dim_pi + (num_actions,),
+            use_layer_norm=self.mlp_use_layernorm,
+            last_layer_init_scaling=0.01,
+        )
+
+        self.mlp_pi_2 = MLP(
             hidden_dim_layers=self.hidden_dim_pi + (num_actions,),
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=0.01,
@@ -410,68 +438,51 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         x_maps = self.maps_net(obs)
         x_local_map = self.local_map_net(obs[1:7])
         x_local_map_2 = self.local_map_net(obs[13:19])
-        x_actions,x_actions_2 = self.actions_net(obs)
+        x_actions_1, x_actions_2 = self.actions_net(obs[11])
         
         # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
         # Local maps are also included.
         combined_features_1 = jnp.concatenate(
-            (x_agent_state, x_actions, x_local_map), 
+            (x_agent_state, x_actions_1, x_local_map), 
             axis=-1
         )
         combined_features_2 = jnp.concatenate(
-            (x_agent_state_2,x_actions_2 ,x_local_map_2), 
+            (x_agent_state_2, x_actions_2,  x_local_map_2), 
             axis=-1
         )
         
         # Process through intermediate MLP
         combined_features_1 = self.intermediate_mlp(combined_features_1)
         combined_features_2 = self.intermediate_mlp(combined_features_2)
-        combined_features = jnp.concatenate(
-            (combined_features_1, combined_features_2), 
-            axis=-1
-        )
-        combined_features = self.activation(combined_features)
+        # combined_features = jnp.concatenate(
+        #     (combined_features_1, combined_features_2), 
+        #     axis=-1
+        # )
+        combined_features = self.activation(combined_features_1)
         
         # Concatenate MLP output with MapNet output
-        x = jnp.concatenate((combined_features, x_maps), axis=-1)
+        x = jnp.concatenate((combined_features_1, x_maps), axis=-1)
+        y = jnp.concatenate((combined_features_1,combined_features_2, x_maps), axis=-1)
         
         # Apply final activation
         x = self.activation(x)
+        y = self.activation(y)
+        # Get the agent ID from the observation
+        agent_id = obs[20]
 
-        v = self.mlp_v(x)
-        xpi = self.mlp_pi(x)
+        # Define the condition for agent 1
+        is_agent_1 = (agent_id == 0)
+
+        # Compute outputs from both sets of network heads
+        v = self.mlp_v(y)
+        pi1 = self.mlp_pi(x)
+        pi2 = self.mlp_pi_2(x)
+
+        # Select the output based on the agent ID
+        # jnp.where(condition, value_if_true, value_if_false)
+
+        xpi = jnp.where(is_agent_1, pi1, pi2)
 
         return v, xpi
 
 
-class PreviousActionsNet2(nn.Module):
-    """
-    Pre-processes the sequence of previous actions for agent 2.
-    """
-    num_actions: int
-    mlp_use_layernorm: bool
-    num_embedding_features: int = 8
-    hidden_dim_layers_mlp: Sequence[int] = (16, 32)
-
-    def setup(self) -> None:
-        self.embedding = nn.Embed(
-            num_embeddings=self.num_actions,
-            features=self.num_embedding_features
-        )
-
-        self.mlp = MLP(
-            hidden_dim_layers=self.hidden_dim_layers_mlp,
-            use_layer_norm=self.mlp_use_layernorm,
-        )
-
-        self.activation = nn.relu
-
-    def __call__(self, obs: dict[str, Array]):
-        x_actions = obs[19].astype(jnp.int32)  # Agent 2 previous actions
-        x_actions = self.embedding(x_actions)
-
-        x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
-        x_flattened = self.mlp(x_flattened)
-
-        x = self.activation(x_flattened)
-        return x
