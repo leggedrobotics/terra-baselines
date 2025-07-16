@@ -1,0 +1,71 @@
+Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
+wandb: Currently logged in as: aless-weber (aless-weber-eth). Use `wandb login --relogin` to force relogin
+ERROR:root:Driver not initialized (amdgpu not found in modules)
+wandb: wandb version 0.21.0 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+wandb: Tracking run with wandb version 0.16.4
+wandb: Run data is saved locally in /cluster/home/alesweber/TerraProject/terra-baselines/wandb/run-20250715_235103-mf1ucron
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run mixed-agents-skidsteer-skidsteer-local-2025-07-15-23-50-56
+wandb: ⭐️ View project at https://wandb.ai/aless-weber-eth/mixed-agents
+wandb: 🚀 View run at https://wandb.ai/aless-weber-eth/mixed-agents/runs/mf1ucron
+pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+🔄 Training Configuration: Mixed Agents (Tracked + SkidSteer)
+Devices: [cuda(id=0), cuda(id=1), cuda(id=2), cuda(id=3)]
+Mixed Agent Training - Devices: 4, Updates: 4768
+🤖 Fixed Agent Types: Agent1=0, Agent2=2
+Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations_easy', '/cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations'].
+Data Loader:   0%|          | 0/100 [00:00<?, ?it/s]Data Loader:   3%|▎         | 3/100 [00:00<00:03, 25.96it/s]Data Loader:   7%|▋         | 7/100 [00:00<00:03, 29.91it/s]Data Loader:  11%|█         | 11/100 [00:00<00:02, 31.11it/s]Data Loader:  15%|█▌        | 15/100 [00:00<00:02, 31.68it/s]Data Loader:  19%|█▉        | 19/100 [00:00<00:02, 32.08it/s]Data Loader:  23%|██▎       | 23/100 [00:00<00:02, 32.26it/s]Data Loader:  27%|██▋       | 27/100 [00:00<00:02, 32.36it/s]Data Loader:  31%|███       | 31/100 [00:00<00:02, 32.22it/s]Data Loader:  35%|███▌      | 35/100 [00:01<00:02, 32.43it/s]Data Loader:  39%|███▉      | 39/100 [00:01<00:01, 32.43it/s]Data Loader:  43%|████▎     | 43/100 [00:01<00:01, 32.48it/s]Data Loader:  47%|████▋     | 47/100 [00:01<00:01, 32.54it/s]Data Loader:  51%|█████     | 51/100 [00:01<00:01, 32.58it/s]Data Loader:  55%|█████▌    | 55/100 [00:01<00:01, 32.76it/s]Data Loader:  59%|█████▉    | 59/100 [00:01<00:01, 32.74it/s]Data Loader:  63%|██████▎   | 63/100 [00:01<00:01, 32.73it/s]Data Loader:  67%|██████▋   | 67/100 [00:02<00:01, 32.60it/s]Data Loader:  71%|███████   | 71/100 [00:02<00:00, 30.93it/s]Data Loader:  75%|███████▌  | 75/100 [00:02<00:00, 30.97it/s]Data Loader:  79%|███████▉  | 79/100 [00:02<00:00, 31.44it/s]Data Loader:  83%|████████▎ | 83/100 [00:02<00:00, 31.52it/s]Data Loader:  87%|████████▋ | 87/100 [00:02<00:00, 31.93it/s]Data Loader:  91%|█████████ | 91/100 [00:02<00:00, 32.21it/s]Data Loader:  95%|█████████▌| 95/100 [00:02<00:00, 32.35it/s]Data Loader:  99%|█████████▉| 99/100 [00:03<00:00, 32.44it/s]Data Loader: 100%|██████████| 100/100 [00:03<00:00, 32.04it/s]
+Loaded 100 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations_easy.
+Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations_easy.
+Data Loader:   0%|          | 0/100 [00:00<?, ?it/s]Data Loader:   3%|▎         | 3/100 [00:00<00:03, 27.08it/s]Data Loader:   7%|▋         | 7/100 [00:00<00:03, 30.58it/s]Data Loader:  11%|█         | 11/100 [00:00<00:02, 31.63it/s]Data Loader:  15%|█▌        | 15/100 [00:00<00:02, 32.01it/s]Data Loader:  19%|█▉        | 19/100 [00:00<00:02, 31.63it/s]Data Loader:  23%|██▎       | 23/100 [00:00<00:02, 31.83it/s]Data Loader:  27%|██▋       | 27/100 [00:00<00:02, 32.02it/s]Data Loader:  31%|███       | 31/100 [00:00<00:02, 32.15it/s]Data Loader:  35%|███▌      | 35/100 [00:01<00:02, 32.26it/s]Data Loader:  39%|███▉      | 39/100 [00:01<00:01, 32.44it/s]Data Loader:  43%|████▎     | 43/100 [00:01<00:01, 32.44it/s]Data Loader:  47%|████▋     | 47/100 [00:01<00:01, 32.34it/s]Data Loader:  51%|█████     | 51/100 [00:01<00:01, 32.32it/s]Data Loader:  55%|█████▌    | 55/100 [00:01<00:01, 32.44it/s]Data Loader:  59%|█████▉    | 59/100 [00:01<00:01, 32.32it/s]Data Loader:  63%|██████▎   | 63/100 [00:01<00:01, 32.36it/s]Data Loader:  67%|██████▋   | 67/100 [00:02<00:01, 32.31it/s]Data Loader:  71%|███████   | 71/100 [00:02<00:00, 32.06it/s]Data Loader:  75%|███████▌  | 75/100 [00:02<00:00, 32.20it/s]Data Loader:  79%|███████▉  | 79/100 [00:02<00:00, 32.30it/s]Data Loader:  83%|████████▎ | 83/100 [00:02<00:00, 32.19it/s]Data Loader:  87%|████████▋ | 87/100 [00:02<00:00, 32.36it/s]Data Loader:  91%|█████████ | 91/100 [00:02<00:00, 32.35it/s]Data Loader:  95%|█████████▌| 95/100 [00:02<00:00, 32.42it/s]Data Loader:  99%|█████████▉| 99/100 [00:03<00:00, 32.43it/s]Data Loader: 100%|██████████| 100/100 [00:03<00:00, 32.16it/s]
+/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:316: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
+  env_params = jax.tree_map(
+/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:344: DeprecationWarning: jax.tree_leaves is deprecated: use jax.tree.leaves (jax v0.4.25 or newer) or jax.tree_util.tree_leaves (any JAX version).
+  print(f"🤖 Mixed Agent Network: {sum(x.size for x in jax.tree_leaves(network_params)):,} parameters")
+Loaded 100 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations.
+Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/relocations.
+Maps width: 64
+Maps height: 64
+Unique shapes of trench_axes_list: {(100, 3, 3)}
+Maps shape: (2, 100, 64, 64).
+Padding mask shape: (2, 100, 64, 64).
+Dumpability mask shape: (2, 100, 64, 64).
+Trench axes shape: (2, 100, 3, 3).
+Trench types shape: (2,).
+Actions shape: (2, 100, 64, 64).
+Mixed Agent Environment - Tile size shape: (4, 2048)
+num_embeddings_agent = 64
+map normalization min max = (-1, 1)
+Model: 419,680 parameters
+🤖 Mixed Agent Network: 419,680 parameters
+🔧 Agent Configuration: Agent1=Tracked (type 0), Agent2=SkidSteer (type 2)
+🧠 Network: Unified with agent type conditioning
+🚀 Starting Mixed Agent Training...
+============================================================
+📊 Configuration:
+   - Environments per device: 2048
+   - Total environments: 8192
+   - Training steps: 32
+   - Total timesteps: 5,000,000,000
+   - Learning rate: 0.0003
+   - Agent types: Tracked (0) + SkidSteer (2)
+
+🎯 Reward Configuration:
+   - Existence penalty: -0.10000000149011612
+   - Movement penalty: -0.10000000149011612
+   - Holding dirt penalty: -0.15000000596046448
+   - Skid auto-load reward: 0.5
+   - Skid dump correct reward: 40.0
+   - Skid dump wrong penalty: -0.6000000238418579
+   - Move to dump zone reward: 0.4000000059604645
+   - Skid lift shovel with dirt: 0.05000000074505806
+   - Skid move loaded shovel up: 0.019999999552965164
+   - Auto load dump zone penalty: -0.0
+   - Reward normalizer: 100.0
+============================================================
+tile_size: 0.6875
+agent_width: 5, agent_height: 9
+[TerraEnv.reset] action_map shape: (64, 64), type: <class 'jax._src.interpreters.partial_eval.DynamicJaxprTracer'>
+Training:   0%|          | 0/4768 [00:00<?, ?it/s]slurmstepd: error: *** JOB 37367192 ON eu-lo-g3-047 CANCELLED AT 2025-07-15T23:52:15 ***

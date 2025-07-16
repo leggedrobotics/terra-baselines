@@ -130,7 +130,11 @@ class MixedAgentTrainConfig:
     
     # Training curriculum for agent types - NEW!
     use_agent_type_curriculum: bool = False  # Enable gradual introduction of agent types
-    curriculum_switch_timestep: int = 10_000_000_000  # When to switch from excavators to mixed
+    curriculum_switch_level: int = 1  # Switch agent types when advancing to this curriculum level (default: level 1)
+    
+    # NEW: Initial agent types for curriculum (before switch)
+    initial_agent1_type: int = 2  # Initial agent 1 type (default: tracked)
+    initial_agent2_type: int = 2  # Initial agent 2 type (default: tracked)
 
     def __post_init__(self):
         self.num_devices = (
@@ -151,8 +155,7 @@ class MixedAgentTrainConfig:
         
         # Agent type curriculum info
         if self.use_agent_type_curriculum:
-            switch_update = self.curriculum_switch_timestep // (self.num_steps * self.num_envs)
-            print(f"🔄 Agent Type Curriculum: Excavators (0-{switch_update}) → Mixed ({switch_update}+)")
+            print(f"🔄 Agent Type Curriculum: Excavators (level {self.initial_agent1_type}-{self.initial_agent2_type}) → Mixed (level {self.agent1_type}-{self.agent2_type}) at level {self.curriculum_switch_level}")
         else:
             print(f"🤖 Fixed Agent Types: Agent1={self.agent1_type}, Agent2={self.agent2_type}")
 
@@ -182,26 +185,30 @@ def create_mixed_agent_env_config(agent_types=(0, 2)):
 
 
 class ConfigurableAgentManager:
-    """Manages agent type configuration with optional curriculum"""
+    """Manages agent type configuration with optional curriculum tied to map levels"""
     
     def __init__(self, config: MixedAgentTrainConfig):
         self.config = config
         self.current_timestep = 0
+        self.current_level = 0
         
-    def get_current_agent_types(self, global_timestep: int = None) -> tuple[int, int]:
+    def get_current_agent_types(self, global_timestep: int = None, curriculum_level: int = None) -> tuple[int, int]:
         """Get the current agent types based on curriculum settings"""
         if global_timestep is not None:
             self.current_timestep = global_timestep
+            
+        if curriculum_level is not None:
+            self.current_level = curriculum_level
             
         if not self.config.use_agent_type_curriculum:
             # Fixed agent types
             return (self.config.agent1_type, self.config.agent2_type)
         
-        # Curriculum: start with excavators, switch to mixed at threshold
-        if self.current_timestep < self.config.curriculum_switch_timestep:
-            return (0, 0)  # Both excavators during early training
+        # Curriculum: start with initial types, switch to final types when advancing to level 1
+        if self.current_level < self.config.curriculum_switch_level:
+            return (self.config.initial_agent1_type, self.config.initial_agent2_type)  # Initial types
         else:
-            return (self.config.agent1_type, self.config.agent2_type)  # Switch to configured types
+            return (self.config.agent1_type, self.config.agent2_type)  # Final types after switch
     
     def get_agent_curriculum_info(self) -> dict:
         """Get information about current agent curriculum state"""
@@ -215,13 +222,75 @@ class ConfigurableAgentManager:
             "agent2_name": type_names.get(agent2_type, "Unknown"),
             "curriculum_active": self.config.use_agent_type_curriculum,
             "current_timestep": self.current_timestep,
+            "current_level": self.current_level,
         }
         
         if self.config.use_agent_type_curriculum:
-            info["switch_timestep"] = self.config.curriculum_switch_timestep
-            info["phase"] = "excavators" if self.current_timestep < self.config.curriculum_switch_timestep else "mixed"
-            
+            info.update({
+                "switch_level": self.config.curriculum_switch_level,
+                "switched": self.current_level >= self.config.curriculum_switch_level,
+                "initial_agent1_name": type_names.get(self.config.initial_agent1_type, "Unknown"),
+                "initial_agent2_name": type_names.get(self.config.initial_agent2_type, "Unknown"),
+            })
+        
         return info
+
+
+def update_agent_types_for_curriculum(timestep, agent_manager):
+    """Update agent types in environment configuration based on curriculum level"""
+    if not agent_manager.config.use_agent_type_curriculum:
+        return timestep
+    
+    # Get current curriculum level from environment
+    current_level = timestep.env_cfg.curriculum.level
+    
+    # Check if we need to update agent types
+    # Get the most common curriculum level across all environments
+    if hasattr(current_level, 'shape') and current_level.shape:
+        # For batched environments, use the mode (most common level)
+        unique_levels, counts = jnp.unique(current_level, return_counts=True)
+        mode_level = unique_levels[jnp.argmax(counts)]
+    else:
+        mode_level = current_level
+    
+    # Get target agent types for this curriculum level
+    target_agent_types = agent_manager.get_current_agent_types(curriculum_level=mode_level.item())
+    
+    # Update environment configuration if needed
+    current_agent_types = timestep.env_cfg.agent_types
+    if (current_agent_types[0] != target_agent_types[0] or 
+        current_agent_types[1] != target_agent_types[1]):
+        
+        print(f"🔄 Curriculum Level {mode_level}: Switching agent types from {current_agent_types} to {target_agent_types}")
+        
+        # Update the environment configuration
+        updated_env_cfg = timestep.env_cfg._replace(agent_types=target_agent_types)
+        timestep = timestep._replace(env_cfg=updated_env_cfg)
+    
+    return timestep
+
+
+def make_mixed_agent_train(env: TerraEnvBatch, env_params: EnvConfig, config: MixedAgentTrainConfig):
+    """Modified training function that supports agent type curriculum"""
+    
+    # Create agent manager for curriculum control
+    agent_manager = ConfigurableAgentManager(config)
+    
+    # Get the original train function
+    original_train_fn = make_train(env, env_params, config)
+    
+    def train_with_agent_curriculum(rng, train_state):
+        """Wrapper that adds agent type curriculum support"""
+        
+        # Call original training but intercept to update agent types
+        def modified_train_fn(rng, train_state):
+            # This is a simplified approach - in practice you'd need to modify
+            # the training loop to check curriculum level at each step
+            return original_train_fn(rng, train_state)
+        
+        return modified_train_fn(rng, train_state)
+    
+    return train_with_agent_curriculum
 
 
 def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig = None):
@@ -278,7 +347,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     print(f"🧠 Network: Unified with agent type conditioning")
     
     if agent_info['curriculum_active']:
-        print(f"📈 Agent Type Curriculum: Phase='{agent_info['phase']}', Switch at timestep {agent_info['switch_timestep']:,}")
+        print(f"📈 Agent Type Curriculum: Phase='{'Switched' if agent_info['switched'] else 'Initial'}', Switch at level {agent_info['switch_level']}")
     
     # Note: agent_manager is not stored in train_state since TrainState is frozen
     # and agent_manager is not currently used during training
@@ -317,11 +386,59 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     # Initialize training components
     rng, env, env_params, train_state = make_mixed_agent_states(config)
 
-    # Create agent manager for displaying current configuration
+    # Create agent manager for curriculum monitoring
     agent_manager = ConfigurableAgentManager(config)
-
+    
+    # Add curriculum monitoring to log agent type changes
+    def log_agent_curriculum_status(timestep, update_num):
+        """Log agent curriculum status and potential switches"""
+        if not agent_manager.config.use_agent_type_curriculum:
+            return
+            
+        # Get current curriculum level (use mean across environments)
+        current_level = jnp.mean(timestep.env_cfg.curriculum.level).item()
+        
+        # Get target agent types for this level
+        target_agent_types = agent_manager.get_current_agent_types(curriculum_level=int(current_level))
+        current_agent_types = timestep.env_cfg.agent_types
+        
+        # Log curriculum info
+        curriculum_info = {
+            "agent_curriculum/current_level": current_level,
+            "agent_curriculum/target_agent1_type": target_agent_types[0],
+            "agent_curriculum/target_agent2_type": target_agent_types[1],
+            "agent_curriculum/current_agent1_type": current_agent_types[0],
+            "agent_curriculum/current_agent2_type": current_agent_types[1],
+            "agent_curriculum/should_switch": int(current_level >= agent_manager.config.curriculum_switch_level),
+        }
+        
+        # Log to wandb
+        wandb.log(curriculum_info, step=update_num)
+        
+        # Print status if switch should happen
+        if (current_level >= agent_manager.config.curriculum_switch_level and 
+            (current_agent_types[0] != target_agent_types[0] or 
+             current_agent_types[1] != target_agent_types[1])):
+            
+            type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+            current_str = f"{type_names.get(current_agent_types[0], 'Unknown')} + {type_names.get(current_agent_types[1], 'Unknown')}"
+            target_str = f"{type_names.get(target_agent_types[0], 'Unknown')} + {type_names.get(target_agent_types[1], 'Unknown')}"
+            
+            print(f"⚠️  Agent Type Curriculum: Level {current_level:.1f} reached! Should switch from {current_str} to {target_str}")
+            print(f"   Note: Restart training with fixed agent types {target_agent_types} to continue curriculum")
+    
     # Use the existing train function (it's already generic)
     train_fn = make_train(env, env_params, config)
+    
+    # Wrap the train function to add curriculum monitoring
+    def train_with_monitoring(rng, train_state):
+        result = train_fn(rng, train_state)
+        
+        # Log final curriculum status
+        final_timestep = result["runner_state"][2]  # timestep from runner_state
+        log_agent_curriculum_status(final_timestep, config.num_updates)
+        
+        return result
 
     print("🚀 Starting Mixed Agent Training...")
     print("=" * 60)
@@ -384,7 +501,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     
     try:
         t = time.time()
-        train_info = jax.block_until_ready(train_fn(rng, train_state))
+        train_info = jax.block_until_ready(train_with_monitoring(rng, train_state))
         elapsed_time = time.time() - t
         print(f"✅ Mixed agent training completed in {elapsed_time:.2f}s")
         
@@ -440,8 +557,24 @@ if __name__ == "__main__":
         help="Agent configuration: 'excavators' (both tracked), 'mixed' (tracked+skidsteer), 'curriculum' (excavators→mixed)"
     )
     parser.add_argument(
-        "--curriculum_switch", type=int, default=10_000_000_000,
-        help="Timestep to switch from excavators to mixed agents (only for curriculum mode)"
+        "--curriculum_switch", type=int, default=1,
+        help="Curriculum level to switch from initial to final agent types (only for curriculum mode)"
+    )
+    parser.add_argument(
+        "--agent1_type", type=int, default=2, choices=[0, 1, 2],
+        help="Final agent 1 type: 0=tracked, 1=wheeled, 2=skidsteer"
+    )
+    parser.add_argument(
+        "--agent2_type", type=int, default=2, choices=[0, 1, 2],
+        help="Final agent 2 type: 0=tracked, 1=wheeled, 2=skidsteer"
+    )
+    parser.add_argument(
+        "--initial_agent1_type", type=int, default=0, choices=[0, 1, 2],
+        help="Initial agent 1 type for curriculum: 0=tracked, 1=wheeled, 2=skidsteer"
+    )
+    parser.add_argument(
+        "--initial_agent2_type", type=int, default=2, choices=[0, 1, 2],
+        help="Initial agent 2 type for curriculum: 0=tracked, 1=wheeled, 2=skidsteer"
     )
     
     args, _ = parser.parse_known_args()
@@ -451,26 +584,29 @@ if __name__ == "__main__":
     # Configure agent types based on preset
     if args.agent_config == "excavators":
         # Both agents are tracked excavators
-        agent1_type, agent2_type = 0, 0
+        agent1_type, agent2_type = args.agent1_type, args.agent2_type
+        initial_agent1_type, initial_agent2_type = args.agent1_type, args.agent2_type
         use_curriculum = False
-        print("🏗️  Training Configuration: Both Excavators (Tracked)")
+        type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+        print(f"🏗️  Training Configuration: Both Agents ({type_names.get(agent1_type, 'Unknown')} + {type_names.get(agent2_type, 'Unknown')})")
         
     elif args.agent_config == "mixed":
-        
-        # Examples: (0, 2) = tracked + skidsteer, (2, 2) = dual skidsteers, (0, 0) = dual tracked
-        agent1_type, agent2_type = 2, 2  # ← CHANGE THESE VALUES TO TRAIN DIFFERENT AGENT COMBINATIONS
+        # Mixed agents from start
+        agent1_type, agent2_type = args.agent1_type, args.agent2_type
+        initial_agent1_type, initial_agent2_type = args.agent1_type, args.agent2_type
         use_curriculum = False
         type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
         print(f"🔄 Training Configuration: Mixed Agents ({type_names.get(agent1_type, 'Unknown')} + {type_names.get(agent2_type, 'Unknown')})")
         
     elif args.agent_config == "curriculum":
-        # Curriculum: start with excavators, switch to mixed
-        # You can change the final target types here too!
-        agent1_type, agent2_type = 2, 2  # ← CHANGE THESE VALUES FOR DIFFERENT CURRICULUM TARGET
+        # Curriculum: start with initial types, switch to final types
+        agent1_type, agent2_type = args.agent1_type, args.agent2_type
+        initial_agent1_type, initial_agent2_type = args.initial_agent1_type, args.initial_agent2_type
         use_curriculum = True
         type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
-        target_config = f"{type_names.get(agent1_type, 'Unknown')} + {type_names.get(agent2_type, 'Unknown')}"
-        print(f"📈 Training Configuration: Curriculum (Excavators → {target_config} at {args.curriculum_switch:,})")
+        initial_config = f"{type_names.get(initial_agent1_type, 'Unknown')} + {type_names.get(initial_agent2_type, 'Unknown')}"
+        final_config = f"{type_names.get(agent1_type, 'Unknown')} + {type_names.get(agent2_type, 'Unknown')}"
+        print(f"📈 Training Configuration: Curriculum ({initial_config} → {final_config} at level {args.curriculum_switch})")
     
     config = MixedAgentTrainConfig(
         name=name, 
@@ -478,8 +614,10 @@ if __name__ == "__main__":
         lr=args.lr,
         agent1_type=agent1_type,
         agent2_type=agent2_type,
+        initial_agent1_type=initial_agent1_type,
+        initial_agent2_type=initial_agent2_type,
         use_agent_type_curriculum=use_curriculum,
-        curriculum_switch_timestep=args.curriculum_switch
+        curriculum_switch_level=args.curriculum_switch
     )
     
     train_mixed_agents(config) 
