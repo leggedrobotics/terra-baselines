@@ -556,7 +556,7 @@ def train(config: TrainConfig):
     # Log config.py and train.py files to wandb
     train_py_path = os.path.abspath(__file__)  # Path to current train.py file
     config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "terra", "terra", "config.py")
-    model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "terra-baslines", "utils", "models.py")
+    model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "terra-baselines", "utils", "models.py")
     code_artifact = wandb.Artifact(name="source_code", type="code")
     
     # Add train.py
