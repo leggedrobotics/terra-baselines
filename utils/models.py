@@ -156,18 +156,18 @@ class AgentStateNet(nn.Module):
     mlp_use_layernorm: bool
     num_embedding_features: int = 12
     hidden_dim_layers_mlp_one_hot: Sequence[int] = (32, 64)
-    hidden_dim_layers_mlp_continuous: Sequence[int] = (4, 8)
+    hidden_dim_layers_mlp_continuous: Sequence[int] = (8, 16)
 
     def setup(self) -> None:
         self.embedding = nn.Embed(
             num_embeddings=self.num_embeddings, features=self.num_embedding_features
         )
-        self.embedding_direction = nn.Embed(
-            num_embeddings=self.num_embeddings_2, features=self.num_embedding_features
-        )
-        self.embedding_3 = nn.Embed(
-            num_embeddings=self.num_embeddings_2, features=self.num_embedding_features
-        )
+        # self.embedding_direction = nn.Embed(
+        #     num_embeddings=self.num_embeddings_2, features=self.num_embedding_features
+        # )
+        # self.embedding_3 = nn.Embed(
+        #     num_embeddings=self.num_embeddings_2, features=self.num_embedding_features
+        # )
 
         self.mlp_positions = MLP(
             hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot,
@@ -185,33 +185,33 @@ class AgentStateNet(nn.Module):
         )
 
     def __call__(self, agent_state_obs: Array):
-        x_position = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)
-        x_cabin = agent_state_obs[..., [2]].astype(dtype=jnp.int32)
-        x_base = agent_state_obs[..., [3]].astype(dtype=jnp.int32)
-        x_wheel_angles = agent_state_obs[..., [4]].astype(dtype=jnp.int32)
- 
-        x_position= self.embedding(x_position)
+        # x_position = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)
+        # x_cabin = agent_state_obs[..., [2]].astype(dtype=jnp.int32)
+        # x_base = agent_state_obs[..., [3]].astype(dtype=jnp.int32)
+        # x_wheel_angles = agent_state_obs[..., [4]].astype(dtype=jnp.int32)
+        x_position = agent_state_obs[..., :-1].astype(dtype=jnp.int32)
+        x_position = self.embedding(x_position)
         x_loaded = agent_state_obs[..., [-1]].astype(dtype=jnp.int32)
 
         #x_one_hot.reshape(*x_one_hot.shape[:-2],-1)
 
-        x_cabin = self.embedding_direction(x_cabin)
-        x_cabin = x_cabin.reshape(*x_cabin.shape[:-2], -1)
-        x_base = self.embedding_direction(x_base)
-        x_base = x_base.reshape(*x_base.shape[:-2], -1)
-        x_wheel_angles = self.embedding_3(x_wheel_angles)
-        x_wheel_angles = x_wheel_angles.reshape(*x_wheel_angles.shape[:-2], -1)
+        # x_cabin = self.embedding_direction(x_cabin)
+        # x_cabin = x_cabin.reshape(*x_cabin.shape[:-2], -1)
+        # x_base = self.embedding_direction(x_base)
+        # x_base = x_base.reshape(*x_base.shape[:-2], -1)
+        # x_wheel_angles = self.embedding_3(x_wheel_angles)
+        # x_wheel_angles = x_wheel_angles.reshape(*x_wheel_angles.shape[:-2], -1)
 
-        x_two = jnp.concatenate(
-            (x_cabin, x_base, x_wheel_angles), axis=-1
-        )
+        # x_two = jnp.concatenate(
+        #     (x_cabin, x_base, x_wheel_angles), axis=-1
+        # )
 
         x_one = self.mlp_positions(x_position.reshape(*x_position.shape[:-2], -1))
-        x_two = self.mlp_directions_and_all(x_two)
+        # x_two = self.mlp_directions_and_all(x_two)
         x_loaded = normalize(x_loaded, 0, self.loaded_max)
         x_continuous = self.mlp_continuous(x_loaded)
 
-        return jnp.concatenate([x_one, x_two, x_continuous], axis=-1)
+        return jnp.concatenate([x_one, x_continuous], axis=-1)
 
 
 class LocalMapNet(nn.Module):
@@ -270,7 +270,7 @@ class AtariCNN(nn.Module):
 
         x = nn.Dense(features=128)(x)
         x = nn.relu(x)
-        x = nn.Dense(features=32)(x)
+        x = nn.Dense(features=64)(x)
         return x
 
 
@@ -402,7 +402,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     local_map_min_max: Sequence[int]
     loaded_max: int
     action_type: Union[TrackedAction, WheeledAction]
-    hidden_dim_pi: Sequence[int] = (128, 32)
+    hidden_dim_pi: Sequence[int] = (128, 32, 14)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
     mlp_use_layernorm: bool = False
     intermediate_mlp_dim: int = 128
@@ -489,34 +489,3 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         return v, xpi
 
 
-class PreviousActionsNet2(nn.Module):
-    """
-    Pre-processes the sequence of previous actions for agent 2.
-    """
-    num_actions: int
-    mlp_use_layernorm: bool
-    num_embedding_features: int = 8
-    hidden_dim_layers_mlp: Sequence[int] = (16, 32)
-
-    def setup(self) -> None:
-        self.embedding = nn.Embed(
-            num_embeddings=self.num_actions,
-            features=self.num_embedding_features
-        )
-
-        self.mlp = MLP(
-            hidden_dim_layers=self.hidden_dim_layers_mlp,
-            use_layer_norm=self.mlp_use_layernorm,
-        )
-
-        self.activation = nn.relu
-
-    def __call__(self, obs: dict[str, Array]):
-        x_actions = obs[19].astype(jnp.int32)  # Agent 2 previous actions
-        x_actions = self.embedding(x_actions)
-
-        x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
-        x_flattened = self.mlp(x_flattened)
-
-        x = self.activation(x_flattened)
-        return x
