@@ -162,12 +162,12 @@ class AgentStateNet(nn.Module):
         self.embedding = nn.Embed(
             num_embeddings=self.num_embeddings, features=self.num_embedding_features
         )
-        # self.embedding_direction = nn.Embed(
-        #     num_embeddings=self.num_embeddings_2, features=self.num_embedding_features
-        # )
-        # self.embedding_3 = nn.Embed(
-        #     num_embeddings=self.num_embeddings_2, features=self.num_embedding_features
-        # )
+        self.embedding_direction = nn.Embed(
+            num_embeddings=self.num_embeddings_2, features=self.num_embedding_features
+        )
+        self.embedding_3 = nn.Embed(
+            num_embeddings=self.num_embeddings_2, features=self.num_embedding_features
+        )
 
         self.mlp_positions = MLP(
             hidden_dim_layers=self.hidden_dim_layers_mlp_one_hot,
@@ -185,33 +185,33 @@ class AgentStateNet(nn.Module):
         )
 
     def __call__(self, agent_state_obs: Array):
-        # x_position = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)
-        # x_cabin = agent_state_obs[..., [2]].astype(dtype=jnp.int32)
-        # x_base = agent_state_obs[..., [3]].astype(dtype=jnp.int32)
-        # x_wheel_angles = agent_state_obs[..., [4]].astype(dtype=jnp.int32)
-        x_position = agent_state_obs[..., :-1].astype(dtype=jnp.int32)
+        x_position = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)
+        x_cabin = agent_state_obs[..., [2]].astype(dtype=jnp.int32)
+        x_base = agent_state_obs[..., [3]].astype(dtype=jnp.int32)
+        x_wheel_angles = agent_state_obs[..., [4]].astype(dtype=jnp.int32)
+        # x_position = agent_state_obs[..., :-1].astype(dtype=jnp.int32)
         x_position = self.embedding(x_position)
         x_loaded = agent_state_obs[..., [-1]].astype(dtype=jnp.int32)
 
         #x_one_hot.reshape(*x_one_hot.shape[:-2],-1)
 
-        # x_cabin = self.embedding_direction(x_cabin)
-        # x_cabin = x_cabin.reshape(*x_cabin.shape[:-2], -1)
-        # x_base = self.embedding_direction(x_base)
-        # x_base = x_base.reshape(*x_base.shape[:-2], -1)
-        # x_wheel_angles = self.embedding_3(x_wheel_angles)
-        # x_wheel_angles = x_wheel_angles.reshape(*x_wheel_angles.shape[:-2], -1)
+        x_cabin = self.embedding_direction(x_cabin)
+        x_cabin = x_cabin.reshape(*x_cabin.shape[:-2], -1)
+        x_base = self.embedding_direction(x_base)
+        x_base = x_base.reshape(*x_base.shape[:-2], -1)
+        x_wheel_angles = self.embedding_3(x_wheel_angles)
+        x_wheel_angles = x_wheel_angles.reshape(*x_wheel_angles.shape[:-2], -1)
 
-        # x_two = jnp.concatenate(
-        #     (x_cabin, x_base, x_wheel_angles), axis=-1
-        # )
+        x_two = jnp.concatenate(
+            (x_cabin, x_base, x_wheel_angles), axis=-1
+        )
 
         x_one = self.mlp_positions(x_position.reshape(*x_position.shape[:-2], -1))
-        # x_two = self.mlp_directions_and_all(x_two)
+        x_two = self.mlp_directions_and_all(x_two)
         x_loaded = normalize(x_loaded, 0, self.loaded_max)
         x_continuous = self.mlp_continuous(x_loaded)
 
-        return jnp.concatenate([x_one, x_continuous], axis=-1)
+        return jnp.concatenate([x_one, x_two, x_continuous], axis=-1)
 
 
 class LocalMapNet(nn.Module):
