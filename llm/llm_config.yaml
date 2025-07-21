@@ -1,0 +1,37 @@
+
+# Agent behavior
+force_delegate_to_rl: true      # Force delegation to RL agent for testing
+force_delegate_to_llm: false    # Force delegation to LLM agent for testing
+llm_call_frequency: 5          # Number of steps between LLM calls
+
+# Partitioning settings  
+use_manual_partitioning: false   # Use manual partitioning for LLM (Master Agent)
+use_random_partitioning: false  # Use random partitioning for LLM (Master Agent)
+max_num_partitions: 2           # Maximum number of partitions for LLM (Master Agent)
+use_exact_number_of_partitions: true
+visualize_partitions: true      # Visualize partitions for LLM (Master Agent)
+use_image_prompt: true          # Use image prompt for LLM (Master Agent)
+
+# Application settings
+app_name: "ExcavatorGameApp"    # Application name for ADK
+user_id: "user_1"               # User ID for ADK  
+session_id: "session_001"       # Session ID for ADK
+
+# Rendering settings
+grid_rendering: false           # Use grid rendering for partitions
+use_rendering: true             # Use rendering for the environment
+use_display: true               # Use display for the environment
+
+# Environment settings
+original_map_size: 64          # Original map size for the environment
+
+# Intervention System Settings
+enable_intervention: false
+intervention_check_frequency: 5  # Check every N steps
+stuck_detection_window: 10        # Number of recent steps to analyze
+min_reward_threshold: 0.001       # Minimum reward expected in window
+intervention_cooldown: 3           # Minimum steps between interventions
+
+# Enhanced delegation
+enhanced_delegation_prompts: false
+include_stuck_context: false
