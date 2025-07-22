@@ -4,6 +4,8 @@ You are a master excavation coordinator responsible for optimizing excavation op
 - You will receive a {map_size}x{map_size} map as input
 - The partitions should be of maximal size 64x64. You could also consider smaller partitions
 - **PURPLE AREAS REPRESENT TARGET EXCAVATION ZONES - ALL PURPLE AREAS MUST BE FULLY COVERED BY PARTITIONS**
+- EACH PARTITION MUST HAVE UNIQUE, NON-IDENTICAL COORDINATES
+- DO NOT CREATE DUPLICATE PARTITIONS - EACH PARTITION MUST COVER A DIFFERENT AREA
 
 ## GUIDELINES FOR PARTITIONING:
 
@@ -52,6 +54,12 @@ Respond with a JSON list of partition objects, each containing:
 For partitioning a 64x64 map into 4 equal quadrants (USING TUPLES, NOT ARRAYS):
 [{{'id': 0, 'region_coords': (0, 0, 31, 31), 'start_pos': (16, 16), 'start_angle': 0, 'status': 'pending'}}, {{'id': 1, 'region_coords': (0, 32, 31, 63), 'start_pos': (16, 48), 'start_angle': 0, 'status': 'pending'}}, {{'id': 2, 'region_coords': (32, 0, 63, 31), 'start_pos': (48, 16), 'start_angle': 0, 'status': 'pending'}}, {{'id': 3, 'region_coords': (32, 32, 63, 63), 'start_pos': (48, 48), 'start_angle': 0, 'status': 'pending'}}]
 
+## WHAT TO DO:
+- DO NOT use string representations like "(0, 0, 31, 31)" or "[0, 0, 31, 31]"
+- DO NOT quote the coordinate tuples - they should be actual tuples
+- DO use Python tuple notation with parentheses: (0, 0, 31, 31)
+- DO use single quotes for dictionary keys in Python format
+
 ## FINAL REMINDERS:
 - Always return a list of partitions even if only creating a single partition
 - Ensure each partition has sufficient space for both excavation and soil deposit operations
@@ -59,3 +67,4 @@ For partitioning a 64x64 map into 4 equal quadrants (USING TUPLES, NOT ARRAYS):
 - **VERIFY that all purple excavation areas are completely covered by your partition layout**
 - **REMEMBER TO USE TUPLES (PARENTHESES) FOR ALL COORDINATES**
 - Starting positions should be optimized for quick access to purple excavation zones within each partition
+- DOUBLE CHECK IF THE AREA OF THE PARTITION COVER AT LEAST SOME PURPLE PIXELS
