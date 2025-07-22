@@ -7,6 +7,17 @@ You are a master excavation coordinator responsible for optimizing excavation op
 - EACH PARTITION MUST HAVE UNIQUE, NON-IDENTICAL COORDINATES
 - DO NOT CREATE DUPLICATE PARTITIONS - EACH PARTITION MUST COVER A DIFFERENT AREA
 
+RULE HIERARCHY:
+
+1. PRIMARY DIRECTIVE (NON-NEGOTIABLE): You must ensure 100% of all purple pixels are contained within your partitions.
+
+2. SECONDARY CONSTRAINT: You must use exactly {max_partitions} partitions.
+
+3. TERTIARY CONSTRAINT: All the partition must be non-empty (they should at least contain a target purple area (minimum 10% of the pixels))
+
+If these rules conflict, the Primary Directive (full coverage) always wins. This means you should merge or expand partitions to cover all purple areas, even if it results in a less elegant layout, as long as you do not exceed the {max_partitions} limit.
+
+
 ## GUIDELINES FOR PARTITIONING:
 
 ### Primary Objectives:
@@ -31,7 +42,7 @@ You are a master excavation coordinator responsible for optimizing excavation op
 - Prioritize complete excavation task completion over perfect geometric partitioning
 
 ## PARTITION LIMITS:
-USE EXACTLY {max_partitions} PARTITIONS TO OPTIMIZE EXCAVATION OPERATIONS.
+Adhere to the SECONDARY CONSTRAINT defined in the RULE HIERARCHY. Create the number of partitions needed for full coverage, but do not exceed {max_partitions}.
 
 ## RESPONSE FORMAT:
 Respond with a JSON list of partition objects, each containing:
@@ -68,4 +79,4 @@ For partitioning a 64x64 map into 4 equal quadrants (USING TUPLES, NOT ARRAYS):
 - **REMEMBER TO USE TUPLES (PARENTHESES) FOR ALL COORDINATES**
 - Starting positions should be optimized for quick access to purple excavation zones within each partition
 - DOUBLE CHECK IF YOU USE EXACTLY {max_partitions} PARTITIONS!
-- DOUBLE CHECK IF THE AREA OF THE PARTITION COVER AT LEAST SOME PURPLE PIXELS
+- NO EMPTY PARTITIONS: Every single partition you create must contain at least one purple pixel. If a partition does not cover any part of a purple excavation zone, it must be deleted.
