@@ -1767,7 +1767,9 @@ def load_experiment_constants(config_file="llm/llm_config.yaml"):
         'min_reward_threshold': 0.001,
         'use_random_partitioning': False,
         'use_exact_number_of_partitions': False,
-
+        'save_video': False,
+        'fps': 30,
+        'compute_bench_stats': False
     }
     
     # Try to load from YAML file
@@ -1830,7 +1832,10 @@ def setup_experiment_config(config_file="llm/llm_config.yaml"):
         constants.stuck_detection_window,
         constants.min_reward_threshold,
         constants.use_random_partitioning,  # USE_RANDOM_PARTITIONING
-        constants.use_exact_number_of_partitions
+        constants.use_exact_number_of_partitions,
+        constants.save_video,           # SAVE_VIDEO
+        constants.fps,
+        constants.compute_bench_stats
     )
 
 def detect_stuck_excavator(partition_state, threshold_steps=10, min_reward_threshold=0.001):

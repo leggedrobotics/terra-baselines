@@ -53,7 +53,8 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
      USE_IMAGE_PROMPT , APP_NAME, USER_ID, SESSION_ID,
      GRID_RENDERING, ORIGINAL_MAP_SIZE, 
      USE_RENDERING, USE_DISPLAY,
-    ENABLE_INTERVENTION, INTERVENTION_FREQUENCY, STUCK_WINDOW, MIN_REWARD, USE_RANDOM_PARTITIONING,USE_EXACT_NUMBER_OF_PARTITIONS) = setup_experiment_config()
+    ENABLE_INTERVENTION, INTERVENTION_FREQUENCY, STUCK_WINDOW, MIN_REWARD, USE_RANDOM_PARTITIONING,
+    USE_EXACT_NUMBER_OF_PARTITIONS, SAVE_VIDEO, FPS, COMPUTE_BENCH_STATS) = setup_experiment_config()
 
     # Initialize once with proper batching
     rng = jax.random.PRNGKey(seed)
@@ -586,17 +587,16 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
     print(f"EXPERIMENT COMPLETED - PROCESSED {current_map_index} MAPS")
     print(f"{'='*80}")
 
-    # Save results
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    safe_model_name = llm_model_name.replace('/', '_')
-    output_dir = os.path.join("experiments", f"{safe_model_name}_{current_time}")
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Save video
-    SAVE_VIDEO = False
     if SAVE_VIDEO:
+        # Save results
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        safe_model_name = llm_model_name.replace('/', '_')
+        output_dir = os.path.join("experiments", f"{safe_model_name}_{current_time}")
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Save video
         video_path = os.path.join(output_dir, "gameplay_all_maps.mp4")
-        save_video(all_frames, video_path)
+        save_video(all_frames, video_path, FPS)
         
         print(f"\nResults saved to: {output_dir}")
 
@@ -717,7 +717,7 @@ if __name__ == "__main__":
      _ , _, _, _,
      _, _, 
      USE_RENDERING, USE_DISPLAY,
-    _, _, _, _, _,_) = setup_experiment_config()
+    _, _, _, _, _,_, _, _, COMPUTE_BENCH_STATS) = setup_experiment_config()
 
 
 
@@ -788,7 +788,6 @@ if __name__ == "__main__":
         dug_tiles_per_action_map_list.append(dug_tiles_per_action_map.item())
 
     print("\nExperiment completed for all environments.")
-    COMPUTE_BENCH_STATS = True  # Set to True to compute and print stats}
     if COMPUTE_BENCH_STATS:
         compute_stats_llm(episode_done_once_list, episode_length_list, move_cumsum_list,
                       do_cumsum_list, areas_list, dig_tiles_per_target_map_init_list,
