@@ -14,10 +14,12 @@ Structure of the folder
         - GOOGLE_API_KEY.txt
         - OPENAI_API_KEY.txt
     - prompts
-        - delegation_decision.txt
+        - delegation_no_intervention.txt <- delegation prompt intervention disabled
+        - delegation.txt <- delegation prompt
         - excavator_action.txt
         - excavator_llm_simple.txt
-        - master_partitioning.txt
+        - partitioning_exact.txt <- partitioning with an exact number of partitions (sometimes fails)
+        - partitioning.txt <-partitioning
     - __init__.py
     - ...
 ```
@@ -37,3 +39,6 @@ The level index can be choosen according to the following table
 | trenches/double_diagonal      | 3 |
 | trenches/triple               | 4 |
 | trenches/triple_diagonal      | 5 |
+
+### Note
+If you find any bug or issue do not esitate to open a issue and tag @gioelemo 

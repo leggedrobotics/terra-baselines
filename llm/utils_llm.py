@@ -974,9 +974,9 @@ def init_llms(llm_model_key, llm_model_name, config, action_size,
     print("Using model: ", llm_model_name_extended)
 
     # Load system messages from files
-    system_message_master = prompts.get("master_partitioning", map_size=MAP_SIZE, max_partitions=MAX_NUM_PARTITIONS)
+    system_message_master = prompts.get("partitioning", map_size=MAP_SIZE, max_partitions=MAX_NUM_PARTITIONS)
     
-    system_message_delegation = prompts.get("delegation_decision", observation="See current state")
+    system_message_delegation = prompts.get("delegation", observation="See current state")
     
     system_message_excavator = prompts.get("excavator_llm_simple")
 
@@ -1117,9 +1117,9 @@ def get_delegation_prompt(prompts, current_observation, context="", ENABLE_INTER
         obs_str = json.dumps({k: v.tolist() if hasattr(v, 'tolist') else str(v) 
                             for k, v in current_observation.items()}) if isinstance(current_observation, dict) else str(current_observation)
         if ENABLE_INTERVENTION:
-            prompt = prompts.get("delegation_decision", observation=obs_str)
+            prompt = prompts.get("delegation", observation=obs_str)
         else:
-            prompt = prompts.get("delegation_decision_no_intervention", observation=obs_str)
+            prompt = prompts.get("delegation_no_intervention", observation=obs_str)
         if context:
             prompt += f"\n\nAdditional context: {context}"
         return prompt
@@ -1237,11 +1237,11 @@ def setup_partitions_and_llm(map_index, ORIGINAL_MAP_SIZE, env_manager, config, 
         # Use file-based prompt
         if USE_IMAGE_PROMPT:
             if USE_EXACT_NUMBER_OF_PARTITIONS:
-                prompt = prompts.get("master_partitioning_exact", 
+                prompt = prompts.get("partitioning_exact", 
                             map_size=ORIGINAL_MAP_SIZE, 
                             max_partitions=MAX_NUM_PARTITIONS) + "\n\nCurrent observation: See image"
             else:
-                prompt = prompts.get("master_partitioning", 
+                prompt = prompts.get("partitioning", 
                             map_size=ORIGINAL_MAP_SIZE, 
                             max_partitions=MAX_NUM_PARTITIONS) + "\n\nCurrent observation: See image"
 
@@ -1253,11 +1253,11 @@ def setup_partitions_and_llm(map_index, ORIGINAL_MAP_SIZE, env_manager, config, 
                 observation_str = str(current_observation)
             
             if USE_EXACT_NUMBER_OF_PARTITIONS:
-                prompt = prompts.get("master_partitioning_exact", 
+                prompt = prompts.get("partitioning_exact", 
                             map_size=ORIGINAL_MAP_SIZE, 
                             max_partitions=MAX_NUM_PARTITIONS) + "\n\nCurrent observation: See image"
             else:
-                prompt = prompts.get("master_partitioning", 
+                prompt = prompts.get("partitioning", 
                             map_size=ORIGINAL_MAP_SIZE, 
                             max_partitions=MAX_NUM_PARTITIONS) + "\n\nCurrent observation: See image"
 
