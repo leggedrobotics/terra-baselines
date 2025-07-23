@@ -1727,7 +1727,7 @@ def reconstruct_observation_from_synced_state(timestep):
     #print("Reconstructed observation from synced state:")
     return observation
 
-def load_experiment_constants(config_file="llm/llm_config.yaml"):
+def load_experiment_constants(config_file="llm/config_llm.yaml"):
     """
     Load all experiment constants from YAML file.
     Returns a namespace object with all your constants as attributes.
@@ -1797,7 +1797,7 @@ def load_experiment_constants(config_file="llm/llm_config.yaml"):
     
     return ConfigNamespace(defaults)
 
-def setup_experiment_config(config_file="llm/llm_config.yaml"):
+def setup_experiment_config(config_file="llm/config_llm.yaml"):
     """
     Direct replacement for your constant definitions.
     

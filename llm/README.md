@@ -5,7 +5,7 @@ In this folder you find the scripts to run Terra using an hybrid LLM and RL appr
 ## Setup and usage
 1. Make sure that you have Terra and Terra baselines installed and also the additional dependency for this hybrid version. This are listed in the XXX.yaml file (follow the instruction in Terra).
 
-2. Most of the parameters of the experiment can be configured in the `llm_config.yaml` file. The details of each parameters can be founded there as a comment. You can adapt the prompts by changing the corresponding file in the `prompts` folder
+2. Most of the parameters of the experiment can be configured in the `config_llm.yaml` file. The details of each parameters can be founded there as a comment. You can adapt the prompts by changing the corresponding file in the `prompts` folder
 
 3. Before running the main script make sure that you export the API-Key(s) of the model(s) that you wanted to use. This can be done with:
     - Google Models (Gemini): `export GOOGLE_API_KEY=<API_KEY>`
@@ -58,6 +58,7 @@ The level index can be choosen according to the following table
         - partitioning_exact.txt <- partitioning with an exact number of partitions (sometimes fails)
         - partitioning.txt <-partitioning
     - __init__.py
+    - config_llm.py
     - env_llm.py
     - env_manager_llm.py
     - eval_llm.py
