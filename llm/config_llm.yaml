@@ -6,13 +6,13 @@
 original_map_size: 64               # Original map size for the environment
 
 # Agent behavior
-force_delegate_to_rl: false         # Force delegation to RL agent for testing
+force_delegate_to_rl: true         # Force delegation to RL agent for testing
 force_delegate_to_llm: false        # Force delegation to LLM agent for testing
 llm_call_frequency: 15              # Number of steps between LLM calls
 
 # Partitioning settings  
 use_manual_partitioning: false      # Use manual partitioning 
-use_random_partitioning: false      # Use random partitioning 
+use_random_partitioning: true      # Use random partitioning 
 max_num_partitions: 2               # Maximum number of partitions for LLM (Partitioning Agent)
 use_exact_number_of_partitions: false # Use exact number of partitions for LLM (Partitioning Agent)
 use_image_prompt: true              # Use image prompt for LLM (Partitioning Agent)
@@ -26,9 +26,9 @@ compute_bench_stats: true           # Compute and print benchmark statistics
 # Rendering settings
 grid_rendering: false               # Use grid rendering for partitions
 use_rendering: true                 # Use rendering for the environment
-use_display: true                   # Use display for the environment
+use_display: false                   # Use display for the environment
 visualize_partitions: true          # Visualize partitions
-save_video: true                    # Save video of the environment
+save_video: false                    # Save video of the environment
 fps: 10                             # Frames per second for video rendering
 
 # Intervention System Settings
