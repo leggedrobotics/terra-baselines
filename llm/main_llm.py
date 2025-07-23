@@ -47,14 +47,14 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
     Run an experiment with completely separate environments for global and small maps.
     """
 
-
     (FORCE_DELEGATE_TO_RL, FORCE_DELEGATE_TO_LLM, LLM_CALL_FREQUENCY,
      USE_MANUAL_PARTITIONING, MAX_NUM_PARTITIONS, VISUALIZE_PARTITIONS,
      USE_IMAGE_PROMPT , APP_NAME, USER_ID, SESSION_ID,
      GRID_RENDERING, ORIGINAL_MAP_SIZE, 
-     USE_RENDERING, USE_DISPLAY,
-    ENABLE_INTERVENTION, INTERVENTION_FREQUENCY, STUCK_WINDOW, MIN_REWARD, USE_RANDOM_PARTITIONING,
-    USE_EXACT_NUMBER_OF_PARTITIONS, SAVE_VIDEO, FPS, COMPUTE_BENCH_STATS) = setup_experiment_config()
+     USE_RENDERING, _, ENABLE_INTERVENTION, INTERVENTION_FREQUENCY, 
+     STUCK_WINDOW, MIN_REWARD, USE_RANDOM_PARTITIONING,
+     USE_EXACT_NUMBER_OF_PARTITIONS, SAVE_VIDEO, FPS, _
+    ) = setup_experiment_config()
 
     # Initialize once with proper batching
     rng = jax.random.PRNGKey(seed)
@@ -185,7 +185,6 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
         map_step = 0
         max_steps_per_map = num_timesteps
         map_done = False  # Track map completion
-
 
         while playing and active_partitions and map_step < max_steps_per_map and global_step < num_timesteps:
             # Handle quit events
@@ -428,8 +427,8 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
                             map_action_list.append(action_rl)
                             
                             # Log intervention details
-                            print(f"    🔧 Intervention #{total_interventions} for partition {partition_idx}")
-                            print(f"    🔧 Reason: {stuck_info['reason']} | Action: {action_rl}")
+                            print(f"    Intervention #{total_interventions} for partition {partition_idx}")
+                            print(f"    Reason: {stuck_info['reason']} | Action: {action_rl}")
                         except Exception as intervention_error:
                             print(f"    ERROR during intervention for partition {partition_idx}: {intervention_error}")
                             # Fallback to a safe action
@@ -713,13 +712,9 @@ if __name__ == "__main__":
 
     base_seed = args.seed
 
-    (_, _, _, _, _, _,
-     _ , _, _, _,
-     _, _, 
-     USE_RENDERING, USE_DISPLAY,
-    _, _, _, _, _,_, _, _, COMPUTE_BENCH_STATS) = setup_experiment_config()
-
-
+    (_, _, _, _, _, _, _ , _, _, _, _, _, USE_RENDERING, USE_DISPLAY,
+    _, _, _, _, _,_, _, _, COMPUTE_BENCH_STATS
+    ) = setup_experiment_config()
 
     # Track intervention statistics
     total_interventions = 0
