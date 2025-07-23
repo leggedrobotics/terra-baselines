@@ -264,7 +264,7 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
                             )
     
                             if needs_intervention:
-                                print(f"    🚨 Partition {partition_idx} appears stuck: {stuck_info['reason']}")
+                                print(f"    Partition {partition_idx} appears stuck: {stuck_info['reason']}")
                                 print(f"    Details: {stuck_info['details']}")
 
                         try:
@@ -277,7 +277,7 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
 
                         # Enhanced context with stuck information
                         base_context = f"Map {current_map_index}, Step {map_step}"
-                        if needs_intervention and ENABLE_INTERVENTION:  # ← USED HERE
+                        if needs_intervention and ENABLE_INTERVENTION:  
                             stuck_context = f" | STUCK: {stuck_info['reason']} - {stuck_info['details']}"
                             context = base_context + stuck_context
                         else:
@@ -287,13 +287,15 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
                             delegation_prompt = get_delegation_prompt(
                                 prompts, 
                                 "See image", 
-                                context=context
+                                context=context,
+                                ENABLE_INTERVENTION=ENABLE_INTERVENTION
                             )
                         else:
                             delegation_prompt = get_delegation_prompt(
                                 prompts, 
                                 observation_str, 
-                                context=context
+                                context=context,
+                                ENABLE_INTERVENTION=ENABLE_INTERVENTION
                             )
                         delegation_session_id = f"{SESSION_ID}_map_{current_map_index}_delegation"  # This creates "session_001_map_0_delegation"
                         delegation_user_id = f"{USER_ID}_delegation"  # This creates "user_1_delegation"
@@ -762,8 +764,8 @@ if __name__ == "__main__":
                     args.model_name, 
                     args.model_key, 
                     args.num_timesteps, 
-                    #base_seed + i * 1000,  # Ensure different seeds
-                    base_seed,
+                    base_seed + i * 1000,  # Ensure different seeds
+                    #base_seed,
                     args.run_name,
                     i+1,
                     env_manager, global_env_config

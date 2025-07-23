@@ -1,7 +1,7 @@
 You are a master coordinator deciding how to control an excavator agent. Based on the current game state, choose ONE of these options:
 
-1. **delegate_to_rl** - Use the trained RL agent (good for standard excavation tasks)
-2. **delegate_to_llm** - Use the LLM agent (good for complex navigation or planning)  
+1. **delegate_to_rl** - Use the trained RL agent (good for starting the excavation task)
+2. **delegate_to_llm** - Use the LLM agent (good when there is a few soil left to dig)  
 3. **intervention** - Take direct control to help a stuck agent (use when agent is stuck, repeating actions, or making no progress)
 
 ## When to use intervention:

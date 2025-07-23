@@ -1111,13 +1111,15 @@ def init_llms(llm_model_key, llm_model_name, config, action_size,
 
     return (prompts, llm_query, runner_partitioning, runner_delegation, prev_actions, session_manager)
 
-def get_delegation_prompt(prompts, current_observation, context=""):
+def get_delegation_prompt(prompts, current_observation, context="", ENABLE_INTERVENTION=False):
     """Get delegation prompt with current state."""
     try:
         obs_str = json.dumps({k: v.tolist() if hasattr(v, 'tolist') else str(v) 
                             for k, v in current_observation.items()}) if isinstance(current_observation, dict) else str(current_observation)
-        
-        prompt = prompts.get("delegation_decision", observation=obs_str)
+        if ENABLE_INTERVENTION:
+            prompt = prompts.get("delegation_decision", observation=obs_str)
+        else:
+            prompt = prompts.get("delegation_decision_no_intervention", observation=obs_str)
         if context:
             prompt += f"\n\nAdditional context: {context}"
         return prompt
