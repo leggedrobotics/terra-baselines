@@ -219,10 +219,10 @@ def run_single_map_corrected(map_idx, args, config, model_params, global_env_con
                 best_coverage_so_far = coverage
             
             # Optional: Early stopping if full coverage achieved
-            # if coverage >= 1.0:  # 100% coverage achieved
-            #     early_stop_achieved = True
-            #     print(f"  🎉 FULL COVERAGE ACHIEVED! Early stopping after trial {partition_trial + 1}")
-            #     break
+            if coverage >= 1.0:  # 100% coverage achieved
+                early_stop_achieved = True
+                print(f"  🎉 FULL COVERAGE ACHIEVED! Early stopping after trial {partition_trial + 1}")
+                break
             
         except Exception as e:
             print(f"  ERROR in trial {partition_trial + 1}: {e}")
