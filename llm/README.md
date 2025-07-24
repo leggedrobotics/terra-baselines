@@ -7,11 +7,19 @@ The approach can be described by the following schema:
 ![image info](assets/VLM_Schema.png)
 
 This can be shortly described as follow:
-
-
+1. The first phase consists in the partitioning of the map. You have the following three possibilities:
+    1. Manual partitioning: You directly provide the partitioning information directly in the code,
+    2. Random partitioning: The partitions are generated according to some criteria. In particular a vertical or horizontal line is generated randomly to divide in two the main map. It is possible to specify a minimum width and height in % and a minimum amount of targets that the partition should contain. This is for avoiding empty or very small partitions.
+    3. LLM partitioning: The partitions are generated directly from an LLM model. You can also try to enforce the exact amount of excavators used in the model with the specific prompt. The details of the supported models and the prompts are specified in the next sections.
+2. Once you have the partitions these are processed separately.
+For each partition you have a master LLM agent which can decide what to do if to directly use the RL policy (`delegate_to_RL`) or to use the LLM policy (`delegate_to_LLM`). Using the RL policy is faster compared to the LLM policy.
+    1. `delegate_to_RL`. In this case we use an RL policy previously trained on the set of maps to choose the next action,
+    2. `delegate_to_LLM` In this case we actually delegate the choice of the action to an LLM model which uses as input the current image of the game and some other information.
+3. After a partition is processed we update the global map and synchronize the information to the other partitions. We can check again after a choosable number of iterations if to delegate to which type of agent again.
+4. When a map is completed the next map is partitioned and we proceed with the previously described steps.
 
 ## Setup and usage
-1. Make sure that you have Terra and Terra baselines installed and also the additional dependency for this hybrid version. This are listed in the environment_llm.yaml file (follow the instruction in Terra).
+1. Make sure that you have Terra and Terra baselines installed and also the additional dependency for this hybrid version. This are listed in the `environment_llm.yaml` file (follow the instruction in Terra).
 
 2. Most of the parameters of the experiment can be configured in the [`config_llm.yaml`](config_llm.yaml)  file. The details of each parameters can be founded there as a comment. You can adapt the prompts by changing the corresponding file in the [`prompts`](prompts)  folder
 
@@ -35,7 +43,7 @@ This can be shortly described as follow:
     - `<LEVEL_INDEX>`: The level index choosed for the experiment. The list of the correspondence index to the level can be found in the [Level index map](#level-index-map) section. Important: This option works only when the `run_levels.slurm` (see next section) script is used.
 
 ### Running on a cluster
-It is possible to run the code on multiple CPU on a cluster using the provided `run_levels.slurm` script. Also here it is important to set the API-KEYS for the models that you are planning to do. The script is designed to work for a SLURM-based environment like ETH Zürich Euler cluster. For more information on running code on a cluster consults the [official documentation](https://scicomp.ethz.ch/wiki/Main_Page)
+It is possible to run the code on multiple CPUs on a cluster using the provided `run_levels.slurm` script. Also here it is important to set the API-KEYS for the models that you are planning to do. The script is designed to work for a SLURM-based environment like ETH Zürich Euler cluster. For more information on running code on a cluster consults the [official documentation](https://scicomp.ethz.ch/wiki/Main_Page)
 
 ### Supported models
 
@@ -72,6 +80,12 @@ The level index can be choosen according to the following table
 | trenches/double_diagonal      | 3 |
 | trenches/triple               | 4 |
 | trenches/triple_diagonal      | 5 |
+
+### Prompts types:
+We have three type of LLM Agent with different prompts:
+1. Partitioning agent: In [`partitioning.txt`](partitioning.txt) we have the partitioning rule for the agent. To use a fixed amount of excavators in the code is possible to use [`partitioning_exact.txt`](partitioning_exact.txt)
+2. Delegation agent: You should use the [`delegation_no_intervention.txt`](delegation_no_intervention.txt) file for the moment. The delegation with intervation (file [`delegation.txt`](delegation.txt)) is still not supported and finally tested.
+3. Excavator agent: [`excavator_llm_simple.txt`](excavator_llm_simple.txt) is used as system message for the LLM excavator. The [`excavator_action.txt`](excavator_action.txt) provide additional information about the current status of the excavator used by the LLM.
 
 ## Structure of the folder
 
