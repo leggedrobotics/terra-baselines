@@ -88,7 +88,7 @@ def run_single_map_corrected(map_idx, args, config, model_params, global_env_con
     CORRECTED VERSION: Uses the same map for all partition trials.
     """
     print(f"\n{'='*80}")
-    print(f"PROCESSING MAP {map_idx + 1} (Job for map index {map_idx})")
+    print(f"PROCESSING MAP {map_idx} (Job for map index {map_idx})")
     print(f"TESTING DIFFERENT PARTITIONS ON THE SAME MAP")
     print(f"{'='*80}")
     
@@ -123,17 +123,17 @@ def run_single_map_corrected(map_idx, args, config, model_params, global_env_con
     )
     
     # Initialize the map ONCE
-    print(f"Initializing map {map_idx + 1} with seed {map_seed}")
+    print(f"Initializing map {map_idx} with seed {map_seed}")
     reset_to_same_map(map_idx, args.seed, env_manager, map_env_config)
     
     # Store the initial map state to verify it's the same across trials
     initial_target_map = env_manager.global_maps['target_map'].copy()
     total_dig_targets = jnp.sum(initial_target_map == -1).item()
-    print(f"Map {map_idx + 1} has {total_dig_targets} dig targets")
+    print(f"Map {map_idx} has {total_dig_targets} dig targets")
     
     # Run multiple partition experiments on the SAME map
     for partition_trial in range(args.n_partitions_per_map):
-        print(f"\nMap {map_idx + 1}, Partition Trial {partition_trial + 1}/{args.n_partitions_per_map}")
+        print(f"\nMap {map_idx}, Partition Trial {partition_trial + 1}/{args.n_partitions_per_map}")
         print(f"Using SAME map with DIFFERENT random partitioning strategy")
         
         try:
@@ -256,8 +256,8 @@ def run_single_map_corrected(map_idx, args, config, model_params, global_env_con
         best_coverage = best_result['coverage']
         best_trial_idx = best_result['trial_idx']
         
-        print(f"\nBest partition strategy for map {map_idx + 1}:")
-        print(f"  Trial: {best_trial_idx + 1}")
+        print(f"\nBest partition strategy for map {map_idx}:")
+        print(f"  Trial: {best_trial_idx}")
         print(f"  Coverage: {best_coverage:.4f}")
         print(f"  Episode done: {best_result['episode_done_once']}")
         print(f"  Episode length: {best_result['episode_length']}")
@@ -294,11 +294,11 @@ def run_single_map_corrected(map_idx, args, config, model_params, global_env_con
         with open(map_filename, 'w') as f:
             json.dump(map_results_data, f, indent=2)
         
-        print(f"Results for map {map_idx + 1} saved to: {map_filename}")
+        print(f"Results for map {map_idx} saved to: {map_filename}")
         
         return best_result
     else:
-        print(f"No valid results for map {map_idx + 1}")
+        print(f"No valid results for map {map_idx}")
         return None
 
 def run_experiment_single_map_trial(llm_model_name, llm_model_key, num_timesteps, seed, 
