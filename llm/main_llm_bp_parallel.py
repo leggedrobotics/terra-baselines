@@ -16,7 +16,7 @@ from terra.config import BatchConfig
 
 
 from llm.utils_llm import *
-from terra.viz.llms_adk import *
+from llm.adk_llm import *
 from terra.actions import (
     WheeledAction,
     TrackedAction,

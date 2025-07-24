@@ -17,7 +17,7 @@ import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from llm.utils_llm import *
-from terra.viz.llms_adk import *
+from llm.adk_llm import *
 from terra.actions import (
     WheeledAction,
     TrackedAction,

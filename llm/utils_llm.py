@@ -6,9 +6,8 @@ from google.adk.agents import Agent
 from google.adk.models.lite_llm import LiteLlm
 from google.genai import types
 import jax.numpy as jnp
-from terra.viz.llms_adk import *
+from llm.adk_llm import *
 
-from terra.viz.llms_utils import *
 import csv
 from utils.models import load_neural_network
 

@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from terra.env import TerraEnv
 
 from llm.utils_llm import *
-from terra.viz.llms_adk import *
+from llm.adk_llm import *
 
 import pygame as pg
 

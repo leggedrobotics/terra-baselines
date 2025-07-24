@@ -12,7 +12,7 @@ llm_call_frequency: 15              # Number of steps between LLM calls
 
 # Partitioning settings  
 use_manual_partitioning: false      # Use manual partitioning 
-use_random_partitioning: true      # Use random partitioning 
+use_random_partitioning: false      # Use random partitioning 
 max_num_partitions: 2               # Maximum number of partitions for LLM (Partitioning Agent)
 use_exact_number_of_partitions: false # Use exact number of partitions for LLM (Partitioning Agent)
 use_image_prompt: true              # Use image prompt for LLM (Partitioning Agent)
