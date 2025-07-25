@@ -204,7 +204,7 @@ class LLM_query:
                 logger.warning(f"Response is not a dictionary: {type(response_text)}")
             
             # If we get here, the action was invalid
-            error_message = f'Your action value is invalid. Please provide a valid action between -1 and {self.actions_size-1}.'
+            error_message = f'Your action value is invalid. Please provide a valid action between -1 and {self.action_size-1}.'
             self.add_user_message(user_msg=error_message)
             
             try:
@@ -323,16 +323,11 @@ class LLM_query:
                 self.messages.append(user_content)
 
             elif frame is None and user_msg is not None:
-                self.messages.append(
-                    {
-                        "role": "user",
-                        "parts": [
-                            {
-                                "text": types.Part.from_text(text=user_msg)
-                            }
-                        ]
-                    }
+                user_content = types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=user_msg)]
                 )
+                self.messages.append(user_content)
             else:
                 pass
 
