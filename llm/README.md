@@ -185,10 +185,6 @@ The system uses three types of specialized prompts:
 
 ```
 llm/
-├── api_keys/                    # API key storage (gitignored)
-│   ├── ANTHROPIC_API_KEY.txt
-│   ├── GOOGLE_API_KEY.txt
-│   └── OPENAI_API_KEY.txt
 ├── assets/                      # Media and documentation assets
 ├── prompts/                     # Customizable prompt templates
 │   ├── delegation_no_intervention.txt

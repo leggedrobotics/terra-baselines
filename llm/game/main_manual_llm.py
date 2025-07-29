@@ -29,12 +29,9 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai import types
 
-
 os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "False"
 
-
-
-def run_experiment(model_name, model_key, num_timesteps):
+def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed):
     """
     Run an LLM-based simulation experiment.
 
@@ -46,27 +43,16 @@ def run_experiment(model_name, model_key, num_timesteps):
     Returns:
         None
     """
-    USE_PATH = False
 
-    # Load the JSON configuration file
-    with open("llm/game/prompt.json", "r") as file:
-        game_instructions = json.load(file)
-
-    # Define the environment name for the Autonomous Excavator Game
-    environment_name = "AutonomousExcavatorGame"
-
-    # Retrieve the system message for the environment
-    system_message = game_instructions.get(
-        environment_name,
-        "You are a game playing assistant. Provide the best action for the current game state."
-    )
+    f = open('llm/game/prompt.txt', 'r')
+    system_message = f.read()
+    f.close()
 
     batch_cfg = BatchConfig()
     action_type = batch_cfg.action_type
     n_envs_x = 1
     n_envs_y = 1
     n_envs = n_envs_x * n_envs_y
-    seed = 33 #35 #33 # 5810 #24
     rng = jax.random.PRNGKey(seed)
     env = TerraEnvBatch(
         rendering=True,
@@ -82,17 +68,17 @@ def run_experiment(model_name, model_key, num_timesteps):
     _rng = _rng[None]
     timestep = env.reset(env_cfgs, _rng)
 
-    if model_key == "gpt":
-        model_name_extended = "openai/{}".format(model_name)
-    elif model_key == "claude":
-        model_name_extended = "anthropic/{}".format(model_name)
+    if llm_model_key == "gpt":
+        model_name_extended = "openai/{}".format(llm_model_name)
+    elif llm_model_key == "claude":
+        model_name_extended = "anthropic/{}".format(llm_model_name)
     else:
-        model_name_extended =  model_name
+        model_name_extended =  llm_model_name
 
     # Initialize the agent
     print("Using model: ", model_name_extended)
 
-    if model_key == "gemini":
+    if llm_model_key == "gemini":
         agent_excavator = Agent(
             name="ExcavatorAgent",
             model=model_name_extended,
@@ -132,7 +118,7 @@ def run_experiment(model_name, model_key, num_timesteps):
 
     llm_query = LLM_query(
         model_name=model_name_extended,
-        model=model_key,
+        model=llm_model_key,
         system_message=system_message,
         action_size=7,
         session_id=SESSION_ID,
@@ -142,8 +128,6 @@ def run_experiment(model_name, model_key, num_timesteps):
 
     print("LLM query initialized.")
 
-
-
     # Define the repeat_action function
     def repeat_action(action, n_times=n_envs):
         return action_type.new(action.action[None].repeat(n_times, 0))
@@ -152,7 +136,6 @@ def run_experiment(model_name, model_key, num_timesteps):
     timestep = env.step(timestep, repeat_action(action_type.do_nothing()), _rng)
     end_time = time.time()
     print(f"Environment started. Compilation time: {end_time - start_time} seconds.")
-
 
     env.terra_env.render_obs_pygame(timestep.observation, timestep.info)
 
@@ -164,10 +147,6 @@ def run_experiment(model_name, model_key, num_timesteps):
     steps_taken = 0
     num_timesteps = num_timesteps
     frames = []
-
-    USE_LOCAL_MAP = True
-
-    #pg.image.save(screen, "screenshot.png")
 
     progress_bar = tqdm(total=num_timesteps, desc="Rollout", unit="steps")
 
@@ -195,9 +174,6 @@ def run_experiment(model_name, model_key, num_timesteps):
             previous_action = []  # Reset the previous action list
             llm_query.delete_messages()  # Clear previous messages
 
-
-
-
         game_state_image = capture_screen(screen)
         frames.append(game_state_image)
 
@@ -205,51 +181,36 @@ def run_experiment(model_name, model_key, num_timesteps):
         base_orientation = extract_base_orientation(state)
         bucket_status = extract_bucket_status(state)  # Extract bucket status
 
+        start, target_positions = extract_positions(timestep.state)
+        nearest_target = find_nearest_target(start, target_positions)
 
-        traversability_map = state.world.traversability_mask.map[0]  # Extract the traversability map
+        print(f"Current direction: {base_orientation['direction']}")
+        print(f"Bucket status: {bucket_status}")
+        print(f"Current position: {start} (y,x)")
+        print(f"Nearest target position: {nearest_target} (y,x)")
+        print(f"Previous action list: {previous_action}")
 
-        traversability_map_np = np.array(traversability_map)  # Convert JAX array to NumPy
-        traversability_map_np = (traversability_map_np * 255).astype(np.uint8)
+        usr_msg = (
+            f"Analyze this game frame and the provided local map to select the optimal action. "
+            f"The base of the excavator is currently facing {base_orientation['direction']}. "
+            f"The bucket is currently {bucket_status}. "
+            f"The excavator is currently located at {start} (y,x). "
+            f"The target digging positions are {target_positions} (y,x). "
+            f"The list of the previous actions is {previous_action}. "
+            f"Ensure that the excavator base maintains a safe minimum distance (8 to 10 pixels) from the target area to allow proper alignment of the orange area with the purple area for efficient digging. "
+            f"Avoid moving too close to the purple area to prevent overlap with the base. "
+            f"If the previous action was digging and the bucket is still empty, moving backward can be an appropriate action to reposition. You can then try to dig in the next action. "
+            f"Focus on immediate gameplay elements visible in this specific frame and the spatial context from the map. "
+            f"Follow the format: {{\"reasoning\": \"detailed step-by-step analysis\", \"action\": X}}"
+        )
 
-
-
-        if USE_LOCAL_MAP:
-            local_map = generate_local_map(timestep)
-            local_map_image = local_map_to_image(local_map)
-
-            start, target_positions = extract_positions(timestep.state)
-            nearest_target = find_nearest_target(start, target_positions)
-
-
-            print(f"Current direction: {base_orientation['direction']}")
-            print(f"Bucket status: {bucket_status}")
-            print(f"Current position: {start} (y,x)")
-            print(f"Nearest target position: {nearest_target} (y,x)")
-            print(f"Previous action list: {previous_action}")
-
-
-            usr_msg7 = (
-                f"Analyze this game frame and the provided local map to select the optimal action. "
-                f"The base of the excavator is currently facing {base_orientation['direction']}. "
-                f"The bucket is currently {bucket_status}. "
-                f"The excavator is currently located at {start} (y,x). "
-                f"The target digging positions are {target_positions} (y,x). "
-                f"The traversability mask is provided, where 0 indicates obstacles and 1 indicates traversable areas. "
-                f"The list of the previous actions is {previous_action}. "
-                f"Ensure that the excavator base maintains a safe minimum distance (8 to 10 pixels) from the target area to allow proper alignment of the orange area with the purple area for efficient digging. "
-                f"Avoid moving too close to the purple area to prevent overlap with the base. "
-                f"If the previous action was digging and the bucket is still empty, moving backward can be an appropriate action to reposition. You can then try to dig in the next action. "
-                f"Focus on immediate gameplay elements visible in this specific frame and the spatial context from the map. "
-                f"Follow the format: {{\"reasoning\": \"detailed step-by-step analysis\", \"action\": X}}"
-            )
-            llm_query.add_user_message(frame=game_state_image, user_msg=usr_msg7, local_map=None)
+        llm_query.add_user_message(frame=game_state_image, user_msg=usr_msg, local_map=None)
 
         action_output, reasoning = llm_query.generate_response("./")
 
         print(f"\n Action output: {action_output}, Reasoning: {reasoning}")
         
-        #llm_query.add_assistant_message()
-        #print("agent.MESSAGES: ", agent.messages)
+        llm_query.add_assistant_message()
 
         previous_action.append(action_output)
 
@@ -307,12 +268,11 @@ def run_experiment(model_name, model_key, num_timesteps):
 
     print(f"Rollout complete. Total reward: {rewards}")
 
-
     # Generate a timestamp
     current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     # Create a unique output directory for the model and timestamp
-    output_dir = os.path.join("experiments", f"{model_name}_{current_time}")
+    output_dir = os.path.join("experiments", f"{llm_model_name}_{current_time}")
     print(f"Output directory: {output_dir}")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -332,9 +292,53 @@ def run_experiment(model_name, model_key, num_timesteps):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run an LLM-based simulation experiment.")
-    parser.add_argument("--model_name", type=str, required=True, choices=["gpt-4o", "gpt-4.1", "o4-mini", "o3", "o3-mini", "gemini-1.5-flash-latest", "gemini-2.0-flash", "gemini-2.5-pro", "gemini-2.5-pro-preview-03-25", "gemini-2.5-flash-preview-04-17", "claude-3-haiku-20240307", "claude-3-7-sonnet-20250219"], help="Name of the LLM model to use.")
-    parser.add_argument("--model_key", type=str, required=True, choices=["gpt", "gemini", "claude"], help="Name of the LLM model key to use.")
-    parser.add_argument("--num_timesteps", type=int, default=100, help="Number of timesteps to run.")
-
+    parser.add_argument(
+        "--model_name", 
+        type=str, 
+        required=True, 
+        choices=["gpt-4o", 
+                 "gpt-4.1", 
+                 "o4-mini", 
+                 "o3", 
+                 "o3-mini", 
+                 "gemini-1.5-flash-latest", 
+                 "gemini-2.0-flash", 
+                 "gemini-2.5-pro",
+                 "gemini-2.5-flash", 
+                 "claude-3-haiku-20240307", 
+                 "claude-3-7-sonnet-20250219",
+                 "claude-opus-4-20250514",
+                 "claude-sonnet-4-20250514",		
+                 ], 
+        help="Name of the LLM model to use."
+    )    
+    parser.add_argument(
+        "--model_key", 
+        type=str, 
+        required=True, 
+        choices=["gpt", 
+                 "gemini", 
+                 "claude"], 
+        help="Name of the LLM model key to use."
+    )
+    parser.add_argument(
+        "--num_timesteps", 
+        type=int, 
+        default=100, 
+        help="Number of timesteps to run."
+    )
+    parser.add_argument(
+        "-s",
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for the environment.",
+    )
     args = parser.parse_args()
-    run_experiment(args.model_name, args.model_key, args.num_timesteps)
+
+    run_experiment(
+                    args.model_name, 
+                    args.model_key, 
+                    args.num_timesteps, 
+                    args.seed, 
+                )

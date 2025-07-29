@@ -1394,9 +1394,9 @@ def base_orientation_to_direction(angle_base):
     # Map orientation to cardinal direction
     direction_map = {
         0: "right",
-        1: "up",
-        2: "left",
-        3: "down"
+        3: "up",
+        7: "left",
+        11: "down"
     }
     return direction_map.get(angle_base, "unknown")  # Default to 'unknown' if invalid
 
