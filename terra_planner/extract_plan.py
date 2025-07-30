@@ -73,10 +73,8 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
             agent_state_after = jnp.squeeze(timestep.observation["agent_state"]).copy()
             loaded_after = jnp.bool_(agent_state_after[5])
 
-            # Analyze what happened during the DO action
-            # Find all tiles where the action map changed
             changed_tiles = action_map_before != action_map_after
-            terrain_modification_mask = changed_tiles.astype(jnp.float32)
+            terrain_modification_mask = changed_tiles.astype(jnp.bool_)
 
             if loaded_before != loaded_after:
                 if not loaded_before and loaded_after:
@@ -94,7 +92,6 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
                     'pos_base': (agent_state_before[0], agent_state_before[1]),
                     'angle_base': agent_state_before[2],
                     'wheel_angle': agent_state_before[4],
-                    'loaded': loaded_before,
                 },
                 'terrain_modification_mask': terrain_modification_mask,
                 'loaded_state_change': {
@@ -169,6 +166,14 @@ def main():
     config = log["train_config"]
     config.num_test_rollouts = 1  # Only one environment
     config.num_devices = 1
+
+    # Disable action map clipping to see full terrain state
+    print(f"Original clip_action_maps setting: {config.clip_action_maps}")
+    config.clip_action_maps = False
+    # Add the missing attribute that the model expects when clipping is disabled
+    config.maps_net_normalization_bounds = [-100, 100]  # Reasonable range for terrain heights
+    print(f"Modified clip_action_maps setting: {config.clip_action_maps}")
+    print(f"Added maps_net_normalization_bounds: {config.maps_net_normalization_bounds}")
 
     # Create environment
     env_cfgs = log["env_config"]
