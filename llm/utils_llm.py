@@ -972,7 +972,7 @@ def init_llms(llm_model_key, llm_model_name, config, action_size,
     print("Using model: ", llm_model_name_extended)
 
     # Load system messages from files
-    system_message_master = prompts.get("partitioning", map_size=MAP_SIZE, max_partitions=MAX_NUM_PARTITIONS)
+    system_message_master = prompts.get("partitioning_new", map_size=MAP_SIZE, max_partitions=MAX_NUM_PARTITIONS)
     
     system_message_delegation = prompts.get("delegation", observation="See current state")
     
