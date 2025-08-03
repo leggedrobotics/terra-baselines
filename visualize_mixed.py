@@ -100,28 +100,28 @@ if __name__ == "__main__":
         "-nx",
         "--n_envs_x",
         type=int,
-        default=3,
+        default=4,
         help="Number of environments on x.",
     )
     parser.add_argument(
         "-ny",
         "--n_envs_y",
         type=int,
-        default=3,
+        default=4,
         help="Number of environments on y.",
     )
     parser.add_argument(
         "-steps",
         "--n_steps",
         type=int,
-        default=150,
+        default=200,
         help="Number of steps.",
     )
     parser.add_argument(
         "-o",
         "--out_path",
         type=str,
-        default="./visualize_mixed_skid_skid.gif",
+        default="./visualize_mixed_skid_exec_13.gif",
         help="Output path.",
     )
     parser.add_argument(

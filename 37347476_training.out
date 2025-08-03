@@ -1,4 +1,0 @@
-Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
-wandb: Currently logged in as: aless-weber (aless-weber-eth). Use `wandb login --relogin` to force relogin
-ERROR:root:Driver not initialized (amdgpu not found in modules)
-slurmstepd: error: *** JOB 37347476 ON eu-lo-g3-036 CANCELLED AT 2025-07-15T18:55:48 ***

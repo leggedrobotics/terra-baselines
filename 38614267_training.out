@@ -1,0 +1,128 @@
+Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
+wandb: Currently logged in as: aless-weber (aless-weber-eth). Use `wandb login --relogin` to force relogin
+ERROR:root:Driver not initialized (amdgpu not found in modules)
+wandb: wandb version 0.21.0 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+wandb: Tracking run with wandb version 0.16.4
+wandb: Run data is saved locally in /cluster/home/alesweber/TerraProject/terra-baselines/wandb/run-20250728_161210-mp0y74im
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run mixed-agents-skidsteer-skidsteer-local-2025-07-28-16-11-59
+wandb: ⭐️ View project at https://wandb.ai/aless-weber-eth/mixed-agents
+wandb: 🚀 View run at https://wandb.ai/aless-weber-eth/mixed-agents/runs/mp0y74im
+pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+🔄 Training Configuration: Mixed Agents (Tracked + SkidSteer)
+Devices: [cuda(id=0), cuda(id=1), cuda(id=2), cuda(id=3)]
+Mixed Agent Training - Devices: 4, Updates: 4768
+🤖 Fixed Agent Types: Agent1=Tracked (0), Agent2=SkidSteer (2)
+Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones'].
+Data Loader:   0%|          | 0/600 [00:00<?, ?it/s]Data Loader:   0%|          | 2/600 [00:00<00:38, 15.63it/s]Data Loader:   1%|          | 5/600 [00:00<00:28, 20.58it/s]Data Loader:   1%|▏         | 8/600 [00:00<00:26, 22.13it/s]Data Loader:   2%|▏         | 11/600 [00:00<00:25, 22.82it/s]Data Loader:   2%|▏         | 14/600 [00:00<00:25, 23.21it/s]Data Loader:   3%|▎         | 17/600 [00:00<00:24, 23.43it/s]Data Loader:   3%|▎         | 20/600 [00:00<00:25, 23.10it/s]Data Loader:   4%|▍         | 23/600 [00:01<00:26, 21.99it/s]Data Loader:   4%|▍         | 26/600 [00:01<00:26, 21.31it/s]Data Loader:   5%|▍         | 29/600 [00:01<00:26, 21.26it/s]Data Loader:   5%|▌         | 32/600 [00:01<00:26, 21.60it/s]Data Loader:   6%|▌         | 35/600 [00:01<00:27, 20.67it/s]Data Loader:   6%|▋         | 38/600 [00:01<00:27, 20.74it/s]Data Loader:   7%|▋         | 41/600 [00:01<00:26, 20.81it/s]Data Loader:   7%|▋         | 44/600 [00:02<00:25, 21.65it/s]Data Loader:   8%|▊         | 47/600 [00:02<00:26, 21.13it/s]Data Loader:   8%|▊         | 50/600 [00:02<00:26, 20.77it/s]Data Loader:   9%|▉         | 53/600 [00:02<00:26, 20.54it/s]Data Loader:   9%|▉         | 56/600 [00:02<00:26, 20.37it/s]Data Loader:  10%|▉         | 59/600 [00:02<00:26, 20.26it/s]Data Loader:  10%|█         | 62/600 [00:02<00:26, 20.18it/s]Data Loader:  11%|█         | 65/600 [00:03<00:26, 20.46it/s]Data Loader:  11%|█▏        | 68/600 [00:03<00:26, 20.32it/s]Data Loader:  12%|█▏        | 71/600 [00:03<00:25, 20.74it/s]Data Loader:  12%|█▏        | 74/600 [00:03<00:25, 20.52it/s]Data Loader:  13%|█▎        | 77/600 [00:03<00:25, 20.37it/s]Data Loader:  13%|█▎        | 80/600 [00:03<00:25, 20.26it/s]Data Loader:  14%|█▍        | 83/600 [00:03<00:25, 20.51it/s]Data Loader:  14%|█▍        | 86/600 [00:04<00:23, 21.43it/s]Data Loader:  15%|█▍        | 89/600 [00:04<00:24, 20.96it/s]Data Loader:  15%|█▌        | 92/600 [00:04<00:24, 20.58it/s]Data Loader:  16%|█▌        | 95/600 [00:04<00:24, 20.73it/s]Data Loader:  16%|█▋        | 98/600 [00:04<00:24, 20.83it/s]Data Loader:  17%|█▋        | 101/600 [00:04<00:23, 20.92it/s]Data Loader:  17%|█▋        | 104/600 [00:04<00:24, 20.65it/s]Data Loader:  18%|█▊        | 107/600 [00:05<00:24, 20.47it/s]Data Loader:  18%|█▊        | 110/600 [00:05<00:24, 20.33it/s]Data Loader:  19%|█▉        | 113/600 [00:05<00:24, 20.24it/s]Data Loader:  19%|█▉        | 116/600 [00:05<00:24, 20.17it/s]Data Loader:  20%|█▉        | 119/600 [00:05<00:23, 20.47it/s]Data Loader:  20%|██        | 122/600 [00:05<00:23, 20.68it/s]Data Loader:  21%|██        | 125/600 [00:05<00:22, 21.20it/s]Data Loader:  21%|██▏       | 128/600 [00:06<00:22, 20.93it/s]Data Loader:  22%|██▏       | 131/600 [00:06<00:23, 20.05it/s]Data Loader:  22%|██▏       | 134/600 [00:06<00:23, 20.06it/s]Data Loader:  23%|██▎       | 137/600 [00:06<00:23, 20.07it/s]Data Loader:  23%|██▎       | 140/600 [00:06<00:23, 19.91it/s]Data Loader:  24%|██▍       | 143/600 [00:06<00:22, 20.29it/s]Data Loader:  24%|██▍       | 146/600 [00:07<00:22, 20.23it/s]Data Loader:  25%|██▍       | 149/600 [00:07<00:21, 20.89it/s]Data Loader:  25%|██▌       | 152/600 [00:07<00:21, 20.99it/s]Data Loader:  26%|██▌       | 155/600 [00:07<00:21, 21.06it/s]Data Loader:  26%|██▋       | 158/600 [00:07<00:21, 20.76it/s]Data Loader:  27%|██▋       | 161/600 [00:07<00:20, 20.91it/s]Data Loader:  27%|██▋       | 164/600 [00:07<00:20, 21.29it/s]Data Loader:  28%|██▊       | 167/600 [00:08<00:20, 21.65it/s]Data Loader:  28%|██▊       | 170/600 [00:08<00:19, 21.90it/s]Data Loader:  29%|██▉       | 173/600 [00:08<00:18, 22.49it/s]Data Loader:  29%|██▉       | 176/600 [00:08<00:19, 21.64it/s]Data Loader:  30%|██▉       | 179/600 [00:08<00:19, 21.10it/s]Data Loader:  30%|███       | 182/600 [00:08<00:19, 21.13it/s]Data Loader:  31%|███       | 185/600 [00:08<00:20, 20.75it/s]Data Loader:  31%|███▏      | 188/600 [00:09<00:20, 20.53it/s]Data Loader:  32%|███▏      | 191/600 [00:09<00:19, 20.73it/s]Data Loader:  32%|███▏      | 194/600 [00:09<00:19, 20.53it/s]Data Loader:  33%|███▎      | 197/600 [00:09<00:19, 21.08it/s]Data Loader:  33%|███▎      | 200/600 [00:09<00:18, 21.88it/s]Data Loader:  34%|███▍      | 203/600 [00:09<00:17, 22.46it/s]Data Loader:  34%|███▍      | 206/600 [00:09<00:17, 22.91it/s]Data Loader:  35%|███▍      | 209/600 [00:09<00:16, 23.24it/s]Data Loader:  35%|███▌      | 212/600 [00:10<00:16, 23.46it/s]Data Loader:  36%|███▌      | 215/600 [00:10<00:16, 23.54it/s]Data Loader:  36%|███▋      | 218/600 [00:10<00:16, 23.66it/s]Data Loader:  37%|███▋      | 221/600 [00:10<00:15, 23.76it/s]Data Loader:  37%|███▋      | 224/600 [00:10<00:16, 23.27it/s]Data Loader:  38%|███▊      | 227/600 [00:10<00:17, 21.34it/s]Data Loader:  38%|███▊      | 230/600 [00:10<00:17, 21.65it/s]Data Loader:  39%|███▉      | 233/600 [00:10<00:16, 22.28it/s]Data Loader:  39%|███▉      | 236/600 [00:11<00:15, 22.77it/s]Data Loader:  40%|███▉      | 239/600 [00:11<00:15, 23.13it/s]Data Loader:  40%|████      | 242/600 [00:11<00:15, 23.38it/s]Data Loader:  41%|████      | 245/600 [00:11<00:15, 23.54it/s]Data Loader:  41%|████▏     | 248/600 [00:11<00:15, 22.77it/s]Data Loader:  42%|████▏     | 251/600 [00:11<00:15, 22.25it/s]Data Loader:  42%|████▏     | 254/600 [00:11<00:15, 21.90it/s]Data Loader:  43%|████▎     | 257/600 [00:12<00:16, 21.30it/s]Data Loader:  43%|████▎     | 260/600 [00:12<00:15, 21.25it/s]Data Loader:  44%|████▍     | 263/600 [00:12<00:15, 21.21it/s]Data Loader:  44%|████▍     | 266/600 [00:12<00:15, 21.56it/s]Data Loader:  45%|████▍     | 269/600 [00:12<00:14, 22.23it/s]Data Loader:  45%|████▌     | 272/600 [00:12<00:14, 22.72it/s]Data Loader:  46%|████▌     | 275/600 [00:12<00:14, 22.23it/s]Data Loader:  46%|████▋     | 278/600 [00:13<00:14, 22.29it/s]Data Loader:  47%|████▋     | 281/600 [00:13<00:14, 21.95it/s]Data Loader:  47%|████▋     | 284/600 [00:13<00:14, 21.71it/s]Data Loader:  48%|████▊     | 287/600 [00:13<00:14, 21.49it/s]Data Loader:  48%|████▊     | 290/600 [00:13<00:14, 21.33it/s]Data Loader:  49%|████▉     | 293/600 [00:13<00:14, 21.62it/s]Data Loader:  49%|████▉     | 296/600 [00:13<00:14, 21.05it/s]Data Loader:  50%|████▉     | 299/600 [00:14<00:14, 21.07it/s]Data Loader:  50%|█████     | 302/600 [00:14<00:14, 21.08it/s]Data Loader:  51%|█████     | 305/600 [00:14<00:13, 21.85it/s]Data Loader:  51%|█████▏    | 308/600 [00:14<00:13, 21.25it/s]Data Loader:  52%|█████▏    | 311/600 [00:14<00:13, 20.85it/s]Data Loader:  52%|█████▏    | 314/600 [00:14<00:13, 20.58it/s]Data Loader:  53%|█████▎    | 317/600 [00:14<00:13, 20.40it/s]Data Loader:  53%|█████▎    | 320/600 [00:15<00:13, 20.61it/s]Data Loader:  54%|█████▍    | 323/600 [00:15<00:14, 19.59it/s]Data Loader:  54%|█████▍    | 325/600 [00:15<00:14, 19.55it/s]Data Loader:  55%|█████▍    | 327/600 [00:15<00:13, 19.65it/s]Data Loader:  55%|█████▌    | 330/600 [00:15<00:13, 20.14it/s]Data Loader:  56%|█████▌    | 333/600 [00:15<00:12, 20.83it/s]Data Loader:  56%|█████▌    | 336/600 [00:15<00:12, 21.72it/s]Data Loader:  56%|█████▋    | 339/600 [00:15<00:12, 21.54it/s]Data Loader:  57%|█████▋    | 342/600 [00:16<00:12, 21.38it/s]Data Loader:  57%|█████▊    | 345/600 [00:16<00:11, 21.70it/s]Data Loader:  58%|█████▊    | 348/600 [00:16<00:11, 21.14it/s]Data Loader:  58%|█████▊    | 351/600 [00:16<00:11, 20.78it/s]Data Loader:  59%|█████▉    | 354/600 [00:16<00:12, 20.46it/s]Data Loader:  60%|█████▉    | 357/600 [00:16<00:11, 20.31it/s]Data Loader:  60%|██████    | 360/600 [00:16<00:11, 20.21it/s]Data Loader:  60%|██████    | 363/600 [00:17<00:11, 20.15it/s]Data Loader:  61%|██████    | 366/600 [00:17<00:11, 20.11it/s]Data Loader:  62%|██████▏   | 369/600 [00:17<00:11, 20.08it/s]Data Loader:  62%|██████▏   | 372/600 [00:17<00:11, 20.05it/s]Data Loader:  62%|██████▎   | 375/600 [00:17<00:11, 20.04it/s]Data Loader:  63%|██████▎   | 378/600 [00:17<00:10, 20.30it/s]Data Loader:  64%|██████▎   | 381/600 [00:18<00:10, 20.14it/s]Data Loader:  64%|██████▍   | 384/600 [00:18<00:10, 20.08it/s]Data Loader:  64%|██████▍   | 387/600 [00:18<00:10, 20.05it/s]Data Loader:  65%|██████▌   | 390/600 [00:18<00:10, 20.01it/s]Data Loader:  66%|██████▌   | 393/600 [00:18<00:10, 20.00it/s]Data Loader:  66%|██████▌   | 396/600 [00:18<00:10, 19.99it/s]Data Loader:  66%|██████▋   | 399/600 [00:18<00:10, 20.01it/s]Data Loader:  67%|██████▋   | 402/600 [00:19<00:09, 20.35it/s]Data Loader:  68%|██████▊   | 405/600 [00:19<00:09, 20.26it/s]Data Loader:  68%|██████▊   | 408/600 [00:19<00:09, 20.20it/s]Data Loader:  68%|██████▊   | 411/600 [00:19<00:09, 20.17it/s]Data Loader:  69%|██████▉   | 414/600 [00:19<00:09, 20.41it/s]Data Loader:  70%|██████▉   | 417/600 [00:19<00:09, 19.28it/s]Data Loader:  70%|███████   | 420/600 [00:19<00:09, 19.52it/s]Data Loader:  70%|███████   | 423/600 [00:20<00:08, 19.68it/s]Data Loader:  71%|███████   | 426/600 [00:20<00:08, 19.80it/s]Data Loader:  72%|███████▏  | 429/600 [00:20<00:08, 19.89it/s]Data Loader:  72%|███████▏  | 432/600 [00:20<00:08, 20.28it/s]Data Loader:  72%|███████▎  | 435/600 [00:20<00:08, 20.22it/s]Data Loader:  73%|███████▎  | 438/600 [00:20<00:08, 20.17it/s]Data Loader:  74%|███████▎  | 441/600 [00:21<00:07, 20.14it/s]Data Loader:  74%|███████▍  | 444/600 [00:21<00:07, 20.12it/s]Data Loader:  74%|███████▍  | 447/600 [00:21<00:07, 20.11it/s]Data Loader:  75%|███████▌  | 450/600 [00:21<00:07, 20.79it/s]Data Loader:  76%|███████▌  | 453/600 [00:21<00:07, 20.93it/s]Data Loader:  76%|███████▌  | 456/600 [00:21<00:06, 21.38it/s]Data Loader:  76%|███████▋  | 459/600 [00:21<00:06, 21.31it/s]Data Loader:  77%|███████▋  | 462/600 [00:21<00:06, 21.25it/s]Data Loader:  78%|███████▊  | 465/600 [00:22<00:06, 21.60it/s]Data Loader:  78%|███████▊  | 468/600 [00:22<00:06, 21.48it/s]Data Loader:  78%|███████▊  | 471/600 [00:22<00:05, 21.76it/s]Data Loader:  79%|███████▉  | 474/600 [00:22<00:05, 21.58it/s]Data Loader:  80%|███████▉  | 477/600 [00:22<00:05, 21.47it/s]Data Loader:  80%|████████  | 480/600 [00:22<00:05, 21.02it/s]Data Loader:  80%|████████  | 483/600 [00:22<00:05, 21.07it/s]Data Loader:  81%|████████  | 486/600 [00:23<00:05, 21.48it/s]Data Loader:  82%|████████▏ | 489/600 [00:23<00:05, 22.18it/s]Data Loader:  82%|████████▏ | 492/600 [00:23<00:04, 22.29it/s]Data Loader:  82%|████████▎ | 495/600 [00:23<00:04, 22.78it/s]Data Loader:  83%|████████▎ | 498/600 [00:23<00:04, 22.70it/s]Data Loader:  84%|████████▎ | 501/600 [00:23<00:04, 22.24it/s]Data Loader:  84%|████████▍ | 504/600 [00:23<00:04, 21.92it/s]Data Loader:  84%|████████▍ | 507/600 [00:24<00:04, 21.32it/s]Data Loader:  85%|████████▌ | 510/600 [00:24<00:04, 20.82it/s]Data Loader:  86%|████████▌ | 513/600 [00:24<00:04, 20.56it/s]Data Loader:  86%|████████▌ | 516/600 [00:24<00:04, 20.75it/s]Data Loader:  86%|████████▋ | 519/600 [00:24<00:03, 20.88it/s]Data Loader:  87%|████████▋ | 522/600 [00:24<00:03, 20.60it/s]Data Loader:  88%|████████▊ | 525/600 [00:24<00:03, 20.42it/s]Data Loader:  88%|████████▊ | 528/600 [00:25<00:03, 20.29it/s]Data Loader:  88%|████████▊ | 531/600 [00:25<00:03, 20.19it/s]Data Loader:  89%|████████▉ | 534/600 [00:25<00:03, 20.47it/s]Data Loader:  90%|████████▉ | 537/600 [00:25<00:03, 20.32it/s]Data Loader:  90%|█████████ | 540/600 [00:25<00:02, 20.91it/s]Data Loader:  90%|█████████ | 543/600 [00:25<00:02, 21.34it/s]Data Loader:  91%|█████████ | 546/600 [00:25<00:02, 22.04it/s]Data Loader:  92%|█████████▏| 549/600 [00:26<00:02, 21.74it/s]Data Loader:  92%|█████████▏| 552/600 [00:26<00:02, 21.94it/s]Data Loader:  92%|█████████▎| 555/600 [00:26<00:02, 21.67it/s]Data Loader:  93%|█████████▎| 558/600 [00:26<00:01, 21.83it/s]Data Loader:  94%|█████████▎| 561/600 [00:26<00:01, 21.24it/s]Data Loader:  94%|█████████▍| 564/600 [00:26<00:01, 20.82it/s]Data Loader:  94%|█████████▍| 567/600 [00:26<00:01, 21.26it/s]Data Loader:  95%|█████████▌| 570/600 [00:27<00:01, 21.18it/s]Data Loader:  96%|█████████▌| 573/600 [00:27<00:01, 21.18it/s]Data Loader:  96%|█████████▌| 576/600 [00:27<00:01, 21.55it/s]Data Loader:  96%|█████████▋| 579/600 [00:27<00:00, 21.06it/s]Data Loader:  97%|█████████▋| 582/600 [00:27<00:00, 20.74it/s]Data Loader:  98%|█████████▊| 585/600 [00:27<00:00, 20.85it/s]Data Loader:  98%|█████████▊| 588/600 [00:27<00:00, 20.59it/s]Data Loader:  98%|█████████▊| 591/600 [00:28<00:00, 20.39it/s]Data Loader:  99%|█████████▉| 594/600 [00:28<00:00, 20.26it/s]Data Loader: 100%|█████████▉| 597/600 [00:28<00:00, 20.87it/s]Data Loader: 100%|██████████| 600/600 [00:28<00:00, 20.92it/s]Data Loader: 100%|██████████| 600/600 [00:28<00:00, 21.04it/s]
+/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:322: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
+  env_params = jax.tree_map(
+/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:350: DeprecationWarning: jax.tree_leaves is deprecated: use jax.tree.leaves (jax v0.4.25 or newer) or jax.tree_util.tree_leaves (any JAX version).
+  print(f"🤖 Mixed Agent Network: {sum(x.size for x in jax.tree_leaves(network_params)):,} parameters")
+2025-07-28 16:13:41.898931: E external/xla/xla/service/slow_operation_alarm.cc:65] Constant folding an instruction is taking > 1s:
+
+  %reduce.349 = s32[2048]{0} reduce(s32[2048,4096]{1,0} %broadcast.18007, s32[] %constant.2227), dimensions={1}, to_apply=%region_91.6063, metadata={op_name="pmap(reset)/jit(main)/jit(reset)/vmap(jit(reset))/reduce_sum[axes=(1,)]" source_file="/cluster/home/alesweber/TerraProject/terra/terra/state.py" source_line=1575}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+2025-07-28 16:13:45.771093: E external/xla/xla/service/slow_operation_alarm.cc:133] The operation took 4.872221864s
+Constant folding an instruction is taking > 1s:
+
+  %reduce.349 = s32[2048]{0} reduce(s32[2048,4096]{1,0} %broadcast.18007, s32[] %constant.2227), dimensions={1}, to_apply=%region_91.6063, metadata={op_name="pmap(reset)/jit(main)/jit(reset)/vmap(jit(reset))/reduce_sum[axes=(1,)]" source_file="/cluster/home/alesweber/TerraProject/terra/terra/state.py" source_line=1575}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+2025-07-28 16:13:47.906939: E external/xla/xla/service/slow_operation_alarm.cc:65] Constant folding an instruction is taking > 2s:
+
+  %reduce.405 = s32[2048]{0} reduce(s32[2048,4096]{1,0} %broadcast.18009, s32[] %constant.2227), dimensions={1}, to_apply=%region_197.12027, metadata={op_name="pmap(reset)/jit(main)/jit(reset)/vmap(jit(reset))/reduce_sum[axes=(1,)]" source_file="/cluster/home/alesweber/TerraProject/terra/terra/state.py" source_line=1575}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+2025-07-28 16:13:50.958641: E external/xla/xla/service/slow_operation_alarm.cc:133] The operation took 5.051753944s
+Constant folding an instruction is taking > 2s:
+
+  %reduce.405 = s32[2048]{0} reduce(s32[2048,4096]{1,0} %broadcast.18009, s32[] %constant.2227), dimensions={1}, to_apply=%region_197.12027, metadata={op_name="pmap(reset)/jit(main)/jit(reset)/vmap(jit(reset))/reduce_sum[axes=(1,)]" source_file="/cluster/home/alesweber/TerraProject/terra/terra/state.py" source_line=1575}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+Loaded 600 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
+Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
+Maps width: 64
+Maps height: 64
+Unique shapes of trench_axes_list: {(600, 3, 3)}
+Maps shape: (1, 600, 64, 64).
+Padding mask shape: (1, 600, 64, 64).
+Dumpability mask shape: (1, 600, 64, 64).
+Trench axes shape: (1, 600, 3, 3).
+Trench types shape: (1,).
+Actions shape: (1, 600, 64, 64).
+Mixed Agent Environment - Tile size shape: (4, 2048)
+num_embeddings_agent = 64
+map normalization min max = (-1, 1)
+Model: 419,680 parameters
+🤖 Mixed Agent Network: 419,680 parameters
+🔧 Agent Configuration: Agent1=Tracked (type 0), Agent2=SkidSteer (type 2)
+🧠 Network: Unified with agent type conditioning
+🚀 Starting Mixed Agent Training...
+============================================================
+📊 Configuration:
+   - Environments per device: 2048
+   - Total environments: 8192
+   - Training steps: 32
+   - Total timesteps: 5,000,000,000
+   - Learning rate: 0.0003
+   - Agent types: Tracked (0) + SkidSteer (2)
+
+🎯 Reward Configuration:
+   - Existence penalty: -0.05000000074505806
+   - Movement penalty: -0.10000000149011612
+   - Holding dirt penalty: -0.0
+   - Skid auto-load reward: 0.699999988079071
+   - Skid dump correct reward: 50.0
+   - Skid dump wrong penalty: -0.6000000238418579
+   - Move to dump zone reward: 0.0
+   - Skid lift shovel with dirt: 0.05000000074505806
+   - Skid move loaded shovel up: 0.019999999552965164
+   - Auto load dump zone penalty: -0.0
+   - Reward normalizer: 100.0
+============================================================
+tile_size: 0.6875
+agent_width: 5, agent_height: 9
+[TerraEnv.reset] action_map shape: (64, 64), type: <class 'jax._src.interpreters.partial_eval.DynamicJaxprTracer'>
+Training:   0%|          | 0/4768 [00:00<?, ?it/s]2025-07-28 16:14:29.178010: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libsiw-rdmav34.so': libsiw-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libirdma-rdmav34.so': libirdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libefa-rdmav34.so': libefa-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+                                                  Training:   0%|          | 0/4768 [04:31<?, ?it/s]2025-07-28 16:18:54.229649: E external/xla/xla/service/slow_operation_alarm.cc:65] Constant folding an instruction is taking > 4s:
+
+  %reduce.16 = s32[2048]{0} reduce(s32[2048,4096]{1,0} %broadcast.8276, s32[] %constant.834), dimensions={1}, to_apply=%region_88.5238, metadata={op_name="jit(reset)/jit(main)/vmap(jit(reset))/reduce_sum[axes=(1,)]" source_file="/cluster/home/alesweber/TerraProject/terra/terra/state.py" source_line=1575}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+2025-07-28 16:18:55.112054: E external/xla/xla/service/slow_operation_alarm.cc:133] The operation took 4.882475921s
+Constant folding an instruction is taking > 4s:
+
+  %reduce.16 = s32[2048]{0} reduce(s32[2048,4096]{1,0} %broadcast.8276, s32[] %constant.834), dimensions={1}, to_apply=%region_88.5238, metadata={op_name="jit(reset)/jit(main)/vmap(jit(reset))/reduce_sum[axes=(1,)]" source_file="/cluster/home/alesweber/TerraProject/terra/terra/state.py" source_line=1575}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+slurmstepd: error: *** JOB 38614267 ON eu-lo-g3-029 CANCELLED AT 2025-07-28T16:19:19 ***

@@ -1,0 +1,159 @@
+Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
+wandb: Currently logged in as: aless-weber (aless-weber-eth). Use `wandb login --relogin` to force relogin
+ERROR:root:Driver not initialized (amdgpu not found in modules)
+wandb: wandb version 0.21.0 is available!  To upgrade, please run:
+wandb:  $ pip install wandb --upgrade
+wandb: Tracking run with wandb version 0.16.4
+wandb: Run data is saved locally in /cluster/home/alesweber/TerraProject/terra-baselines/wandb/run-20250728_165518-hxs6wgyz
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run mixed-agents-skidsteer-skidsteer-local-2025-07-28-16-55-10
+wandb: ⭐️ View project at https://wandb.ai/aless-weber-eth/mixed-agents
+wandb: 🚀 View run at https://wandb.ai/aless-weber-eth/mixed-agents/runs/hxs6wgyz
+pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+🔄 Training Configuration: Mixed Agents (Tracked + Tracked)
+Devices: [cuda(id=0), cuda(id=1), cuda(id=2), cuda(id=3)]
+Mixed Agent Training - Devices: 4, Updates: 4768
+🤖 Fixed Agent Types: Agent1=Tracked (0), Agent2=Tracked (0)
+Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones'].
+Data Loader:   0%|          | 0/600 [00:00<?, ?it/s]Data Loader:   1%|          | 5/600 [00:00<00:13, 44.69it/s]Data Loader:   2%|▏         | 11/600 [00:00<00:11, 50.99it/s]Data Loader:   3%|▎         | 17/600 [00:00<00:10, 53.08it/s]Data Loader:   4%|▍         | 23/600 [00:00<00:11, 49.85it/s]Data Loader:   5%|▍         | 29/600 [00:00<00:12, 46.74it/s]Data Loader:   6%|▌         | 34/600 [00:00<00:11, 47.50it/s]Data Loader:   6%|▋         | 39/600 [00:00<00:11, 47.74it/s]Data Loader:   7%|▋         | 44/600 [00:00<00:11, 47.52it/s]Data Loader:   8%|▊         | 49/600 [00:01<00:12, 45.77it/s]Data Loader:   9%|▉         | 54/600 [00:01<00:12, 44.59it/s]Data Loader:  10%|▉         | 59/600 [00:01<00:12, 43.98it/s]Data Loader:  11%|█         | 64/600 [00:01<00:12, 43.47it/s]Data Loader:  12%|█▏        | 69/600 [00:01<00:11, 44.42it/s]Data Loader:  12%|█▏        | 74/600 [00:01<00:12, 43.54it/s]Data Loader:  13%|█▎        | 79/600 [00:01<00:12, 43.01it/s]Data Loader:  14%|█▍        | 84/600 [00:01<00:11, 44.06it/s]Data Loader:  15%|█▍        | 89/600 [00:01<00:11, 44.82it/s]Data Loader:  16%|█▌        | 94/600 [00:02<00:11, 44.64it/s]Data Loader:  16%|█▋        | 99/600 [00:02<00:11, 44.53it/s]Data Loader:  17%|█▋        | 104/600 [00:02<00:11, 44.43it/s]Data Loader:  18%|█▊        | 109/600 [00:02<00:11, 43.70it/s]Data Loader:  19%|█▉        | 114/600 [00:02<00:11, 43.18it/s]Data Loader:  20%|█▉        | 119/600 [00:02<00:11, 43.47it/s]Data Loader:  21%|██        | 124/600 [00:02<00:10, 45.05it/s]Data Loader:  22%|██▏       | 129/600 [00:02<00:10, 44.63it/s]Data Loader:  22%|██▏       | 134/600 [00:02<00:10, 43.82it/s]Data Loader:  23%|██▎       | 139/600 [00:03<00:10, 43.27it/s]Data Loader:  24%|██▍       | 144/600 [00:03<00:10, 43.52it/s]Data Loader:  25%|██▍       | 149/600 [00:03<00:10, 44.43it/s]Data Loader:  26%|██▌       | 154/600 [00:03<00:09, 45.09it/s]Data Loader:  26%|██▋       | 159/600 [00:03<00:09, 44.13it/s]Data Loader:  27%|██▋       | 164/600 [00:03<00:09, 45.50it/s]Data Loader:  28%|██▊       | 170/600 [00:03<00:09, 47.18it/s]Data Loader:  29%|██▉       | 175/600 [00:03<00:08, 47.81it/s]Data Loader:  30%|███       | 180/600 [00:03<00:08, 46.69it/s]Data Loader:  31%|███       | 185/600 [00:04<00:09, 45.09it/s]Data Loader:  32%|███▏      | 190/600 [00:04<00:09, 44.11it/s]Data Loader:  32%|███▎      | 195/600 [00:04<00:09, 43.93it/s]Data Loader:  34%|███▎      | 201/600 [00:04<00:08, 47.06it/s]Data Loader:  34%|███▍      | 207/600 [00:04<00:07, 49.46it/s]Data Loader:  36%|███▌      | 213/600 [00:04<00:07, 51.18it/s]Data Loader:  36%|███▋      | 219/600 [00:04<00:07, 52.46it/s]Data Loader:  38%|███▊      | 225/600 [00:04<00:07, 52.55it/s]Data Loader:  38%|███▊      | 231/600 [00:04<00:07, 51.78it/s]Data Loader:  40%|███▉      | 237/600 [00:05<00:06, 52.83it/s]Data Loader:  40%|████      | 243/600 [00:05<00:06, 53.58it/s]Data Loader:  42%|████▏     | 249/600 [00:05<00:06, 50.94it/s]Data Loader:  42%|████▎     | 255/600 [00:05<00:07, 49.14it/s]Data Loader:  43%|████▎     | 260/600 [00:05<00:07, 47.72it/s]Data Loader:  44%|████▍     | 265/600 [00:05<00:06, 48.04it/s]Data Loader:  45%|████▌     | 271/600 [00:05<00:06, 49.44it/s]Data Loader:  46%|████▌     | 276/600 [00:05<00:06, 48.60it/s]Data Loader:  47%|████▋     | 281/600 [00:06<00:06, 48.75it/s]Data Loader:  48%|████▊     | 286/600 [00:06<00:06, 46.12it/s]Data Loader:  48%|████▊     | 291/600 [00:06<00:06, 45.22it/s]Data Loader:  49%|████▉     | 296/600 [00:06<00:06, 45.67it/s]Data Loader:  50%|█████     | 301/600 [00:06<00:06, 45.23it/s]Data Loader:  51%|█████     | 307/600 [00:06<00:06, 46.80it/s]Data Loader:  52%|█████▏    | 312/600 [00:06<00:06, 45.36it/s]Data Loader:  53%|█████▎    | 317/600 [00:06<00:06, 44.30it/s]Data Loader:  54%|█████▎    | 322/600 [00:06<00:06, 44.24it/s]Data Loader:  55%|█████▍    | 327/600 [00:07<00:06, 44.21it/s]Data Loader:  55%|█████▌    | 332/600 [00:07<00:05, 44.85it/s]Data Loader:  56%|█████▋    | 338/600 [00:07<00:05, 47.19it/s]Data Loader:  57%|█████▋    | 343/600 [00:07<00:05, 46.27it/s]Data Loader:  58%|█████▊    | 348/600 [00:07<00:05, 46.42it/s]Data Loader:  59%|█████▉    | 353/600 [00:07<00:05, 45.04it/s]Data Loader:  60%|█████▉    | 358/600 [00:07<00:05, 44.13it/s]Data Loader:  60%|██████    | 363/600 [00:07<00:05, 43.44it/s]Data Loader:  61%|██████▏   | 368/600 [00:07<00:05, 42.99it/s]Data Loader:  62%|██████▏   | 373/600 [00:08<00:05, 42.67it/s]Data Loader:  63%|██████▎   | 378/600 [00:08<00:05, 43.09it/s]Data Loader:  64%|██████▍   | 383/600 [00:08<00:05, 42.71it/s]Data Loader:  65%|██████▍   | 388/600 [00:08<00:04, 42.46it/s]Data Loader:  66%|██████▌   | 393/600 [00:08<00:04, 42.40it/s]Data Loader:  66%|██████▋   | 398/600 [00:08<00:04, 42.42it/s]Data Loader:  67%|██████▋   | 403/600 [00:08<00:04, 42.96it/s]Data Loader:  68%|██████▊   | 408/600 [00:08<00:04, 42.67it/s]Data Loader:  69%|██████▉   | 413/600 [00:09<00:04, 43.02it/s]Data Loader:  70%|██████▉   | 418/600 [00:09<00:04, 43.28it/s]Data Loader:  70%|███████   | 423/600 [00:09<00:04, 42.86it/s]Data Loader:  71%|███████▏  | 428/600 [00:09<00:04, 42.61it/s]Data Loader:  72%|███████▏  | 433/600 [00:09<00:03, 43.10it/s]Data Loader:  73%|███████▎  | 438/600 [00:09<00:03, 42.79it/s]Data Loader:  74%|███████▍  | 443/600 [00:09<00:03, 42.58it/s]Data Loader:  75%|███████▍  | 448/600 [00:09<00:03, 43.00it/s]Data Loader:  76%|███████▌  | 453/600 [00:09<00:03, 44.01it/s]Data Loader:  76%|███████▋  | 458/600 [00:10<00:03, 45.43it/s]Data Loader:  77%|███████▋  | 463/600 [00:10<00:02, 45.80it/s]Data Loader:  78%|███████▊  | 468/600 [00:10<00:02, 46.05it/s]Data Loader:  79%|███████▉  | 473/600 [00:10<00:02, 46.22it/s]Data Loader:  80%|███████▉  | 478/600 [00:10<00:02, 46.30it/s]Data Loader:  80%|████████  | 483/600 [00:10<00:02, 44.99it/s]Data Loader:  81%|████████▏ | 488/600 [00:10<00:02, 46.18it/s]Data Loader:  82%|████████▏ | 494/600 [00:10<00:02, 48.27it/s]Data Loader:  83%|████████▎ | 500/600 [00:10<00:02, 48.74it/s]Data Loader:  84%|████████▍ | 505/600 [00:11<00:02, 46.98it/s]Data Loader:  85%|████████▌ | 510/600 [00:11<00:01, 46.88it/s]Data Loader:  86%|████████▌ | 515/600 [00:11<00:01, 46.06it/s]Data Loader:  87%|████████▋ | 520/600 [00:11<00:01, 46.06it/s]Data Loader:  88%|████████▊ | 525/600 [00:11<00:01, 44.69it/s]Data Loader:  88%|████████▊ | 530/600 [00:11<00:01, 43.86it/s]Data Loader:  89%|████████▉ | 535/600 [00:11<00:01, 43.94it/s]Data Loader:  90%|█████████ | 540/600 [00:11<00:01, 44.64it/s]Data Loader:  91%|█████████ | 546/600 [00:11<00:01, 47.00it/s]Data Loader:  92%|█████████▏| 551/600 [00:12<00:01, 46.86it/s]Data Loader:  93%|█████████▎| 556/600 [00:12<00:00, 46.81it/s]Data Loader:  94%|█████████▎| 561/600 [00:12<00:00, 46.94it/s]Data Loader:  94%|█████████▍| 566/600 [00:12<00:00, 46.30it/s]Data Loader:  95%|█████████▌| 571/600 [00:12<00:00, 46.34it/s]Data Loader:  96%|█████████▌| 576/600 [00:12<00:00, 47.16it/s]Data Loader:  97%|█████████▋| 581/600 [00:12<00:00, 45.54it/s]Data Loader:  98%|█████████▊| 586/600 [00:12<00:00, 45.11it/s]Data Loader:  98%|█████████▊| 591/600 [00:12<00:00, 44.07it/s]Data Loader:  99%|█████████▉| 596/600 [00:13<00:00, 44.08it/s]Data Loader: 100%|██████████| 600/600 [00:13<00:00, 45.65it/s]
+/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:344: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
+  env_params = jax.tree_map(
+/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:372: DeprecationWarning: jax.tree_leaves is deprecated: use jax.tree.leaves (jax v0.4.25 or newer) or jax.tree_util.tree_leaves (any JAX version).
+  print(f"🤖 Mixed Agent Network: {sum(x.size for x in jax.tree_leaves(network_params)):,} parameters")
+2025-07-28 16:56:34.592456: E external/xla/xla/service/slow_operation_alarm.cc:65] Constant folding an instruction is taking > 1s:
+
+  %reduce.349 = s32[2048]{0} reduce(s32[2048,4096]{1,0} %broadcast.18007, s32[] %constant.2227), dimensions={1}, to_apply=%region_91.6063, metadata={op_name="pmap(reset)/jit(main)/jit(reset)/vmap(jit(reset))/reduce_sum[axes=(1,)]" source_file="/cluster/home/alesweber/TerraProject/terra/terra/state.py" source_line=1575}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+2025-07-28 16:56:38.797929: E external/xla/xla/service/slow_operation_alarm.cc:133] The operation took 5.205521026s
+Constant folding an instruction is taking > 1s:
+
+  %reduce.349 = s32[2048]{0} reduce(s32[2048,4096]{1,0} %broadcast.18007, s32[] %constant.2227), dimensions={1}, to_apply=%region_91.6063, metadata={op_name="pmap(reset)/jit(main)/jit(reset)/vmap(jit(reset))/reduce_sum[axes=(1,)]" source_file="/cluster/home/alesweber/TerraProject/terra/terra/state.py" source_line=1575}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+2025-07-28 16:56:40.967095: E external/xla/xla/service/slow_operation_alarm.cc:65] Constant folding an instruction is taking > 2s:
+
+  %reduce.405 = s32[2048]{0} reduce(s32[2048,4096]{1,0} %broadcast.18009, s32[] %constant.2227), dimensions={1}, to_apply=%region_197.12027, metadata={op_name="pmap(reset)/jit(main)/jit(reset)/vmap(jit(reset))/reduce_sum[axes=(1,)]" source_file="/cluster/home/alesweber/TerraProject/terra/terra/state.py" source_line=1575}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+2025-07-28 16:56:44.441458: E external/xla/xla/service/slow_operation_alarm.cc:133] The operation took 5.474415684s
+Constant folding an instruction is taking > 2s:
+
+  %reduce.405 = s32[2048]{0} reduce(s32[2048,4096]{1,0} %broadcast.18009, s32[] %constant.2227), dimensions={1}, to_apply=%region_197.12027, metadata={op_name="pmap(reset)/jit(main)/jit(reset)/vmap(jit(reset))/reduce_sum[axes=(1,)]" source_file="/cluster/home/alesweber/TerraProject/terra/terra/state.py" source_line=1575}
+
+This isn't necessarily a bug; constant-folding is inherently a trade-off between compilation time and speed at runtime. XLA has some guards that attempt to keep constant folding from taking too long, but fundamentally you'll always be able to come up with an input program that takes a long time.
+
+If you'd like to file a bug, run with envvar XLA_FLAGS=--xla_dump_to=/tmp/foo and attach the results.
+Loaded 600 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
+Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
+Maps width: 64
+Maps height: 64
+Unique shapes of trench_axes_list: {(600, 3, 3)}
+Maps shape: (1, 600, 64, 64).
+Padding mask shape: (1, 600, 64, 64).
+Dumpability mask shape: (1, 600, 64, 64).
+Trench axes shape: (1, 600, 3, 3).
+Trench types shape: (1,).
+Actions shape: (1, 600, 64, 64).
+Mixed Agent Environment - Tile size shape: (4, 2048)
+num_embeddings_agent = 64
+map normalization min max = (-1, 1)
+Model: 419,680 parameters
+🤖 Mixed Agent Network: 419,680 parameters
+🔧 Agent Configuration: Agent1=Tracked (type 0), Agent2=Tracked (type 0)
+🧠 Network: Unified with agent type conditioning
+🚀 Starting Mixed Agent Training...
+============================================================
+📊 Configuration:
+   - Environments per device: 2048
+   - Total environments: 8192
+   - Training steps: 32
+   - Total timesteps: 5,000,000,000
+   - Learning rate: 0.0003
+   - Agent types: Tracked (0) + Tracked (0)
+
+🎯 Reward Configuration:
+   - Existence penalty: -0.05000000074505806
+   - Movement penalty: -0.10000000149011612
+   - Holding dirt penalty: -0.0
+   - Skid auto-load reward: 0.699999988079071
+   - Skid dump correct reward: 50.0
+   - Skid dump wrong penalty: -0.6000000238418579
+   - Move to dump zone reward: 0.0
+   - Skid lift shovel with dirt: 0.05000000074505806
+   - Skid move loaded shovel up: 0.019999999552965164
+   - Auto load dump zone penalty: -0.0
+   - Reward normalizer: 100.0
+============================================================
+tile_size: 0.6875
+agent_width: 5, agent_height: 9
+[TerraEnv.reset] action_map shape: (64, 64), type: <class 'jax._src.interpreters.partial_eval.DynamicJaxprTracer'>
+Training:   0%|          | 0/4768 [00:00<?, ?it/s]2025-07-28 16:57:07.581339: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+libibverbs: Warning: couldn't load driver 'libvmw_pvrdma-rdmav34.so': libvmw_pvrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libsiw-rdmav34.so': libsiw-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'librxe-rdmav34.so': librxe-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libqedr-rdmav34.so': libqedr-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libocrdma-rdmav34.so': libocrdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmthca-rdmav34.so': libmthca-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libmlx4-rdmav34.so': libmlx4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libirdma-rdmav34.so': libirdma-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libipathverbs-rdmav34.so': libipathverbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhns-rdmav34.so': libhns-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libhfi1verbs-rdmav34.so': libhfi1verbs-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libefa-rdmav34.so': libefa-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libcxgb4-rdmav34.so': libcxgb4-rdmav34.so: cannot open shared object file: No such file or directory
+libibverbs: Warning: couldn't load driver 'libbnxt_re-rdmav34.so': libbnxt_re-rdmav34.so: cannot open shared object file: No such file or directory
+                                                  Training:   0%|          | 0/4768 [04:14<?, ?it/s]Training:   0%|          | 0/4768 [04:15<?, ?it/s]
+wandb: - 0.172 MB of 0.172 MB uploaded (0.031 MB deduped)wandb: \ 0.172 MB of 0.172 MB uploaded (0.031 MB deduped)wandb: | 0.172 MB of 0.172 MB uploaded (0.031 MB deduped)wandb: / 0.172 MB of 0.172 MB uploaded (0.031 MB deduped)wandb: - 0.215 MB of 0.226 MB uploaded (0.034 MB deduped)wandb: \ 0.215 MB of 0.226 MB uploaded (0.034 MB deduped)wandb: | 0.226 MB of 0.226 MB uploaded (0.034 MB deduped)wandb:                                                                                
+wandb: W&B sync reduced upload amount by 14.8%             
+wandb: 
+wandb: Run history:
+wandb:                        actor_loss ▁
+wandb:                           entropy ▁
+wandb:                                lr ▁
+wandb: performance/iterations_per_second ▁
+wandb:      performance/steps_per_second ▁
+wandb:                        total_loss ▁
+wandb:                        value_loss ▁
+wandb: 
+wandb: Run summary:
+wandb:                        actor_loss -0.00328
+wandb:                           entropy 1.93929
+wandb:                                lr 0.0003
+wandb: performance/iterations_per_second 0.00392
+wandb:      performance/steps_per_second 4114.34363
+wandb:                        total_loss -0.19637
+wandb:                        value_loss 0.00017
+wandb: 
+wandb: 🚀 View run mixed-agents-skidsteer-skidsteer-local-2025-07-28-16-55-10 at: https://wandb.ai/aless-weber-eth/mixed-agents/runs/hxs6wgyz
+wandb: ️⚡ View job at https://wandb.ai/aless-weber-eth/mixed-agents/jobs/QXJ0aWZhY3RDb2xsZWN0aW9uOjY3OTA4ODc2MQ==/version_details/v32
+wandb: Synced 7 W&B file(s), 0 media file(s), 6 artifact file(s) and 1 other file(s)
+wandb: Find logs at: ./wandb/run-20250728_165518-hxs6wgyz/logs
+ppo_update_networks transitions.obs['agent_state'].shape=(256, 32, 8)
+ppo_update_networks transitions.prev_actions.shape=(256, 32, 10)
+ppo_update_networks transitions_obs_reshaped['agent_state'].shape=(8192, 8)
+ppo_update_networks transitions_actions_reshaped.shape=(8192, 10)
+Steps/s: 4114.34
+📈 Wandb session finished.
+Traceback (most recent call last):
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 1001, in <module>
+    train_mixed_agents(config)
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 857, in train_mixed_agents
+    train_info = jax.block_until_ready(train_with_monitoring(rng, train_state))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 794, in train_with_monitoring
+    return train_fn(rng, train_state)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 732, in train
+    log_environment_metrics(timestep, i)
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 483, in log_environment_metrics
+    states = timestep.env_state
+             ^^^^^^^^^^^^^^^^^^
+AttributeError: 'TimeStep' object has no attribute 'env_state'

@@ -1,0 +1,1010 @@
+Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
+/cluster/home/alesweber/TerraProject/terra-baselines/visualize_mixed.py:159: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
+  env_cfgs = jax.tree_map(replicate_field, env_cfgs)
+pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loaded data from /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-07-31-22-56-24.pkl.
+Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones'].
+Data Loader:   0%|          | 0/20 [00:00<?, ?it/s]Data Loader:   5%|▌         | 1/20 [00:00<00:02,  8.86it/s]Data Loader:  15%|█▌        | 3/20 [00:00<00:01, 13.49it/s]Data Loader:  25%|██▌       | 5/20 [00:00<00:01, 14.89it/s]Data Loader:  35%|███▌      | 7/20 [00:00<00:00, 15.57it/s]Data Loader:  45%|████▌     | 9/20 [00:00<00:00, 15.95it/s]Data Loader:  55%|█████▌    | 11/20 [00:00<00:00, 16.17it/s]Data Loader:  65%|██████▌   | 13/20 [00:00<00:00, 16.28it/s]Data Loader:  75%|███████▌  | 15/20 [00:00<00:00, 16.39it/s]Data Loader:  85%|████████▌ | 17/20 [00:01<00:00, 16.48it/s]Data Loader:  95%|█████████▌| 19/20 [00:01<00:00, 16.54it/s]Data Loader: 100%|██████████| 20/20 [00:01<00:00, 15.74it/s]
+2025-08-01 10:20:34.076228: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+Loaded 20 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
+Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
+Maps width: 64
+Maps height: 64
+Unique shapes of trench_axes_list: {(20, 3, 3)}
+Maps shape: (1, 20, 64, 64).
+Padding mask shape: (1, 20, 64, 64).
+Dumpability mask shape: (1, 20, 64, 64).
+Trench axes shape: (1, 20, 3, 3).
+Trench types shape: (1,).
+Actions shape: (1, 20, 64, 64).
+Shuffling maps between curriculum levels...
+Maps shuffled.
+TerraEnv: disabling display...
+Agent size (in rendering): 9x5
+Tile size (in rendering): 0.6875
+Rendering tile size: 3
+Number of possible base rotations: 12
+Number of possible cabin rotations: 12
+num_embeddings_agent = 64
+map normalization min max = (-1, 1)
+Model: 419,680 parameters
+Using seed=0
+tile_size: 0.6875
+agent_width: 5, agent_height: 9
+[TerraEnv.reset] action_map shape: (64, 64), type: <class 'jax._src.interpreters.partial_eval.DynamicJaxprTracer'>
+1 [-0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015
+ -0.0015 -0.0025 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015] [3 3 1 2 2 1 3 3 1 3 2 3 1 3 3 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+2 [-0.0015 -0.0015 -0.0005 -0.0005 -0.0015 -0.0005 -0.0005 -0.0005 -0.0015
+ -0.0005 -0.0015 -0.0005 -0.0005 -0.0005 -0.0005 -0.0005] [3 2 1 1 2 1 4 4 3 0 2 5 1 4 1 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+3 [-0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015
+ -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015] [2 0 1 2 2 2 0 0 1 0 2 3 3 0 3 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+4 [-0.0005  -0.0005  -0.0005  -0.0005  -0.0015  -0.0015  -0.0015  -0.0005
+ -0.0015  -0.0015  -0.0025  -0.00049 -0.0015  -0.0015  -0.0005  -0.0005 ] [1 0 4 1 2 2 2 5 3 2 2 6 3 3 1 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+5 [-0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015
+ -0.0015 -0.0025 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015] [0 0 3 1 0 2 0 0 2 0 2 0 3 0 0 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+6 [-0.0015  -0.0005  -0.0005  -0.0005  -0.0015  -0.00049 -0.0015  -0.0005
+ -0.0005  -0.0005  -0.00049 -0.0005  -0.0005  -0.0015  -0.0015  -0.0005 ] [3 5 4 1 2 6 2 1 0 1 6 4 1 3 2 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+7 [-0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015
+ -0.0015 -0.0015 -0.0025 -0.0015 -0.0015 -0.0015 -0.003 ] [2 0 3 0 0 2 3 0 1 0 0 3 0 0 0 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+8 [-0.0005  -0.0005  -0.0005  -0.0015  -0.0005  -0.0005  -0.0005  -0.0005
+ -0.0005  -0.0005  -0.00049 -0.0015  -0.0015  -0.0005  -0.0005  -0.0005 ] [0 0 1 2 0 5 0 1 5 0 6 2 3 5 0 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+9 [-0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.001  -0.0015
+ -0.0015 -0.0025 -0.0015 -0.0015 -0.0015 -0.0015 -0.001 ] [0 3 0 0 3 2 2 5 2 3 2 3 3 2 0 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+10 [-0.0015 -0.0015 -0.0005 -0.0005 -0.0015 -0.0005 -0.0015 -0.0005 -0.0005
+ -0.0005 -0.0015 -0.0025 -0.0005 -0.0015 -0.0005 -0.0025] [3 2 1 0 2 4 2 0 5 4 2 3 5 3 5 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+11 [-0.0015 -0.001  -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015
+ -0.0015 -0.0035 -0.0025 -0.001  -0.0015 -0.0015 -0.001 ] [3 5 2 1 3 0 0 0 1 3 1 3 4 0 3 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+12 [-0.0005  -0.0005  -0.0005  -0.0005  -0.0005  -0.00049 -0.0005  -0.0005
+ -0.0015  -0.0005  -0.0005  -0.0005  -0.0015  -0.0015  -0.0015  -0.0025 ] [0 0 1 1 0 6 0 1 3 1 0 1 3 3 2 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+13 [ 0.0615 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015
+ -0.0015 -0.0015 -0.0025 -0.001  -0.0015 -0.0015 -0.001 ] [6 0 3 2 1 0 0 3 2 0 2 3 5 0 0 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+14 [-0.0005 -0.0015 -0.0005 -0.0005 -0.0015 -0.0005 -0.0005 -0.0005 -0.0005
+ -0.0015 -0.0005 -0.0005 -0.0005 -0.0005 -0.0015 -0.0005] [0 2 4 0 2 5 0 4 5 2 0 5 0 0 2 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+15 [-0.0035 -0.001  -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015
+ -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015] [1 5 2 2 2 0 3 3 1 0 2 0 0 0 0 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+16 [-0.0005  -0.0005  -0.0005  -0.0015  -0.0005  -0.0005  -0.0015  -0.0005
+ -0.0005  -0.0005  -0.0005  -0.0005  -0.0005  -0.0005  -0.0005  -0.00049] [0 0 0 3 0 1 3 0 0 0 4 5 4 0 0 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+17 [-0.0035 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015 -0.0015
+ -0.0015 -0.003  -0.0015 -0.0015 -0.0015 -0.0015 -0.003 ] [0 0 1 0 0 0 0 3 1 3 6 3 2 3 2 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+18 [-0.0015  -0.0005  -0.0015  -0.0005  -0.0015  -0.0005  -0.0015  -0.0005
+ -0.0015  -0.0015  -0.0015  -0.0015  -0.0005  -0.0015  -0.0005  -0.00049] [3 0 2 1 2 1 3 0 3 3 2 3 5 3 0 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+19 [-0.0025 -0.0015 -0.0015 -0.0015 -0.0015 -0.001  -0.0015  0.0535 -0.0015
+ -0.0015 -0.0015 -0.0015 -0.0015 -0.001  -0.001  -0.0015] [2 3 1 0 3 5 3 6 3 3 2 3 2 4 5 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+20 [-0.0015 -0.0015 -0.0015 -0.0005 -0.0005 -0.0015 -0.0005 -0.0015 -0.0005
+ -0.0005 -0.0005 -0.0005 -0.0005 -0.0015 -0.0015 -0.0005] [3 2 2 1 5 2 0 2 0 0 4 1 0 3 2 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+21 [-0.001  -0.0015 -0.001  -0.0015  0.0595 -0.001  -0.0015 -0.0035 -0.0015
+ -0.001  -0.0015 -0.0015 -0.0015 -0.001  -0.0015 -0.0015] [5 3 4 0 6 4 3 0 2 5 2 3 1 5 2 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+22 [-0.0015  -0.0005  -0.0005  -0.0005  -0.0005  -0.0015  -0.0005  -0.0005
+ -0.0005  -0.0015  -0.00049 -0.0005  -0.0015  -0.0005  -0.0015  -0.0005 ] [3 0 0 5 0 2 0 0 0 3 6 4 2 0 2 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+23 [-0.001  -0.0015 -0.001  -0.0015 -0.001  -0.0015 -0.0015 -0.0035  0.0695
+ -0.0015 -0.0015 -0.0015  0.0175 -0.0015 -0.0015 -0.0015] [5 3 5 2 5 3 3 0 6 0 0 0 6 3 1 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+24 [-0.0005 -0.0015 -0.0015 -0.0005 -0.0015 -0.0005 -0.0015 -0.0015 -0.0005
+ -0.0015 -0.0015 -0.0005 -0.0005 -0.0015 -0.0005 -0.0025] [5 2 2 5 2 0 3 2 0 3 2 1 0 3 4 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+25 [-0.0025 -0.0015 -0.0015 -0.0015 -0.0025 -0.001  -0.0015 -0.001  -0.0035
+ -0.0015 -0.0015 -0.0015 -0.001  -0.001  -0.0015 -0.0015] [3 2 3 2 3 5 0 5 0 3 0 0 5 5 0 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+26 [-0.0005  -0.0005  -0.0015  -0.0005  -0.0005  -0.0005  -0.0015  -0.0005
+ -0.0005  -0.0005  -0.00049 -0.0015  -0.0005  -0.0005  -0.0005  -0.0005 ] [0 5 2 0 5 0 3 4 1 0 6 2 5 0 0 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+27 [-0.0025 -0.0015 -0.0035 -0.0015 -0.001   0.0475  0.0855 -0.001  -0.001
+ -0.0015 -0.0015 -0.0015 -0.001  -0.001  -0.0015 -0.001 ] [3 2 1 0 5 6 6 5 5 3 0 3 5 4 0 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+28 [-0.0015  -0.0005  -0.0005  -0.0015  -0.0015  -0.0015  -0.0015  -0.0005
+ -0.0015  -0.0015  -0.0005  -0.00049 -0.0015  -0.0005  -0.0005  -0.0005 ] [3 0 0 2 2 3 3 5 3 3 4 6 2 0 0 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+29 [-0.0025 -0.0015 -0.0015 -0.0015 -0.0005 -0.001  -0.001  -0.0035 -0.0025
+ -0.0015 -0.0015 -0.0015 -0.0005 -0.0015 -0.0015  0.0615] [3 2 3 0 6 5 5 1 2 0 0 0 6 3 1 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+30 [-0.0005 -0.0015 -0.0005 -0.0005  0.0065 -0.0015 -0.0015 -0.0005 -0.0015
+ -0.0015 -0.0005 -0.0015  0.0065 -0.0015 -0.0015 -0.0005] [5 2 0 4 0 3 3 5 3 3 4 3 0 3 2 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+31 [-0.001  -0.001  -0.0015 -0.0015 -0.0015 -0.001  -0.0005 -0.0005 -0.001
+ -0.001  -0.0015 -0.001  -0.001  -0.0015 -0.0015 -0.0005] [5 5 0 3 3 5 6 6 5 5 0 5 4 2 1 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+32 [-0.0005     -0.0005     -0.0005     -0.0015     -0.0005     -0.0015
+  0.0065      0.0045     -0.0015     -0.0005     -0.0015     -0.0005
+  0.22371054 -0.0005     -0.0005     -0.0025    ] [4 0 4 2 1 3 0 0 3 1 2 5 1 4 1 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+33 [-0.0005 -0.001  -0.0015 -0.0015 -0.001  -0.0005 -0.001  -0.0015 -0.0005
+ -0.0015 -0.0015 -0.0015 -0.0035  0.0695  0.0975 -0.001 ] [6 5 0 3 4 6 5 2 6 3 3 0 0 6 6 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+34 [ 0.0045 -0.0005 -0.0005 -0.0005 -0.0015  0.0065 -0.0005 -0.0015 -0.0005
+ -0.0005 -0.0005 -0.0005 -0.0005 -0.0015 -0.0015 -0.0005] [0 0 0 0 3 0 1 3 1 5 0 0 4 3 2 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+35 [-0.0015 -0.001  -0.0015 -0.0015 -0.001  -0.0015 -0.0015 -0.0015 -0.0015
+  0.0895  0.0795 -0.001  -0.001  -0.0035 -0.001  -0.0035] [3 4 0 3 4 1 2 2 2 6 6 5 4 1 5 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+36 [-1.5000000e-03 -5.0000002e-04 -1.5000000e-03 -5.0000002e-04
+  4.4999998e-03 -5.0000002e-04 -1.5000000e-03  5.7739472e-01
+ -1.5000000e-03 -5.0000002e-04 -5.0000002e-04 -5.0000002e-04
+ -2.6955262e-01 -1.5000000e-03 -5.0000002e-04 -5.0000002e-04] [3 0 3 5 0 1 3 1 2 5 0 0 0 3 0 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+37 [-0.001  -0.0015 -0.0015 -0.001  -0.0015 -0.001  -0.001  -0.001  -0.001
+ -0.001  -0.001   0.0795 -0.0015 -0.001  -0.0005 -0.001 ] [4 3 0 5 2 4 4 4 4 5 5 6 2 5 6 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+38 [-1.5000000e-03 -1.5000000e-03 -1.5000000e-03 -5.0000002e-04
+ -5.0000002e-04 -1.5000000e-03 -1.5000000e-03 -6.4092118e-01
+  4.4999998e-03 -1.5000000e-03 -5.0000002e-04 -1.5000000e-03
+  2.2371054e-01 -1.5000000e-03 -2.4999999e-03 -5.0000002e-04] [3 2 3 5 1 3 3 0 0 2 4 3 1 3 2 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+39 [-0.001  -0.0015 -0.0015  0.0555 -0.0015 -0.0015 -0.003  -0.0015 -0.0015
+ -0.0005 -0.0005 -0.001  -0.0015 -0.001  -0.0015 -0.0015] [4 2 2 6 1 2 6 3 3 6 6 5 0 5 3 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+40 [-5.0000002e-04 -1.5000000e-03 -4.9000001e-04 -5.0000002e-04
+  6.4999997e-03  5.1107895e-01 -5.0000002e-04  5.3318429e-01
+ -1.5000000e-03  4.4999998e-03  4.4999998e-03 -1.5000000e-03
+ -5.0000002e-04 -1.5000000e-03 -2.4999999e-03 -2.4999999e-03] [1 2 6 4 0 1 4 1 3 0 0 3 5 3 2 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+41 [-0.0015     -0.0015     -0.0015     -0.001       0.13149999  0.0875
+ -0.0015     -0.0015     -0.0035     -0.0015     -0.0015     -0.001
+ -0.0015     -0.0005     -0.0035     -0.001     ] [2 2 2 5 6 6 2 3 0 2 2 4 1 6 0 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+42 [-5.0000002e-04 -4.9000001e-04 -4.9000001e-04 -1.5000000e-03
+ -1.5000000e-03 -5.8986849e-01  1.7950000e-01 -6.1439478e-01
+  6.4999997e-03 -1.5000000e-03 -1.5000000e-03 -1.5000000e-03
+ -2.6955262e-01  4.4999998e-03 -2.4999999e-03 -5.0000002e-04] [0 6 6 3 3 0 1 0 0 3 3 3 0 0 2 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+43 [-0.001  -0.0015 -0.0015 -0.0035 -0.001  -0.0035 -0.0015 -0.0015 -0.0035
+ -0.0015 -0.0015 -0.001  -0.001  -0.0015 -0.0015 -0.0015] [5 1 2 0 4 0 3 0 0 3 2 5 5 2 2 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+44 [-1.5000000e-03 -4.9000001e-04 -1.5000000e-03 -5.0000002e-04
+ -5.0000002e-04  6.4999997e-03 -2.1649998e-01  5.1107895e-01
+ -1.5000000e-03 -5.0000002e-04  1.7950000e-01 -5.0000002e-04
+ -5.0000002e-04 -1.5000000e-03 -2.4999999e-03 -2.4999999e-03] [3 6 3 1 0 0 0 1 3 1 1 5 4 3 2 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+45 [-0.003       0.0255      0.08350001 -0.0025     -0.0035     -0.0025
+ -0.001      -0.0015     -0.0015     -0.001      -0.0015     -0.0005
+ -0.001      -0.0035     -0.0005     -0.0015    ] [6 6 6 2 0 3 4 3 3 5 0 6 4 0 6 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+46 [ 5.9950006e-01 -1.5000000e-03 -1.5000000e-03 -1.5000000e-03
+  5.7739472e-01 -1.5000000e-03  1.7950000e-01 -1.5000000e-03
+  3.3423686e-01  5.3318429e-01 -2.1649998e-01  4.4999998e-03
+  2.2371054e-01 -5.0000002e-04 -2.4999999e-03 -2.4999999e-03] [1 2 3 2 1 3 1 2 1 1 0 0 1 1 2 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+47 [-0.0015 -0.0035 -0.001  -0.0025 -0.0035 -0.001  -0.0015 -0.001  -0.0015
+ -0.0015 -0.0015 -0.001  -0.0015 -0.003  -0.0025 -0.001 ] [2 1 5 2 1 5 3 5 2 1 1 4 3 6 2 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+48 [-6.1439478e-01 -5.0000002e-04 -1.5000000e-03 -5.0000002e-04
+ -1.5000000e-03 -5.0000002e-04 -2.1649998e-01  6.4999997e-03
+ -1.5000000e-03 -4.2871055e-01  6.4999997e-03 -1.5000000e-03
+ -1.5000000e-03  6.4999997e-03 -2.4999999e-03 -4.9000001e-04] [0 0 3 0 2 0 0 0 2 0 0 3 3 0 2 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+49 [ 0.0495 -0.0005 -0.0005 -0.0035 -0.001  -0.001  -0.0015 -0.001  -0.0015
+ -0.001  -0.0015 -0.001  -0.001  -0.001  -0.0025 -0.0015] [6 6 6 0 5 5 2 4 3 4 1 4 5 5 2 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+50 [ 4.8897371e-01 -5.0000002e-04  4.4999998e-03 -1.5000000e-03
+ -5.0000002e-04  5.3318429e-01  1.7950000e-01 -5.0000002e-04
+  4.4999998e-03  6.4999997e-03 -1.5000000e-03  6.4999997e-03
+ -2.6955262e-01 -1.5000000e-03 -2.4999999e-03 -2.4999999e-03] [1 1 0 3 4 1 1 1 0 0 3 0 0 3 2 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+51 [-0.001  -0.0015 -0.0015 -0.0005 -0.001  -0.001  -0.001   0.0535 -0.0035
+ -0.001  -0.0015 -0.0015 -0.001  -0.001  -0.0025 -0.0015] [5 2 2 6 5 4 5 6 0 4 0 2 4 4 3 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+52 [-6.1439478e-01 -5.0000002e-04 -1.5000000e-03  4.4999998e-03
+ -5.0000002e-04 -4.5523685e-01 -2.1649998e-01 -1.5000000e-03
+  4.4999998e-03 -1.5000000e-03  2.6792109e-01 -1.5000000e-03
+  2.2371054e-01 -5.0000002e-04 -2.4999999e-03 -5.0000002e-04] [0 0 3 0 5 0 0 3 0 3 1 3 1 0 2 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+53 [-0.0025 -0.0015 -0.0015 -0.0015 -0.0025 -0.0035 -0.0035 -0.0025 -0.0015
+ -0.0015 -0.0015 -0.001  -0.0015 -0.0015 -0.0105 -0.001 ] [2 1 1 0 3 1 0 3 2 2 0 5 2 1 6 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+54 [ 5.5528951e-01  6.4999997e-03  5.9950006e-01  4.4999998e-03
+ -1.5000000e-03 -5.0000002e-04  1.7950000e-01  3.3423686e-01
+ -1.5000000e-03  4.6686843e-01 -5.0000002e-04  4.6686843e-01
+ -1.5000000e-03 -5.0000002e-04 -5.0000002e-04 -2.4999999e-03] [1 0 1 0 2 5 1 1 3 1 1 1 2 1 1 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+55 [-0.0035 -0.001  -0.0015 -0.0015 -0.0005 -0.0035 -0.0015 -0.0025 -0.001
+  0.0715 -0.001   0.0135 -0.0015 -0.0015 -0.0025 -0.0015] [0 4 2 1 6 0 3 2 5 6 4 6 1 2 2 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+56 [-5.0000002e-04 -5.0000002e-04 -2.1850000e-01  5.9950006e-01
+  4.4999998e-03 -5.0000002e-04 -1.5000000e-03 -4.0218425e-01
+ -4.0218425e-01 -6.4092118e-01 -2.1649998e-01 -5.1028949e-01
+ -5.0000002e-04  5.9950006e-01  4.4999998e-03 -2.4999999e-03] [4 1 0 1 0 1 2 0 0 0 0 0 1 1 0 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+57 [-0.0025      0.0395      0.08149999 -0.001      -0.0035     -0.0025
+ -0.001      -0.001      -0.0015     -0.001      -0.0015     -0.001
+  0.0415     -0.0015     -0.0105     -0.0015    ] [2 6 6 4 0 2 5 5 2 5 1 5 6 0 6 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+58 [-6.4092118e-01  3.1213158e-01  1.7950000e-01 -1.5000000e-03
+ -1.5000000e-03  4.6686843e-01 -5.0000002e-04 -6.1439478e-01
+  5.7739472e-01  5.5528951e-01  1.7950000e-01  5.1107895e-01
+  6.4999997e-03 -7.2050011e-01  6.4999997e-03 -5.0000002e-04] [0 1 1 2 3 1 0 0 1 1 1 1 0 0 0 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+59 [-0.0035 -0.001  -0.0025 -0.001  -0.001  -0.001  -0.001  -0.0025 -0.0015
+ -0.0005 -0.0015 -0.0005 -0.0025  0.0295 -0.001  -0.001 ] [1 5 3 5 4 4 4 2 3 6 0 6 2 6 4 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+60 [ 5.1107895e-01 -5.0000002e-04 -2.9607895e-01 -5.0000002e-04
+ -5.0000002e-04 -1.5000000e-03 -2.4999999e-03  5.9950006e-01
+ -5.8786851e-01 -1.5000000e-03 -2.1649998e-01 -5.3481579e-01
+ -5.0000002e-04  5.9950006e-01 -5.0000002e-04 -4.9000001e-04] [1 1 0 0 1 2 0 1 0 2 0 0 0 1 4 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+61 [-0.0025 -0.001  -0.001  -0.0015 -0.0015 -0.001  -0.001  -0.0005 -0.0035
+ -0.001  -0.0015 -0.001  -0.0035 -0.0025 -0.0035 -0.0015] [3 5 4 3 2 5 4 6 0 5 3 4 0 3 1 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+62 [-6.1439478e-01 -1.5000000e-03  2.4581580e-01 -1.5000000e-03
+ -2.1649998e-01 -5.0000002e-04 -1.5000000e-03 -1.5000000e-03
+ -5.0000002e-04 -2.4999999e-03  1.7950000e-01  6.4999997e-03
+  1.7950000e-01 -5.0000002e-04 -5.0000002e-04 -5.0000002e-04] [0 3 1 3 0 0 3 2 4 0 1 0 1 5 4 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+63 [-0.001  -0.0025 -0.0035 -0.0015  0.0275 -0.0005 -0.001  -0.0015 -0.0015
+ -0.0015 -0.0015 -0.001  -0.001  -0.0025 -0.0035 -0.0015] [5 2 1 1 6 6 4 3 3 2 1 4 5 3 1 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+64 [ 5.3318429e-01 -1.5000000e-03 -3.4913158e-01 -5.0000002e-04
+ -1.5000000e-03  4.4999998e-03 -2.1850000e-01  4.4999998e-03
+  5.1107895e-01 -2.4999999e-03 -1.5000000e-03 -5.0000002e-04
+ -2.1649998e-01 -7.2050011e-01  3.3423686e-01 -2.4999999e-03] [1 2 0 1 3 0 0 0 1 0 2 4 0 0 1 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+65 [-0.0025 -0.0005 -0.0035 -0.0015 -0.0025 -0.0015 -0.0015 -0.0015 -0.001
+ -0.0015 -0.0015 -0.0015 -0.0035 -0.0035 -0.0035 -0.001 ] [3 6 0 3 2 2 3 2 4 3 2 0 0 0 1 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+66 [-6.1439478e-01 -5.0000002e-04  2.9002631e-01 -2.6955262e-01
+ -6.1439478e-01 -5.0000002e-04  1.7950000e-01 -1.5000000e-03
+ -3.2460529e-01 -1.5000000e-03  6.4999997e-03  4.2265788e-01
+  1.7950000e-01  5.9950006e-01 -2.4302633e-01 -4.9000001e-04] [0 0 1 0 0 1 1 3 0 2 0 1 1 1 0 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+67 [-0.0035 -0.0015 -0.0035 -0.001  -0.001  -0.0015 -0.003  -0.001  -0.0015
+ -0.001  -0.0015 -0.0015 -0.001  -0.0025 -0.001  -0.0015] [0 2 0 4 5 0 6 4 2 4 3 3 5 3 5 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+68 [ 4.8897371e-01 -2.6955262e-01 -3.4913158e-01 -1.5000000e-03
+  5.9950006e-01 -1.5000000e-03 -2.1649998e-01 -7.2050011e-01
+  2.9002631e-01  6.4999997e-03 -1.5000000e-03 -1.5000000e-03
+ -4.9000001e-04 -7.2050011e-01 -1.5000000e-03 -2.4999999e-03] [1 0 0 3 1 3 0 0 1 0 3 2 6 0 3 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+69 [-0.001  -0.0015 -0.0025 -0.0015 -0.0025  0.0575 -0.003  -0.0015 -0.0035
+ -0.001  -0.001  -0.0015 -0.001  -0.0025 -0.0025 -0.001 ] [5 2 2 2 3 6 6 3 0 4 5 2 4 3 3 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+70 [-5.6134212e-01 -1.5000000e-03  2.9002631e-01  2.6792109e-01
+ -4.8376316e-01 -5.8786851e-01  1.7950000e-01  5.9950006e-01
+ -4.0218425e-01 -5.0000002e-04 -2.6955262e-01  4.4999998e-03
+ -4.9000001e-04  5.9950006e-01 -2.9607895e-01 -5.0000002e-04] [0 3 1 1 0 0 1 1 0 1 0 0 6 1 0 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+71 [-0.0035 -0.001  -0.0035 -0.0015 -0.0035 -0.001  -0.001  -0.001  -0.0035
+ -0.003   0.0215 -0.0015 -0.0005 -0.001  -0.001  -0.003 ] [0 4 0 2 0 4 5 5 0 6 6 1 6 5 4 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+72 [ 4.8897371e-01 -5.0000002e-04 -3.4913158e-01 -6.6744745e-01
+  4.2265788e-01 -2.1649998e-01 -2.1649998e-01 -7.2050011e-01
+  3.3423686e-01 -1.5000000e-03  5.9950006e-01 -5.0000002e-04
+ -1.5000000e-03 -1.5000000e-03  3.3423686e-01 -4.9000001e-04] [1 0 0 0 1 0 0 0 1 3 1 5 2 2 1 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+73 [-0.0025 -0.0015 -0.0025 -0.0015 -0.001  -0.0025 -0.0015 -0.001  -0.001
+ -0.0015 -0.001  -0.0015 -0.0015 -0.001  -0.0035 -0.003 ] [3 0 3 0 5 3 3 4 5 2 5 0 3 5 0 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+74 [-5.6134212e-01 -5.0000002e-04  2.9002631e-01 -3.2260528e-01
+ -5.0000002e-04  5.9950006e-01 -1.5000000e-03  5.9950006e-01
+ -5.0000002e-04 -1.5000000e-03 -6.6744745e-01  6.4999997e-03
+  6.4999997e-03 -5.0000002e-04 -5.0000002e-04 -5.0000002e-04] [0 1 1 0 1 1 3 1 5 3 0 0 0 4 1 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+75 [-0.0025 -0.001  -0.001  -0.0015 -0.001  -0.001  -0.0015 -0.0015 -0.0015
+ -0.001  -0.001  -0.0015 -0.001  -0.0005 -0.001  -0.001 ] [3 4 5 2 5 5 1 2 2 5 4 3 4 6 5 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+76 [ 4.4476318e-01  5.5528951e-01 -3.4913158e-01  5.9950006e-01
+ -5.0000002e-04 -1.5000000e-03  1.7950000e-01 -1.5000000e-03
+ -4.0218425e-01 -6.6744745e-01  5.5528951e-01 -5.0000002e-04
+ -1.5000000e-03  4.4999998e-03 -1.5000000e-03 -5.0000002e-04] [1 1 0 1 0 2 1 2 0 0 1 1 3 0 2 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+77 [-0.001  -0.0015 -0.001  -0.001  -0.0005 -0.001  -0.0015  0.0235 -0.0015
+ -0.001  -0.0025 -0.0015  0.0395 -0.001  -0.0025 -0.0015] [4 3 4 5 6 5 2 6 0 4 2 1 6 4 3 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+78 [-1.5000000e-03 -6.9397378e-01  2.9002631e-01 -1.5000000e-03
+ -1.5000000e-03 -5.0000002e-04 -2.1649998e-01  4.4999998e-03
+  3.3423686e-01 -5.0000002e-04 -3.5113159e-01 -1.5000000e-03
+ -1.5000000e-03 -1.5000000e-03  4.4999998e-03 -2.4999999e-03] [2 0 1 2 2 1 0 0 1 0 0 3 3 3 0 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+79 [-0.0035 -0.0015 -0.001  -0.0015 -0.0035 -0.0035 -0.001  -0.0035 -0.0015
+ -0.0015 -0.001  -0.0015 -0.0025 -0.001  -0.0035 -0.0015] [0 3 5 3 0 0 4 0 2 1 5 0 2 5 0 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+80 [-5.0000002e-04  5.7739472e-01 -3.4913158e-01  6.4999997e-03
+  4.4999998e-03 -5.0000002e-04  1.7950000e-01 -1.5000000e-03
+ -4.0218425e-01  5.9950006e-01  3.3423686e-01  4.4476318e-01
+ -2.1649998e-01  2.9002631e-01  3.5634211e-01 -5.0000002e-04] [5 1 0 0 0 5 1 3 0 1 1 1 0 1 1 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+81 [-0.0005  0.0475 -0.001  -0.0015 -0.0015 -0.0025  0.0575 -0.0035 -0.0015
+ -0.0015 -0.001  -0.001  -0.001  -0.001  -0.0035 -0.0015] [6 6 5 1 3 2 6 0 2 2 4 4 5 4 1 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+82 [ 4.4999998e-03 -6.9397378e-01  2.9002631e-01 -1.5000000e-03
+ -1.5000000e-03 -5.0000002e-04 -2.1649998e-01  2.0160528e-01
+  3.3423686e-01 -1.5000000e-03 -4.5523685e-01 -1.5000000e-03
+  5.5528951e-01 -3.7565792e-01 -2.4302633e-01 -2.4999999e-03] [0 0 1 3 3 0 0 1 1 2 0 3 1 0 0 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+83 [-0.0015 -0.001  -0.0035 -0.001  -0.0035 -0.0025 -0.0025 -0.0025 -0.0015
+ -0.001  -0.0025 -0.001  -0.0035 -0.003  -0.0035 -0.0015] [2 5 1 4 0 2 3 3 3 4 3 5 0 6 0 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+84 [ 6.4999997e-03  5.7739472e-01 -3.4913158e-01 -1.5000000e-03
+ -6.4092118e-01 -1.5000000e-03 -5.0000002e-04 -2.6955262e-01
+ -4.0218425e-01 -5.0000002e-04  3.7844738e-01 -7.2050011e-01
+ -3.7765792e-01  3.1213158e-01 -2.1850000e-01 -2.4999999e-03] [0 1 0 3 0 2 0 0 0 4 1 0 0 1 0 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+85 [-0.0015 -0.001  -0.0035 -0.001  -0.0015 -0.001  -0.0035 -0.0025 -0.0015
+ -0.0015 -0.0025 -0.001  -0.0025 -0.001  -0.0025 -0.0035] [0 5 0 4 2 5 0 3 1 3 3 5 3 5 3 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+86 [-0.0015     -0.6939738   0.2900263   0.2458158   0.59950006 -0.0015
+ -0.0015      0.22371054  0.33423686 -0.0015     -0.45523685 -0.0015
+ -0.34913158 -0.37565792 -0.0015     -0.0025    ] [3 0 1 1 1 2 2 1 1 2 0 2 0 0 3 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+87 [-0.001  -0.001  -0.0035  0.0715 -0.0035 -0.0005 -0.0025 -0.001  -0.0015
+  0.0935 -0.0025 -0.003  -0.001  -0.003  -0.0005 -0.0035] [5 4 0 6 0 6 2 4 0 6 2 6 4 6 6 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+88 [-5.0000002e-04  5.7739472e-01 -3.4913158e-01 -6.1439478e-01
+ -7.2050011e-01  4.4999998e-03  1.7950000e-01 -2.6955262e-01
+ -1.5000000e-03  4.4999998e-03  3.7844738e-01 -2.4502634e-01
+  4.4476318e-01  3.1213158e-01 -3.4913158e-01 -5.0000002e-04] [1 1 0 0 0 0 1 0 2 0 1 0 1 1 0 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+89 [-0.001  -0.001  -0.0035 -0.0025 -0.0015 -0.001  -0.0025 -0.0025 -0.001
+ -0.0025 -0.0025 -0.0015 -0.001  -0.0015 -0.0015 -0.0035] [4 5 0 2 2 4 3 3 5 2 3 1 4 2 2 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+90 [-2.1649998e-01 -6.9397378e-01  2.9002631e-01  5.5528951e-01
+  5.9950006e-01 -1.5000000e-03 -1.5000000e-03  2.2371054e-01
+  6.4999997e-03 -1.5000000e-03 -4.5523685e-01 -2.4302633e-01
+ -3.7765792e-01 -3.7565792e-01 -4.0218425e-01 -5.0000002e-04] [0 0 1 1 1 3 2 1 0 3 0 0 0 0 0 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+91 [-0.0015 -0.0035 -0.0025 -0.0025 -0.0015 -0.0015 -0.001  -0.0035 -0.0015
+ -0.001  -0.0035 -0.0015 -0.001  -0.003  -0.003  -0.0005] [3 0 3 2 3 2 5 0 3 5 0 0 5 6 6 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+92 [-1.5000000e-03  5.7739472e-01 -3.4913158e-01 -7.2050011e-01
+ -7.2050011e-01 -1.5000000e-03  6.4999997e-03 -2.6955262e-01
+ -1.5000000e-03 -5.0000002e-04  3.7844738e-01  5.9950006e-01
+ -2.7155262e-01  3.1213158e-01  5.9950006e-01 -5.0000002e-04] [3 1 0 0 0 3 0 0 3 1 1 1 0 1 1 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+93 [-0.001  -0.0025 -0.001  -0.001  -0.001  -0.0015 -0.0035 -0.001  -0.001
+ -0.0025 -0.0035 -0.0015 -0.0025 -0.001  -0.001  -0.0035] [4 3 4 4 4 0 1 4 5 2 0 1 2 4 5 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+94 [-5.0828946e-01 -6.9397378e-01  2.9002631e-01  5.9950006e-01
+  5.9950006e-01  3.1213158e-01 -1.5000000e-03  2.2371054e-01
+  2.2371054e-01  5.1107895e-01 -1.5000000e-03 -5.0000002e-04
+  3.7844738e-01 -3.7565792e-01 -1.5000000e-03 -2.4999999e-03] [0 0 1 1 1 1 3 1 1 1 3 4 1 0 2 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+95 [-0.001  -0.0035 -0.001  -0.001  -0.0015 -0.0015 -0.0035 -0.001  -0.001
+ -0.0035 -0.001  -0.0015 -0.001  -0.001  -0.0015 -0.0025] [4 1 5 5 3 1 1 5 4 1 4 3 5 4 1 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+96 [-0.0015     -0.0005     -0.34913158 -0.0015     -0.0015     -0.3246053
+ -0.0015     -0.0015     -0.0015     -0.0015     -0.29607895 -0.0015
+ -0.0015      0.31213158 -0.0015     -0.00049   ] [2 4 0 2 2 0 3 2 3 3 0 2 3 1 2 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+97 [-0.001  -0.001  -0.0035 -0.001  -0.0035 -0.003  -0.0035 -0.0025 -0.0025
+ -0.0025 -0.0035 -0.0015 -0.001  -0.001  -0.0015 -0.0035] [5 4 1 5 0 6 0 3 3 2 0 0 4 5 0 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+98 [-5.0000002e-04  5.7739472e-01  2.9002631e-01 -5.0000002e-04
+  6.4999997e-03 -5.0000002e-04  5.9950006e-01  6.4999997e-03
+ -4.2871055e-01 -5.6134212e-01 -1.5000000e-03  6.4999997e-03
+ -4.5523685e-01 -1.5000000e-03  4.4999998e-03 -5.0000002e-04] [1 1 1 5 0 5 1 0 0 0 2 0 0 2 0 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+99 [ 0.0375 -0.001  -0.0025 -0.001  -0.0015 -0.0035 -0.001  -0.001  -0.0015
+ -0.0025 -0.0035 -0.001  -0.0025 -0.0015 -0.001  -0.0035] [6 5 2 5 1 1 5 5 2 2 0 5 2 1 4 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+100 [-1.5000000e-03 -6.9397378e-01 -3.4913158e-01 -5.0000002e-04
+ -1.5000000e-03 -2.1649998e-01 -7.2050011e-01 -1.5000000e-03
+ -1.5000000e-03 -1.5000000e-03  2.4581580e-01 -5.0000002e-04
+ -1.5000000e-03 -2.4999999e-03 -1.5000000e-03 -5.0000002e-04] [2 0 0 1 2 0 0 3 2 2 1 1 2 0 3 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+101 [-0.0025 -0.001  -0.0035 -0.0025 -0.001  -0.0015 -0.001  -0.001  -0.001
+ -0.0025 -0.0035 -0.001  -0.0035  0.0435 -0.0015 -0.0025] [3 4 0 2 4 3 4 4 4 2 0 4 1 6 2 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+102 [ 5.9950006e-01 -4.9000001e-04  2.9002631e-01 -5.0000002e-04
+ -2.4999999e-03 -1.5000000e-03 -1.5000000e-03 -4.8176315e-01
+ -5.8786851e-01 -2.9607895e-01 -4.5523685e-01 -1.5000000e-03
+  4.4476318e-01 -1.5000000e-03  5.1107895e-01 -2.4999999e-03] [1 6 1 0 0 3 2 0 0 0 0 3 1 3 1 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+103 [-0.001  -0.001  -0.001  -0.0005 -0.0015 -0.0015 -0.0035 -0.001  -0.0015
+ -0.0025 -0.0035 -0.001  -0.001  -0.001  -0.0015 -0.0035] [5 4 4 6 2 3 0 5 1 3 1 4 5 5 1 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+104 [-7.2250009e-01  5.7740474e-01 -3.4913158e-01  4.4999998e-03
+ -5.0000002e-04  4.4476318e-01 -1.5000000e-03  4.4476318e-01
+ -5.0000002e-04  5.7739472e-01 -1.5000000e-03  1.7950000e-01
+ -5.0000002e-04 -3.7565792e-01 -4.0218425e-01 -5.0000002e-04] [0 6 0 0 1 1 3 1 5 1 2 1 4 0 0 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+105 [-0.0025 -0.0035 -0.0025 -0.003  -0.0015 -0.0015 -0.0025 -0.001  -0.001
+ -0.0035 -0.001  -0.0015 -0.0035 -0.0025  0.0415 -0.0035] [3 0 3 6 0 2 2 5 5 0 4 1 0 2 6 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+106 [ 6.4999997e-03  6.4999997e-03  2.9002631e-01 -1.5000000e-03
+ -4.9000001e-04 -5.6134212e-01 -1.5000000e-03 -1.5000000e-03
+ -5.0000002e-04 -2.1850000e-01 -5.0000002e-04 -3.2260528e-01
+ -1.5000000e-03  3.1213158e-01 -1.5000000e-03 -2.4999999e-03] [0 0 1 3 6 0 2 2 0 0 4 0 2 1 3 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+107 [-0.0025 -0.001  -0.0025 -0.003   0.0135  0.0295 -0.0035 -0.0005 -0.001
+ -0.001  -0.0035 -0.001  -0.0005 -0.0025 -0.001  -0.0105] [2 5 2 6 6 6 0 6 4 5 0 4 6 3 5 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+108 [ 5.9950006e-01 -2.4999999e-03 -3.4913158e-01 -7.2050011e-01
+ -1.2999999e-03  4.6686843e-01 -1.5000000e-03  4.4999998e-03
+ -5.0000002e-04 -5.0000002e-04 -2.1649998e-01  2.6792109e-01
+  4.4999998e-03 -3.7565792e-01  4.0055263e-01 -5.0000002e-04] [1 3 0 0 3 1 3 0 1 5 0 1 0 0 1 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+109 [-0.0005 -0.0025 -0.0025 -0.0035 -0.001  -0.001  -0.001  -0.0015 -0.0015
+ -0.0005 -0.001   0.0155 -0.0015 -0.001  -0.0035 -0.0025] [6 2 3 0 5 5 4 1 3 6 5 6 2 4 1 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+110 [-1.5000000e-03 -2.4999999e-03  2.9002631e-01 -1.5000000e-03
+  2.0161527e-01 -5.6134212e-01  5.9950006e-01 -1.5000000e-03
+ -5.0000002e-04 -1.5000000e-03 -1.5000000e-03 -5.0000002e-04
+ -1.5000000e-03  3.1213158e-01 -6.4092118e-01 -5.0000002e-04] [2 3 1 2 6 0 1 3 5 2 3 5 3 1 0 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+111 [-0.003  -0.001  -0.001  -0.003  -0.001  -0.001  -0.001  -0.001  -0.0015
+ -0.0005 -0.0035 -0.0035  0.0215 -0.001  -0.0025 -0.0105] [6 4 5 6 5 4 5 4 2 6 1 0 6 5 2 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+112 [ 6.4999997e-03 -5.0000002e-04 -3.4913158e-01  5.9950006e-01
+ -2.1649998e-01  4.6686843e-01 -7.2050011e-01 -5.6134212e-01
+  5.9950006e-01 -5.0000002e-04  5.1107895e-01 -3.4913158e-01
+ -5.3481579e-01 -3.7565792e-01  5.3318429e-01 -5.0000002e-04] [0 1 0 1 0 1 0 0 1 4 1 0 0 0 1 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+113 [-0.003  -0.001  -0.0025 -0.001  -0.0035 -0.0035 -0.0025 -0.0015  0.0195
+ -0.0035 -0.001  -0.0025 -0.0035 -0.0035 -0.001  -0.0035] [6 5 2 5 0 1 2 0 6 0 5 2 0 0 5 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+114 [-5.0000002e-04  2.0160528e-01  2.9002631e-01 -1.5000000e-03
+ -1.5000000e-03 -5.6134212e-01  5.9950006e-01  5.9950006e-01
+ -7.2050011e-01 -1.5000000e-03 -7.2050011e-01  2.9002631e-01
+ -2.4999999e-03  3.1213158e-01 -6.9397378e-01 -5.0000002e-04] [1 1 1 2 3 0 1 1 0 3 0 1 0 1 0 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+115 [-0.001  -0.001  -0.0025 -0.0035 -0.0035 -0.0035 -0.001  -0.0015 -0.001
+ -0.0025 -0.0025 -0.0035 -0.001  -0.0035 -0.0025 -0.001 ] [4 5 2 0 1 0 4 2 4 3 3 0 5 0 2 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+116 [-1.5000000e-03 -7.2050011e-01 -3.4913158e-01  6.4999997e-03
+ -1.5000000e-03 -5.0000002e-04 -7.2050011e-01 -6.4092118e-01
+  5.9950006e-01 -4.9000001e-04  5.9950006e-01 -5.0000002e-04
+ -1.5000000e-03 -5.0000002e-04  5.7739472e-01 -5.0000002e-04] [3 0 0 0 3 5 0 0 1 6 1 5 2 4 1 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+117 [-0.0025 -0.001  -0.001  -0.001  -0.0025 -0.0025 -0.0025 -0.0015 -0.001
+ -0.0035 -0.0035 -0.0035 -0.0035 -0.0035 -0.0005 -0.001 ] [3 4 5 4 3 3 3 1 5 1 0 1 0 1 6 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+118 [ 5.1107895e-01  5.7739472e-01  2.9002631e-01 -5.0000002e-04
+  3.1213158e-01  4.6686843e-01 -5.0000002e-04  5.1107895e-01
+ -7.2050011e-01  1.7951000e-01 -7.2050011e-01 -3.4913158e-01
+  5.9950006e-01 -3.7565792e-01 -1.5000000e-03 -5.0000002e-04] [1 1 1 1 1 1 5 1 0 6 0 0 1 0 2 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+119 [-0.0015 -0.001  -0.0025 -0.001  -0.0005 -0.0035 -0.0035 -0.001  -0.0035
+ -0.001  -0.0025 -0.001  -0.0005 -0.0025 -0.001  -0.001 ] [2 5 2 5 6 0 0 4 0 5 2 5 6 2 4 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+120 [-7.2050011e-01 -6.9397378e-01 -3.4913158e-01 -5.0000002e-04
+ -1.5000000e-03 -5.0000002e-04 -1.5000000e-03 -6.4092118e-01
+ -5.0000002e-04 -1.5000000e-03  5.9950006e-01  2.9002631e-01
+  4.4999998e-03 -7.2050011e-01 -2.1850000e-01 -5.0000002e-04] [0 0 0 1 2 4 2 0 0 3 1 1 0 0 0 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+121 [-0.001  -0.0025 -0.0025 -0.001  -0.001  -0.001  -0.0035 -0.0015 -0.0035
+ -0.0025 -0.0025 -0.001  -0.0015 -0.001  -0.001  -0.0025] [5 3 2 4 4 5 0 2 0 2 3 5 2 4 5 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+122 [-2.1649998e-01 -5.0000002e-04  2.9002631e-01  3.7844738e-01
+ -5.0000002e-04 -5.6134212e-01 -1.5000000e-03  5.9950006e-01
+ -5.0000002e-04 -4.9000001e-04 -7.2050011e-01 -3.4913158e-01
+ -5.3481579e-01  5.9950006e-01 -1.5000000e-03 -4.9000001e-04] [0 0 1 1 5 0 3 1 1 6 0 0 0 1 3 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+123 [-0.001  -0.001  -0.0005 -0.0015 -0.0015 -0.0025 -0.0025 -0.0015 -0.0035
+ -0.0025 -0.001  -0.001  -0.001  -0.0025 -0.001  -0.001 ] [4 4 6 2 3 3 2 0 1 3 4 4 4 3 4 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+124 [-1.5000000e-03 -1.5000000e-03 -3.4913158e-01 -4.0218425e-01
+ -1.5000000e-03  4.6686843e-01 -1.5000000e-03 -6.9397378e-01
+  5.9950006e-01 -5.0000002e-04  5.9950006e-01  2.9002631e-01
+ -5.0000002e-04 -7.2050011e-01 -6.9397378e-01 -5.0000002e-04] [3 3 0 0 2 1 2 0 1 1 1 1 1 0 0 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+125 [-0.0015 -0.0035 -0.0015 -0.0015 -0.0015 -0.0005 -0.0025 -0.0015 -0.0025
+ -0.0035 -0.001  -0.001  -0.001  -0.0025 -0.0015 -0.0025] [3 0 3 2 2 6 3 1 3 0 5 5 4 2 1 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+126 [ 5.9950006e-01  5.7739472e-01  2.9002631e-01  6.4999997e-03
+  4.4999998e-03 -1.5000000e-03 -1.5000000e-03  5.3318429e-01
+ -7.2050011e-01 -1.5000000e-03 -7.2050011e-01 -3.4913158e-01
+  5.9950006e-01  5.9950006e-01 -1.5000000e-03 -5.0000002e-04] [1 1 1 0 0 2 3 1 0 2 0 0 1 1 2 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+127 [-0.0025 -0.0025 -0.001  -0.0015 -0.0035 -0.0035 -0.0025 -0.001  -0.0025
+ -0.0025 -0.0025 -0.0035 -0.0015 -0.001  -0.001  -0.0025] [3 2 4 1 0 1 3 4 2 2 3 0 1 5 4 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+128 [-2.4502634e-01 -5.8786851e-01 -3.4913158e-01 -1.5000000e-03
+ -5.0000002e-04 -1.5000000e-03  5.9950006e-01 -5.0000002e-04
+ -5.0000002e-04 -5.0000002e-04 -1.5000000e-03  2.9002631e-01
+ -1.5000000e-03 -7.2050011e-01 -5.0000002e-04 -2.4999999e-03] [0 0 0 3 1 2 1 1 0 5 2 1 3 0 1 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+129 [-0.0025 -0.0025 -0.003   0.0735 -0.0035 -0.001  -0.0025 -0.0015 -0.0025
+ -0.0025 -0.001  -0.0005 -0.0015 -0.001  -0.0015 -0.0025] [3 2 6 6 0 4 3 3 3 3 5 6 3 4 0 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+130 [ 2.0160528e-01 -5.0000002e-04 -1.5000000e-03  3.5634211e-01
+ -1.5000000e-03  4.4999998e-03 -7.2050011e-01 -5.0000002e-04
+ -5.0000002e-04 -4.9000001e-04 -5.0000002e-04 -3.4913158e-01
+ -5.8786851e-01  5.9950006e-01  5.9950006e-01 -4.9000001e-04] [1 0 2 1 3 0 0 0 1 6 1 0 0 1 1 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+131 [-0.0015 -0.001  -0.0015 -0.0025 -0.0015 -0.0035 -0.0035 -0.0015 -0.001
+ -0.001  -0.0025 -0.0015 -0.0015 -0.0025 -0.001  -0.0035] [1 4 3 3 2 1 0 0 4 5 3 2 2 2 4 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+132 [-2.9607895e-01 -1.5000000e-03  6.4999997e-03 -4.5523685e-01
+ -5.8786851e-01  6.4999997e-03 -1.5000000e-03 -6.1439478e-01
+  5.9950006e-01 -2.4302633e-01 -1.5000000e-03  2.9002631e-01
+ -4.0218425e-01 -7.2050011e-01 -5.0000002e-04 -2.4999999e-03] [0 3 0 0 0 0 2 0 1 0 2 1 0 0 1 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+133 [-0.001  -0.0025 -0.001  -0.001  -0.0015 -0.0015 -0.001  -0.001  -0.001
+ -0.0035 -0.001  -0.001  -0.001  -0.001   0.0255 -0.0035] [4 3 4 4 1 2 4 5 5 0 5 5 5 5 6 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+134 [ 2.4581580e-01  5.5528951e-01 -1.5000000e-03  3.7844738e-01
+ -7.2050011e-01 -5.0000002e-04 -1.5000000e-03  5.1107895e-01
+ -7.2050011e-01  2.0160528e-01  5.9950006e-01 -3.4913158e-01
+ -1.5000000e-03  5.9950006e-01 -5.0000002e-04 -4.9000001e-04] [1 1 3 1 0 1 3 1 0 1 1 0 2 1 0 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+135 [ 0.0175 -0.0025 -0.0015 -0.0025 -0.001  -0.0015 -0.001  -0.0015 -0.0025
+ -0.0005 -0.0005 -0.0015 -0.001  -0.0025 -0.001  -0.001 ] [6 2 2 2 4 0 5 1 2 6 6 2 5 2 5 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+136 [-3.4913158e-01 -5.8786851e-01  5.9950006e-01 -4.5523685e-01
+  5.9950006e-01 -1.5000000e-03  5.9950006e-01 -7.2050011e-01
+ -5.0000002e-04 -2.4999999e-03 -7.2250009e-01  2.9002631e-01
+ -5.0828946e-01 -7.2050011e-01 -7.2050011e-01 -5.0000002e-04] [0 0 1 0 1 3 1 0 0 1 0 1 0 0 0 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+137 [-0.001      -0.0025      0.0355     -0.001       0.06349999 -0.001
+ -0.001      -0.001      -0.001      -0.0035     -0.001      -0.0015
+ -0.0015     -0.0025     -0.0035     -0.001     ] [5 3 6 4 6 5 5 5 4 0 4 1 0 3 0 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+138 [ 2.9002631e-01  4.8897371e-01 -7.2250009e-01  3.7844738e-01
+ -7.2050011e-01 -1.5000000e-03 -1.5000000e-03 -5.0000002e-04
+ -5.0000002e-04 -2.4302633e-01  6.4999997e-03 -3.4913158e-01
+  5.9950006e-01  5.9950006e-01  5.9950006e-01 -5.0000002e-04] [1 1 0 1 0 3 2 0 1 0 0 0 1 1 1 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+139 [-0.0005     -0.0035     -0.0025     -0.0035     -0.0025     -0.0015
+ -0.0035     -0.001      -0.0025     -0.0035      0.0315     -0.0015
+ -0.001       0.22371054 -0.0035     -0.0025    ] [6 1 3 0 2 1 0 5 3 0 6 3 4 6 0 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+140 [-3.4913158e-01 -5.8786851e-01  5.3318429e-01 -4.5523685e-01
+  5.9950006e-01 -5.6134212e-01 -5.0000002e-04 -5.0000002e-04
+  5.9950006e-01 -1.5000000e-03 -1.5000000e-03  2.9002631e-01
+ -6.4292115e-01 -7.2050011e-01 -7.2050011e-01 -5.0000002e-04] [0 0 1 0 1 0 5 1 1 3 3 1 0 0 0 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+141 [-0.0015 -0.0025 -0.0025 -0.0025 -0.001  -0.001  -0.001  -0.001  -0.001
+ -0.001  -0.0025 -0.0015 -0.0015 -0.0015 -0.001  -0.001 ] [0 3 3 2 5 4 5 5 5 4 3 2 1 0 5 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+142 [ 2.9002631e-01 -5.0000002e-04 -7.2050011e-01  3.7844738e-01
+ -7.2050011e-01 -1.5000000e-03 -5.0000002e-04  5.9950006e-01
+ -7.2050011e-01  3.3423686e-01  6.4999997e-03 -3.4913158e-01
+ -7.2050011e-01  5.9950006e-01  5.9950006e-01 -4.9000001e-04] [1 0 0 1 0 2 1 1 0 1 0 0 0 1 1 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+143 [-0.0025 -0.0035 -0.0035 -0.0035 -0.001  -0.0015 -0.0035 -0.0015 -0.001
+ -0.0015 -0.0025 -0.001  -0.0015 -0.0005 -0.001  -0.0025] [3 0 0 0 5 3 0 0 4 2 2 5 3 6 5 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+144 [-3.4913158e-01 -1.5000000e-03  5.9950006e-01 -4.5523685e-01
+  5.9950006e-01  5.9950006e-01 -5.0000002e-04 -6.1439478e-01
+ -5.0000002e-04 -4.0218425e-01 -5.0000002e-04 -5.0000002e-04
+  5.9950006e-01 -7.2050011e-01 -7.2050011e-01 -5.0000002e-04] [0 3 1 0 1 1 0 0 0 0 1 5 1 0 0 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+145 [-0.0015 -0.0025 -0.001  -0.0025 -0.0025 -0.001  -0.0025 -0.0005 -0.001
+ -0.001  -0.0035 -0.0005 -0.001  -0.0025 -0.001  -0.0005] [0 3 5 3 3 4 3 6 4 4 0 6 4 2 5 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+146 [ 2.9002631e-01  4.4476318e-01 -7.2050011e-01  3.7844738e-01
+ -7.2050011e-01 -5.0000002e-04 -1.5000000e-03  4.8897371e-01
+ -1.5000000e-03  3.3423686e-01  5.9950006e-01  2.9002631e-01
+ -5.6334209e-01  5.9950006e-01  5.9950006e-01 -2.4999999e-03] [1 1 0 1 0 1 2 1 3 1 1 1 0 1 1 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+147 [-0.0015 -0.001  -0.0025 -0.001  -0.0025 -0.001  -0.0005 -0.0005 -0.0025
+ -0.0015 -0.0025 -0.001  -0.001  -0.0025 -0.0035 -0.0015] [1 5 2 5 2 5 6 6 2 0 3 4 5 2 1 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+148 [-3.4913158e-01 -5.0000002e-04  5.9950006e-01 -4.5523685e-01
+  5.9950006e-01 -7.2050011e-01  4.4999998e-03 -6.6744745e-01
+  5.9950006e-01 -4.0218425e-01 -2.4999999e-03 -5.0000002e-04
+  4.4476318e-01 -3.2460529e-01 -7.2050011e-01 -5.0000002e-04] [0 1 1 0 1 0 0 0 1 0 0 4 1 0 0 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+149 [-0.001  -0.001  -0.0035 -0.0035 -0.0035 -0.0015 -0.0035 -0.003  -0.001
+ -0.001  -0.001  -0.0035 -0.0015 -0.0035 -0.001  -0.003 ] [4 5 0 0 1 1 0 6 5 4 5 0 2 0 5 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+150 [ 2.9002631e-01 -3.7565792e-01 -7.2050011e-01  3.7844738e-01
+ -5.0000002e-04  5.9950006e-01  6.4999997e-03  5.1107895e-01
+ -7.2250009e-01  3.3423686e-01 -1.5000000e-03 -3.4913158e-01
+ -6.9397378e-01  2.9002631e-01 -1.5000000e-03 -4.9000001e-04] [1 0 0 1 5 1 0 1 0 1 2 0 0 1 3 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+151 [-0.0025 -0.0035 -0.001  -0.0025 -0.0035 -0.0015 -0.0035 -0.0015 -0.0025
+ -0.0015 -0.001  -0.001  -0.0015 -0.0025 -0.001  -0.0015] [3 1 4 2 0 2 0 1 2 1 5 5 0 2 4 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+152 [-3.4913158e-01  3.1213158e-01  5.9950006e-01 -1.5000000e-03
+ -1.5000000e-03 -7.2050011e-01 -5.0000002e-04 -5.0000002e-04
+  6.4999997e-03 -4.0218425e-01 -5.0000002e-04  2.9002631e-01
+ -7.2050011e-01 -4.0218425e-01 -4.2871055e-01 -2.4999999e-03] [0 1 1 3 2 0 1 1 0 0 0 1 0 0 0 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+153 [-0.0025 -0.0025 -0.001  -0.001  -0.0005 -0.0015 -0.0015 -0.001  -0.0025
+ -0.001  -0.0005 -0.0105 -0.001  -0.0035 -0.001  -0.001 ] [3 3 4 5 6 1 2 4 2 4 6 6 5 1 4 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+154 [ 2.9002631e-01 -5.0000002e-04 -7.2050011e-01 -4.2871055e-01
+ -1.5000000e-03 -1.5000000e-03 -1.5000000e-03  6.4999997e-03
+  5.9950006e-01  3.3423686e-01 -2.4999999e-03 -3.4913158e-01
+  5.9950006e-01  3.3423686e-01 -1.5000000e-03 -4.9000001e-04] [1 4 0 0 2 3 3 0 1 1 3 0 1 1 2 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+155 [-0.0025 -0.0005 -0.0035 -0.001  -0.0035  0.0315 -0.0035 -0.0015 -0.001
+  0.0415 -0.001  -0.0025 -0.003  -0.001  -0.0025 -0.0015] [3 6 0 4 0 6 0 0 5 6 4 3 6 5 2 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+156 [-1.5000000e-03 -1.5000000e-03 -2.4999999e-03 -7.2050011e-01
+  4.4999998e-03  5.9950006e-01  5.9950006e-01  2.9002631e-01
+ -7.2250009e-01 -4.0218425e-01 -2.4999999e-03  2.9002631e-01
+ -5.6334209e-01 -4.2871055e-01  5.9950006e-01 -5.0000002e-04] [2 3 0 0 0 1 1 1 0 0 3 1 0 0 1 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+157 [-0.0015 -0.0015 -0.001  -0.0025 -0.001  -0.001  -0.001  -0.0015 -0.0025
+ -0.0025 -0.001  -0.0105 -0.0015 -0.0025 -0.0005 -0.001 ] [1 0 5 3 4 5 4 0 3 3 4 6 2 2 6 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+158 [ 6.4999997e-03 -5.0000002e-04  5.9950006e-01 -5.0000002e-04
+ -5.0000002e-04 -7.2050011e-01 -5.8786851e-01 -1.5000000e-03
+ -2.1649998e-01  3.3423686e-01 -5.0000002e-04 -3.4913158e-01
+  4.4476318e-01  3.5634211e-01 -1.5000000e-03 -5.0000002e-04] [0 1 1 0 1 0 0 3 0 1 1 0 1 1 2 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+159 [-0.0015 -0.0015 -0.0025 -0.0025  0.0315 -0.0025 -0.0015 -0.001  -0.001
+ -0.001  -0.0015 -0.0025 -0.0015 -0.0025 -0.0015 -0.0015] [3 1 2 3 6 2 3 4 5 5 0 2 1 3 1 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+160 [-1.5000000e-03 -1.5000000e-03 -7.2050011e-01  5.9950006e-01
+  5.9950006e-01 -1.5000000e-03 -1.5000000e-03 -4.0218425e-01
+  5.9950006e-01 -4.0218425e-01  6.4999997e-03  2.9002631e-01
+ -6.9397378e-01 -4.2871055e-01  4.4999998e-03 -5.0000002e-04] [3 3 0 1 1 2 3 0 1 0 0 1 0 0 0 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+161 [-0.0005 -0.0015 -0.0025 -0.001  -0.0025 -0.001   0.0375 -0.0015 -0.0035
+ -0.001  -0.001  -0.0105 -0.0015 -0.0035 -0.0015 -0.0015] [6 0 2 5 3 5 6 3 0 5 4 6 0 0 2 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+162 [-4.9000001e-04 -5.0000002e-04  5.9950006e-01 -7.2250009e-01
+ -7.2050011e-01  5.9950006e-01  5.7739472e-01 -1.5000000e-03
+ -7.2250009e-01  3.3423686e-01 -1.5000000e-03 -3.4913158e-01
+  5.7739472e-01  3.5634211e-01  6.4999997e-03 -5.0000002e-04] [6 1 1 0 0 1 1 2 0 1 3 0 1 1 0 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+163 [-0.001  -0.001  -0.001  -0.0035 -0.0035 -0.001  -0.0035 -0.001  -0.001
+ -0.001  -0.0025 -0.0025 -0.0015 -0.0005 -0.0015 -0.0015] [5 4 4 1 0 5 0 5 4 5 3 2 0 6 0 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+164 [ 4.2266786e-01  6.4999997e-03 -7.2050011e-01 -2.1649998e-01
+ -1.5000000e-03 -6.6744745e-01 -7.2050011e-01 -7.2050011e-01
+ -2.1649998e-01 -4.0218425e-01 -1.5000000e-03  2.9002631e-01
+ -5.0000002e-04 -4.2871055e-01 -1.5000000e-03 -2.4999999e-03] [6 0 0 0 3 0 0 0 0 0 3 1 1 0 3 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+165 [-0.0025 -0.0015 -0.0035 -0.001  -0.001  -0.001  -0.0025 -0.001  -0.0035
+ -0.0025 -0.0015 -0.0035 -0.001  -0.001  -0.001  -0.001 ] [2 2 1 4 4 4 2 4 0 3 1 0 4 5 4 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+166 [-1.5000000e-03  6.4999997e-03  5.9950006e-01  5.9950006e-01
+ -3.2460529e-01  5.3318429e-01 -1.5000000e-03 -2.1649998e-01
+  5.9950006e-01  3.3423686e-01 -7.2250009e-01 -3.4913158e-01
+ -5.0000002e-04  3.7844738e-01  3.7844738e-01 -5.0000002e-04] [2 0 1 1 0 1 2 0 1 1 0 0 0 1 1 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+167 [-0.0035 -0.0015 -0.001  -0.0035 -0.001  -0.0005 -0.001   0.0055 -0.001
+ -0.0035 -0.0015 -0.0035 -0.0015 -0.0015  0.0555 -0.0015] [1 3 4 0 5 6 4 6 4 0 0 0 3 3 6 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+168 [-1.5000000e-03 -5.0000002e-04 -7.2050011e-01 -7.2250009e-01
+ -5.0828946e-01 -6.9397378e-01  5.9950006e-01  5.9950006e-01
+ -7.2250009e-01 -4.0218425e-01 -5.0000002e-04  2.9002631e-01
+ -7.2050011e-01 -4.5523685e-01 -5.0000002e-04 -5.0000002e-04] [2 0 0 0 0 0 1 1 0 0 5 1 0 0 4 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+169 [-0.001  -0.0015 -0.0025 -0.0025 -0.0035 -0.0015 -0.001  -0.001  -0.001
+ -0.0035 -0.0025 -0.0105 -0.001  -0.001  -0.0025 -0.001 ] [4 1 3 2 0 0 5 5 4 1 3 6 4 4 3 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+170 [-5.0000002e-04  5.1107895e-01 -2.1850000e-01 -2.1649998e-01
+ -1.5000000e-03  5.7739472e-01 -5.3481579e-01 -7.2250009e-01
+ -2.1649998e-01  3.3423686e-01 -1.5000000e-03 -5.0000002e-04
+ -7.2050011e-01  3.7844738e-01 -5.8786851e-01 -5.0000002e-04] [4 1 0 0 3 1 0 0 0 1 2 1 0 1 0 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+171 [-0.0005 -0.001  -0.001  -0.001  -0.0035 -0.0015 -0.0025 -0.0025 -0.001
+ -0.001  -0.0015 -0.0035 -0.0015 -0.0015 -0.0025 -0.0015] [6 5 5 5 0 0 3 3 5 5 1 0 3 2 3 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+172 [ 6.4999997e-03 -5.0828946e-01 -1.5000000e-03  5.9950006e-01
+  5.9950006e-01 -6.6744745e-01 -5.0000002e-04 -2.1649998e-01
+  5.9950006e-01 -4.0218425e-01  5.9950006e-01 -5.0000002e-04
+  5.9950006e-01 -1.5000000e-03  4.8897371e-01 -5.0000002e-04] [0 0 2 1 1 0 4 0 1 0 1 0 1 2 1 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+173 [-0.0015 -0.001  -0.0025 -0.0025 -0.0035 -0.001  -0.0025 -0.0035 -0.0035
+ -0.0025 -0.001  -0.0105 -0.0015 -0.0015 -0.001  -0.0015] [2 5 3 2 1 4 2 1 0 3 4 6 2 2 5 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+174 [-5.0000002e-04 -5.0000002e-04  5.9950006e-01 -7.2250009e-01
+ -4.8376316e-01  5.5528951e-01 -1.5000000e-03  5.9950006e-01
+ -7.2250009e-01  3.3423686e-01 -5.0000002e-04 -1.5000000e-03
+ -5.0000002e-04  6.4999997e-03 -5.0000002e-04 -2.4999999e-03] [1 0 1 0 0 1 3 1 0 1 5 3 4 0 4 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+175 [-0.0035 -0.001  -0.0035 -0.0035 -0.0035 -0.001  -0.0025 -0.0035 -0.001
+ -0.0005 -0.0015 -0.0105 -0.0015  0.0335 -0.0025 -0.003 ] [1 4 1 0 0 5 2 1 4 6 0 6 3 6 3 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+176 [-5.0000002e-04 -5.0000002e-04 -1.5000000e-03 -1.5000000e-03
+  4.0055263e-01 -6.6744745e-01  5.3318429e-01 -7.2250009e-01
+ -1.5000000e-03 -4.0218425e-01 -7.2050011e-01 -1.5000000e-03
+ -5.3681582e-01 -1.5000000e-03 -5.0000002e-04 -2.4999999e-03] [1 0 3 2 1 0 1 0 2 0 0 2 0 3 1 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+177 [-0.0015 -0.003  -0.0035 -0.0025 -0.001  -0.0005 -0.001  -0.0025 -0.0025
+ -0.0035 -0.0025 -0.001  -0.0015 -0.0035 -0.0025 -0.0015] [1 6 0 2 5 6 5 3 2 0 3 4 2 0 2 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+178 [-5.0000002e-04 -5.0000002e-04 -7.2050011e-01 -2.4302633e-01
+ -5.8786851e-01 -1.5000000e-03 -1.5000000e-03 -2.1649998e-01
+ -5.0000002e-04  3.5634211e-01  5.9950006e-01 -3.4913158e-01
+  4.2265788e-01  1.7950000e-01 -1.5000000e-03 -4.9000001e-04] [1 4 0 0 0 3 2 0 5 1 1 0 1 1 3 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+179 [-0.0015 -0.0015 -0.0025 -0.0035 -0.0035 -0.001  -0.0005 -0.0035 -0.001
+ -0.0015 -0.001  -0.001  -0.001  -0.0025 -0.0025 -0.0015] [2 2 3 1 0 4 6 0 5 2 5 4 5 3 3 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+180 [-1.5000000e-03 -5.0000002e-04 -1.5000000e-03  5.9950006e-01
+  4.0055263e-01  5.9950006e-01  6.4999997e-03  5.9950006e-01
+  4.8897371e-01 -1.5000000e-03 -7.2050011e-01 -4.9000001e-04
+ -1.5000000e-03 -3.2260528e-01 -3.7565792e-01 -5.0000002e-04] [3 0 2 1 1 1 0 1 1 2 0 6 2 0 0 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+181 [ 0.0695 -0.0015 -0.001  -0.001  -0.0005 -0.0005 -0.0005 -0.001  -0.0035
+ -0.0015 -0.0025 -0.0035 -0.0015 -0.0035 -0.0035 -0.0015] [6 1 5 4 6 6 6 4 0 3 3 0 0 1 1 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+182 [-1.5000000e-03 -1.5000000e-03  5.9950006e-01 -4.3071055e-01
+ -5.6134212e-01 -7.2050011e-01 -1.5000000e-03 -7.2250009e-01
+ -4.0218425e-01  6.4999997e-03  5.9950006e-01  2.9003632e-01
+  6.4999997e-03  2.6792109e-01 -1.5000000e-03 -5.0000002e-04] [3 2 1 0 0 0 2 0 0 0 1 6 0 1 2 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+183 [-0.001  -0.001  -0.0035 -0.001  -0.003  -0.003  -0.001  -0.0025 -0.001
+ -0.001  -0.0015 -0.001  -0.0015 -0.001  -0.0025 -0.001 ] [5 4 0 4 6 6 5 3 5 4 1 5 1 5 2 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+184 [-5.0000002e-04 -1.5000000e-03 -7.2050011e-01 -1.5000000e-03
+  5.9950006e-01 -5.0000002e-04 -5.0000002e-04 -2.1649998e-01
+ -1.5000000e-03  6.4999997e-03 -4.3071055e-01 -6.9397378e-01
+ -1.5000000e-03 -3.2260528e-01  3.1213158e-01 -5.0000002e-04] [4 2 0 3 1 5 1 0 3 0 0 0 3 0 1 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+185 [-0.001  -0.001  -0.0025 -0.0025 -0.001  -0.001  -0.0025 -0.001  -0.0025
+ -0.0035 -0.001  -0.001  -0.0015 -0.001  -0.001  -0.0015] [5 4 3 2 4 4 3 5 3 1 5 5 1 4 5 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+186 [ 1.7950000e-01 -5.0000002e-04  5.9950006e-01  3.1213158e-01
+ -1.5000000e-03  5.9950006e-01 -5.0000002e-04  5.9950006e-01
+ -2.4302633e-01 -1.5000000e-03 -1.5000000e-03 -5.0000002e-04
+  2.0160528e-01  2.6792109e-01 -1.5000000e-03 -5.0000002e-04] [1 0 1 1 3 1 1 1 0 3 3 4 1 1 2 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+187 [-0.001  -0.0015 -0.001  -0.0025 -0.001  -0.001  -0.001  -0.0105 -0.0035
+ -0.0035  0.0195 -0.0035 -0.001  -0.0025 -0.0005 -0.001 ] [5 3 5 2 4 4 4 6 0 1 6 1 5 3 6 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+188 [-4.9000001e-04 -1.5000000e-03 -7.2050011e-01 -1.5000000e-03
+ -1.5000000e-03 -7.2050011e-01  3.5634211e-01 -5.0000002e-04
+  5.5528951e-01 -5.0000002e-04  3.5634211e-01  5.9950006e-01
+ -4.8176315e-01 -3.2260528e-01  6.4999997e-03 -5.0000002e-04] [6 2 0 2 3 0 1 4 1 4 1 1 0 0 0 5] [False False False False False False False False False False False False
+ False False False False]
+==========
+189 [-0.001  -0.0015 -0.0025 -0.001  -0.0015 -0.0015 -0.001  -0.0035 -0.0025
+ -0.0015 -0.001  -0.0105 -0.0015 -0.0035 -0.001  -0.0015] [4 2 2 5 2 3 5 1 3 2 5 6 2 1 4 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+190 [-4.9000001e-04 -1.5000000e-03  5.9950006e-01 -2.9607895e-01
+ -5.0000002e-04  5.9950006e-01 -2.9607895e-01 -7.2250009e-01
+ -7.2250009e-01 -4.9000001e-04 -5.8786851e-01 -3.7765792e-01
+  4.0055263e-01  2.6792109e-01 -1.5000000e-03 -5.0000002e-04] [6 2 1 0 0 1 0 0 0 6 0 0 1 1 3 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+191 [-0.001  -0.0015 -0.0035 -0.001  -0.001  -0.001  -0.0025 -0.0035 -0.0035
+ -0.001  -0.0025 -0.0105 -0.0015 -0.001  -0.001  -0.0015] [5 0 0 4 5 4 2 0 0 4 2 6 2 4 5 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+192 [-5.0000002e-04  3.5634211e-01 -7.2050011e-01 -1.5000000e-03
+ -1.5000000e-03 -1.5000000e-03 -1.5000000e-03  5.9950006e-01
+ -2.1649998e-01 -3.0000001e-04 -7.2050011e-01  3.1213158e-01
+ -4.8176315e-01 -3.2260528e-01 -5.0000002e-04 -5.0000002e-04] [5 1 0 3 2 3 3 1 0 0 0 1 0 0 1 4] [False False False False False False False False False False False False
+ False False False False]
+==========
+193 [ 0.22371054 -0.0015     -0.0025     -0.0035     -0.0015     -0.0015
+ -0.0025     -0.0025     -0.0025     -0.0015     -0.0025     -0.0025
+ -0.001      -0.001      -0.0015     -0.0035    ] [6 2 2 0 1 0 3 2 3 0 3 2 4 5 1 1] [False False False False False False False False False False False False
+ False False False False]
+==========
+194 [-2.1649998e-01 -4.0218425e-01 -1.5000000e-03  2.4581580e-01
+ -1.5000000e-03 -5.0000002e-04  2.9002631e-01 -5.0000002e-04
+  5.9950006e-01 -1.2999999e-03 -3.7565792e-01 -4.5523685e-01
+  4.0055263e-01 -7.2050011e-01 -1.5000000e-03 -2.4999999e-03] [0 0 3 1 2 1 1 1 1 3 0 0 1 0 3 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+195 [-0.0015 -0.0015 -0.0035 -0.001  -0.001  -0.001  -0.0025 -0.001  -0.0035
+ -0.0015 -0.0035 -0.001  -0.0015 -0.001  -0.0015 -0.0015] [2 2 0 5 4 5 3 4 1 1 0 4 3 4 2 3] [False False False False False False False False False False False False
+ False False False False]
+==========
+196 [-5.0000002e-04 -5.0000002e-04  5.9950006e-01 -1.5000000e-03
+ -2.4502634e-01 -5.0000002e-04 -3.7565792e-01 -2.1649998e-01
+ -7.2250009e-01  5.9951001e-01  5.9950006e-01  3.7844738e-01
+ -4.8176315e-01  5.9950006e-01 -2.6955262e-01 -4.9000001e-04] [4 0 1 2 0 0 0 0 0 6 1 1 0 1 0 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+197 [-0.0015 -0.001  -0.001  -0.001   0.0875 -0.0015 -0.0025 -0.0025 -0.0035
+ -0.001  -0.0005 -0.0105 -0.001  -0.001  -0.0015 -0.0015] [0 5 4 5 6 1 3 2 0 4 6 6 5 5 2 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+198 [ 1.7950000e-01 -1.5000000e-03 -7.2050011e-01 -5.0000002e-04
+ -5.0000002e-04 -1.5000000e-03 -7.2050011e-01  1.7950000e-01
+ -2.1649998e-01 -7.2050011e-01 -5.0000002e-04 -4.8176315e-01
+  4.0055263e-01 -7.2050011e-01 -1.5000000e-03 -4.9000001e-04] [1 2 0 0 4 2 0 1 0 0 1 0 1 0 2 6] [False False False False False False False False False False False False
+ False False False False]
+==========
+199 [-0.0015 -0.001  -0.001  -0.0035 -0.0025 -0.0015 -0.001  -0.0035 -0.001
+ -0.001  -0.0015 -0.001  -0.0015 -0.001  -0.001  -0.0015] [3 5 4 0 3 3 5 1 4 5 2 4 0 4 4 2] [False False False False False False False False False False False False
+ False False False False]
+==========
+200 [-2.1649998e-01  4.2265788e-01 -1.5000000e-03 -5.0000002e-04
+ -1.5000000e-03 -1.5000000e-03 -1.5000000e-03 -2.4302633e-01
+  5.9950006e-01 -5.0000002e-04 -1.5000000e-03  4.0055263e-01
+ -4.8176315e-01  5.9950006e-01  5.9950006e-01 -5.0000002e-04] [0 1 2 1 2 2 2 0 1 0 2 1 0 1 1 0] [False False False False False False False False False False False False
+ False False False False]
+==========
+Terra - Steps: 200, Return: -22.501976013183594
+Rendering:   0%|          | 0/201 [00:00<?, ?it/s]Rendering:   0%|          | 1/201 [00:01<05:16,  1.58s/it]Rendering:   1%|          | 2/201 [00:02<04:12,  1.27s/it]Rendering:   1%|▏         | 3/201 [00:03<03:53,  1.18s/it]Rendering:   2%|▏         | 4/201 [00:04<03:46,  1.15s/it]Rendering:   2%|▏         | 5/201 [00:05<03:41,  1.13s/it]Rendering:   3%|▎         | 6/201 [00:07<03:40,  1.13s/it]Rendering:   3%|▎         | 7/201 [00:10<05:35,  1.73s/it]Rendering:   4%|▍         | 8/201 [00:11<04:51,  1.51s/it]Rendering:   4%|▍         | 9/201 [00:12<04:22,  1.37s/it]Rendering:   5%|▍         | 10/201 [00:13<04:04,  1.28s/it]Rendering:   5%|▌         | 11/201 [00:14<03:54,  1.23s/it]Rendering:   6%|▌         | 12/201 [00:15<03:46,  1.20s/it]Rendering:   6%|▋         | 13/201 [00:16<03:39,  1.17s/it]Rendering:   7%|▋         | 14/201 [00:17<03:35,  1.15s/it]Rendering:   7%|▋         | 15/201 [00:20<05:16,  1.70s/it]Rendering:   8%|▊         | 16/201 [00:21<04:38,  1.50s/it]Rendering:   8%|▊         | 17/201 [00:22<04:12,  1.37s/it]Rendering:   9%|▉         | 18/201 [00:23<03:53,  1.28s/it]Rendering:   9%|▉         | 19/201 [00:24<03:40,  1.21s/it]Rendering:  10%|▉         | 20/201 [00:25<03:28,  1.15s/it]Rendering:  10%|█         | 21/201 [00:26<03:22,  1.12s/it]Rendering:  11%|█         | 22/201 [00:27<03:18,  1.11s/it]Rendering:  11%|█▏        | 23/201 [00:30<04:58,  1.68s/it]Rendering:  12%|█▏        | 24/201 [00:32<04:22,  1.48s/it]Rendering:  12%|█▏        | 25/201 [00:33<03:59,  1.36s/it]Rendering:  13%|█▎        | 26/201 [00:34<03:43,  1.28s/it]Rendering:  13%|█▎        | 27/201 [00:35<03:32,  1.22s/it]Rendering:  14%|█▍        | 28/201 [00:36<03:21,  1.17s/it]Rendering:  14%|█▍        | 29/201 [00:37<03:14,  1.13s/it]Rendering:  15%|█▍        | 30/201 [00:38<03:12,  1.12s/it]Rendering:  15%|█▌        | 31/201 [00:41<04:43,  1.67s/it]Rendering:  16%|█▌        | 32/201 [00:42<04:08,  1.47s/it]Rendering:  16%|█▋        | 33/201 [00:43<03:46,  1.35s/it]Rendering:  17%|█▋        | 34/201 [00:44<03:29,  1.25s/it]Rendering:  17%|█▋        | 35/201 [00:45<03:17,  1.19s/it]Rendering:  18%|█▊        | 36/201 [00:46<03:10,  1.15s/it]Rendering:  18%|█▊        | 37/201 [00:47<03:07,  1.14s/it]Rendering:  19%|█▉        | 38/201 [00:50<04:35,  1.69s/it]Rendering:  19%|█▉        | 39/201 [00:51<04:05,  1.51s/it]Rendering:  20%|█▉        | 40/201 [00:52<03:43,  1.39s/it]Rendering:  20%|██        | 41/201 [00:53<03:27,  1.29s/it]Rendering:  21%|██        | 42/201 [00:55<03:16,  1.24s/it]Rendering:  21%|██▏       | 43/201 [00:56<03:09,  1.20s/it]Rendering:  22%|██▏       | 44/201 [00:57<03:02,  1.16s/it]Rendering:  22%|██▏       | 45/201 [00:58<02:55,  1.13s/it]Rendering:  23%|██▎       | 46/201 [01:01<04:19,  1.68s/it]Rendering:  23%|██▎       | 47/201 [01:02<03:53,  1.52s/it]Rendering:  24%|██▍       | 48/201 [01:03<03:33,  1.40s/it]Rendering:  24%|██▍       | 49/201 [01:04<03:20,  1.32s/it]Rendering:  25%|██▍       | 50/201 [01:05<03:08,  1.25s/it]Rendering:  25%|██▌       | 51/201 [01:06<02:59,  1.19s/it]Rendering:  26%|██▌       | 52/201 [01:07<02:55,  1.18s/it]Rendering:  26%|██▋       | 53/201 [01:09<02:49,  1.14s/it]Rendering:  27%|██▋       | 54/201 [01:11<04:08,  1.69s/it]Rendering:  27%|██▋       | 55/201 [01:13<03:40,  1.51s/it]Rendering:  28%|██▊       | 56/201 [01:14<03:20,  1.38s/it]Rendering:  28%|██▊       | 57/201 [01:15<03:05,  1.29s/it]Rendering:  29%|██▉       | 58/201 [01:16<02:52,  1.21s/it]Rendering:  29%|██▉       | 59/201 [01:17<02:48,  1.18s/it]Rendering:  30%|██▉       | 60/201 [01:18<02:41,  1.14s/it]Rendering:  30%|███       | 61/201 [01:19<02:37,  1.13s/it]Rendering:  31%|███       | 62/201 [01:22<03:51,  1.67s/it]Rendering:  31%|███▏      | 63/201 [01:23<03:23,  1.47s/it]Rendering:  32%|███▏      | 64/201 [01:24<03:03,  1.34s/it]Rendering:  32%|███▏      | 65/201 [01:25<02:51,  1.26s/it]Rendering:  33%|███▎      | 66/201 [01:26<02:43,  1.21s/it]Rendering:  33%|███▎      | 67/201 [01:27<02:36,  1.17s/it]Rendering:  34%|███▍      | 68/201 [01:28<02:31,  1.14s/it]Rendering:  34%|███▍      | 69/201 [01:31<03:40,  1.67s/it]Rendering:  35%|███▍      | 70/201 [01:32<03:17,  1.50s/it]Rendering:  35%|███▌      | 71/201 [01:33<03:00,  1.39s/it]Rendering:  36%|███▌      | 72/201 [01:35<02:46,  1.29s/it]Rendering:  36%|███▋      | 73/201 [01:36<02:36,  1.22s/it]Rendering:  37%|███▋      | 74/201 [01:37<02:29,  1.18s/it]Rendering:  37%|███▋      | 75/201 [01:38<02:25,  1.15s/it]Rendering:  38%|███▊      | 76/201 [01:39<02:22,  1.14s/it]Rendering:  38%|███▊      | 77/201 [01:42<03:29,  1.69s/it]Rendering:  39%|███▉      | 78/201 [01:43<03:03,  1.49s/it]Rendering:  39%|███▉      | 79/201 [01:44<02:46,  1.37s/it]Rendering:  40%|███▉      | 80/201 [01:45<02:37,  1.30s/it]Rendering:  40%|████      | 81/201 [01:46<02:28,  1.24s/it]Rendering:  41%|████      | 82/201 [01:47<02:23,  1.21s/it]Rendering:  41%|████▏     | 83/201 [01:48<02:17,  1.16s/it]Rendering:  42%|████▏     | 84/201 [01:49<02:14,  1.15s/it]Rendering:  42%|████▏     | 85/201 [01:52<03:14,  1.68s/it]Rendering:  43%|████▎     | 86/201 [01:53<02:52,  1.50s/it]Rendering:  43%|████▎     | 87/201 [01:55<02:36,  1.37s/it]Rendering:  44%|████▍     | 88/201 [01:56<02:25,  1.29s/it]Rendering:  44%|████▍     | 89/201 [01:57<02:19,  1.25s/it]Rendering:  45%|████▍     | 90/201 [01:58<02:12,  1.19s/it]Rendering:  45%|████▌     | 91/201 [01:59<02:09,  1.18s/it]Rendering:  46%|████▌     | 92/201 [02:00<02:05,  1.15s/it]Rendering:  46%|████▋     | 93/201 [02:03<03:04,  1.71s/it]Rendering:  47%|████▋     | 94/201 [02:04<02:41,  1.51s/it]Rendering:  47%|████▋     | 95/201 [02:05<02:27,  1.39s/it]Rendering:  48%|████▊     | 96/201 [02:06<02:16,  1.30s/it]Rendering:  48%|████▊     | 97/201 [02:07<02:08,  1.23s/it]Rendering:  49%|████▉     | 98/201 [02:09<02:03,  1.20s/it]Rendering:  49%|████▉     | 99/201 [02:10<01:59,  1.17s/it]Rendering:  50%|████▉     | 100/201 [02:13<02:52,  1.70s/it]Rendering:  50%|█████     | 101/201 [02:14<02:33,  1.53s/it]Rendering:  51%|█████     | 102/201 [02:15<02:19,  1.41s/it]Rendering:  51%|█████     | 103/201 [02:16<02:08,  1.31s/it]Rendering:  52%|█████▏    | 104/201 [02:17<02:01,  1.25s/it]Rendering:  52%|█████▏    | 105/201 [02:18<01:54,  1.20s/it]Rendering:  53%|█████▎    | 106/201 [02:19<01:51,  1.17s/it]Rendering:  53%|█████▎    | 107/201 [02:20<01:49,  1.17s/it]Rendering:  54%|█████▎    | 108/201 [02:23<02:39,  1.71s/it]Rendering:  54%|█████▍    | 109/201 [02:24<02:19,  1.51s/it]Rendering:  55%|█████▍    | 110/201 [02:26<02:07,  1.40s/it]Rendering:  55%|█████▌    | 111/201 [02:27<01:56,  1.30s/it]Rendering:  56%|█████▌    | 112/201 [02:28<01:49,  1.23s/it]Rendering:  56%|█████▌    | 113/201 [02:29<01:44,  1.19s/it]Rendering:  57%|█████▋    | 114/201 [02:30<01:39,  1.15s/it]Rendering:  57%|█████▋    | 115/201 [02:31<01:38,  1.14s/it]Rendering:  58%|█████▊    | 116/201 [02:34<02:25,  1.71s/it]Rendering:  58%|█████▊    | 117/201 [02:35<02:07,  1.52s/it]Rendering:  59%|█████▊    | 118/201 [02:36<01:55,  1.39s/it]Rendering:  59%|█████▉    | 119/201 [02:37<01:46,  1.30s/it]Rendering:  60%|█████▉    | 120/201 [02:38<01:40,  1.24s/it]Rendering:  60%|██████    | 121/201 [02:39<01:36,  1.20s/it]Rendering:  61%|██████    | 122/201 [02:41<01:33,  1.19s/it]Rendering:  61%|██████    | 123/201 [02:42<01:31,  1.17s/it]Rendering:  62%|██████▏   | 124/201 [02:45<02:10,  1.69s/it]Rendering:  62%|██████▏   | 125/201 [02:46<01:55,  1.52s/it]Rendering:  63%|██████▎   | 126/201 [02:47<01:45,  1.40s/it]Rendering:  63%|██████▎   | 127/201 [02:48<01:37,  1.31s/it]Rendering:  64%|██████▎   | 128/201 [02:49<01:30,  1.24s/it]Rendering:  64%|██████▍   | 129/201 [02:50<01:25,  1.19s/it]Rendering:  65%|██████▍   | 130/201 [02:51<01:22,  1.17s/it]Rendering:  65%|██████▌   | 131/201 [02:54<02:01,  1.73s/it]Rendering:  66%|██████▌   | 132/201 [02:55<01:46,  1.54s/it]Rendering:  66%|██████▌   | 133/201 [02:56<01:35,  1.41s/it]Rendering:  67%|██████▋   | 134/201 [02:58<01:28,  1.31s/it]Rendering:  67%|██████▋   | 135/201 [02:59<01:24,  1.27s/it]Rendering:  68%|██████▊   | 136/201 [03:00<01:19,  1.22s/it]Rendering:  68%|██████▊   | 137/201 [03:01<01:15,  1.18s/it]Rendering:  69%|██████▊   | 138/201 [03:02<01:13,  1.16s/it]Rendering:  69%|██████▉   | 139/201 [03:05<01:45,  1.69s/it]Rendering:  70%|██████▉   | 140/201 [03:06<01:32,  1.51s/it]Rendering:  70%|███████   | 141/201 [03:07<01:23,  1.39s/it]Rendering:  71%|███████   | 142/201 [03:08<01:17,  1.31s/it]Rendering:  71%|███████   | 143/201 [03:09<01:12,  1.25s/it]Rendering:  72%|███████▏  | 144/201 [03:11<01:09,  1.21s/it]Rendering:  72%|███████▏  | 145/201 [03:12<01:06,  1.18s/it]Rendering:  73%|███████▎  | 146/201 [03:13<01:03,  1.15s/it]Rendering:  73%|███████▎  | 147/201 [03:16<01:32,  1.71s/it]Rendering:  74%|███████▎  | 148/201 [03:17<01:21,  1.53s/it]Rendering:  74%|███████▍  | 149/201 [03:18<01:12,  1.39s/it]Rendering:  75%|███████▍  | 150/201 [03:19<01:06,  1.30s/it]Rendering:  75%|███████▌  | 151/201 [03:20<01:01,  1.23s/it]Rendering:  76%|███████▌  | 152/201 [03:21<00:57,  1.18s/it]Rendering:  76%|███████▌  | 153/201 [03:22<00:56,  1.17s/it]Rendering:  77%|███████▋  | 154/201 [03:23<00:54,  1.15s/it]Rendering:  77%|███████▋  | 155/201 [03:26<01:18,  1.70s/it]Rendering:  78%|███████▊  | 156/201 [03:28<01:08,  1.53s/it]Rendering:  78%|███████▊  | 157/201 [03:29<01:01,  1.41s/it]Rendering:  79%|███████▊  | 158/201 [03:30<00:56,  1.31s/it]Rendering:  79%|███████▉  | 159/201 [03:31<00:53,  1.27s/it]Rendering:  80%|███████▉  | 160/201 [03:32<00:50,  1.22s/it]Rendering:  80%|████████  | 161/201 [03:33<00:47,  1.19s/it]Rendering:  81%|████████  | 162/201 [03:36<01:07,  1.73s/it]Rendering:  81%|████████  | 163/201 [03:37<00:58,  1.53s/it]Rendering:  82%|████████▏ | 164/201 [03:38<00:52,  1.42s/it]Rendering:  82%|████████▏ | 165/201 [03:40<00:48,  1.34s/it]Rendering:  83%|████████▎ | 166/201 [03:41<00:44,  1.27s/it]Rendering:  83%|████████▎ | 167/201 [03:42<00:41,  1.21s/it]Rendering:  84%|████████▎ | 168/201 [03:43<00:39,  1.19s/it]Rendering:  84%|████████▍ | 169/201 [03:44<00:37,  1.17s/it]Rendering:  85%|████████▍ | 170/201 [03:47<00:53,  1.72s/it]Rendering:  85%|████████▌ | 171/201 [03:48<00:46,  1.55s/it]Rendering:  86%|████████▌ | 172/201 [03:49<00:41,  1.42s/it]Rendering:  86%|████████▌ | 173/201 [03:50<00:37,  1.33s/it]Rendering:  87%|████████▋ | 174/201 [03:51<00:34,  1.27s/it]Rendering:  87%|████████▋ | 175/201 [03:53<00:31,  1.22s/it]Rendering:  88%|████████▊ | 176/201 [03:54<00:29,  1.18s/it]Rendering:  88%|████████▊ | 177/201 [03:55<00:28,  1.17s/it]Rendering:  89%|████████▊ | 178/201 [03:58<00:39,  1.71s/it]Rendering:  89%|████████▉ | 179/201 [03:59<00:33,  1.53s/it]Rendering:  90%|████████▉ | 180/201 [04:00<00:29,  1.40s/it]Rendering:  90%|█████████ | 181/201 [04:01<00:26,  1.32s/it]Rendering:  91%|█████████ | 182/201 [04:02<00:23,  1.26s/it]Rendering:  91%|█████████ | 183/201 [04:03<00:22,  1.22s/it]Rendering:  92%|█████████▏| 184/201 [04:05<00:20,  1.22s/it]Rendering:  92%|█████████▏| 185/201 [04:06<00:18,  1.18s/it]Rendering:  93%|█████████▎| 186/201 [04:09<00:25,  1.73s/it]Rendering:  93%|█████████▎| 187/201 [04:10<00:21,  1.54s/it]Rendering:  94%|█████████▎| 188/201 [04:11<00:18,  1.43s/it]Rendering:  94%|█████████▍| 189/201 [04:12<00:15,  1.32s/it]Rendering:  95%|█████████▍| 190/201 [04:13<00:13,  1.25s/it]Rendering:  95%|█████████▌| 191/201 [04:14<00:12,  1.21s/it]Rendering:  96%|█████████▌| 192/201 [04:15<00:10,  1.15s/it]Rendering:  96%|█████████▌| 193/201 [04:18<00:13,  1.70s/it]Rendering:  97%|█████████▋| 194/201 [04:19<00:10,  1.51s/it]Rendering:  97%|█████████▋| 195/201 [04:20<00:08,  1.38s/it]Rendering:  98%|█████████▊| 196/201 [04:22<00:06,  1.31s/it]Rendering:  98%|█████████▊| 197/201 [04:23<00:05,  1.26s/it]Rendering:  99%|█████████▊| 198/201 [04:24<00:03,  1.23s/it]Rendering:  99%|█████████▉| 199/201 [04:25<00:02,  1.19s/it]Rendering: 100%|█████████▉| 200/201 [04:26<00:01,  1.18s/it]Rendering: 100%|██████████| 201/201 [04:29<00:00,  1.72s/it]Rendering: 100%|██████████| 201/201 [04:29<00:00,  1.34s/it]
+GIF generated at ./visualize_mixed_skid_skid.gif
+GIF saved to ./visualize_mixed_skid_skid.gif

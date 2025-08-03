@@ -1,0 +1,53 @@
+Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
+/cluster/home/alesweber/TerraProject/terra-baselines/visualize_mixed.py:159: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
+  env_cfgs = jax.tree_map(replicate_field, env_cfgs)
+pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+Loaded data from /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-07-29-20-40-35.pkl.
+Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones'].
+Data Loader:   0%|          | 0/20 [00:00<?, ?it/s]Data Loader:  10%|█         | 2/20 [00:00<00:01, 17.22it/s]Data Loader:  25%|██▌       | 5/20 [00:00<00:00, 21.31it/s]Data Loader:  40%|████      | 8/20 [00:00<00:00, 22.05it/s]Data Loader:  55%|█████▌    | 11/20 [00:00<00:00, 22.77it/s]Data Loader:  70%|███████   | 14/20 [00:00<00:00, 23.11it/s]Data Loader:  85%|████████▌ | 17/20 [00:00<00:00, 23.37it/s]Data Loader: 100%|██████████| 20/20 [00:00<00:00, 23.01it/s]Data Loader: 100%|██████████| 20/20 [00:00<00:00, 22.60it/s]
+Loaded 20 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
+Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
+Maps width: 64
+Maps height: 64
+Unique shapes of trench_axes_list: {(20, 3, 3)}
+Maps shape: (1, 20, 64, 64).
+Padding mask shape: (1, 20, 64, 64).
+Dumpability mask shape: (1, 20, 64, 64).
+Trench axes shape: (1, 20, 3, 3).
+Trench types shape: (1,).
+Actions shape: (1, 20, 64, 64).
+Shuffling maps between curriculum levels...
+Maps shuffled.
+TerraEnv: disabling display...
+Agent size (in rendering): 9x5
+Tile size (in rendering): 0.6875
+Rendering tile size: 3
+Number of possible base rotations: 12
+Number of possible cabin rotations: 12
+num_embeddings_agent = 64
+map normalization min max = (-1, 1)
+Model: 419,680 parameters
+Using seed=0
+tile_size: 0.6875
+agent_width: 5, agent_height: 9
+[TerraEnv.reset] action_map shape: (64, 64), type: <class 'jax._src.interpreters.partial_eval.DynamicJaxprTracer'>
+Traceback (most recent call last):
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/visualize_mixed.py", line 172, in <module>
+    obs_seq, cum_rewards, state_seq = rollout_episode(
+                                      ^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/visualize_mixed.py", line 49, in rollout_episode
+    v, logits_pi = model.apply(model_params, obs)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/utils/models.py", line 451, in __call__
+    x_agent_states_batch = self.agent_state_net(agent_states_batch)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/TerraProject/terra-baselines/utils/models.py", line 193, in __call__
+    x_one_hot = self.embedding_1(x_one_hot)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/cluster/home/alesweber/miniconda3/envs/terra/lib/python3.12/site-packages/flax/linen/linear.py", line 1111, in setup
+    self.embedding = self.param(
+                     ^^^^^^^^^^^
+flax.errors.ScopeParamShapeError: Initializer expected to generate shape (50, 8) but got shape (64, 8) instead for parameter "embedding" in "/agent_state_net/embedding_1". (https://flax.readthedocs.io/en/latest/api_reference/flax.errors.html#flax.errors.ScopeParamShapeError)
+--------------------
+For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.

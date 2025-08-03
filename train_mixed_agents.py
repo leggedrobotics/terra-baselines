@@ -8,34 +8,34 @@ TRAINING MODES:
 ===============
 
 1. EXCAVATORS ONLY (--agent_config excavators):
-   - Both agents are tracked excavators (0, 0)
+   - Both agents use the same type (final_agent1_type = final_agent2_type)
    - Good for initial learning of basic skills
    - Sufficient agent density for alternating training
 
 2. MIXED AGENTS (--agent_config mixed):  
-   - Agent 1: Tracked excavator (0)
-   - Agent 2: Skid steer (2)
-   - Full heterogeneous multi-agent training
+   - Agent 1: final_agent1_type (e.g., tracked excavator = 0)
+   - Agent 2: final_agent2_type (e.g., skid steer = 2)
+   - Full heterogeneous multi-agent training from start
 
 3. CURRICULUM (--agent_config curriculum):
-   - Start: Both excavators (0, 0) 
-   - Switch: Mixed agents (0, 2) at specified timestep
+   - Start: initial_agent1_type + initial_agent2_type (e.g., both skidsteers = 2,2)
+   - Switch: final_agent1_type + final_agent2_type (e.g., excavator+skidsteer = 0,2) at specified curriculum level
    - Gradual introduction of complexity
 
 USAGE EXAMPLES:
 ===============
 
-# Train with both excavators initially
-python train_mixed_agents.py --agent_config excavators --name "excavators-only"
+# Train with both skidsteers initially (no curriculum)
+python train_mixed_agents.py --agent_config excavators --final_agent1_type 2 --final_agent2_type 2 --name "skidsteers-only"
 
-# Train with mixed agents from start  
-python train_mixed_agents.py --agent_config mixed --name "full-mixed"
+# Train with mixed agents from start (excavator + skidsteer)
+python train_mixed_agents.py --agent_config mixed --final_agent1_type 0 --final_agent2_type 2 --name "full-mixed"
 
-# Curriculum: excavators → mixed at 10B timesteps
-python train_mixed_agents.py --agent_config curriculum --curriculum_switch 10000000000 --name "curriculum"
+# Curriculum: skidsteers → mixed at level 1
+python train_mixed_agents.py --agent_config curriculum --initial_agent1_type 2 --initial_agent2_type 2 --final_agent1_type 0 --final_agent2_type 2 --curriculum_switch 1 --name "curriculum"
 
-# Curriculum: excavators → mixed at 5B timesteps (earlier switch)
-python train_mixed_agents.py --agent_config curriculum --curriculum_switch 5000000000 --name "early-switch"
+# Curriculum: skidsteers → mixed at level 2 (later switch)
+python train_mixed_agents.py --agent_config curriculum --initial_agent1_type 2 --initial_agent2_type 2 --final_agent1_type 0 --final_agent2_type 2 --curriculum_switch 2 --name "late-switch"
 
 SHARED NETWORK BENEFITS:
 ========================
@@ -70,9 +70,28 @@ from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, 
 import os
 
 # Import the base training infrastructure
-from train import make_train, get_curriculum_levels, calculate_gae, ppo_update_networks, Transition
+from train import get_curriculum_levels, calculate_gae, ppo_update_networks, Transition
 
 jax.config.update("jax_threefry_partitionable", True)
+
+def safe_jax_to_python(value):
+    """Safely convert JAX arrays to Python scalars"""
+    if hasattr(value, 'item'):
+        try:
+            return value.item()
+        except (ValueError, TypeError):
+            # If it's an array with multiple elements, take the first one
+            if hasattr(value, 'shape') and value.shape:
+                return value.ravel()[0].item()
+            else:
+                return float(value)
+    elif hasattr(value, '__array__'):
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return str(value)
+    else:
+        return value
 
 '''
 For 8 devices: 
@@ -101,18 +120,18 @@ class MixedAgentTrainConfig:
     num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
     update_epochs: int = 3  # Reduced from 4 to 2 for faster training
     num_minibatches: int = 8  # Reduced from 16 to 8 for faster training
-    total_timesteps: int = 5_000_000_000  # Increased from 1B to 5B for sufficient training
+    total_timesteps: int = 10_000_000_000  # Increased from 1B to 5B for sufficient training
     lr: float = 3e-4  
     clip_eps: float = 0.2  # Less conservative clipping for escaping local optima
     gamma: float = 0.995
     gae_lambda: float = 0.95
-    ent_coef: float = 0.06  # 0.1 Higher entropy to escape "do nothing" optima and encourage exploration
+    ent_coef: float = 0.1  # 0.1 Higher entropy to escape "do nothing" optima and encourage exploration
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 3  # Number of updates between logging train stats
-    log_eval_interval: int = 100  # Less frequent evaluation for speed
+    log_eval_interval: int = 80  # Less frequent evaluation for speed
     checkpoint_interval: int = 400  # Less frequent checkpoints for speed
     
     # Model settings optimized for mixed agents
@@ -125,16 +144,20 @@ class MixedAgentTrainConfig:
     cache_clear_interval = 1000  # Less frequent cache clearing for speed
     
     # Agent type configuration - NEW!
-    agent1_type: int = 0  # 0=tracked, 1=wheeled, 2=skidsteer
-    agent2_type: int = 2  # 0=tracked, 1=wheeled, 2=skidsteer
+    first_agent1_type: int = 0  # 0=tracked, 1=wheeled, 2=skidsteer (used when no curriculum)
+    first_agent2_type: int = 0  # 0=tracked, 1=wheeled, 2=skidsteer (used when no curriculum)
+    second_agent1_type: int = 2  # 0=tracked, 1=wheeled, 2=skidsteer (used after first curriculum switch)
+    second_agent2_type: int = 2  # 0=tracked, 1=wheeled, 2=skidsteer (used after first curriculum switch)
     
     # Training curriculum for agent types - NEW!
     use_agent_type_curriculum: bool = False  # Enable gradual introduction of agent types
     curriculum_switch_level: int = 1  # Switch agent types when advancing to this curriculum level (default: level 1)
     
-    # NEW: Initial agent types for curriculum (before switch)
-    initial_agent1_type: int = 2  # Initial agent 1 type (default: tracked)
-    initial_agent2_type: int = 2  # Initial agent 2 type (default: tracked)
+    # Second curriculum switch (optional) - NEW!
+    use_second_curriculum_switch: bool = False  # Enable second curriculum switch
+    second_curriculum_switch_level: int = 2  # Switch to third agent types at this level
+    third_agent1_type: int = 0  # Third agent 1 type (after second switch)
+    third_agent2_type: int = 2  # Third agent 2 type (after second switch)
 
     def __post_init__(self):
         self.num_devices = (
@@ -155,9 +178,18 @@ class MixedAgentTrainConfig:
         
         # Agent type curriculum info
         if self.use_agent_type_curriculum:
-            print(f"🔄 Agent Type Curriculum: Excavators (level {self.initial_agent1_type}-{self.initial_agent2_type}) → Mixed (level {self.agent1_type}-{self.agent2_type}) at level {self.curriculum_switch_level}")
+            type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+            first_str = f"{type_names.get(self.first_agent1_type, 'Unknown')}-{type_names.get(self.first_agent2_type, 'Unknown')}"
+            second_str = f"{type_names.get(self.second_agent1_type, 'Unknown')}-{type_names.get(self.second_agent2_type, 'Unknown')}"
+            
+            if self.use_second_curriculum_switch:
+                third_str = f"{type_names.get(self.third_agent1_type, 'Unknown')}-{type_names.get(self.third_agent2_type, 'Unknown')}"
+                print(f"🔄 Agent Type Curriculum: {first_str} → {second_str} → {third_str} (levels {self.curriculum_switch_level} → {self.second_curriculum_switch_level})")
+            else:
+                print(f"🔄 Agent Type Curriculum: {first_str} → {second_str} at level {self.curriculum_switch_level}")
         else:
-            print(f"🤖 Fixed Agent Types: Agent1={self.agent1_type}, Agent2={self.agent2_type}")
+            type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+            print(f"🤖 Fixed Agent Types: Agent1={type_names.get(self.first_agent1_type, 'Unknown')} ({self.first_agent1_type}), Agent2={type_names.get(self.first_agent2_type, 'Unknown')} ({self.first_agent2_type})")
 
     # make object subscriptable - required for compatibility with existing code
     def __getitem__(self, key):
@@ -201,14 +233,20 @@ class ConfigurableAgentManager:
             self.current_level = curriculum_level
             
         if not self.config.use_agent_type_curriculum:
-            # Fixed agent types
-            return (self.config.agent1_type, self.config.agent2_type)
+            # Fixed agent types - use first types when no curriculum
+            return (self.config.first_agent1_type, self.config.first_agent2_type)
         
-        # Curriculum: start with initial types, switch to final types when advancing to level 1
+        # Curriculum with potential second switch
         if self.current_level < self.config.curriculum_switch_level:
-            return (self.config.initial_agent1_type, self.config.initial_agent2_type)  # Initial types
+            # First types (before first switch)
+            return (self.config.first_agent1_type, self.config.first_agent2_type)
+        elif (self.config.use_second_curriculum_switch and 
+              self.current_level >= self.config.second_curriculum_switch_level):
+            # Third types (after second switch)
+            return (self.config.third_agent1_type, self.config.third_agent2_type)
         else:
-            return (self.config.agent1_type, self.config.agent2_type)  # Final types after switch
+            # Second types (after first switch, before second switch)
+            return (self.config.second_agent1_type, self.config.second_agent2_type)
     
     def get_agent_curriculum_info(self) -> dict:
         """Get information about current agent curriculum state"""
@@ -229,68 +267,25 @@ class ConfigurableAgentManager:
             info.update({
                 "switch_level": self.config.curriculum_switch_level,
                 "switched": self.current_level >= self.config.curriculum_switch_level,
-                "initial_agent1_name": type_names.get(self.config.initial_agent1_type, "Unknown"),
-                "initial_agent2_name": type_names.get(self.config.initial_agent2_type, "Unknown"),
+                "first_agent1_name": type_names.get(self.config.first_agent1_type, "Unknown"),
+                "first_agent2_name": type_names.get(self.config.first_agent2_type, "Unknown"),
             })
+            
+            if self.config.use_second_curriculum_switch:
+                info.update({
+                    "second_switch_level": self.config.second_curriculum_switch_level,
+                    "second_switched": self.current_level >= self.config.second_curriculum_switch_level,
+                    "third_agent1_name": type_names.get(self.config.third_agent1_type, "Unknown"),
+                    "third_agent2_name": type_names.get(self.config.third_agent2_type, "Unknown"),
+                })
         
         return info
 
 
-def update_agent_types_for_curriculum(timestep, agent_manager):
-    """Update agent types in environment configuration based on curriculum level"""
-    if not agent_manager.config.use_agent_type_curriculum:
-        return timestep
-    
-    # Get current curriculum level from environment
-    current_level = timestep.env_cfg.curriculum.level
-    
-    # Check if we need to update agent types
-    # Get the most common curriculum level across all environments
-    if hasattr(current_level, 'shape') and current_level.shape:
-        # For batched environments, use the mode (most common level)
-        unique_levels, counts = jnp.unique(current_level, return_counts=True)
-        mode_level = unique_levels[jnp.argmax(counts)]
-    else:
-        mode_level = current_level
-    
-    # Get target agent types for this curriculum level
-    target_agent_types = agent_manager.get_current_agent_types(curriculum_level=mode_level.item())
-    
-    # Update environment configuration if needed
-    current_agent_types = timestep.env_cfg.agent_types
-    if (current_agent_types[0] != target_agent_types[0] or 
-        current_agent_types[1] != target_agent_types[1]):
-        
-        print(f"🔄 Curriculum Level {mode_level}: Switching agent types from {current_agent_types} to {target_agent_types}")
-        
-        # Update the environment configuration
-        updated_env_cfg = timestep.env_cfg._replace(agent_types=target_agent_types)
-        timestep = timestep._replace(env_cfg=updated_env_cfg)
-    
-    return timestep
 
 
-def make_mixed_agent_train(env: TerraEnvBatch, env_params: EnvConfig, config: MixedAgentTrainConfig):
-    """Modified training function that supports agent type curriculum"""
-    
-    # Create agent manager for curriculum control
-    agent_manager = ConfigurableAgentManager(config)
-    
-    # Get the original train function
-    original_train_fn = make_train(env, env_params, config)
-    
-    def train_with_agent_curriculum(rng, train_state):
-        """Wrapper that adds agent type curriculum support"""
-        
-        # Call original training but intercept to update agent types
-        def modified_train_fn(rng, train_state):
-            # This is a simplified approach - in practice you'd need to modify
-            # the training loop to check curriculum level at each step
-            return original_train_fn(rng, train_state)
-        
-        return modified_train_fn(rng, train_state)
-    
-    return train_with_agent_curriculum
+
+
 
 
 def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig = None):
@@ -392,53 +387,438 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     # Add curriculum monitoring to log agent type changes
     def log_agent_curriculum_status(timestep, update_num):
         """Log agent curriculum status and potential switches"""
-        if not agent_manager.config.use_agent_type_curriculum:
-            return
+        try:
+            if not agent_manager.config.use_agent_type_curriculum:
+                return
+                
+            # Get current curriculum level (use mean across environments)
+            current_level = jnp.mean(timestep.env_cfg.curriculum.level).item()
             
-        # Get current curriculum level (use mean across environments)
-        current_level = jnp.mean(timestep.env_cfg.curriculum.level).item()
-        
-        # Get target agent types for this level
-        target_agent_types = agent_manager.get_current_agent_types(curriculum_level=int(current_level))
-        current_agent_types = timestep.env_cfg.agent_types
-        
-        # Log curriculum info
-        curriculum_info = {
-            "agent_curriculum/current_level": current_level,
-            "agent_curriculum/target_agent1_type": target_agent_types[0],
-            "agent_curriculum/target_agent2_type": target_agent_types[1],
-            "agent_curriculum/current_agent1_type": current_agent_types[0],
-            "agent_curriculum/current_agent2_type": current_agent_types[1],
-            "agent_curriculum/should_switch": int(current_level >= agent_manager.config.curriculum_switch_level),
-        }
-        
-        # Log to wandb
-        wandb.log(curriculum_info, step=update_num)
-        
-        # Print status if switch should happen
-        if (current_level >= agent_manager.config.curriculum_switch_level and 
-            (current_agent_types[0] != target_agent_types[0] or 
-             current_agent_types[1] != target_agent_types[1])):
+            # Get target agent types for this level
+            target_agent_types = agent_manager.get_current_agent_types(curriculum_level=int(current_level))
+            current_agent_types = timestep.env_cfg.agent_types
             
+            # Handle batched agent types - average across all environments on first device
+            if hasattr(current_agent_types, 'shape') and len(current_agent_types.shape) > 1:
+                # If batched, average across all environments on first device
+                # Shape is typically (num_devices, num_envs_per_device, num_agents)
+                current_agent1_type = safe_jax_to_python(jnp.mean(current_agent_types[0, :, 0]))  # Average across all envs on device 0
+                current_agent2_type = safe_jax_to_python(jnp.mean(current_agent_types[0, :, 1]))  # Average across all envs on device 0
+            else:
+                # If not batched, take directly
+                current_agent1_type = safe_jax_to_python(current_agent_types[0])
+                current_agent2_type = safe_jax_to_python(current_agent_types[1])
+            
+            # Log curriculum info - ensure step is always positive and increasing
+            if update_num > 0:  # Only log if we have a valid step number
+                curriculum_info = {
+                    "agent_curriculum/current_level": current_level,
+                    "agent_curriculum/target_agent1_type": target_agent_types[0],
+                    "agent_curriculum/target_agent2_type": target_agent_types[1],
+                    "agent_curriculum/current_agent1_type": current_agent1_type,
+                    "agent_curriculum/current_agent2_type": current_agent2_type,
+                    "agent_curriculum/should_switch": int(current_level >= agent_manager.config.curriculum_switch_level),
+                }
+                
+                # Add second switch info if enabled
+                if agent_manager.config.use_second_curriculum_switch:
+                    curriculum_info.update({
+                        "agent_curriculum/second_switch_level": agent_manager.config.second_curriculum_switch_level,
+                        "agent_curriculum/should_second_switch": int(current_level >= agent_manager.config.second_curriculum_switch_level),
+                    })
+                
+                # Log to wandb
+                wandb.log(curriculum_info, step=update_num)
+            
+            # Print status if switch should happen
             type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
-            current_str = f"{type_names.get(current_agent_types[0], 'Unknown')} + {type_names.get(current_agent_types[1], 'Unknown')}"
-            target_str = f"{type_names.get(target_agent_types[0], 'Unknown')} + {type_names.get(target_agent_types[1], 'Unknown')}"
             
-            print(f"⚠️  Agent Type Curriculum: Level {current_level:.1f} reached! Should switch from {current_str} to {target_str}")
-            print(f"   Note: Restart training with fixed agent types {target_agent_types} to continue curriculum")
+            # Check first switch
+            if (current_level >= agent_manager.config.curriculum_switch_level and 
+                current_level < agent_manager.config.second_curriculum_switch_level and
+                (current_agent1_type != target_agent_types[0] or 
+                 current_agent2_type != target_agent_types[1])):
+                
+                current_str = f"{type_names.get(current_agent1_type, 'Unknown')} + {type_names.get(current_agent2_type, 'Unknown')}"
+                target_str = f"{type_names.get(target_agent_types[0], 'Unknown')} + {type_names.get(target_agent_types[1], 'Unknown')}"
+                
+                print(f"⚠️  Agent Type Curriculum: Level {current_level:.1f} reached! Should switch from {current_str} to {target_str}")
+                print(f"   Note: Restart training with fixed agent types {target_agent_types} to continue curriculum")
+            
+            # Check second switch
+            elif (agent_manager.config.use_second_curriculum_switch and
+                  current_level >= agent_manager.config.second_curriculum_switch_level and
+                  (current_agent1_type != target_agent_types[0] or 
+                   current_agent2_type != target_agent_types[1])):
+                
+                current_str = f"{type_names.get(current_agent1_type, 'Unknown')} + {type_names.get(current_agent2_type, 'Unknown')}"
+                target_str = f"{type_names.get(target_agent_types[0], 'Unknown')} + {type_names.get(target_agent_types[1], 'Unknown')}"
+                
+                print(f"⚠️  Agent Type Curriculum: Level {current_level:.1f} reached! Should switch from {current_str} to {target_str}")
+                print(f"   Note: Restart training with fixed agent types {target_agent_types} to continue curriculum")
+                
+        except Exception as e:
+            # Log the error but don't crash the training
+            print(f"⚠️  Warning: Failed to log agent curriculum status at step {update_num}: {e}")
+            # Don't try to log anything else to avoid cascading errors
     
-    # Use the existing train function (it's already generic)
-    train_fn = make_train(env, env_params, config)
+    def log_environment_metrics(timestep, update_num):
+        """Log environment metrics for all mixed agent training"""
+        try:
+            # Extract data from timestep observation
+            obs = timestep.observation
+            
+            # 1. Agent type distribution from env_cfg - average across all environments on first device
+            agent_types = timestep.env_cfg.agent_types
+            if hasattr(agent_types, 'shape') and len(agent_types.shape) > 1:
+                # If batched, average across all environments on first device
+                # Shape is typically (num_devices, num_envs_per_device, num_agents)
+                agent1_type = safe_jax_to_python(jnp.mean(agent_types[0, :, 0]))  # Average across all envs on device 0
+                agent2_type = safe_jax_to_python(jnp.mean(agent_types[0, :, 1]))  # Average across all envs on device 0
+            else:
+                # If not batched, take directly
+                agent1_type = safe_jax_to_python(agent_types[0])
+                agent2_type = safe_jax_to_python(agent_types[1])
+            
+            # Count agent types (this will be the same for all environments in the batch)
+            agent1_tracked = int(agent1_type == 0)
+            agent1_wheeled = int(agent1_type == 1)
+            agent1_skidsteer = int(agent1_type == 2)
+            agent2_tracked = int(agent2_type == 0)
+            agent2_wheeled = int(agent2_type == 1)
+            agent2_skidsteer = int(agent2_type == 2)
+            
+            # 2. Basic episode metrics
+            episode_done = timestep.done
+            completion_rate = safe_jax_to_python(jnp.mean(episode_done))
+            
+            # 3. Calculate completion percentage for each environment
+            try:
+                if hasattr(obs, 'world') and hasattr(obs.world, 'action_map') and hasattr(obs, 'world') and hasattr(obs.world, 'target_map'):
+                    action_maps = obs.world.action_map
+                    target_maps = obs.world.target_map
+                    
+                    # Calculate completion percentage for each environment on first device
+                    if hasattr(action_maps, 'shape') and len(action_maps.shape) > 3:  # More than (height, width, channels)
+                        # Shape is typically (num_devices, num_envs_per_device, height, width, channels)
+                        device_0_action_maps = action_maps[0, :]  # All envs on device 0
+                        device_0_target_maps = target_maps[0, :]  # All envs on device 0
+                        
+                        # Calculate completion percentage for each environment
+                        def calculate_completion_per_env(action_map, target_map):
+                            # Get designated dump zones (target_map > 0)
+                            designated_dump_zones = target_map > 0
+                            
+                            # Calculate total dirt in the environment
+                            total_dirt = jnp.sum(action_map > 0)
+                            
+                            # Calculate dirt in correct dump zones
+                            dirt_in_correct_zones = jnp.sum(jnp.where(
+                                jnp.logical_and(action_map > 0, designated_dump_zones),
+                                action_map,
+                                0
+                            ))
+                            
+                            # Calculate completion percentage
+                            # If no dirt exists, return 0.0 (no completion)
+                            completion_percentage = jax.lax.cond(
+                                total_dirt > 0,
+                                lambda: dirt_in_correct_zones / total_dirt,
+                                lambda: 0.0
+                            )
+                            
+                            return completion_percentage
+                        
+                        # Vectorize the calculation across all environments
+                        completion_percentages = jax.vmap(calculate_completion_per_env)(device_0_action_maps, device_0_target_maps)
+                        
+                        # Calculate statistics
+                        avg_completion = safe_jax_to_python(jnp.mean(completion_percentages))
+                        max_completion = safe_jax_to_python(jnp.max(completion_percentages))
+                        
+                    else:
+                        # Single environment case
+                        completion_percentage = calculate_completion_per_env(action_maps, target_maps)
+                        avg_completion = safe_jax_to_python(completion_percentage)
+                        max_completion = avg_completion
+                        
+                else:
+                    avg_completion = 0.0
+                    max_completion = 0.0
+                    
+            except Exception as e:
+                print(f"⚠️  Warning: Failed to calculate completion percentage: {e}")
+                avg_completion = 0.0
+                max_completion = 0.0
+            
+            # Log the metrics - ensure step is always positive and increasing
+            if update_num > 0:  # Only log if we have a valid step number
+                wandb.log({
+                    "agent_types/agent1_tracked": agent1_tracked,
+                    "agent_types/agent1_wheeled": agent1_wheeled,
+                    "agent_types/agent1_skidsteer": agent1_skidsteer,
+                    "agent_types/agent2_tracked": agent2_tracked,
+                    "agent_types/agent2_wheeled": agent2_wheeled,
+                    "agent_types/agent2_skidsteer": agent2_skidsteer,
+                    "progress/episode_completion_rate": completion_rate,
+                    "completion/avg_percentage": avg_completion,
+                    "completion/max_percentage": max_completion,
+                }, step=update_num)
+                
+        except Exception as e:
+            # Log the error but don't crash the training
+            print(f"⚠️  Warning: Failed to log environment metrics at step {update_num}: {e}")
+            # Optionally log a minimal set of metrics without step to avoid the warning
+            try:
+                wandb.log({
+                    "agent_types/agent1_tracked": 0,
+                    "agent_types/agent1_wheeled": 0,
+                    "agent_types/agent1_skidsteer": 0,
+                    "agent_types/agent2_tracked": 0,
+                    "agent_types/agent2_wheeled": 0,
+                    "agent_types/agent2_skidsteer": 0,
+                    "progress/episode_completion_rate": 0.0,
+                    "completion/avg_percentage": 0.0,
+                    "completion/max_percentage": 0.0,
+                })
+            except:
+                pass  # If even this fails, just continue training
     
-    # Wrap the train function to add curriculum monitoring
+    def make_mixed_agent_train(env, env_params, config):
+        def train(rng: jax.Array, train_state: TrainState):
+            # INIT ENV
+            rng, _rng = jax.random.split(rng)
+            reset_rng = jax.random.split(
+                _rng, config.num_envs_per_device * config.num_devices
+            )
+            reset_rng = reset_rng.reshape(
+                (config.num_devices, config.num_envs_per_device, -1)
+            )
+
+            # TERRA: Reset envs
+            reset_fn_p = jax.pmap(env.reset, axis_name="devices")  # vmapped inside
+            timestep = reset_fn_p(env_params, reset_rng)
+            prev_actions = jnp.zeros(
+                (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
+            )
+            prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
+
+            # TRAIN LOOP
+            @partial(jax.pmap, axis_name="devices")
+            def _update_step(runner_state, _):
+                # COLLECT TRAJECTORIES
+                def _env_step(runner_state, _):
+                    rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
+
+                    # SELECT ACTION
+                    rng, _rng_model, _rng_env = jax.random.split(rng, 3)
+                    action, log_prob, value, _ = select_action_ppo(
+                        train_state, prev_timestep.observation, prev_actions, _rng_model, config
+                    )
+
+                    # STEP ENV
+                    _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
+                    action_env = wrap_action(action, env.batch_cfg.action_type)
+                    timestep = env.step(prev_timestep, action_env, _rng_env)
+                    transition = Transition(
+                        done=timestep.done,
+                        action=action,
+                        value=value,
+                        reward=timestep.reward,
+                        log_prob=log_prob,
+                        obs=prev_timestep.observation,
+                        prev_actions=prev_actions,
+                        prev_reward=prev_reward,
+                    )
+
+                    # UPDATE PREVIOUS ACTIONS
+                    prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
+                    prev_actions = prev_actions.at[..., 0].set(action)
+
+                    runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
+                    return runner_state, transition
+
+                # transitions: [seq_len, batch_size, ...]
+                runner_state, transitions = jax.lax.scan(
+                    _env_step, runner_state, None, config.num_steps
+                )
+
+                # CALCULATE ADVANTAGE
+                rng, train_state, timestep, prev_actions, prev_reward = runner_state
+                rng, _rng = jax.random.split(rng)
+                _, _, last_val, _ = select_action_ppo(
+                    train_state, timestep.observation, prev_actions, _rng, config
+                )
+                advantages, targets = calculate_gae(
+                    transitions, last_val, config.gamma, config.gae_lambda
+                )
+
+                # UPDATE NETWORK
+                def _update_epoch(update_state, _):
+                    def _update_minbatch(train_state, batch_info):
+                        transitions, advantages, targets = batch_info
+                        new_train_state, update_info = ppo_update_networks(
+                            train_state=train_state,
+                            transitions=transitions,
+                            advantages=advantages,
+                            targets=targets,
+                            config=config,
+                        )
+                        return new_train_state, update_info
+
+                    rng, train_state, transitions, advantages, targets = update_state
+
+                    # MINIBATCHES PREPARATION
+                    rng, _rng = jax.random.split(rng)
+                    permutation = jax.random.permutation(_rng, config.num_envs_per_device)
+                    # [seq_len, batch_size, ...]
+                    batch = (transitions, advantages, targets)
+                    # [batch_size, seq_len, ...], as our model assumes
+                    batch = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
+
+                    shuffled_batch = jtu.tree_map(
+                        lambda x: jnp.take(x, permutation, axis=0), batch
+                    )
+                    # [num_minibatches, minibatch_size, seq_len, ...]
+                    minibatches = jtu.tree_map(
+                        lambda x: jnp.reshape(
+                            x, (config.num_minibatches, -1) + x.shape[1:]
+                        ),
+                        shuffled_batch,
+                    )
+                    train_state, update_info = jax.lax.scan(
+                        _update_minbatch, train_state, minibatches
+                    )
+
+                    update_state = (rng, train_state, transitions, advantages, targets)
+                    return update_state, update_info
+
+                # [seq_len, batch_size, num_layers, hidden_dim]
+                update_state = (rng, train_state, transitions, advantages, targets)
+                update_state, loss_info = jax.lax.scan(
+                    _update_epoch, update_state, None, config.update_epochs
+                )
+
+                # averaging over minibatches then over epochs
+                loss_info = jtu.tree_map(lambda x: x.mean(-1).mean(-1), loss_info)
+
+                rng, train_state = update_state[:2]
+                # EVALUATE AGENT
+                rng, _rng = jax.random.split(rng)
+
+                runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
+                return runner_state, loss_info
+
+            # Setup runner state for multiple devices
+            rng, rng_rollout = jax.random.split(rng)
+            rng = jax.random.split(rng, num=config.num_devices)
+            train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
+            runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
+            
+            for i in tqdm(range(config.num_updates), desc="Training"):
+                start_time = time.time()
+                runner_state, loss_info = jax.block_until_ready(
+                    _update_step(runner_state, None)
+                )
+                end_time = time.time()
+
+                iteration_duration = end_time - start_time
+                iterations_per_second = 1 / iteration_duration
+                steps_per_second = (
+                    iterations_per_second
+                    * config.num_steps
+                    * config.num_envs
+                    * config.num_devices
+                )
+
+                tqdm.write(f"Steps/s: {steps_per_second:.2f}")
+
+                # Use data from the first device for stats and eval
+                loss_info_single = unreplicate(loss_info)
+                runner_state_single = unreplicate(runner_state)
+                _, train_state, timestep, prev_actions = runner_state_single[:4]
+                env_params_single = timestep.env_cfg
+
+                if i % config.log_train_interval == 0:
+                    # Original logging
+                    curriculum_levels = get_curriculum_levels(
+                        env_params_single, env.batch_cfg.curriculum_global.levels
+                    )
+                    wandb.log(
+                        {
+                            "performance/steps_per_second": steps_per_second,
+                            "performance/iterations_per_second": iterations_per_second,
+                            "curriculum_levels": curriculum_levels,
+                            "lr": config.lr,
+                            **loss_info_single,
+                        }
+                    )
+                    
+                    # Add our custom logging
+                    log_agent_curriculum_status(timestep, i)
+                    log_environment_metrics(timestep, i)
+
+                if i % config.checkpoint_interval == 0:
+                    checkpoint = {
+                        "train_config": config,
+                        "env_config": env_params_single,
+                        "model": runner_state_single[1].params,
+                        "loss_info": loss_info_single,
+                    }
+                    helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
+
+                if i % config.log_eval_interval == 0:
+                    eval_stats = eval_ppo.rollout(
+                        rng_rollout,
+                        env,
+                        env_params_single,
+                        train_state,
+                        config,
+                    )
+
+                    n = config.num_envs_per_device * eval_stats.length
+                    avg_positive_episode_length = jnp.where(
+                        eval_stats.positive_terminations > 0,
+                        eval_stats.positive_terminations_steps / eval_stats.positive_terminations,
+                        jnp.zeros_like(eval_stats.positive_terminations_steps)
+                    )
+                    loss_info_single.update(
+                        {
+                            "eval/rewards": eval_stats.reward / n,
+                            "eval/max_reward": eval_stats.max_reward,
+                            "eval/min_reward": eval_stats.min_reward,
+                            "eval/lengths": eval_stats.length,
+                            "eval/FORWARD %": eval_stats.action_0 / n,
+                            "eval/BACKWARD %": eval_stats.action_1 / n,
+                            "eval/CLOCK %": eval_stats.action_2 / n,
+                            "eval/ANTICLOCK %": eval_stats.action_3 / n,
+                            "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
+                            "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
+                            "eval/DO": eval_stats.action_6 / n,
+                            "eval/positive_terminations": eval_stats.positive_terminations
+                            / config.num_envs_per_device,
+                            "eval/total_terminations": eval_stats.terminations
+                            / config.num_envs_per_device,
+                            "eval/avg_positive_episode_length": avg_positive_episode_length
+                        }
+                    )
+
+                    wandb.log(loss_info_single)
+
+                # Clear JAX caches and run garbage collection to stabilize memory use
+                if i % config.cache_clear_interval == 0:
+                    jax.clear_caches()
+                    import gc
+                    gc.collect()
+
+            return {"runner_state": runner_state_single, "loss_info": loss_info_single}
+
+        return train
+    
+    train_fn = make_mixed_agent_train(env, env_params, config)
+    
     def train_with_monitoring(rng, train_state):
-        result = train_fn(rng, train_state)
-        
-        # Log final curriculum status
-        final_timestep = result["runner_state"][2]  # timestep from runner_state
-        log_agent_curriculum_status(final_timestep, config.num_updates)
-        
-        return result
+        return train_fn(rng, train_state)
 
     print("🚀 Starting Mixed Agent Training...")
     print("=" * 60)
@@ -461,36 +841,19 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         else:
             rewards = env_params.rewards  # Direct access if not batched
         
-        # Extract scalar values from JAX arrays
-        def get_scalar(value):
-            if hasattr(value, 'item'):
-                try:
-                    return value.item()
-                except ValueError:
-                    # If it's an array with multiple elements, take the first one
-                    if hasattr(value, 'shape') and value.shape:
-                        return value.ravel()[0].item()
-                    else:
-                        return str(value)
-            elif hasattr(value, '__array__'):
-                try:
-                    return float(value)
-                except (ValueError, TypeError):
-                    return str(value)
-            else:
-                return value
+        # Use our safe conversion function
         
-        print(f"   - Existence penalty: {get_scalar(rewards.existence)}")
-        print(f"   - Movement penalty: {get_scalar(rewards.move)}")
-        print(f"   - Holding dirt penalty: {get_scalar(rewards.holding_dirt)}")
-        print(f"   - Skid auto-load reward: {get_scalar(rewards.skid_auto_load)}")
-        print(f"   - Skid dump correct reward: {get_scalar(rewards.skid_dump_correct)}")
-        print(f"   - Skid dump wrong penalty: {get_scalar(rewards.skid_dump_wrong)}")
-        print(f"   - Move to dump zone reward: {get_scalar(rewards.move_to_dump_zone)}")
-        print(f"   - Skid lift shovel with dirt: {get_scalar(rewards.skid_lift_shovel_with_dirt)}")
-        print(f"   - Skid move loaded shovel up: {get_scalar(rewards.skid_move_loaded_shovel_up)}")
-        print(f"   - Auto load dump zone penalty: {get_scalar(rewards.skid_auto_load_from_dumpzone_penalty)}")
-        print(f"   - Reward normalizer: {get_scalar(rewards.normalizer)}")
+        print(f"   - Existence penalty: {safe_jax_to_python(rewards.existence)}")
+        print(f"   - Movement penalty: {safe_jax_to_python(rewards.move)}")
+        print(f"   - Holding dirt penalty: {safe_jax_to_python(rewards.holding_dirt)}")
+        print(f"   - Skid auto-load reward: {safe_jax_to_python(rewards.skid_auto_load)}")
+        print(f"   - Skid dump correct reward: {safe_jax_to_python(rewards.skid_dump_correct)}")
+        print(f"   - Skid dump wrong penalty: {safe_jax_to_python(rewards.skid_dump_wrong)}")
+        print(f"   - Move to dump zone reward: {safe_jax_to_python(rewards.move_to_dump_zone)}")
+        print(f"   - Skid lift shovel with dirt: {safe_jax_to_python(rewards.skid_lift_shovel_with_dirt)}")
+        print(f"   - Skid move loaded shovel up: {safe_jax_to_python(rewards.skid_move_loaded_shovel_up)}")
+        print(f"   - Auto load dump zone penalty: {safe_jax_to_python(rewards.skid_auto_load_from_dumpzone_penalty)}")
+        print(f"   - Reward normalizer: {safe_jax_to_python(rewards.normalizer)}")
         
     except Exception as e:
         print(f"   ⚠️  Could not print reward configuration: {e}")
@@ -561,20 +924,36 @@ if __name__ == "__main__":
         help="Curriculum level to switch from initial to final agent types (only for curriculum mode)"
     )
     parser.add_argument(
-        "--agent1_type", type=int, default=2, choices=[0, 1, 2],
-        help="Final agent 1 type: 0=tracked, 1=wheeled, 2=skidsteer"
+        "--first_agent1_type", type=int, default=0, choices=[0, 1, 2],
+        help="First agent 1 type (used when no curriculum): 0=tracked, 1=wheeled, 2=skidsteer"
     )
     parser.add_argument(
-        "--agent2_type", type=int, default=2, choices=[0, 1, 2],
-        help="Final agent 2 type: 0=tracked, 1=wheeled, 2=skidsteer"
+        "--first_agent2_type", type=int, default=2, choices=[0, 1, 2],
+        help="First agent 2 type (used when no curriculum): 0=tracked, 1=wheeled, 2=skidsteer"
     )
     parser.add_argument(
-        "--initial_agent1_type", type=int, default=0, choices=[0, 1, 2],
-        help="Initial agent 1 type for curriculum: 0=tracked, 1=wheeled, 2=skidsteer"
+        "--second_agent1_type", type=int, default=2, choices=[0, 1, 2],
+        help="Second agent 1 type (after first curriculum switch): 0=tracked, 1=wheeled, 2=skidsteer"
     )
     parser.add_argument(
-        "--initial_agent2_type", type=int, default=2, choices=[0, 1, 2],
-        help="Initial agent 2 type for curriculum: 0=tracked, 1=wheeled, 2=skidsteer"
+        "--second_agent2_type", type=int, default=2, choices=[0, 1, 2],
+        help="Second agent 2 type (after first curriculum switch): 0=tracked, 1=wheeled, 2=skidsteer"
+    )
+    parser.add_argument(
+        "--use_second_curriculum_switch", action="store_true",
+        help="Enable second curriculum switch to third agent types"
+    )
+    parser.add_argument(
+        "--second_curriculum_switch", type=int, default=2,
+        help="Curriculum level to switch to third agent types (only when use_second_curriculum_switch is enabled)"
+    )
+    parser.add_argument(
+        "--third_agent1_type", type=int, default=0, choices=[0, 1, 2],
+        help="Third agent 1 type (after second curriculum switch): 0=tracked, 1=wheeled, 2=skidsteer"
+    )
+    parser.add_argument(
+        "--third_agent2_type", type=int, default=2, choices=[0, 1, 2],
+        help="Third agent 2 type (after second curriculum switch): 0=tracked, 1=wheeled, 2=skidsteer"
     )
     
     args, _ = parser.parse_known_args()
@@ -584,40 +963,49 @@ if __name__ == "__main__":
     # Configure agent types based on preset
     if args.agent_config == "excavators":
         # Both agents are tracked excavators
-        agent1_type, agent2_type = args.agent1_type, args.agent2_type
-        initial_agent1_type, initial_agent2_type = args.agent1_type, args.agent2_type
+        first_agent1_type, first_agent2_type = args.first_agent1_type, args.first_agent2_type
+        second_agent1_type, second_agent2_type = args.first_agent1_type, args.first_agent2_type  # Same as first for excavators-only
         use_curriculum = False
         type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
-        print(f"🏗️  Training Configuration: Both Agents ({type_names.get(agent1_type, 'Unknown')} + {type_names.get(agent2_type, 'Unknown')})")
+        print(f"🏗️  Training Configuration: Both Agents ({type_names.get(first_agent1_type, 'Unknown')} + {type_names.get(first_agent2_type, 'Unknown')})")
         
     elif args.agent_config == "mixed":
         # Mixed agents from start
-        agent1_type, agent2_type = args.agent1_type, args.agent2_type
-        initial_agent1_type, initial_agent2_type = args.agent1_type, args.agent2_type
+        first_agent1_type, first_agent2_type = args.first_agent1_type, args.first_agent2_type
+        second_agent1_type, second_agent2_type = args.first_agent1_type, args.first_agent2_type  # Same as first for mixed from start
         use_curriculum = False
         type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
-        print(f"🔄 Training Configuration: Mixed Agents ({type_names.get(agent1_type, 'Unknown')} + {type_names.get(agent2_type, 'Unknown')})")
+        print(f"🔄 Training Configuration: Mixed Agents ({type_names.get(first_agent1_type, 'Unknown')} + {type_names.get(first_agent2_type, 'Unknown')})")
         
     elif args.agent_config == "curriculum":
-        # Curriculum: start with initial types, switch to final types
-        agent1_type, agent2_type = args.agent1_type, args.agent2_type
-        initial_agent1_type, initial_agent2_type = args.initial_agent1_type, args.initial_agent2_type
+        # Curriculum: start with first types, switch to second types
+        first_agent1_type, first_agent2_type = args.first_agent1_type, args.first_agent2_type
+        second_agent1_type, second_agent2_type = args.second_agent1_type, args.second_agent2_type
         use_curriculum = True
         type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
-        initial_config = f"{type_names.get(initial_agent1_type, 'Unknown')} + {type_names.get(initial_agent2_type, 'Unknown')}"
-        final_config = f"{type_names.get(agent1_type, 'Unknown')} + {type_names.get(agent2_type, 'Unknown')}"
-        print(f"📈 Training Configuration: Curriculum ({initial_config} → {final_config} at level {args.curriculum_switch})")
+        first_config = f"{type_names.get(first_agent1_type, 'Unknown')} + {type_names.get(first_agent2_type, 'Unknown')}"
+        second_config = f"{type_names.get(second_agent1_type, 'Unknown')} + {type_names.get(second_agent2_type, 'Unknown')}"
+        
+        if args.use_second_curriculum_switch:
+            third_config = f"{type_names.get(args.third_agent1_type, 'Unknown')} + {type_names.get(args.third_agent2_type, 'Unknown')}"
+            print(f"📈 Training Configuration: Curriculum ({first_config} → {second_config} at level {args.curriculum_switch} → {third_config} at level {args.second_curriculum_switch})")
+        else:
+            print(f"📈 Training Configuration: Curriculum ({first_config} → {second_config} at level {args.curriculum_switch})")
     
     config = MixedAgentTrainConfig(
         name=name, 
         num_devices=args.num_devices,
         lr=args.lr,
-        agent1_type=agent1_type,
-        agent2_type=agent2_type,
-        initial_agent1_type=initial_agent1_type,
-        initial_agent2_type=initial_agent2_type,
+        first_agent1_type=first_agent1_type,
+        first_agent2_type=first_agent2_type,
+        second_agent1_type=second_agent1_type,
+        second_agent2_type=second_agent2_type,
         use_agent_type_curriculum=use_curriculum,
-        curriculum_switch_level=args.curriculum_switch
+        curriculum_switch_level=args.curriculum_switch,
+        use_second_curriculum_switch=args.use_second_curriculum_switch,
+        second_curriculum_switch_level=args.second_curriculum_switch,
+        third_agent1_type=args.third_agent1_type,
+        third_agent2_type=args.third_agent2_type
     )
     
     train_mixed_agents(config) 

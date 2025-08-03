@@ -23,9 +23,9 @@ conda activate $CONDA_ENV
 
 # Set environment variables and run training
 export DATASET_PATH=/cluster/home/alesweber/TerraProject/terra/data/terra/train/
-export DATASET_SIZE=100
+export DATASET_SIZE=600
 
 
 # Change to the directory containing train.py or use the full path
 cd /cluster/home/alesweber/TerraProject/terra-baselines
-python train_mixed_agents.py 
+python train_mixed_agents.py --agent_config mixed
