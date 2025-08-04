@@ -896,8 +896,25 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
             ]
         else:  # 128x128
             # Take a 64x64 region from the 128x128 map
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
+            # ]
+            # Single partition for 128x128 map, centered in the middle
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (32, 32, 95, 95), 'start_pos': (64, 64), 'start_angle': 0, 'status': 'pending'},
+            # ]
+            # Two overlapping 64x64 regions in the center of the 128x128 map
+            # Left-center region: (16, 16) to (79, 79)
+            # Right-center region: (48, 48) to (111, 111)
+            # Overlap area: (48, 48) to (79, 79) = 32x32 overlap
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (16, 16, 79, 79), 'start_pos': (48, 48), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (48, 48, 111, 111), 'start_pos': (80, 80), 'start_angle': 0, 'status': 'pending'}
+            # ]
+
             sub_tasks_manual = [
-                {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
+                {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (64, 32), 'start_angle': 0, 'status': 'pending'},
+                {'id': 1, 'region_coords': (32, 64, 95, 127), 'start_pos': (64, 96), 'start_angle': 0, 'status': 'pending'}
             ]
             
     elif NUM_PARTITIONS == 2:
