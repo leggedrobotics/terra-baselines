@@ -120,8 +120,8 @@ class MixedAgentTrainConfig:
     num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
     update_epochs: int = 3  # Reduced from 4 to 2 for faster training
     num_minibatches: int = 8  # Reduced from 16 to 8 for faster training
-    total_timesteps: int = 10_000_000_000  # Increased from 1B to 5B for sufficient training
-    lr: float = 3e-4  
+    total_timesteps: int = 15_000_000_000  # Increased from 1B to 5B for sufficient training 60_000_000_000
+    lr: float = 3.5e-4    #3e-4
     clip_eps: float = 0.2  # Less conservative clipping for escaping local optima
     gamma: float = 0.995
     gae_lambda: float = 0.95
@@ -132,7 +132,7 @@ class MixedAgentTrainConfig:
     seed: int = 42
     log_train_interval: int = 3  # Number of updates between logging train stats
     log_eval_interval: int = 80  # Less frequent evaluation for speed
-    checkpoint_interval: int = 400  # Less frequent checkpoints for speed
+    checkpoint_interval: int = 250  # Less frequent checkpoints for speed
     
     # Model settings optimized for mixed agents
     num_prev_actions = 10
@@ -493,63 +493,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             completion_rate = safe_jax_to_python(jnp.mean(episode_done))
             
             # 3. Calculate completion percentage for each environment
-            try:
-                if hasattr(obs, 'world') and hasattr(obs.world, 'action_map') and hasattr(obs, 'world') and hasattr(obs.world, 'target_map'):
-                    action_maps = obs.world.action_map
-                    target_maps = obs.world.target_map
-                    
-                    # Calculate completion percentage for each environment on first device
-                    if hasattr(action_maps, 'shape') and len(action_maps.shape) > 3:  # More than (height, width, channels)
-                        # Shape is typically (num_devices, num_envs_per_device, height, width, channels)
-                        device_0_action_maps = action_maps[0, :]  # All envs on device 0
-                        device_0_target_maps = target_maps[0, :]  # All envs on device 0
-                        
-                        # Calculate completion percentage for each environment
-                        def calculate_completion_per_env(action_map, target_map):
-                            # Get designated dump zones (target_map > 0)
-                            designated_dump_zones = target_map > 0
-                            
-                            # Calculate total dirt in the environment
-                            total_dirt = jnp.sum(action_map > 0)
-                            
-                            # Calculate dirt in correct dump zones
-                            dirt_in_correct_zones = jnp.sum(jnp.where(
-                                jnp.logical_and(action_map > 0, designated_dump_zones),
-                                action_map,
-                                0
-                            ))
-                            
-                            # Calculate completion percentage
-                            # If no dirt exists, return 0.0 (no completion)
-                            completion_percentage = jax.lax.cond(
-                                total_dirt > 0,
-                                lambda: dirt_in_correct_zones / total_dirt,
-                                lambda: 0.0
-                            )
-                            
-                            return completion_percentage
-                        
-                        # Vectorize the calculation across all environments
-                        completion_percentages = jax.vmap(calculate_completion_per_env)(device_0_action_maps, device_0_target_maps)
-                        
-                        # Calculate statistics
-                        avg_completion = safe_jax_to_python(jnp.mean(completion_percentages))
-                        max_completion = safe_jax_to_python(jnp.max(completion_percentages))
-                        
-                    else:
-                        # Single environment case
-                        completion_percentage = calculate_completion_per_env(action_maps, target_maps)
-                        avg_completion = safe_jax_to_python(completion_percentage)
-                        max_completion = avg_completion
-                        
-                else:
-                    avg_completion = 0.0
-                    max_completion = 0.0
-                    
-            except Exception as e:
-                print(f"⚠️  Warning: Failed to calculate completion percentage: {e}")
-                avg_completion = 0.0
-                max_completion = 0.0
+            # Removed completion calculation as it was not working properly
             
             # Log the metrics - ensure step is always positive and increasing
             if update_num > 0:  # Only log if we have a valid step number
@@ -561,8 +505,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "agent_types/agent2_wheeled": agent2_wheeled,
                     "agent_types/agent2_skidsteer": agent2_skidsteer,
                     "progress/episode_completion_rate": completion_rate,
-                    "completion/avg_percentage": avg_completion,
-                    "completion/max_percentage": max_completion,
                 }, step=update_num)
                 
         except Exception as e:
@@ -578,8 +520,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "agent_types/agent2_wheeled": 0,
                     "agent_types/agent2_skidsteer": 0,
                     "progress/episode_completion_rate": 0.0,
-                    "completion/avg_percentage": 0.0,
-                    "completion/max_percentage": 0.0,
                 })
             except:
                 pass  # If even this fails, just continue training

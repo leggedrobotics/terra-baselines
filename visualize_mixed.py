@@ -114,14 +114,14 @@ if __name__ == "__main__":
         "-steps",
         "--n_steps",
         type=int,
-        default=200,
+        default=300,
         help="Number of steps.",
     )
     parser.add_argument(
         "-o",
         "--out_path",
         type=str,
-        default="./visualize_mixed_skid_exec_13.gif",
+        default="./visualize_mixed_skid_exec_harder_nodump_154316.gif",
         help="Output path.",
     )
     parser.add_argument(

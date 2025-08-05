@@ -1,13 +1,16 @@
 #!/bin/bash
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
-#SBATCH --gpus=gpu:4
+#SBATCH --gpus=gpu:rtx_4090:4
 #SBATCH --time=12:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
 #SBATCH --mail-user=name@mail
 #SBATCH --job-name="training-$(date +"%Y-%m-%dT%H:%M")"
 #SBATCH --output=%j_training.out
+
+
+#--gpus=gpu:rtx_4090:8
 
 # Load required modules
 module load eth_proxy
