@@ -110,6 +110,38 @@ Visualize the rollout of your policy with
 DATASET_PATH=/path/to/dataset DATASET_SIZE=<num_maps_per_type> python visualize.py -run <checkpoint_path> -nx <num_environments_x> -ny <num_environments_y> -steps <num_steps> -o <output_path.gif>
 ```
 
+## Plan Extraction and Analysis
+
+Extract and analyze terrain modification plans from your trained policies using the plan extraction tools.
+
+### Extract Plans
+Extract action maps and terrain modifications from policy rollouts:
+```bash
+python extract_plan.py -policy <checkpoint_path> -map <map_metadata_path> -steps <max_steps> -o <output_plan.pkl>
+```
+
+Example:
+```bash
+python extract_plan.py -policy checkpoints/tracked-dense.pkl -map plan_maps/foundation -o plan.pkl
+```
+
+This captures the robot state and terrain modifications at each DO (dig/dump) action, storing:
+- Agent position, orientation, and loaded state
+- Terrain change values and modification masks
+- Traversability information
+
+### Visualize Plans
+Create visualizations of the extracted terrain modification plans:
+```bash
+python visualize_plan.py <plan.pkl>
+```
+
+This generates multi-panel plots showing:
+- Terrain modification masks (where digging/dumping occurred)
+- Traversability maps with agent positions
+- Terrain change values and action map evolution
+- Combined overlays of all modifications
+
 ## Baselines
 We train 2 models capable of solving both foundation and trench type of environments. They differentiate themselves based on the type of agent (wheeled or tracked), and the type of curriculum used to train them (dense reward with single level, or sparse reward with curriculum). All models are trained on 64x64 maps and are stored in the `checkpoints/` folder.
 

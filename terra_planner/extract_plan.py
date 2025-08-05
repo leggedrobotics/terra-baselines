@@ -53,31 +53,63 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
         # Check if DO action and record state BEFORE executing the action
         if action[0] == do_action:
             print(f"DO action at step {t_counter}")
-            action_map = jnp.squeeze(timestep.observation["action_map"]).copy()
+            action_map_before = jnp.squeeze(timestep.observation["action_map"]).copy()
             traversability_mask = jnp.squeeze(timestep.observation["traversability_mask"]).copy()
-            agent_state = jnp.squeeze(timestep.observation["agent_state"]).copy()
+            agent_state_before = jnp.squeeze(timestep.observation["agent_state"]).copy()
+            loaded_before = jnp.bool_(agent_state_before[5])
+
+            # Update previous actions
+            prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+            prev_actions = prev_actions.at[:, 0].set(action)
+
+            # Take step in environment
+            rng_step = jax.random.split(rng_step, 1)
+            timestep = env.step(
+                timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
+            )
+
+            # Get state AFTER executing the action
+            action_map_after = jnp.squeeze(timestep.observation["action_map"]).copy()
+            agent_state_after = jnp.squeeze(timestep.observation["agent_state"]).copy()
+            loaded_after = jnp.bool_(agent_state_after[5])
+
+            changed_tiles = action_map_before != action_map_after
+            terrain_modification_mask = changed_tiles.astype(jnp.bool_)
+
+            if loaded_before != loaded_after:
+                if not loaded_before and loaded_after:
+                    print(f"  Digging detected: {jnp.sum(changed_tiles)} tiles modified")
+                elif loaded_before and not loaded_after:
+                    print(f"  Dumping detected: {jnp.sum(changed_tiles)} tiles modified")
+            else:
+                # Case 3: loaded state did not change, but still check for modifications
+                print(f"  Loaded state unchanged ({loaded_before}), {jnp.sum(changed_tiles)} tiles modified")
+
             plan_entry = {
                 'step': t_counter,
-                'action_map': action_map,
                 'traversability_mask': traversability_mask,
                 'agent_state': {
-                    'pos_base': (agent_state[0], agent_state[1]),
-                    'angle_base': agent_state[2],
-                    'wheel_angle': agent_state[4],
-                    'loaded': jnp.bool_(agent_state[5]),
+                    'pos_base': (agent_state_before[0], agent_state_before[1]),
+                    'angle_base': agent_state_before[2],
+                    'wheel_angle': agent_state_before[4],
+                },
+                'terrain_modification_mask': terrain_modification_mask,
+                'loaded_state_change': {
+                    'before': loaded_before,
+                    'after': loaded_after,
                 }
             }
             plan.append(plan_entry)
+        else:
+            # Update previous actions
+            prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+            prev_actions = prev_actions.at[:, 0].set(action)
 
-        # Update previous actions
-        prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
-        prev_actions = prev_actions.at[:, 0].set(action)
-
-        # Take step in environment
-        rng_step = jax.random.split(rng_step, 1)
-        timestep = env.step(
-            timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
-        )
+            # Take step in environment
+            rng_step = jax.random.split(rng_step, 1)
+            timestep = env.step(
+                timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
+            )
 
         t_counter += 1
         print(f"Step {t_counter}, Action: {action[0]}")
@@ -134,6 +166,14 @@ def main():
     config = log["train_config"]
     config.num_test_rollouts = 1  # Only one environment
     config.num_devices = 1
+
+    # Disable action map clipping to see full terrain state
+    print(f"Original clip_action_maps setting: {config.clip_action_maps}")
+    config.clip_action_maps = False
+    # Add the missing attribute that the model expects when clipping is disabled
+    config.maps_net_normalization_bounds = [-100, 100]  # Reasonable range for terrain heights
+    print(f"Modified clip_action_maps setting: {config.clip_action_maps}")
+    print(f"Added maps_net_normalization_bounds: {config.maps_net_normalization_bounds}")
 
     # Create environment
     env_cfgs = log["env_config"]
