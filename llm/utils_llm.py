@@ -917,9 +917,13 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
             #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (64, 32), 'start_angle': 0, 'status': 'pending'},
             #     {'id': 1, 'region_coords': (32, 64, 95, 127), 'start_pos': (64, 96), 'start_angle': 0, 'status': 'pending'}
             # ]
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (32, 48, 95, 111), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
+            # ]
             sub_tasks_manual = [
                 {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
-                {'id': 1, 'region_coords': (32, 48, 95, 111), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
+                {'id': 1, 'region_coords': (32, 54, 95, 117), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
             ]
 
     elif NUM_PARTITIONS == 2:
@@ -1825,7 +1829,7 @@ def simple_sync_overlapping_regions(partition_states, env_manager, source_partit
     updated_timestep = partition_states[target_partition_idx]['timestep']._replace(state=target_state)
     partition_states[target_partition_idx]['timestep'] = updated_timestep
     
-    print(f"  ✓ Synced overlapping region from partition {source_partition_idx} to {target_partition_idx}")
+    #print(f"  ✓ Synced overlapping region from partition {source_partition_idx} to {target_partition_idx}")
 
 
 def full_sync_partitions(partition_states, env_manager, source_partition_idx, target_partition_idx):

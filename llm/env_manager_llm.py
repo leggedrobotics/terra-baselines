@@ -328,7 +328,7 @@ class EnvironmentsManager:
         #     'padding_mask': create_sub_task_padding_mask_64x64(self.global_maps['padding_mask'], region_coords),
         #     'traversability_mask': create_sub_task_traversability_mask_64x64(self.global_maps['traversability_mask'], region_coords),
         # }
-        print("Self.map_size_px:", self.map_size_px)
+        #print("Self.map_size_px:", self.map_size_px)
 
         if self.map_size_px == 64:
             sub_maps = {
@@ -1373,14 +1373,14 @@ class EnvironmentsManager:
         region_coords = partition['region_coords']
         y_start, x_start, y_end, x_end = region_coords
         
-        print(f"  Updating global maps from partition {source_partition_idx}")
-        print(f"    Partition region_coords: {region_coords}")
+        #print(f"  Updating global maps from partition {source_partition_idx}")
+        #print(f"    Partition region_coords: {region_coords}")
         
         # Calculate the actual region dimensions
         region_height = y_end - y_start + 1
         region_width = x_end - x_start + 1
         
-        print(f"    Region dimensions in global map: {region_height}x{region_width}")
+        #print(f"    Region dimensions in global map: {region_height}x{region_width}")
         
         # Define which maps to update globally
         maps_to_update = [
@@ -1394,7 +1394,7 @@ class EnvironmentsManager:
         for map_name in maps_to_update:
             # Get the current map from the partition (this is always 64x64)
             partition_map = getattr(source_state.world, map_name).map
-            print(f"    {map_name} partition shape: {partition_map.shape}")
+            #print(f"    {map_name} partition shape: {partition_map.shape}")
             
             # CRITICAL FIX: The partition map is 64x64, which represents the ENTIRE partition view
             # We can only update the portion of the global map that fits within 64x64
@@ -1404,7 +1404,7 @@ class EnvironmentsManager:
             update_height = min(64, region_height)
             update_width = min(64, region_width)
             
-            print(f"    Will update {update_height}x{update_width} region in global map")
+            #print(f"    Will update {update_height}x{update_width} region in global map")
             
             # Extract the data to update (the full partition map up to the update size)
             data_to_update = partition_map[:update_height, :update_width]
@@ -1418,12 +1418,12 @@ class EnvironmentsManager:
             # Update the global map with the extracted region
             try:
                 self.global_maps[map_name] = self.global_maps[map_name].at[global_region_slice].set(data_to_update)
-                print(f"    ✓ Updated global {map_name} from partition {source_partition_idx}")
+                #print(f"    ✓ Updated global {map_name} from partition {source_partition_idx}")
             except Exception as e:
                 print(f"    ✗ Error updating global {map_name}: {e}")
-                print(f"      Global map shape: {self.global_maps[map_name].shape}")
-                print(f"      Target slice: {global_region_slice}")
-                print(f"      Data to update shape: {data_to_update.shape}")
+                # print(f"      Global map shape: {self.global_maps[map_name].shape}")
+                # print(f"      Target slice: {global_region_slice}")
+                # print(f"      Data to update shape: {data_to_update.shape}")
 
 
     def step_with_full_global_sync_fixed(self, partition_idx: int, action, partition_states: dict):
@@ -1464,7 +1464,7 @@ class EnvironmentsManager:
         FIXED: Synchronize overlapping regions between partitions for big maps.
         Handles the case where regions are larger than 64x64.
         """
-        print(f"  Syncing overlapping regions from partition {source_partition_idx}")
+        #print(f"  Syncing overlapping regions from partition {source_partition_idx}")
         
         # Get all partitions that overlap with the source
         overlapping_partitions = self.overlap_map.get(source_partition_idx, set())
@@ -1510,7 +1510,7 @@ class EnvironmentsManager:
         # Maps to sync (excluding traversability which is handled separately)
         maps_to_sync = ['action_map', 'dumpability_mask', 'dumpability_mask_init']
         
-        print(f"    Syncing overlap from partition {source_idx} to {target_idx}")
+        #print(f"    Syncing overlap from partition {source_idx} to {target_idx}")
         
         for map_name in maps_to_sync:
             try:
@@ -1552,7 +1552,7 @@ class EnvironmentsManager:
                 updated_world = self._update_world_map(target_state.world, map_name, target_map)
                 target_state = target_state._replace(world=updated_world)
                 
-                print(f"      ✓ Synced {map_name} ({sync_height}x{sync_width} region)")
+                #print(f"      ✓ Synced {map_name} ({sync_height}x{sync_width} region)")
                 
             except Exception as e:
                 print(f"      ✗ Error syncing {map_name}: {e}")
@@ -1577,7 +1577,7 @@ class EnvironmentsManager:
             updated_world = self._update_world_map(target_state.world, 'target_map', target_target_map)
             target_state = target_state._replace(world=updated_world)
             
-            print(f"      ✓ Merged target_map ({sync_height}x{sync_width} region)")
+            #print(f"      ✓ Merged target_map ({sync_height}x{sync_width} region)")
             
         except Exception as e:
             print(f"      ✗ Error merging target_map: {e}")
@@ -1586,7 +1586,7 @@ class EnvironmentsManager:
         updated_timestep = partition_states[target_idx]['timestep']._replace(state=target_state)
         partition_states[target_idx]['timestep'] = updated_timestep
         
-        print(f"    ✓ Synced overlap region")
+        #print(f"    ✓ Synced overlap region")
 
 
     def _calculate_overlap_region_fixed(self, partition_i: int, partition_j: int):
@@ -1689,7 +1689,7 @@ class EnvironmentsManager:
         """
         FIXED: Synchronize ALL partitions with updated global maps, handling 64x64 partition maps correctly.
         """
-        print(f"  Syncing global maps to all partitions (excluding traversability)")
+        #print(f"  Syncing global maps to all partitions (excluding traversability)")
         
         for target_partition_idx, target_partition_state in partition_states.items():
             if target_partition_state['status'] != 'active':
@@ -1711,7 +1711,7 @@ class EnvironmentsManager:
             # Update the partition state
             partition_states[target_partition_idx]['timestep'] = updated_timestep
             
-            print(f"    Synced global maps to partition {target_partition_idx}")
+            #print(f"    Synced global maps to partition {target_partition_idx}")
 
 
     def _create_world_with_global_maps_preserve_targets_fixed(self, current_world, partition_idx):
@@ -1727,7 +1727,7 @@ class EnvironmentsManager:
         region_height = min(64, y_end - y_start + 1)
         region_width = min(64, x_end - x_start + 1)
         
-        print(f"    Creating world for partition {partition_idx}, extracting {region_height}x{region_width} from global")
+        #print(f"    Creating world for partition {partition_idx}, extracting {region_height}x{region_width} from global")
         
         # Get the original partition-specific target map
         if hasattr(self, 'partition_target_maps') and partition_idx in self.partition_target_maps:
