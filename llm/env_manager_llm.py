@@ -19,7 +19,7 @@ class EnvironmentsManager:
     Only map data is exchanged between environments.
     """
         
-    def __init__(self, seed, global_env_config, small_env_config=None, shuffle_maps=False, rendering=False, display=False):
+    def __init__(self, seed, global_env_config, small_env_config=None, shuffle_maps=False, rendering=False, display=False, size=64):
         """
         Initialize with separate configurations for large and small environments.
         
@@ -57,7 +57,7 @@ class EnvironmentsManager:
             shuffle_maps=shuffle_maps,
         )
 
-        self.map_size_px = 128
+        self.map_size_px = size  # Set map size based on provided size parameter
         print(f"Global map size: {self.map_size_px}x{self.map_size_px} pixels")
         self.small_agent_config = {
             'height': jnp.array([9], dtype=jnp.int32), 
@@ -202,7 +202,7 @@ class EnvironmentsManager:
             print(f"  Partition {i}: {partition}")
         
         # Use the fixed overlap computation
-        self._compute_overlap_relationships()
+        self._compute_overlap_relationships_fixed()
         
         print(f"Set {len(self.partitions)} partitions with overlaps computed.")
 
@@ -1359,6 +1359,464 @@ class EnvironmentsManager:
         
         return new_timestep
     
+    
+    def _update_global_maps_from_single_partition_big_fixed(self, source_partition_idx, partition_states):
+        """
+        FIXED: Update global maps with proper handling for overlapping regions.
+        This version correctly handles coordinate mapping and overlap synchronization.
+        """
+        if source_partition_idx not in partition_states:
+            return
+            
+        source_state = partition_states[source_partition_idx]['timestep'].state
+        partition = self.partitions[source_partition_idx]
+        region_coords = partition['region_coords']
+        y_start, x_start, y_end, x_end = region_coords
+        
+        print(f"  Updating global maps from partition {source_partition_idx}")
+        print(f"    Partition region_coords: {region_coords}")
+        
+        # Calculate the actual region dimensions
+        region_height = y_end - y_start + 1
+        region_width = x_end - x_start + 1
+        
+        print(f"    Region dimensions in global map: {region_height}x{region_width}")
+        
+        # Define which maps to update globally
+        maps_to_update = [
+            'action_map', 
+            'dumpability_mask',
+            'dumpability_mask_init',
+            'target_map'  # Include target_map for overlap sync
+        ]
+        
+        # Update each map in the global storage
+        for map_name in maps_to_update:
+            # Get the current map from the partition (this is always 64x64)
+            partition_map = getattr(source_state.world, map_name).map
+            print(f"    {map_name} partition shape: {partition_map.shape}")
+            
+            # CRITICAL FIX: The partition map is 64x64, which represents the ENTIRE partition view
+            # We can only update the portion of the global map that fits within 64x64
+            # If the region is larger than 64x64, we can only update a 64x64 portion
+            
+            # Calculate how much we can actually update
+            update_height = min(64, region_height)
+            update_width = min(64, region_width)
+            
+            print(f"    Will update {update_height}x{update_width} region in global map")
+            
+            # Extract the data to update (the full partition map up to the update size)
+            data_to_update = partition_map[:update_height, :update_width]
+            
+            # Define the target slice in the global map (only update what we can)
+            global_region_slice = (
+                slice(y_start, y_start + update_height), 
+                slice(x_start, x_start + update_width)
+            )
+            
+            # Update the global map with the extracted region
+            try:
+                self.global_maps[map_name] = self.global_maps[map_name].at[global_region_slice].set(data_to_update)
+                print(f"    ✓ Updated global {map_name} from partition {source_partition_idx}")
+            except Exception as e:
+                print(f"    ✗ Error updating global {map_name}: {e}")
+                print(f"      Global map shape: {self.global_maps[map_name].shape}")
+                print(f"      Target slice: {global_region_slice}")
+                print(f"      Data to update shape: {data_to_update.shape}")
+
+
+    def step_with_full_global_sync_fixed(self, partition_idx: int, action, partition_states: dict):
+        """
+        FIXED: Enhanced step function with proper overlap synchronization for big maps.
+        """
+        # Step 1: Sync current positions BEFORE any movement
+        self._sync_agent_positions_across_partitions(partition_states)
+        
+        # Step 2: Update observations so agents see synchronized state
+        self._update_all_observations(partition_states)
+        
+        # Step 3: Take the action with proper obstacle awareness
+        new_timestep = self.step_simple(partition_idx, action, partition_states)
+        
+        # Step 4: Update the partition state
+        partition_states[partition_idx]['timestep'] = new_timestep
+        
+        # Step 5: Extract changes and update global maps
+        if self.map_size_px == 64:
+            self._update_global_maps_from_single_partition_small(partition_idx, partition_states)
+        else:
+            self._update_global_maps_from_single_partition_big_fixed(partition_idx, partition_states)
+        
+        # Step 6: Sync overlapping regions for big maps
+        if self.map_size_px > 64 and self.overlap_regions:
+            self._sync_overlapping_regions_big_maps_fixed(partition_idx, partition_states)
+        
+        # Step 7: Propagate changes to other partitions
+        if self.overlap_regions != {}:
+            self._sync_all_partitions_from_global_maps_excluding_traversability(partition_states)
+        
+        return new_timestep
+
+
+    def _sync_overlapping_regions_big_maps_fixed(self, source_partition_idx, partition_states):
+        """
+        FIXED: Synchronize overlapping regions between partitions for big maps.
+        Handles the case where regions are larger than 64x64.
+        """
+        print(f"  Syncing overlapping regions from partition {source_partition_idx}")
+        
+        # Get all partitions that overlap with the source
+        overlapping_partitions = self.overlap_map.get(source_partition_idx, set())
+        
+        for target_partition_idx in overlapping_partitions:
+            if (target_partition_idx not in partition_states or 
+                partition_states[target_partition_idx]['status'] != 'active'):
+                continue
+            
+            # Get overlap information
+            overlap_key = (min(source_partition_idx, target_partition_idx), 
+                        max(source_partition_idx, target_partition_idx))
+            
+            if overlap_key not in self.overlap_regions:
+                continue
+            
+            overlap_info = self.overlap_regions[overlap_key]
+            
+            # Determine which partition is source and which is target
+            if source_partition_idx < target_partition_idx:
+                source_slice = overlap_info['partition_i_slice']
+                target_slice = overlap_info['partition_j_slice']
+            else:
+                source_slice = overlap_info['partition_j_slice']
+                target_slice = overlap_info['partition_i_slice']
+            
+            # Sync the overlapping region
+            self._sync_single_overlap_region_fixed(
+                source_partition_idx, target_partition_idx,
+                source_slice, target_slice,
+                partition_states
+            )
+
+
+    def _sync_single_overlap_region_fixed(self, source_idx, target_idx, source_slice, target_slice, partition_states):
+        """
+        FIXED: Sync a single overlapping region from source to target partition.
+        Handles shape mismatches by only syncing the actual overlapping data.
+        """
+        source_state = partition_states[source_idx]['timestep'].state
+        target_state = partition_states[target_idx]['timestep'].state
+        
+        # Maps to sync (excluding traversability which is handled separately)
+        maps_to_sync = ['action_map', 'dumpability_mask', 'dumpability_mask_init']
+        
+        print(f"    Syncing overlap from partition {source_idx} to {target_idx}")
+        
+        for map_name in maps_to_sync:
+            try:
+                # Get source and target maps
+                source_map = getattr(source_state.world, map_name).map
+                target_map = getattr(target_state.world, map_name).map.copy()
+                
+                # Extract the actual shapes of the slices
+                source_y_slice, source_x_slice = source_slice
+                target_y_slice, target_x_slice = target_slice
+                
+                # Calculate actual dimensions of overlap region
+                source_height = min(source_y_slice.stop - source_y_slice.start, source_map.shape[0] - source_y_slice.start)
+                source_width = min(source_x_slice.stop - source_x_slice.start, source_map.shape[1] - source_x_slice.start)
+                target_height = min(target_y_slice.stop - target_y_slice.start, target_map.shape[0] - target_y_slice.start)
+                target_width = min(target_x_slice.stop - target_x_slice.start, target_map.shape[1] - target_x_slice.start)
+                
+                # Use the minimum dimensions to ensure compatibility
+                sync_height = min(source_height, target_height)
+                sync_width = min(source_width, target_width)
+                
+                # Create adjusted slices
+                adj_source_slice = (
+                    slice(source_y_slice.start, source_y_slice.start + sync_height),
+                    slice(source_x_slice.start, source_x_slice.start + sync_width)
+                )
+                adj_target_slice = (
+                    slice(target_y_slice.start, target_y_slice.start + sync_height),
+                    slice(target_x_slice.start, target_x_slice.start + sync_width)
+                )
+                
+                # Extract overlapping region from source
+                source_overlap_data = source_map[adj_source_slice]
+                
+                # Update target map with source data
+                target_map = target_map.at[adj_target_slice].set(source_overlap_data)
+                
+                # Update the world state
+                updated_world = self._update_world_map(target_state.world, map_name, target_map)
+                target_state = target_state._replace(world=updated_world)
+                
+                print(f"      ✓ Synced {map_name} ({sync_height}x{sync_width} region)")
+                
+            except Exception as e:
+                print(f"      ✗ Error syncing {map_name}: {e}")
+        
+        # Special handling for target_map - merge instead of overwrite
+        try:
+            source_target_map = source_state.world.target_map.map
+            target_target_map = target_state.world.target_map.map.copy()
+            
+            # Use adjusted slices for target map as well
+            source_overlap_targets = source_target_map[adj_source_slice]
+            target_overlap_targets = target_target_map[adj_target_slice]
+            
+            # Merge logic: keep dig targets (-1) from both, prioritize source for conflicts
+            merged_targets = jnp.where(
+                (target_overlap_targets == -1) | (source_overlap_targets == -1),
+                -1,  # Keep dig targets from either partition
+                source_overlap_targets  # Otherwise use source
+            )
+            
+            target_target_map = target_target_map.at[adj_target_slice].set(merged_targets)
+            updated_world = self._update_world_map(target_state.world, 'target_map', target_target_map)
+            target_state = target_state._replace(world=updated_world)
+            
+            print(f"      ✓ Merged target_map ({sync_height}x{sync_width} region)")
+            
+        except Exception as e:
+            print(f"      ✗ Error merging target_map: {e}")
+        
+        # Update the partition state
+        updated_timestep = partition_states[target_idx]['timestep']._replace(state=target_state)
+        partition_states[target_idx]['timestep'] = updated_timestep
+        
+        print(f"    ✓ Synced overlap region")
+
+
+    def _calculate_overlap_region_fixed(self, partition_i: int, partition_j: int):
+        """
+        FIXED: Calculate the overlapping region between two partitions with correct coordinate mapping.
+        Handles cases where partitions are larger than 64x64.
+        """
+        p1_coords = self.partitions[partition_i]['region_coords']
+        p2_coords = self.partitions[partition_j]['region_coords']
+        
+        y1_start, x1_start, y1_end, x1_end = p1_coords
+        y2_start, x2_start, y2_end, x2_end = p2_coords
+        
+        # Find intersection in global coordinates
+        overlap_y_start = max(y1_start, y2_start)
+        overlap_x_start = max(x1_start, x2_start)
+        overlap_y_end = min(y1_end, y2_end)
+        overlap_x_end = min(x1_end, x2_end)
+        
+        # Check if there's actual overlap
+        if overlap_y_start > overlap_y_end or overlap_x_start > overlap_x_end:
+            return None
+        
+        # Calculate local coordinates relative to each partition's origin
+        # But limit to 64x64 since that's the actual partition map size
+        local_i_y_start = overlap_y_start - y1_start
+        local_i_x_start = overlap_x_start - x1_start
+        local_i_y_end = overlap_y_end - y1_start
+        local_i_x_end = overlap_x_end - x1_start
+        
+        local_j_y_start = overlap_y_start - y2_start
+        local_j_x_start = overlap_x_start - x2_start
+        local_j_y_end = overlap_y_end - y2_start
+        local_j_x_end = overlap_x_end - x2_start
+        
+        # CRITICAL: Ensure local coordinates don't exceed 64x64 bounds
+        # The partition maps are always 64x64, even if the region is larger
+        local_i_y_start = max(0, min(local_i_y_start, 63))
+        local_i_x_start = max(0, min(local_i_x_start, 63))
+        local_i_y_end = max(0, min(local_i_y_end, 63))
+        local_i_x_end = max(0, min(local_i_x_end, 63))
+        
+        local_j_y_start = max(0, min(local_j_y_start, 63))
+        local_j_x_start = max(0, min(local_j_x_start, 63))
+        local_j_y_end = max(0, min(local_j_y_end, 63))
+        local_j_x_end = max(0, min(local_j_x_end, 63))
+        
+        return {
+            'global_slice': (slice(overlap_y_start, overlap_y_end + 1), 
+                            slice(overlap_x_start, overlap_x_end + 1)),
+            'partition_i_slice': (slice(local_i_y_start, local_i_y_end + 1), 
+                                slice(local_i_x_start, local_i_x_end + 1)),
+            'partition_j_slice': (slice(local_j_y_start, local_j_y_end + 1),
+                                slice(local_j_x_start, local_j_x_end + 1)),
+            'overlap_bounds': (overlap_y_start, overlap_x_start, overlap_y_end, overlap_x_end)
+        }
+
+
+    def _compute_overlap_relationships_fixed(self):
+        """
+        FIXED: Compute overlap relationships with corrected coordinate mapping.
+        """
+        print(f"\n=== COMPUTING OVERLAP RELATIONSHIPS ===")
+        
+        self.overlap_map = {i: set() for i in range(len(self.partitions))}
+        self.overlap_regions = {}
+        
+        for i in range(len(self.partitions)):
+            for j in range(i + 1, len(self.partitions)):
+                print(f"\nChecking partitions {i} and {j}:")
+                
+                if self._partitions_overlap(i, j):
+                    self.overlap_map[i].add(j)
+                    self.overlap_map[j].add(i)
+                    
+                    # Use the fixed overlap calculation
+                    overlap_info = self._calculate_overlap_region_fixed(i, j)
+                    if overlap_info is not None:
+                        self.overlap_regions[(i, j)] = overlap_info
+                        self.overlap_regions[(j, i)] = overlap_info  # Symmetric
+                        
+                        # Debug: print overlap details
+                        print(f"  Overlap found:")
+                        print(f"    Global region: {overlap_info['overlap_bounds']}")
+                        print(f"    Partition {i} local slice: {overlap_info['partition_i_slice']}")
+                        print(f"    Partition {j} local slice: {overlap_info['partition_j_slice']}")
+                    else:
+                        print(f"  Could not calculate overlap region!")
+                else:
+                    print(f"  No overlap detected")
+        
+        print(f"\n=== FINAL OVERLAP RELATIONSHIPS ===")
+        for i, partition in enumerate(self.partitions):
+            overlaps = list(self.overlap_map[i])
+            print(f"Partition {i}: region={partition['region_coords']}, overlaps with {overlaps}")
+        
+        print(f"Total overlap regions cached: {len(self.overlap_regions)}")
+
+    def _sync_all_partitions_from_global_maps_excluding_traversability_fixed(self, partition_states):
+        """
+        FIXED: Synchronize ALL partitions with updated global maps, handling 64x64 partition maps correctly.
+        """
+        print(f"  Syncing global maps to all partitions (excluding traversability)")
+        
+        for target_partition_idx, target_partition_state in partition_states.items():
+            if target_partition_state['status'] != 'active':
+                continue
+                
+            # Get current state
+            current_timestep = target_partition_state['timestep']
+            current_state = current_timestep.state
+            
+            # Create updated world state with global maps but preserve partition-specific targets
+            updated_world = self._create_world_with_global_maps_preserve_targets_fixed(
+                current_state.world, target_partition_idx
+            )
+            
+            # Create updated state and timestep
+            updated_state = current_state._replace(world=updated_world)
+            updated_timestep = current_timestep._replace(state=updated_state)
+            
+            # Update the partition state
+            partition_states[target_partition_idx]['timestep'] = updated_timestep
+            
+            print(f"    Synced global maps to partition {target_partition_idx}")
+
+
+    def _create_world_with_global_maps_preserve_targets_fixed(self, current_world, partition_idx):
+        """
+        FIXED: Create a new world state that uses global maps but correctly handles 64x64 partition size.
+        """
+        # Get partition info
+        partition = self.partitions[partition_idx]
+        region_coords = partition['region_coords']
+        y_start, x_start, y_end, x_end = region_coords
+        
+        # Calculate region dimensions
+        region_height = min(64, y_end - y_start + 1)
+        region_width = min(64, x_end - x_start + 1)
+        
+        print(f"    Creating world for partition {partition_idx}, extracting {region_height}x{region_width} from global")
+        
+        # Get the original partition-specific target map
+        if hasattr(self, 'partition_target_maps') and partition_idx in self.partition_target_maps:
+            partition_target_map = self.partition_target_maps[partition_idx]
+        else:
+            partition_target_map = current_world.target_map.map
+        
+        # Extract 64x64 regions from global maps for this partition
+        extracted_maps = {}
+        
+        for map_name in ['action_map', 'dumpability_mask', 'dumpability_mask_init', 'padding_mask']:
+            global_map = self.global_maps[map_name]
+            
+            # Extract the region from global map
+            extracted_region = global_map[y_start:y_start + region_height, x_start:x_start + region_width]
+            
+            # If extracted region is smaller than 64x64, pad it
+            if extracted_region.shape != (64, 64):
+                # Create a 64x64 map with appropriate default values
+                if map_name == 'action_map':
+                    default_val = 0  # Free space
+                elif 'dumpability' in map_name:
+                    default_val = 0 if 'dumpability_mask' in map_name else 1  # Can't dump / can dump for init
+                elif map_name == 'padding_mask':
+                    default_val = 1  # Non-traversable padding
+                else:
+                    default_val = 0
+                    
+                padded_map = jnp.full((64, 64), default_val, dtype=extracted_region.dtype)
+                padded_map = padded_map.at[:extracted_region.shape[0], :extracted_region.shape[1]].set(extracted_region)
+                extracted_maps[map_name] = padded_map
+            else:
+                extracted_maps[map_name] = extracted_region
+        
+        # Create updated world with extracted maps
+        updated_world = current_world._replace(
+            target_map=current_world.target_map._replace(map=partition_target_map),  # Keep partition-specific
+            action_map=current_world.action_map._replace(map=extracted_maps['action_map']),
+            dumpability_mask=current_world.dumpability_mask._replace(map=extracted_maps['dumpability_mask']),
+            dumpability_mask_init=current_world.dumpability_mask_init._replace(map=extracted_maps['dumpability_mask_init']),
+            padding_mask=current_world.padding_mask._replace(map=extracted_maps['padding_mask'])
+            # NOTE: traversability_mask is handled separately by agent sync
+        )
+        
+        return updated_world
+
+
+    def step_with_full_global_sync_fixed_v2(self, partition_idx: int, action, partition_states: dict):
+        """
+        FIXED V2: Enhanced step function with better error handling for shape mismatches.
+        """
+        try:
+            # Step 1: Sync current positions BEFORE any movement
+            self._sync_agent_positions_across_partitions(partition_states)
+            
+            # Step 2: Update observations so agents see synchronized state
+            self._update_all_observations(partition_states)
+            
+            # Step 3: Take the action with proper obstacle awareness
+            new_timestep = self.step_simple(partition_idx, action, partition_states)
+            
+            # Step 4: Update the partition state
+            partition_states[partition_idx]['timestep'] = new_timestep
+            
+            # Step 5: Extract changes and update global maps
+            if self.map_size_px == 64:
+                self._update_global_maps_from_single_partition_small(partition_idx, partition_states)
+            else:
+                self._update_global_maps_from_single_partition_big_fixed(partition_idx, partition_states)
+            
+            # Step 6: Sync overlapping regions for big maps
+            if self.map_size_px > 64 and self.overlap_regions:
+                self._sync_overlapping_regions_big_maps_fixed(partition_idx, partition_states)
+            
+            # Step 7: Propagate changes to other partitions (using fixed version)
+            if self.overlap_regions != {}:
+                self._sync_all_partitions_from_global_maps_excluding_traversability_fixed(partition_states)
+            
+            return new_timestep
+            
+        except Exception as e:
+            print(f"    ERROR in step_with_full_global_sync for partition {partition_idx}: {e}")
+            import traceback
+            traceback.print_exc()
+            # Return the timestep even if sync failed
+            return new_timestep if 'new_timestep' in locals() else partition_states[partition_idx]['timestep']
+
+
+        
     def _update_partition_traversability_with_dumped_soil_and_dig_targets(self, target_partition_idx, target_partition_state, 
                                                                      all_agent_positions, partition_states):
         """
@@ -1817,3 +2275,203 @@ class EnvironmentsManager:
         )
         
         return updated_world
+    
+    def assign_exclusive_targets_in_overlaps(self, partition_states):
+        """
+        Assign targets in overlapping regions exclusively to one partition.
+        This prevents conflicts and double work.
+        """
+        print("\n=== ASSIGNING EXCLUSIVE TARGETS IN OVERLAPPING REGIONS ===")
+        
+        # Track which targets have been assigned
+        assigned_targets = {}  # (y, x) -> partition_idx
+        
+        # First pass: identify all targets in overlapping regions
+        overlap_targets = {}  # (y, x) -> list of partition_idx that can see it
+        
+        for partition_idx, partition_state in partition_states.items():
+            if partition_state['status'] != 'active':
+                continue
+                
+            partition = self.partitions[partition_idx]
+            region_coords = partition['region_coords']
+            y_start, x_start, y_end, x_end = region_coords
+            
+            # Get this partition's target map
+            if hasattr(self, 'partition_target_maps') and partition_idx in self.partition_target_maps:
+                target_map = self.partition_target_maps[partition_idx]
+                
+                # Find all dig targets in this partition
+                dig_targets = jnp.where(target_map == -1)
+                
+                for i in range(len(dig_targets[0])):
+                    local_y = int(dig_targets[0][i])
+                    local_x = int(dig_targets[1][i])
+                    
+                    # Convert to global coordinates
+                    global_y = y_start + local_y
+                    global_x = x_start + local_x
+                    
+                    # Check if this target is in an overlap region
+                    for other_idx in self.overlap_map.get(partition_idx, set()):
+                        other_partition = self.partitions[other_idx]
+                        other_y_start, other_x_start, other_y_end, other_x_end = other_partition['region_coords']
+                        
+                        # Check if this global coordinate is within the other partition's region
+                        if (other_y_start <= global_y <= other_y_end and 
+                            other_x_start <= global_x <= other_x_end):
+                            # This target is in an overlap region
+                            coord = (global_y, global_x)
+                            if coord not in overlap_targets:
+                                overlap_targets[coord] = []
+                            overlap_targets[coord].append(partition_idx)
+        
+        # Second pass: assign overlapping targets based on strategy
+        targets_reassigned = 0
+        for (global_y, global_x), partition_list in overlap_targets.items():
+            if len(partition_list) > 1:
+                # Multiple partitions can see this target - assign to one
+                assigned_partition = self._choose_partition_for_target(
+                    global_y, global_x, partition_list, partition_states
+                )
+                assigned_targets[(global_y, global_x)] = assigned_partition
+                targets_reassigned += 1
+                
+                print(f"  Target at ({global_y}, {global_x}) assigned to partition {assigned_partition} "
+                    f"(was visible to: {partition_list})")
+        
+        # Third pass: update partition target maps to remove non-assigned targets
+        for partition_idx, partition_state in partition_states.items():
+            if partition_state['status'] != 'active':
+                continue
+                
+            partition = self.partitions[partition_idx]
+            region_coords = partition['region_coords']
+            y_start, x_start, y_end, x_end = region_coords
+            
+            # Get current target map
+            if hasattr(self, 'partition_target_maps') and partition_idx in self.partition_target_maps:
+                target_map = self.partition_target_maps[partition_idx].copy()
+                modified = False
+                
+                # Check each target in this partition
+                dig_targets = jnp.where(target_map == -1)
+                for i in range(len(dig_targets[0])):
+                    local_y = int(dig_targets[0][i])
+                    local_x = int(dig_targets[1][i])
+                    global_y = y_start + local_y
+                    global_x = x_start + local_x
+                    
+                    # If this target was assigned to another partition, remove it
+                    if ((global_y, global_x) in assigned_targets and 
+                        assigned_targets[(global_y, global_x)] != partition_idx):
+                        # Change from dig target (-1) to free space (0) or dump area (1)
+                        target_map = target_map.at[local_y, local_x].set(0)
+                        modified = True
+                
+                if modified:
+                    # Update the stored partition target map
+                    self.partition_target_maps[partition_idx] = target_map
+                    
+                    # Update the actual partition's target map
+                    current_timestep = partition_state['timestep']
+                    updated_world = self._update_world_map(
+                        current_timestep.state.world, 
+                        'target_map', 
+                        target_map
+                    )
+                    updated_state = current_timestep.state._replace(world=updated_world)
+                    updated_timestep = current_timestep._replace(state=updated_state)
+                    partition_states[partition_idx]['timestep'] = updated_timestep
+        
+        print(f"  Total targets reassigned: {targets_reassigned}")
+        print(f"=== TARGET ASSIGNMENT COMPLETE ===\n")
+        
+        return assigned_targets
+
+
+    def _choose_partition_for_target(self, global_y, global_x, partition_list, partition_states):
+        """
+        Choose which partition should handle a target in an overlapping region.
+        
+        Strategies:
+        1. Closest agent
+        2. Least loaded partition (fewer remaining targets)
+        3. First-come-first-served (lowest partition index)
+        4. Based on partition efficiency/performance
+        """
+        # Strategy 1: Assign to partition with closest agent
+        min_distance = float('inf')
+        chosen_partition = partition_list[0]
+        
+        for partition_idx in partition_list:
+            if partition_states[partition_idx]['status'] != 'active':
+                continue
+                
+            # Get agent position
+            agent_state = partition_states[partition_idx]['timestep'].state.agent.agent_state
+            agent_pos = agent_state.pos_base
+            
+            # Calculate distance to target
+            # Note: agent position might need coordinate transformation
+            partition = self.partitions[partition_idx]
+            y_start, x_start, _, _ = partition['region_coords']
+            
+            # Convert agent local position to global
+            agent_global_y = y_start + agent_pos[0]
+            agent_global_x = x_start + agent_pos[1]
+            
+            distance = jnp.sqrt((agent_global_y - global_y)**2 + (agent_global_x - global_x)**2)
+            
+            if distance < min_distance:
+                min_distance = distance
+                chosen_partition = partition_idx
+        
+        return chosen_partition
+
+
+    def _choose_partition_by_load(self, partition_list, partition_states):
+        """
+        Alternative strategy: Choose partition with fewer remaining targets.
+        """
+        min_targets = float('inf')
+        chosen_partition = partition_list[0]
+        
+        for partition_idx in partition_list:
+            if hasattr(self, 'partition_target_maps') and partition_idx in self.partition_target_maps:
+                target_map = self.partition_target_maps[partition_idx]
+                remaining_targets = jnp.sum(target_map == -1)
+                
+                if remaining_targets < min_targets:
+                    min_targets = remaining_targets
+                    chosen_partition = partition_idx
+        
+        return chosen_partition
+
+
+    def initialize_partition_specific_target_maps_with_exclusive_assignment(self, partition_states):
+        """
+        Enhanced version that assigns exclusive targets after initialization.
+        """
+        # First, do the regular initialization
+        if not hasattr(self, 'partition_target_maps'):
+            self.partition_target_maps = {}
+        
+        print("Storing partition-specific target maps...")
+        
+        for partition_idx, partition_state in partition_states.items():
+            if partition_state['status'] == 'active':
+                # Store the original target map for this partition
+                original_target_map = partition_state['timestep'].state.world.target_map.map.copy()
+                self.partition_target_maps[partition_idx] = original_target_map
+                
+                # Count targets for verification
+                dig_targets = jnp.sum(original_target_map == -1)
+                dump_targets = jnp.sum(original_target_map == 1)
+                
+                print(f"  Partition {partition_idx}: {dig_targets} dig targets, {dump_targets} dump targets")
+        
+        # Then assign exclusive targets in overlapping regions
+        if self.overlap_regions:
+            self.assign_exclusive_targets_in_overlaps(partition_states)
+

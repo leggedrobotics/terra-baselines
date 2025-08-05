@@ -118,6 +118,12 @@ DATASET_PATH=<path> DATASET_SIZE=<size> python -m llm.main_llm \
 | `-run` | Path to pre-trained RL policy |
 | `--level_index` | Map difficulty level (see [Level Index](#level-index-reference)) |
 
+### Running big maps
+After generating big maps (currently tested only with 128x128) it is possible to run the code as described in the previous section.
+
+> [!WARNING]
+> Make sure to set the new map size in `config_llm.yaml` file and adapt the visualization in Terra `terra/viz/game/setting.py`. A value of 384 can be used for 128x128 (2x the value used for 64x64)!
+
 ### Running on Clusters
 
 For SLURM-based clusters (e.g., ETH Zürich Euler):

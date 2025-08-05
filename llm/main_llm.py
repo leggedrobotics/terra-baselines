@@ -158,8 +158,8 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
                         USE_MANUAL_PARTITIONING, USE_IMAGE_PROMPT, MAX_NUM_PARTITIONS,USE_EXACT_NUMBER_OF_PARTITIONS, USE_RANDOM_PARTITIONING, sub_task_seed)
             partition_states, partition_models, active_partitions = initialize_partitions_for_current_map(env_manager, config, model_params)
 
-            env_manager.initialize_partition_specific_target_maps(partition_states)
-
+            #env_manager.initialize_partition_specific_target_maps(partition_states)
+            env_manager.initialize_partition_specific_target_maps_with_exclusive_assignment(partition_states)
 
             if partition_states is None:
                 print(f"Failed to initialize map {current_map_index}, moving to next map")
@@ -451,7 +451,10 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
                     wrapped_action = wrap_action_llm(action_rl, action_type)
 
                     # Take step with full sync
-                    new_timestep = env_manager.step_with_full_global_sync(partition_idx, wrapped_action, partition_states)
+                    if ORIGINAL_MAP_SIZE == 64:
+                        new_timestep = env_manager.step_with_full_global_sync(partition_idx, wrapped_action, partition_states)
+                    else:
+                        new_timestep = env_manager.step_with_full_global_sync_fixed_v2(partition_idx, wrapped_action, partition_states)
                     partition_states[partition_idx]['timestep'] = new_timestep
                     partition_state['step_count'] += 1
                 
@@ -706,8 +709,13 @@ if __name__ == "__main__":
 
     base_seed = args.seed
 
-    (_, _, _, _, _, _, _ , _, _, _, _, _, USE_RENDERING, USE_DISPLAY,
-    _, _, _, _, _,_, _, _, COMPUTE_BENCH_STATS
+    (FORCE_DELEGATE_TO_RL, FORCE_DELEGATE_TO_LLM, LLM_CALL_FREQUENCY,
+     USE_MANUAL_PARTITIONING, MAX_NUM_PARTITIONS, VISUALIZE_PARTITIONS,
+     USE_IMAGE_PROMPT , APP_NAME, USER_ID, SESSION_ID,
+     GRID_RENDERING, ORIGINAL_MAP_SIZE, 
+     USE_RENDERING, USE_DISPLAY, ENABLE_INTERVENTION, INTERVENTION_FREQUENCY, 
+     STUCK_WINDOW, MIN_REWARD, USE_RANDOM_PARTITIONING,
+     USE_EXACT_NUMBER_OF_PARTITIONS, SAVE_VIDEO, FPS, COMPUTE_BENCH_STATS
     ) = setup_experiment_config()
 
     # Track intervention statistics
@@ -740,7 +748,8 @@ if __name__ == "__main__":
         small_env_config=None,
         shuffle_maps=False,
         rendering=USE_RENDERING,
-        display=USE_DISPLAY
+        display=USE_DISPLAY,
+        size=ORIGINAL_MAP_SIZE,
     )
     print("Environment manager initialized.")
 

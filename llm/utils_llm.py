@@ -912,11 +912,16 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
             #     {'id': 1, 'region_coords': (48, 48, 111, 111), 'start_pos': (80, 80), 'start_angle': 0, 'status': 'pending'}
             # ]
 
+
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (64, 32), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (32, 64, 95, 127), 'start_pos': (64, 96), 'start_angle': 0, 'status': 'pending'}
+            # ]
             sub_tasks_manual = [
-                {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (64, 32), 'start_angle': 0, 'status': 'pending'},
-                {'id': 1, 'region_coords': (32, 64, 95, 127), 'start_pos': (64, 96), 'start_angle': 0, 'status': 'pending'}
+                {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
+                {'id': 1, 'region_coords': (32, 48, 95, 111), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
             ]
-            
+
     elif NUM_PARTITIONS == 2:
         if ORIGINAL_MAP_SIZE == 64:
             # Horizontal split of 64x64 map
