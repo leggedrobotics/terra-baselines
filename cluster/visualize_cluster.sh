@@ -26,9 +26,14 @@ conda activate $CONDA_ENV
 
 # Set environment variables and run visualization
 export DATASET_PATH=/cluster/home/alesweber/TerraProject/terra/data/terra/train/
-export DATASET_SIZE=30
+export DATASET_SIZE=20
 
 
 # Change to the directory containing visualize.py
 cd /cluster/home/alesweber/TerraProject/terra-baselines
-python visualize_mixed.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-08-05-15-43-16.pkl
+#JAX_PLATFORMS=cpu  python visualize_mixed.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-08-08-13-52-00.pkl
+python visualize_mixed.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-08-12-01-52-26.pkl
+
+#mixed-agents-skidsteer-skidsteer-local-2025-08-07-16-58-21_FINAL.pkl
+
+#JAX_PLATFORMS=cpu 

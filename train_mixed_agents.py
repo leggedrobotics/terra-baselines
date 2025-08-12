@@ -116,7 +116,7 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 2048  # Increased for better dual skidsteer training 2048
+    num_envs_per_device: int = 2048 #1536  # Increased for better dual skidsteer training 2048
     num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
     update_epochs: int = 3  # Reduced from 4 to 2 for faster training
     num_minibatches: int = 8  # Reduced from 16 to 8 for faster training

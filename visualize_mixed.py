@@ -100,28 +100,29 @@ if __name__ == "__main__":
         "-nx",
         "--n_envs_x",
         type=int,
-        default=4,
+        default=2,
         help="Number of environments on x.",
     )
     parser.add_argument(
         "-ny",
         "--n_envs_y",
         type=int,
-        default=4,
+        default=2,
         help="Number of environments on y.",
     )
     parser.add_argument(
         "-steps",
         "--n_steps",
         type=int,
-        default=300,
+        default=200,
         help="Number of steps.",
     )
     parser.add_argument(
         "-o",
         "--out_path",
         type=str,
-        default="./visualize_mixed_skid_exec_harder_nodump_154316.gif",
+        default="./visualize_mixed_skid_exec___experimental_96x96_2x2env_2.gif",
+        #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )
     parser.add_argument(
@@ -157,6 +158,25 @@ if __name__ == "__main__":
             return x[0][None, ...].repeat(n_envs, 0)
     
     env_cfgs = jax.tree_map(replicate_field, env_cfgs)
+    
+    # Fix for 128x128 maps: override environment configuration to use correct map dimensions
+    # The checkpoint was trained on 64x64 maps, but we want to visualize 128x128 maps
+    # if hasattr(env_cfgs, 'maps') and hasattr(env_cfgs.maps, 'edge_length_m'):
+    #     # Override the edge_length_m to use 88.0 meters for 128x128 maps
+    #     # This ensures the physical map size matches the 128x128 resolution
+    #     original_edge_length = env_cfgs.maps.edge_length_m
+    #     if isinstance(original_edge_length, (list, tuple)):
+    #         # If it's already an array, set each element to 88.0
+    #         scaled_edge_length = [88.0 for _ in original_edge_length]
+    #     else:
+    #         # If it's a scalar, set it to 88.0
+    #         scaled_edge_length = 88.0
+        
+    #     # Update the edge_length_m for all environments
+    #     env_cfgs = env_cfgs._replace(
+    #         maps=env_cfgs.maps._replace(edge_length_m=scaled_edge_length)
+    #     )
+    #     print(f"Overriding edge_length_m from {original_edge_length} to {scaled_edge_length} for 128x128 visualization")
     suffle_maps = True
     env = TerraEnvBatch(
         rendering=True,
