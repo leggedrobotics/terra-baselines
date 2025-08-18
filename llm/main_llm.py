@@ -158,8 +158,8 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
                         USE_MANUAL_PARTITIONING, USE_IMAGE_PROMPT, MAX_NUM_PARTITIONS,USE_EXACT_NUMBER_OF_PARTITIONS, USE_RANDOM_PARTITIONING, sub_task_seed)
             partition_states, partition_models, active_partitions = initialize_partitions_for_current_map(env_manager, config, model_params)
 
-            #env_manager.initialize_partition_specific_target_maps(partition_states)
-            env_manager.initialize_partition_specific_target_maps_with_exclusive_assignment(partition_states)
+            env_manager.initialize_partition_specific_target_maps(partition_states)
+            #env_manager.initialize_partition_specific_target_maps_with_exclusive_assignment(partition_states)
 
             if partition_states is None:
                 print(f"Failed to initialize map {current_map_index}, moving to next map")

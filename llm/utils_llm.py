@@ -900,9 +900,9 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
             #     {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
             # ]
             # Single partition for 128x128 map, centered in the middle
-            # sub_tasks_manual = [
-            #     {'id': 0, 'region_coords': (32, 32, 95, 95), 'start_pos': (64, 64), 'start_angle': 0, 'status': 'pending'},
-            # ]
+            sub_tasks_manual = [
+                {'id': 0, 'region_coords': (32, 32, 95, 95), 'start_pos': (64, 64), 'start_angle': 0, 'status': 'pending'},
+            ]
             # Two overlapping 64x64 regions in the center of the 128x128 map
             # Left-center region: (16, 16) to (79, 79)
             # Right-center region: (48, 48) to (111, 111)
@@ -921,10 +921,10 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
             #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
             #     {'id': 1, 'region_coords': (32, 48, 95, 111), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
             # ]
-            sub_tasks_manual = [
-                {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
-                {'id': 1, 'region_coords': (32, 54, 95, 117), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
-            ]
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (32, 54, 95, 117), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
+            # ]
 
     elif NUM_PARTITIONS == 2:
         if ORIGINAL_MAP_SIZE == 64:
@@ -933,12 +933,30 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
                 {'id': 0, 'region_coords': (0, 0, 31, 63), 'start_pos': (16, 32), 'start_angle': 0, 'status': 'pending'},
                 {'id': 1, 'region_coords': (32, 0, 63, 63), 'start_pos': (48, 32), 'start_angle': 0, 'status': 'pending'}
             ]
+            # sub_tasks_manual = [
+            #     {
+            #         "id": 0,
+            #         "region_coords": (45, 20, 60, 63),
+            #         "start_pos": (38, 31),
+            #         "start_angle": 0,
+            #         "status": "pending"
+            #     },
+            #     {
+            #         "id": 1,
+            #         "region_coords": (20, 45, 63, 60),
+            #         "start_pos": (31, 54),
+            #         "start_angle": 0,
+            #         "status": "pending"
+            #     }
+            # ]
         else:  # 128x128
             # Two 64x64 regions from different parts of the 128x128 map
             sub_tasks_manual = [
                 {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
                 {'id': 1, 'region_coords': (64, 0, 127, 63), 'start_pos': (96, 32), 'start_angle': 0, 'status': 'pending'}
             ]
+            
+
             
     elif NUM_PARTITIONS == 4:
         if ORIGINAL_MAP_SIZE == 64:
