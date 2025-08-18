@@ -28,7 +28,7 @@ grid_rendering: false               # Use grid rendering for partitions
 use_rendering: true                 # Use rendering for the environment
 use_display: true                   # Use display for the environment
 visualize_partitions: true          # Visualize partitions
-save_video: true                    # Save video of the environment
+save_video: false                    # Save video of the environment
 fps: 10                             # Frames per second for video rendering
 
 # Intervention System Settings
