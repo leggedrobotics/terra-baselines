@@ -141,6 +141,7 @@ The framework supports multiple LLM providers through [LiteLLM](https://docs.lit
 ### OpenAI
 - `gpt-4o`
 - `gpt-4.1`
+- `gpt-5`
 - `o4-mini`
 - `o3`
 - `o3-mini`
