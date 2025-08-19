@@ -89,7 +89,7 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
     global_step = 0
     playing = True
     current_map_index = 0
-    max_maps = 1 # Set a reasonable limit for number of maps to process
+    max_maps = 10 # Set a reasonable limit for number of maps to process
     
     # For visualization and metrics across all maps
     all_frames = []
