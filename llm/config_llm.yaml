@@ -16,6 +16,7 @@ use_random_partitioning: false      # Use random partitioning
 max_num_partitions: 1               # Maximum number of partitions for LLM (Partitioning Agent)
 use_exact_number_of_partitions: false # Use exact number of partitions for LLM (Partitioning Agent)
 use_image_prompt: true              # Use image prompt for LLM (Partitioning Agent)
+use_exclusive_assignment: false      # Use exclusive assignment for partition-specific target maps
 
 # Application settings
 app_name: "ExcavatorGameApp"        # Application name for ADK

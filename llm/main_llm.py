@@ -53,7 +53,7 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
      GRID_RENDERING, ORIGINAL_MAP_SIZE, 
      USE_RENDERING, _, ENABLE_INTERVENTION, INTERVENTION_FREQUENCY, 
      STUCK_WINDOW, MIN_REWARD, USE_RANDOM_PARTITIONING,
-     USE_EXACT_NUMBER_OF_PARTITIONS, SAVE_VIDEO, FPS, _
+     USE_EXACT_NUMBER_OF_PARTITIONS, SAVE_VIDEO, FPS, _, USE_EXCLUSIVE_ASSIGNMENT
     ) = setup_experiment_config()
 
     # Initialize once with proper batching
@@ -114,12 +114,10 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
         raise (ValueError(f"{action_type=}"))
 
     obs = env_manager.global_env.timestep.observation
-    #obs = env_manager.global_maps
     areas = (obs["target_map"] == -1).sum(
         tuple([i for i in range(len(obs["target_map"].shape))][1:])
             ) * (tile_size**2)
     target_maps_init = obs["target_map"].copy()
-    #target_maps_init = env_manager.global_maps['target_map'].copy()
     dig_tiles_per_target_map_init = (target_maps_init == -1).sum(
         tuple([i for i in range(len(target_maps_init.shape))][1:])
     )
@@ -158,8 +156,10 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
                         USE_MANUAL_PARTITIONING, USE_IMAGE_PROMPT, MAX_NUM_PARTITIONS,USE_EXACT_NUMBER_OF_PARTITIONS, USE_RANDOM_PARTITIONING, sub_task_seed)
             partition_states, partition_models, active_partitions = initialize_partitions_for_current_map(env_manager, config, model_params)
 
-            env_manager.initialize_partition_specific_target_maps(partition_states)
-            #env_manager.initialize_partition_specific_target_maps_with_exclusive_assignment(partition_states)
+            if USE_EXCLUSIVE_ASSIGNMENT:
+                env_manager.initialize_partition_specific_target_maps_with_exclusive_assignment(partition_states)
+            else:
+                env_manager.initialize_partition_specific_target_maps(partition_states)
 
             if partition_states is None:
                 print(f"Failed to initialize map {current_map_index}, moving to next map")
@@ -357,18 +357,6 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
                     if llm_decision == "delegate_to_rl":
                         print(f"    Partition {partition_idx} - Delegating to RL agent")
                         try:
-                            #current_observation = partition_state['timestep'].observation
-
-
-                            # if map_step <=1 and current_map_index == 0:
-                            #         sub_maps = current_observation
-                            #         save_mask(np.array(sub_maps['target_map']),'target', 'before_RL', partition_idx, map_step)
-                            #         #save_mask(np.array(sub_maps['action_map']),'action', 'before_RL', partition_idx, map_step)
-                            #         #save_mask(np.array(sub_maps['dumpability_mask']),'dumpability', 'before_RL', partition_idx, map_step)
-                            #         save_mask(np.array(sub_maps['traversability_mask']),'traversability', 'before_RL', partition_idx, map_step)
-
-                            # if map_step <=2 and current_map_index == 0:
-                            #     print(current_observation)
                             batched_observation = add_batch_dimension_to_observation(current_observation)
                             obs = obs_to_model_input(batched_observation, partition_state['prev_actions_rl'], config)
 
@@ -716,7 +704,7 @@ if __name__ == "__main__":
      GRID_RENDERING, ORIGINAL_MAP_SIZE, 
      USE_RENDERING, USE_DISPLAY, ENABLE_INTERVENTION, INTERVENTION_FREQUENCY, 
      STUCK_WINDOW, MIN_REWARD, USE_RANDOM_PARTITIONING,
-     USE_EXACT_NUMBER_OF_PARTITIONS, SAVE_VIDEO, FPS, COMPUTE_BENCH_STATS
+     USE_EXACT_NUMBER_OF_PARTITIONS, SAVE_VIDEO, FPS, COMPUTE_BENCH_STATS, _
     ) = setup_experiment_config()
 
     # Track intervention statistics

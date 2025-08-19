@@ -2005,7 +2005,8 @@ def load_experiment_constants(config_file="llm/config_llm.yaml"):
         'use_exact_number_of_partitions': False,
         'save_video': False,
         'fps': 30,
-        'compute_bench_stats': False
+        'compute_bench_stats': False,
+        'use_exclusive_assignment': False,  # New constant for exclusive assignment
     }
     
     # Try to load from YAML file
@@ -2071,7 +2072,8 @@ def setup_experiment_config(config_file="llm/config_llm.yaml"):
         constants.use_exact_number_of_partitions,
         constants.save_video,           # SAVE_VIDEO
         constants.fps,
-        constants.compute_bench_stats
+        constants.compute_bench_stats,
+        constants.use_exclusive_assignment,  # USE_EXCLUSIVE_ASSIGNMENT
     )
 
 def detect_stuck_excavator(partition_state, threshold_steps=10, min_reward_threshold=0.001):
