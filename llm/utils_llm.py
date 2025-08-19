@@ -207,7 +207,7 @@ def create_sub_task_dumpability_mask_64x64(dumpability_mask_data: jnp.ndarray,
 
     return sub_task_mask
 
-def create_sub_task_target_map_64x64_fixed(global_target_map_data: jnp.ndarray,
+def create_sub_task_target_map_64x64_big(global_target_map_data: jnp.ndarray,
                                            region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
     """
     FIXED: Creates a 64x64 target map that always returns exactly 64x64 dimensions.
@@ -257,7 +257,7 @@ def create_sub_task_target_map_64x64_fixed(global_target_map_data: jnp.ndarray,
     
     return sub_task_map
 
-def create_sub_task_action_map_64x64_fixed(action_map_data: jnp.ndarray,
+def create_sub_task_action_map_64x64_big(action_map_data: jnp.ndarray,
                                           region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
     """
     FIXED: Creates a 64x64 action map that always returns exactly 64x64 dimensions.
@@ -284,7 +284,7 @@ def create_sub_task_action_map_64x64_fixed(action_map_data: jnp.ndarray,
     
     return sub_task_map
 
-def create_sub_task_mask_64x64_fixed(mask_data: jnp.ndarray,
+def create_sub_task_mask_64x64_big(mask_data: jnp.ndarray,
                                     region_coords: tuple[int, int, int, int],
                                     default_value: int = 1) -> jnp.ndarray:
     """
@@ -318,14 +318,14 @@ def create_sub_task_mask_64x64_fixed(mask_data: jnp.ndarray,
     return sub_task_map
 
 # Wrapper functions for specific mask types
-def create_sub_task_padding_mask_64x64_fixed(padding_mask_data, region_coords):
-    return create_sub_task_mask_64x64_fixed(padding_mask_data, region_coords, default_value=1)
+def create_sub_task_padding_mask_64x64_big(padding_mask_data, region_coords):
+    return create_sub_task_mask_64x64_big(padding_mask_data, region_coords, default_value=1)
 
-def create_sub_task_traversability_mask_64x64_fixed(traversability_mask_data, region_coords):
-    return create_sub_task_mask_64x64_fixed(traversability_mask_data, region_coords, default_value=1)
+def create_sub_task_traversability_mask_64x64_big(traversability_mask_data, region_coords):
+    return create_sub_task_mask_64x64_big(traversability_mask_data, region_coords, default_value=1)
 
-def create_sub_task_dumpability_mask_64x64_fixed(dumpability_mask_data, region_coords):
-    return create_sub_task_mask_64x64_fixed(dumpability_mask_data, region_coords, default_value=0)
+def create_sub_task_dumpability_mask_64x64_big(dumpability_mask_data, region_coords):
+    return create_sub_task_mask_64x64_big(dumpability_mask_data, region_coords, default_value=0)
 
 def verify_maps_override(timestep, sub_task_target_map_data, sub_task_traversability_mask_data, 
                          sub_task_padding_mask_data, sub_task_dumpability_mask_data,
@@ -539,111 +539,6 @@ def is_valid_region_list(var):
     
     return True
 
-# def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
-
-#     if ORIGINAL_MAP_SIZE not in [64, 128]:
-#         raise ValueError(f"Unsupported ORIGINAL_MAP_SIZE: {ORIGINAL_MAP_SIZE}. Must be 64 or 128.")
-#     elif ORIGINAL_MAP_SIZE == 64:
-#         if NUM_PARTITIONS == 1:
-#             # Single partition for 64x64 map
-#             sub_tasks_manual = [
-#                 {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
-#             ]
-#             # Single partition for 64x64 map (different start position)
-#             # sub_tasks_manual = [
-#             #     {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (25, 20), 'start_angle': 0, 'status': 'pending'},
-#             # ]
-
-#             # Single partition for 64x64 map (different region, square centered in middle)
-#             # sub_tasks_manual = [
-#             #     {'id': 0, 'region_coords': (22, 22, 41, 41), 'start_pos': (25, 20), 'start_angle': 0, 'status': 'pending'},
-#             # ]
-
-            
-#         elif NUM_PARTITIONS == 2:
-#             # Horizontal partitioning for 64x64 map (y,x)
-#             sub_tasks_manual = [
-#                 {'id': 0, 'region_coords': (0, 0, 31, 63), 'start_pos': (16, 32), 'start_angle': 0, 'status': 'pending'},
-#                 {'id': 1, 'region_coords': (32, 0, 63, 63), 'start_pos': (48, 32), 'start_angle': 0, 'status': 'pending'}
-#             ]
-
-#             # Horizontal partitioning for 64x64 map (x,y)
-
-#             # sub_tasks_manual = [
-#             #     {'id': 0, 'region_coords': (0, 0, 31, 63), 'start_pos': (32, 16), 'start_angle': 0, 'status': 'pending'},
-#             #     {'id': 1, 'region_coords': (32, 0, 63, 63), 'start_pos': (32, 48), 'start_angle': 0, 'status': 'pending'}
-#             # ]
-
-#             # Vertical partitioning for 64x64 map
-#             # sub_tasks_manual = [
-#             #     {'id': 0, 'region_coords': (0, 0, 63, 31), 'start_pos': (32, 16), 'start_angle': 0, 'status': 'pending'},
-#             #     {'id': 1, 'region_coords': (0, 32, 63, 63), 'start_pos': (32, 48), 'start_angle': 0, 'status': 'pending'}
-#             # ]
-
-#             # Vertical partitioning with overlapping
-#             # sub_tasks_manual = [
-#             #     {'id': 0, 'region_coords': (0, 0, 63, 35), 'start_pos': (32, 18), 'start_angle': 0, 'status': 'pending'},
-#             #     {'id': 1, 'region_coords': (0, 28, 63, 63), 'start_pos': (32, 46), 'start_angle': 0, 'status': 'pending'}
-#             # ]
-
-#             # Random partitioning for 64x64 map
-#             # sub_tasks_manual = [
-#             #     {'id': 0, 'region_coords': (0, 0, 32, 32), 'start_pos': (25, 20), 'start_angle': 0, 'status': 'pending'},
-#             #     {'id': 1, 'region_coords': (0, 33, 63, 63), 'start_pos': (40, 40), 'start_angle': 0, 'status': 'pending'},
-#             # ]
-            
-#         elif NUM_PARTITIONS == 4:
-#             # 4 partitions for 64x64 map (2x2 grid)
-#             sub_tasks_manual = [
-#                 {'id': 0, 'region_coords': (0, 0, 31, 31), 'start_pos': (16, 16), 'start_angle': 0, 'status': 'pending'},
-#                 {'id': 1, 'region_coords': (0, 32, 31, 63), 'start_pos': (16, 48), 'start_angle': 0, 'status': 'pending'},
-#                 {'id': 2, 'region_coords': (32, 0, 63, 31), 'start_pos': (48, 16), 'start_angle': 0, 'status': 'pending'},
-#                 {'id': 3, 'region_coords': (32, 32, 63, 63), 'start_pos': (48, 48), 'start_angle': 0, 'status': 'pending'}
-#             ]
-#         else:
-#             raise ValueError("Invalid number of partitions. Must be 1, 2 or 4.")
-    
-#     elif ORIGINAL_MAP_SIZE == 128:
-#         if NUM_PARTITIONS == 1:
-#             sub_tasks_manual = [
-#                 {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (25, 20), 'start_angle': 0, 'status': 'pending'},
-#             ]
-#         elif NUM_PARTITIONS == 2:
-#             # Partition for starting map seed ?, DATASET_SIZE = ?
-#             # sub_tasks_manual = [
-#             #     {'id': 0, 'region_coords': (30, 0, 93, 63), 'start_pos': (45, 45), 'start_angle': 0, 'status': 'pending'},
-#             #     {'id': 1, 'region_coords': (64, 32, 127, 95), 'start_pos': (80, 50), 'start_angle': 0, 'status': 'pending'}
-#             # ]
-
-#             # Partition for starting map seed 30, DATASET_SIZE = 100
-#             sub_tasks_manual = [
-#                 {'id': 0, 'region_coords': (20, 15, 83, 78), 'start_pos': (45, 80), 'start_angle': 0, 'status': 'pending'},
-#                 {'id': 1, 'region_coords': (60, 10, 123, 73), 'start_pos': (85, 50), 'start_angle': 0, 'status': 'pending'}
-#             ]
-#         elif NUM_PARTITIONS == 4:
-#             # 4 partitions for 128x128 map (2x2 grid)
-#             sub_tasks_manual = [
-#                 {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
-#                 {'id': 1, 'region_coords': (0, 64, 63, 127), 'start_pos': (32, 96), 'start_angle': 0, 'status': 'pending'},
-#                 {'id': 2, 'region_coords': (64, 0, 127, 63), 'start_pos': (96, 32), 'start_angle': 0, 'status': 'pending'},
-#                 {'id': 3, 'region_coords': (64, 64, 127, 127), 'start_pos': (96, 96), 'start_angle': 0, 'status': 'pending'}
-#             ]
-
-#             # 4 partitions for 128x128 map (2x2 grid) with different start positions
-#             # sub_tasks_manual = [
-#             #     {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (20, 20), 'start_angle': 0, 'status': 'pending'},
-#             #     {'id': 1, 'region_coords': (0, 64, 63, 127), 'start_pos': (20, 44), 'start_angle': 0, 'status': 'pending'},
-#             #     {'id': 2, 'region_coords': (64, 0, 127, 63), 'start_pos': (44, 20), 'start_angle': 0, 'status': 'pending'},
-#             #     {'id': 3, 'region_coords': (64, 64, 127, 127), 'start_pos': (44, 44), 'start_angle': 0, 'status': 'pending'}
-#             # ]         
-#         else:
-#             raise ValueError("Invalid number of partitions. Must be 1, 2 or 4.")
-#     else:
-#         raise ValueError(f"Unsupported ORIGINAL_MAP_SIZE: {ORIGINAL_MAP_SIZE}")
-
-
-#     return sub_tasks_manual
-
 def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
     """
     UPDATED: Ensures all partitions are exactly 64x64 for RL policy compatibility.
@@ -651,9 +546,7 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
     if ORIGINAL_MAP_SIZE not in [64, 128]:
         raise ValueError(f"Unsupported ORIGINAL_MAP_SIZE: {ORIGINAL_MAP_SIZE}. Must be 64 or 128.")
     
-    # For both 64x64 and 128x128 maps, we create partitions that result in 64x64 sub-maps
     if NUM_PARTITIONS == 1:
-        # Single 64x64 partition
         if ORIGINAL_MAP_SIZE == 64:
             sub_tasks_manual = [
                 {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
@@ -663,7 +556,8 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
             # sub_tasks_manual = [
             #     {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
             # ]
-            # Single partition for 128x128 map, centered in the middle
+
+            # Single partition for 128x128 map, taking the center 64x64 region
             sub_tasks_manual = [
                 {'id': 0, 'region_coords': (32, 32, 95, 95), 'start_pos': (64, 64), 'start_angle': 0, 'status': 'pending'},
             ]
@@ -676,22 +570,31 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
                 {'id': 0, 'region_coords': (0, 0, 31, 63), 'start_pos': (16, 32), 'start_angle': 0, 'status': 'pending'},
                 {'id': 1, 'region_coords': (32, 0, 63, 63), 'start_pos': (48, 32), 'start_angle': 0, 'status': 'pending'}
             ]
+
+            # Horizontal partitioning for 64x64 map (x,y)
             # sub_tasks_manual = [
-            #     {
-            #         "id": 0,
-            #         "region_coords": (45, 20, 60, 63),
-            #         "start_pos": (38, 31),
-            #         "start_angle": 0,
-            #         "status": "pending"
-            #     },
-            #     {
-            #         "id": 1,
-            #         "region_coords": (20, 45, 63, 60),
-            #         "start_pos": (31, 54),
-            #         "start_angle": 0,
-            #         "status": "pending"
-            #     }
+            #     {'id': 0, 'region_coords': (0, 0, 31, 63), 'start_pos': (32, 16), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (32, 0, 63, 63), 'start_pos': (32, 48), 'start_angle': 0, 'status': 'pending'}
             # ]
+
+            # Vertical partitioning for 64x64 map
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (0, 0, 63, 31), 'start_pos': (32, 16), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (0, 32, 63, 63), 'start_pos': (32, 48), 'start_angle': 0, 'status': 'pending'}
+            # ]
+
+            # Vertical partitioning with overlapping
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (0, 0, 63, 35), 'start_pos': (32, 18), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (0, 28, 63, 63), 'start_pos': (32, 46), 'start_angle': 0, 'status': 'pending'}
+            # ]
+
+            # Random partitioning for 64x64 map
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (0, 0, 32, 32), 'start_pos': (25, 20), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (0, 33, 63, 63), 'start_pos': (40, 40), 'start_angle': 0, 'status': 'pending'},
+            # ]
+
         else:  # 128x128
             # Two 64x64 regions from different parts of the 128x128 map
             sub_tasks_manual = [
@@ -699,7 +602,7 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
                 {'id': 1, 'region_coords': (64, 0, 127, 63), 'start_pos': (96, 32), 'start_angle': 0, 'status': 'pending'}
             ]
             
-                        # Two overlapping 64x64 regions in the center of the 128x128 map
+            # Two overlapping 64x64 regions in the center of the 128x128 map
             # Left-center region: (16, 16) to (79, 79)
             # Right-center region: (48, 48) to (111, 111)
             # Overlap area: (48, 48) to (79, 79) = 32x32 overlap
@@ -708,7 +611,7 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
             #     {'id': 1, 'region_coords': (48, 48, 111, 111), 'start_pos': (80, 80), 'start_angle': 0, 'status': 'pending'}
             # ]
 
-
+            # Two overlapping 64x64 regions in the center of the 128x128 map shifting the start positions
             # sub_tasks_manual = [
             #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (64, 32), 'start_angle': 0, 'status': 'pending'},
             #     {'id': 1, 'region_coords': (32, 64, 95, 127), 'start_pos': (64, 96), 'start_angle': 0, 'status': 'pending'}
@@ -739,6 +642,7 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
                 {'id': 2, 'region_coords': (64, 0, 127, 63), 'start_pos': (96, 32), 'start_angle': 0, 'status': 'pending'},
                 {'id': 3, 'region_coords': (64, 64, 127, 127), 'start_pos': (96, 96), 'start_angle': 0, 'status': 'pending'}
             ]
+            # Four 64x64 regions covering different corners of the 128x128 map different start positions
             # sub_tasks_manual = [
             #     {'id': 0, 'region_coords': (0, 0, 63, 63), 'start_pos': (20, 20), 'start_angle': 0, 'status': 'pending'},
             #     {'id': 1, 'region_coords': (0, 64, 63, 127), 'start_pos': (20, 44), 'start_angle': 0, 'status': 'pending'},
@@ -2617,7 +2521,6 @@ def extract_positions(state):
         
     """
 
-    #print(state.agent.agent_state.pos_base[0])
     # Extract th11e current base position
     current_position = {
         "x": state.agent.agent_state.pos_base[0][0],
@@ -2625,7 +2528,6 @@ def extract_positions(state):
     }
 
     # Extract the target position from the target_map if available
-    #print(state.world.target_map.map)
     target_positions = []
 
     for x in range(state.world.target_map.map.shape[1]):  # Iterate over rows
@@ -2635,7 +2537,6 @@ def extract_positions(state):
     
     # # Convert positions to tuples
     start = (int(current_position["x"]), int(current_position["y"]))
-    #target = (int(target_position["x"]), int(target_position["y"])) if target_position else None
 
     return start, target_positions
 

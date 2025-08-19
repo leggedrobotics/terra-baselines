@@ -442,7 +442,7 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
                     if ORIGINAL_MAP_SIZE == 64:
                         new_timestep = env_manager.step_with_full_global_sync(partition_idx, wrapped_action, partition_states)
                     else:
-                        new_timestep = env_manager.step_with_full_global_sync_fixed_v2(partition_idx, wrapped_action, partition_states)
+                        new_timestep = env_manager.step_with_full_global_sync_big(partition_idx, wrapped_action, partition_states)
                     partition_states[partition_idx]['timestep'] = new_timestep
                     partition_state['step_count'] += 1
                 

@@ -50,7 +50,6 @@ class LLM_query:
 
         response_text = ""
 
-        #for i, message in enumerate(self.messages):
         message = self.messages[-1]
         async for event in self.runner.run_async(user_id=self.user_id, session_id=self.session_id, new_message=message):
             print(f"  [Event] Author: {event.author}, Type: {type(event).__name__}, Final: {event.is_final_response()}")

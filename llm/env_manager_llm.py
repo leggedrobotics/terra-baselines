@@ -104,17 +104,6 @@ class EnvironmentsManager:
         self.small_env_timestep = None
         self.current_partition_idx = None
 
-        # Agent size configurations
-        # self.small_agent_config = {
-        #     'height': jnp.array([9], dtype=jnp.int32), 
-        #     'width': jnp.array([5], dtype=jnp.int32)
-        # }
-        # self.big_agent_config = {
-        #     'height': jnp.array([19], dtype=jnp.int32), 
-        #     'width': jnp.array([11], dtype=jnp.int32)
-        # }
-        
-        #print(f"Agent configs - Small: {self.small_agent_config}, Big: {self.big_agent_config}")
 
     def _partitions_overlap(self, i: int, j: int) -> bool:
         """Check if two partitions overlap."""
@@ -123,72 +112,14 @@ class EnvironmentsManager:
         
         y1_start, x1_start, y1_end, x1_end = p1_coords
         y2_start, x2_start, y2_end, x2_end = p2_coords
-        
-        # print(f"Checking overlap between partition {i}: ({y1_start}, {x1_start}, {y1_end}, {x1_end}) and partition {j}: ({y2_start}, {x2_start}, {y2_end}, {x2_end})")
-        
+                
         # Check for overlap - rectangles overlap if they overlap in BOTH dimensions
         y_overlap = (y1_start <= y2_end) and (y2_start <= y1_end)
         x_overlap = (x1_start <= x2_end) and (x2_start <= x1_end)
         
         overlap_exists = y_overlap and x_overlap
         
-        # print(f"  Y overlap: {y_overlap} (y1: {y1_start}-{y1_end}, y2: {y2_start}-{y2_end})")
-        # print(f"  X overlap: {x_overlap} (x1: {x1_start}-{x1_end}, x2: {x2_start}-{x2_end})")
-        # print(f"  Overall overlap: {overlap_exists}")
-        
         return overlap_exists
-
-    def _calculate_overlap_region(self, partition_i: int, partition_j: int):
-            """
-            Calculate the overlapping region between two partitions.
-            Returns slices for global coordinates, partition i local coordinates, and partition j local coordinates.
-            """
-            p1_coords = self.partitions[partition_i]['region_coords']
-            p2_coords = self.partitions[partition_j]['region_coords']
-            
-            y1_start, x1_start, y1_end, x1_end = p1_coords
-            y2_start, x2_start, y2_end, x2_end = p2_coords
-            
-            # print(f"Calculating overlap region between partition {partition_i} and {partition_j}")
-            # print(f"  Partition {partition_i}: ({y1_start}, {x1_start}) to ({y1_end}, {x1_end})")
-            # print(f"  Partition {partition_j}: ({y2_start}, {x2_start}) to ({y2_end}, {x2_end})")
-            
-            # Find intersection in global coordinates
-            overlap_y_start = max(y1_start, y2_start)
-            overlap_x_start = max(x1_start, x2_start)
-            overlap_y_end = min(y1_end, y2_end)
-            overlap_x_end = min(x1_end, x2_end)
-            
-            # print(f"  Global overlap region: ({overlap_y_start}, {overlap_x_start}) to ({overlap_y_end}, {overlap_x_end})")
-            
-            # Check if there's actual overlap
-            if overlap_y_start > overlap_y_end or overlap_x_start > overlap_x_end:
-                print(f"  No actual overlap!")
-                return None
-            
-            # Convert to local coordinates for each partition
-            local_i_y_start = overlap_y_start - y1_start
-            local_i_x_start = overlap_x_start - x1_start
-            local_i_y_end = overlap_y_end - y1_start
-            local_i_x_end = overlap_x_end - x1_start
-            
-            local_j_y_start = overlap_y_start - y2_start
-            local_j_x_start = overlap_x_start - x2_start
-            local_j_y_end = overlap_y_end - y2_start
-            local_j_x_end = overlap_x_end - x2_start
-            
-            # print(f"  Partition {partition_i} local overlap: ({local_i_y_start}, {local_i_x_start}) to ({local_i_y_end}, {local_i_x_end})")
-            # print(f"  Partition {partition_j} local overlap: ({local_j_y_start}, {local_j_x_start}) to ({local_j_y_end}, {local_j_x_end})")
-            
-            return {
-                'global_slice': (slice(overlap_y_start, overlap_y_end + 1), 
-                            slice(overlap_x_start, overlap_x_end + 1)),
-                'partition_i_slice': (slice(local_i_y_start, local_i_y_end + 1), 
-                                    slice(local_i_x_start, local_i_x_end + 1)),
-                'partition_j_slice': (slice(local_j_y_start, local_j_y_end + 1),
-                                    slice(local_j_x_start, local_j_x_end + 1)),
-                'overlap_bounds': (overlap_y_start, overlap_x_start, overlap_y_end, overlap_x_end)
-            }
 
     def set_partitions(self, partitions):
         """
@@ -201,46 +132,11 @@ class EnvironmentsManager:
         for i, partition in enumerate(self.partitions):
             print(f"  Partition {i}: {partition}")
         
-        # Use the fixed overlap computation
-        self._compute_overlap_relationships_fixed()
+        # Use the  overlap computation
+        self._compute_overlap_relationships()
         
         print(f"Set {len(self.partitions)} partitions with overlaps computed.")
 
-    def _compute_overlap_relationships(self):
-        """
-        Compute which partitions overlap with each other and cache overlap regions.
-        """
-        print(f"\n=== COMPUTING OVERLAP RELATIONSHIPS ===")
-        
-        self.overlap_map = {i: set() for i in range(len(self.partitions))}
-        self.overlap_regions = {}
-        
-        for i in range(len(self.partitions)):
-            for j in range(i + 1, len(self.partitions)):
-                print(f"\nChecking partitions {i} and {j}:")
-                
-                if self._partitions_overlap(i, j):
-                    self.overlap_map[i].add(j)
-                    self.overlap_map[j].add(i)
-                    
-                    # Cache the overlap region calculation
-                    overlap_info = self._calculate_overlap_region(i, j)
-                    if overlap_info is not None:
-                        self.overlap_regions[(i, j)] = overlap_info
-                        self.overlap_regions[(j, i)] = overlap_info  # Symmetric
-                        print(f"  Stored overlap info for partitions {i} <-> {j}")
-                    else:
-                        print(f"  Could not calculate overlap region!")
-                else:
-                    print(f"  No overlap detected")
-        
-        # Print final overlap information
-        print(f"\n=== FINAL OVERLAP RELATIONSHIPS ===")
-        for i, partition in enumerate(self.partitions):
-            overlaps = list(self.overlap_map[i])
-            print(f"Partition {i}: region={partition['region_coords']}, overlaps with {overlaps}")
-        
-        print(f"Total overlap regions cached: {len(self.overlap_regions)}")
 
     def initialize_with_fixed_overlaps(self, partitions):
         """
@@ -319,17 +215,6 @@ class EnvironmentsManager:
         custom_pos = partition['start_pos']
         custom_angle = partition['start_angle']
 
-        # Extract sub-maps from global maps (64x64)
-        # sub_maps = {
-        #     'target_map': create_sub_task_target_map_64x64(self.global_maps['target_map'], region_coords),
-        #     'action_map': create_sub_task_action_map_64x64(self.global_maps['action_map'], region_coords),
-        #     'dumpability_mask': create_sub_task_dumpability_mask_64x64(self.global_maps['dumpability_mask'], region_coords),
-        #     'dumpability_mask_init': create_sub_task_dumpability_mask_64x64(self.global_maps['dumpability_mask_init'], region_coords),
-        #     'padding_mask': create_sub_task_padding_mask_64x64(self.global_maps['padding_mask'], region_coords),
-        #     'traversability_mask': create_sub_task_traversability_mask_64x64(self.global_maps['traversability_mask'], region_coords),
-        # }
-        #print("Self.map_size_px:", self.map_size_px)
-
         if self.map_size_px == 64:
             sub_maps = {
                 'target_map': create_sub_task_target_map_64x64(self.global_maps['target_map'], region_coords),                              #ok
@@ -341,32 +226,13 @@ class EnvironmentsManager:
             }
         else:
             sub_maps = {
-                'target_map': create_sub_task_target_map_64x64_fixed(self.global_maps['target_map'], region_coords),
-                'action_map': create_sub_task_action_map_64x64_fixed(self.global_maps['action_map'], region_coords),
-                'dumpability_mask': create_sub_task_dumpability_mask_64x64_fixed(self.global_maps['dumpability_mask'], region_coords),
-                'dumpability_mask_init': create_sub_task_dumpability_mask_64x64_fixed(self.global_maps['dumpability_mask_init'], region_coords),
-                'padding_mask': create_sub_task_padding_mask_64x64_fixed(self.global_maps['padding_mask'], region_coords),
-                'traversability_mask': create_sub_task_traversability_mask_64x64_fixed(self.global_maps['traversability_mask'], region_coords),
+                'target_map': create_sub_task_target_map_64x64_big(self.global_maps['target_map'], region_coords),
+                'action_map': create_sub_task_action_map_64x64_big(self.global_maps['action_map'], region_coords),
+                'dumpability_mask': create_sub_task_dumpability_mask_64x64_big(self.global_maps['dumpability_mask'], region_coords),
+                'dumpability_mask_init': create_sub_task_dumpability_mask_64x64_big(self.global_maps['dumpability_mask_init'], region_coords),
+                'padding_mask': create_sub_task_padding_mask_64x64_big(self.global_maps['padding_mask'], region_coords),
+                'traversability_mask': create_sub_task_traversability_mask_64x64_big(self.global_maps['traversability_mask'], region_coords),
             }
-            # Create all sub-maps consistently as 64x64
-            # sub_maps = create_sub_task_maps_64x64_consistent(self.global_maps, region_coords)
-    
-            # # Debug: verify shapes
-            # debug_map_shapes(sub_maps, f"Partition {partition_idx}")
-
-        # save_mask(np.array(sub_maps['target_map']),'target', 'after_init', partition_idx, 0)
-        # save_mask(np.array(sub_maps['action_map']),'action', 'after_init', partition_idx, 0)
-        # save_mask(np.array(sub_maps['dumpability_mask']),'dumpability', 'after_init', partition_idx, 0)
-        # save_mask(np.array(sub_maps['dumpability_mask_init']),'dumpability_init', 'after_init', partition_idx, 0)
-        # save_mask(np.array(sub_maps['padding_mask']),'padding', 'after_init', partition_idx, 0)
-        # save_mask(np.array(sub_maps['traversability_mask']),'traversability', 'after_init', partition_idx, 0)
-
-        #DIAGNOSTIC: Check sub-map validity
-        # print(f"=== SUB-MAP DIAGNOSTICS ===")
-        # for name, map_data in sub_maps.items():
-        #     print(f"{name}:")
-        #     print(f"  Shape: {map_data.shape}")
-        
 
         # Fix trench data shapes - remove batch dimension for single environment
         trench_axes = self.global_maps['trench_axes']
@@ -484,8 +350,6 @@ class EnvironmentsManager:
         self.global_timestep = global_timestep
     
         print("Global environment initialized successfully.")
-        #print(f"Initial target map has {jnp.sum(self.global_maps['target_map'] < 0)} dig targets")
-
         return self.global_timestep
         
     def map_position_small_to_global(self, small_pos, region_coords):
@@ -507,10 +371,6 @@ class EnvironmentsManager:
         else:
             local_x = float(small_pos[0])
             local_y = float(small_pos[1])
-        
-        # Add region offset to get global position
-        # global_x = local_x + x_start
-        # global_y = local_y + y_start
 
         # Adjust global coordinates based on map size
         if self.map_size_px == 128:
@@ -520,17 +380,6 @@ class EnvironmentsManager:
             global_x = local_x 
             global_y = local_y
 
-        # global_x = local_x 
-        # global_y = local_y 
-        #print(f"Mapping small position {small_pos} to global coordinates: ({global_x}, {global_y}) with region {region_coords}")
-        
-        # Ensure position is within valid bounds
-        #global_x = max(0, min(63, global_x))
-        #global_y = max(0, min(63, global_y))
-        
-        # Return as (x, y) for rendering
-        #return (int(global_x), int(global_y))
-                # Return as (y, x) for rendering
         return (int(global_y), int(global_x))
 
     def is_small_task_completed(self):
@@ -576,10 +425,7 @@ class EnvironmentsManager:
                     small_angle_base = small_agent_state.angle_base
                     small_angle_cabin = small_agent_state.angle_cabin
                     small_loaded = small_agent_state.loaded
-                    # print("original small pos:", small_pos)
-                    # print("original small angle base:", small_angle_base)
-                    # print("original small angle cabin:", small_angle_cabin)
-                
+
                     # Map position to global coordinates
                     global_pos = self.map_position_small_to_global(small_pos, region_coords)
                 
@@ -613,8 +459,6 @@ class EnvironmentsManager:
                             small_loaded = False
                     else:
                         small_loaded = int(small_loaded)
-
-                    #print(global_pos, angle_base_val, angle_cabin_val, small_loaded)
                 
                     all_agent_positions.append(global_pos)
                     all_agent_angles_base.append(angle_base_val)
@@ -679,14 +523,7 @@ class EnvironmentsManager:
             if partition_state['status'] == 'active' and partition_state['timestep'] is not None:
                 partition = self.partitions[partition_idx]
                 y_start, x_start, y_end, x_end = partition['region_coords']
-            
-                # Calculate actual region dimensions
-                # region_height = y_end - y_start + 1
-                # region_width = x_end - x_start + 1
-            
-                # print(f"Partition {partition_idx} region: ({y_start}, {x_start}) to ({y_end}, {x_end})")
-                # print(f"Expected region size: {region_height} x {region_width}")
-            
+                        
                 region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
         
                 # Get current state from small environment
@@ -700,69 +537,28 @@ class EnvironmentsManager:
                     'traversability_mask': small_state.world.traversability_mask.map,
                     'padding_mask': small_state.world.padding_mask.map,
                 }
-
-                
-            
-                # print(f"Small environment map shapes:")
-                # for name, map_data in small_maps.items():
-                #     print(f"  {name}: {map_data.shape}")
-            
-                # Extract only the relevant portion from the 64x64 small maps
-                # that corresponds to the actual region size
-                # extract_height = min(region_height, 64)
-                # extract_width = min(region_width, 64)
             
                 for map_name, small_map in small_maps.items():
                     # Extract the portion that matches the region size
-                    #extracted_region = small_map[:extract_height, :extract_width]
                     extracted_region = small_map[region_slice]
-                    #print(map_name, extracted_region.shape, region_slice)
 
-                
-                    #print(f"  Extracted {map_name}: {extracted_region.shape} -> Global region: {region_height}x{region_width}")
                     self.global_maps[map_name] = self.global_maps[map_name].at[region_slice].set(extracted_region)
-
-                    # Update the global map with the extracted region
-                    # try:
-                    #     self.global_maps[map_name] = self.global_maps[map_name].at[region_slice].set(extracted_region)
-                    # except ValueError as e:
-                    #     #print(f"  WARNING: Shape mismatch for {map_name}: {e}")
-                    #     # Try to handle the mismatch by padding or cropping
-                    #     if extracted_region.shape[0] != region_height or extracted_region.shape[1] != region_width:
-                    #         # Pad or crop to match the region size
-                    #         if extracted_region.shape[0] < region_height or extracted_region.shape[1] < region_width:
-                    #             # Pad with zeros
-                    #             padded_region = jnp.zeros((region_height, region_width), dtype=extracted_region.dtype)
-                    #             padded_region = padded_region.at[:extracted_region.shape[0], :extracted_region.shape[1]].set(extracted_region)
-                    #             extracted_region = padded_region
-                    #         else:
-                    #             # Crop to fit
-                    #             extracted_region = extracted_region[:region_height, :region_width]
-                        
-                    #         #print(f"  Adjusted {map_name}: {extracted_region.shape}")
-                    #         self.global_maps[map_name] = self.global_maps[map_name].at[region_slice].set(extracted_region)
 
     def update_global_maps_from_all_small_environments_big(self, partition_states):
         """
-        FIXED: Update global maps with changes from ALL active small environments.
+        Update global maps with changes from ALL active small environments.
         Properly handles coordinate transformation between 64x64 partition maps and 128x128 global maps.
-        """
-        #print(f"🔄 Updating global maps from {len(partition_states)} partitions")
-        
+        """        
         for partition_idx, partition_state in partition_states.items():
             if partition_state['status'] == 'active' and partition_state['timestep'] is not None:
                 try:
                     partition = self.partitions[partition_idx]
                     y_start, x_start, y_end, x_end = partition['region_coords']
-                    
-                    #print(f"  📦 Processing partition {partition_idx}: region ({y_start}, {x_start}) to ({y_end}, {x_end})")
-                    
+                                        
                     # Calculate actual region dimensions
                     region_height = y_end - y_start + 1
                     region_width = x_end - x_start + 1
-                    
-                    #print(f"     Region size: {region_height} x {region_width}")
-                    
+                                        
                     # Get current state from small environment
                     small_state = partition_state['timestep'].state
                     
@@ -774,27 +570,17 @@ class EnvironmentsManager:
                         'traversability_mask': small_state.world.traversability_mask.map,
                         'padding_mask': small_state.world.padding_mask.map,
                     }
-                    
-                    # print(f"     Small environment map shapes:")
-                    # for name, map_data in small_maps.items():
-                    #     print(f"       {name}: {map_data.shape}")
-                    
-                    # CRITICAL FIX: Extract the correct portion from the 64x64 partition maps
-                    # We need to extract a region-sized portion from the 64x64 map, NOT use global coordinates
-                    
+                                        
                     for map_name, small_map in small_maps.items():
                         if small_map.shape != (64, 64):
-                            #print(f"     ⚠️  WARNING: {map_name} has unexpected shape {small_map.shape}, skipping")
                             continue
                         
-                        # FIXED: Extract region from the 64x64 local map using LOCAL coordinates
+                        # Extract region from the 64x64 local map using LOCAL coordinates
                         if region_height <= 64 and region_width <= 64:
                             # Extract the relevant portion from the TOP-LEFT of the 64x64 map
                             # This corresponds to the actual region data
                             extracted_region = small_map[:region_height, :region_width]
-                            #print(f"     ✅ Extracted {map_name}: {extracted_region.shape} from local coordinates")
                         else:
-                            #print(f"     ❌ Region size {region_height}x{region_width} exceeds 64x64, skipping {map_name}")
                             continue
                         
                         # Now update the global map using GLOBAL coordinates
@@ -803,35 +589,25 @@ class EnvironmentsManager:
                         try:
                             # Verify global map exists and has correct shape
                             if map_name not in self.global_maps:
-                                #print(f"     ❌ Global map {map_name} not found")
                                 continue
                                 
                             global_map = self.global_maps[map_name]
                             if global_map.shape != (128, 128):
-                                #print(f"     ⚠️  Global map {map_name} has unexpected shape {global_map.shape}")
                                 continue
                             
                             # Update the global map
                             self.global_maps[map_name] = global_map.at[global_region_slice].set(extracted_region)
-                            #print(f"     ✅ Updated global {map_name} at {global_region_slice} with {extracted_region.shape} data")
                             
                         except Exception as update_error:
-                            print(f"     ❌ Failed to update global {map_name}: {update_error}")
-                            print(f"        Global map shape: {self.global_maps[map_name].shape}")
-                            print(f"        Global slice: {global_region_slice}")
-                            print(f"        Extracted region shape: {extracted_region.shape}")
+                            print(f"     Failed to update global {map_name}: {update_error}")
                             continue
-                    
-                    #print(f"  ✅ Completed partition {partition_idx}")
-                    
+                                        
                 except Exception as partition_error:
-                    print(f"  ❌ Failed to process partition {partition_idx}: {partition_error}")
+                    print(f"  Failed to process partition {partition_idx}: {partition_error}")
                     import traceback
                     traceback.print_exc()
                     continue
         
-        #print(f"🏁 Global maps update completed")
-
     def render_global_environment_with_multiple_agents(self, partition_states, VISUALIZE_PARTITIONS=False):
         """
         Update and render global environment showing ALL active excavators.
@@ -950,11 +726,6 @@ class EnvironmentsManager:
         traversability_mask = world.traversability_mask.map
         agent_pos = agent_state.pos_base
         
-        #print(current_timestep.observation)
-        # target_map = current_timestep.observation['target_map']
-        # action_map = current_timestep.observation['action_map']
-        # traversability_mask = current_timestep.observation['traversability_mask']
-
         # Map dimensions
         map_height, map_width = target_map.shape
         
@@ -1059,9 +830,7 @@ class EnvironmentsManager:
         """
         if not hasattr(self, 'base_traversability_masks'):
             self.base_traversability_masks = {}
-        
-        #print("Initializing base traversability masks...")
-        
+                
         for partition_idx, partition_state in partition_states.items():
             if partition_state['status'] == 'active':
                 # Get the current traversability mask
@@ -1084,11 +853,6 @@ class EnvironmentsManager:
                 )
                 
                 self.base_traversability_masks[partition_idx] = clean_mask
-                #print(f"  Stored clean base mask for partition {partition_idx}")
-                
-                # Count terrain obstacles for verification
-                terrain_obstacles = jnp.sum(clean_mask == 1)
-                #print(f"    Terrain obstacles: {terrain_obstacles}")
 
     def _update_partition_with_other_agents(self, target_partition_idx, target_partition_state, 
                                         all_occupied_cells, partition_states):
@@ -1326,7 +1090,7 @@ class EnvironmentsManager:
     
     def step_with_full_global_sync(self, partition_idx: int, action, partition_states: dict):
         """
-        FIXED: Synchronize BEFORE stepping to prevent collisions.
+        Synchronize BEFORE stepping to prevent collisions.
         """
         # Step 1: Sync current positions BEFORE any movement
         self._sync_agent_positions_across_partitions(partition_states)
@@ -1418,53 +1182,14 @@ class EnvironmentsManager:
             # Update the global map with the extracted region
             try:
                 self.global_maps[map_name] = self.global_maps[map_name].at[global_region_slice].set(data_to_update)
-                #print(f"    ✓ Updated global {map_name} from partition {source_partition_idx}")
             except Exception as e:
                 print(f"    ✗ Error updating global {map_name}: {e}")
-                # print(f"      Global map shape: {self.global_maps[map_name].shape}")
-                # print(f"      Target slice: {global_region_slice}")
-                # print(f"      Data to update shape: {data_to_update.shape}")
 
-
-    def step_with_full_global_sync_fixed(self, partition_idx: int, action, partition_states: dict):
+    def _sync_overlapping_regions_big_maps(self, source_partition_idx, partition_states):
         """
-        FIXED: Enhanced step function with proper overlap synchronization for big maps.
-        """
-        # Step 1: Sync current positions BEFORE any movement
-        self._sync_agent_positions_across_partitions(partition_states)
-        
-        # Step 2: Update observations so agents see synchronized state
-        self._update_all_observations(partition_states)
-        
-        # Step 3: Take the action with proper obstacle awareness
-        new_timestep = self.step_simple(partition_idx, action, partition_states)
-        
-        # Step 4: Update the partition state
-        partition_states[partition_idx]['timestep'] = new_timestep
-        
-        # Step 5: Extract changes and update global maps
-        if self.map_size_px == 64:
-            self._update_global_maps_from_single_partition_small(partition_idx, partition_states)
-        else:
-            self._update_global_maps_from_single_partition_big_fixed(partition_idx, partition_states)
-        
-        # Step 6: Sync overlapping regions for big maps
-        if self.map_size_px > 64 and self.overlap_regions:
-            self._sync_overlapping_regions_big_maps_fixed(partition_idx, partition_states)
-        
-        # Step 7: Propagate changes to other partitions
-        if self.overlap_regions != {}:
-            self._sync_all_partitions_from_global_maps_excluding_traversability(partition_states)
-        
-        return new_timestep
-
-
-    def _sync_overlapping_regions_big_maps_fixed(self, source_partition_idx, partition_states):
-        """
-        FIXED: Synchronize overlapping regions between partitions for big maps.
+        Synchronize overlapping regions between partitions for big maps.
         Handles the case where regions are larger than 64x64.
         """
-        #print(f"  Syncing overlapping regions from partition {source_partition_idx}")
         
         # Get all partitions that overlap with the source
         overlapping_partitions = self.overlap_map.get(source_partition_idx, set())
@@ -1492,16 +1217,15 @@ class EnvironmentsManager:
                 target_slice = overlap_info['partition_i_slice']
             
             # Sync the overlapping region
-            self._sync_single_overlap_region_fixed(
+            self._sync_single_overlap_region(
                 source_partition_idx, target_partition_idx,
                 source_slice, target_slice,
                 partition_states
             )
 
-
-    def _sync_single_overlap_region_fixed(self, source_idx, target_idx, source_slice, target_slice, partition_states):
+    def _sync_single_overlap_region(self, source_idx, target_idx, source_slice, target_slice, partition_states):
         """
-        FIXED: Sync a single overlapping region from source to target partition.
+        Sync a single overlapping region from source to target partition.
         Handles shape mismatches by only syncing the actual overlapping data.
         """
         source_state = partition_states[source_idx]['timestep'].state
@@ -1509,8 +1233,6 @@ class EnvironmentsManager:
         
         # Maps to sync (excluding traversability which is handled separately)
         maps_to_sync = ['action_map', 'dumpability_mask', 'dumpability_mask_init']
-        
-        #print(f"    Syncing overlap from partition {source_idx} to {target_idx}")
         
         for map_name in maps_to_sync:
             try:
@@ -1551,9 +1273,7 @@ class EnvironmentsManager:
                 # Update the world state
                 updated_world = self._update_world_map(target_state.world, map_name, target_map)
                 target_state = target_state._replace(world=updated_world)
-                
-                #print(f"      ✓ Synced {map_name} ({sync_height}x{sync_width} region)")
-                
+                  
             except Exception as e:
                 print(f"      ✗ Error syncing {map_name}: {e}")
         
@@ -1577,8 +1297,6 @@ class EnvironmentsManager:
             updated_world = self._update_world_map(target_state.world, 'target_map', target_target_map)
             target_state = target_state._replace(world=updated_world)
             
-            #print(f"      ✓ Merged target_map ({sync_height}x{sync_width} region)")
-            
         except Exception as e:
             print(f"      ✗ Error merging target_map: {e}")
         
@@ -1586,12 +1304,9 @@ class EnvironmentsManager:
         updated_timestep = partition_states[target_idx]['timestep']._replace(state=target_state)
         partition_states[target_idx]['timestep'] = updated_timestep
         
-        #print(f"    ✓ Synced overlap region")
-
-
-    def _calculate_overlap_region_fixed(self, partition_i: int, partition_j: int):
+    def _calculate_overlap_region(self, partition_i: int, partition_j: int):
         """
-        FIXED: Calculate the overlapping region between two partitions with correct coordinate mapping.
+        Calculate the overlapping region between two partitions with correct coordinate mapping.
         Handles cases where partitions are larger than 64x64.
         """
         p1_coords = self.partitions[partition_i]['region_coords']
@@ -1645,9 +1360,9 @@ class EnvironmentsManager:
         }
 
 
-    def _compute_overlap_relationships_fixed(self):
+    def _compute_overlap_relationships(self):
         """
-        FIXED: Compute overlap relationships with corrected coordinate mapping.
+        Compute overlap relationships with corrected coordinate mapping.
         """
         print(f"\n=== COMPUTING OVERLAP RELATIONSHIPS ===")
         
@@ -1663,7 +1378,7 @@ class EnvironmentsManager:
                     self.overlap_map[j].add(i)
                     
                     # Use the fixed overlap calculation
-                    overlap_info = self._calculate_overlap_region_fixed(i, j)
+                    overlap_info = self._calculate_overlap_region(i, j)
                     if overlap_info is not None:
                         self.overlap_regions[(i, j)] = overlap_info
                         self.overlap_regions[(j, i)] = overlap_info  # Symmetric
@@ -1689,7 +1404,6 @@ class EnvironmentsManager:
         """
         FIXED: Synchronize ALL partitions with updated global maps, handling 64x64 partition maps correctly.
         """
-        #print(f"  Syncing global maps to all partitions (excluding traversability)")
         
         for target_partition_idx, target_partition_state in partition_states.items():
             if target_partition_state['status'] != 'active':
@@ -1775,9 +1489,9 @@ class EnvironmentsManager:
         return updated_world
 
 
-    def step_with_full_global_sync_fixed_v2(self, partition_idx: int, action, partition_states: dict):
+    def step_with_full_global_sync_big(self, partition_idx: int, action, partition_states: dict):
         """
-        FIXED V2: Enhanced step function with better error handling for shape mismatches.
+        Enhanced step function with better error handling for shape mismatches.
         """
         try:
             # Step 1: Sync current positions BEFORE any movement
@@ -1793,14 +1507,11 @@ class EnvironmentsManager:
             partition_states[partition_idx]['timestep'] = new_timestep
             
             # Step 5: Extract changes and update global maps
-            if self.map_size_px == 64:
-                self._update_global_maps_from_single_partition_small(partition_idx, partition_states)
-            else:
-                self._update_global_maps_from_single_partition_big_fixed(partition_idx, partition_states)
+            self._update_global_maps_from_single_partition_big_fixed(partition_idx, partition_states)
             
             # Step 6: Sync overlapping regions for big maps
             if self.map_size_px > 64 and self.overlap_regions:
-                self._sync_overlapping_regions_big_maps_fixed(partition_idx, partition_states)
+                self._sync_overlapping_regions_big_maps(partition_idx, partition_states)
             
             # Step 7: Propagate changes to other partitions (using fixed version)
             if self.overlap_regions != {}:
@@ -1836,9 +1547,7 @@ class EnvironmentsManager:
         # STEP 1: Start from completely clean base mask (original terrain only)
         if target_partition_idx in self.base_traversability_masks:
             clean_traversability = self.base_traversability_masks[target_partition_idx].copy()
-            #print(f"    Starting from clean base for partition {target_partition_idx}")
         else:
-            #print(f"    WARNING: No base mask for partition {target_partition_idx}, creating clean mask")
             current_mask = current_timestep.state.world.traversability_mask.map
             clean_traversability = jnp.where(
                 (current_mask == -1) | (current_mask == 1),  # Remove all agent markers
@@ -1857,11 +1566,7 @@ class EnvironmentsManager:
             clean_traversability  # Keep existing values
         )
         
-        dumped_obstacle_count = jnp.sum(dumped_areas)
-        # if dumped_obstacle_count > 0:
-        #     print(f"    Added {dumped_obstacle_count} dumped soil obstacles to partition {target_partition_idx}")
-        
-        # STEP 3: FIXED - Add other partitions' DIG TARGETS (-1) as obstacles, but NOT dump targets (1)
+        # STEP 3: Add other partitions' DIG TARGETS (-1) as obstacles, but NOT dump targets (1)
         other_dig_targets_blocked = 0
         
         for other_partition_idx, other_partition_state in partition_states.items():
@@ -1873,7 +1578,7 @@ class EnvironmentsManager:
             if hasattr(self, 'partition_target_maps') and other_partition_idx in self.partition_target_maps:
                 other_target_map = self.partition_target_maps[other_partition_idx]
                 
-                # FIXED: Only block dig targets (-1), NOT dump targets (1)
+                # Only block dig targets (-1), NOT dump targets (1)
                 other_dig_targets = (other_target_map == -1)  # Only dig targets
                 # Note: We don't block dump targets (other_target_map == 1) because agents can potentially traverse dump areas
                 
@@ -1887,12 +1592,6 @@ class EnvironmentsManager:
                 dig_targets_blocked_from_this_partition = jnp.sum(other_dig_targets)
                 other_dig_targets_blocked += dig_targets_blocked_from_this_partition
                 
-                #if dig_targets_blocked_from_this_partition > 0:
-                    #print(f"    Blocked {dig_targets_blocked_from_this_partition} DIG TARGETS from partition {other_partition_idx}")
-        
-        # if other_dig_targets_blocked > 0:
-        #     #print(f"    Total other dig targets blocked: {other_dig_targets_blocked}")
-        
         # STEP 4: Add THIS partition's agent positions as agents (-1)
         if target_partition_idx in all_agent_positions:
             own_positions = all_agent_positions[target_partition_idx]
@@ -1900,9 +1599,7 @@ class EnvironmentsManager:
                 if (0 <= cell_y < clean_traversability.shape[0] and 
                     0 <= cell_x < clean_traversability.shape[1]):
                     clean_traversability = clean_traversability.at[cell_y, cell_x].set(-1)
-            
-            #print(f"    Added {len(own_positions)} own agent cells to partition {target_partition_idx}")
-        
+
         # STEP 5: Add OTHER agents as OBSTACLES (1), not agents
         other_agents_added = 0
         other_cells_added = 0
@@ -1922,9 +1619,7 @@ class EnvironmentsManager:
                     if current_value == 0:  # Free space
                         clean_traversability = clean_traversability.at[cell_y, cell_x].set(1)
                         other_cells_added += 1
-                    #elif current_value == -1:  # Don't overwrite own agent
-                        #print(f"      Conflict: Other agent at own agent position ({cell_y}, {cell_x})")
-            
+                    
             if other_cells_added > 0:
                 other_agents_added += 1
         
@@ -1938,35 +1633,12 @@ class EnvironmentsManager:
         updated_timestep = current_timestep._replace(state=updated_state)
         
         partition_states[target_partition_idx]['timestep'] = updated_timestep
-        
-        # Debug output with all obstacle types
-        terrain_count = jnp.sum(self.base_traversability_masks.get(target_partition_idx, jnp.zeros_like(clean_traversability)) == 1)
-        dumped_soil_count = jnp.sum(dumped_areas)
-        own_agent_count = jnp.sum(clean_traversability == -1)
-        other_obstacle_count = other_cells_added
-        total_obstacles = jnp.sum(clean_traversability == 1)
-        free_space = jnp.sum(clean_traversability == 0)
-        total_cells = clean_traversability.size
-        
-        # print(f"    Partition {target_partition_idx} traversability summary:")
-        # print(f"      Original terrain obstacles: {terrain_count}")
-        # print(f"      Dumped soil obstacles: {dumped_soil_count}")
-        # print(f"      Other partitions' DIG TARGETS blocked: {other_dig_targets_blocked}")
-        # print(f"      Other agents (as obstacles): {other_obstacle_count}")
-        # print(f"      Total obstacles: {total_obstacles}")
-        # print(f"      Own agent cells: {own_agent_count}")
-        # print(f"      Free space: {free_space} ({free_space/total_cells:.1%})")
-        
-        # if free_space < total_cells * 0.3:  # Less than 30% free space
-        #     print(f"      ⚠️  Warning: Low free space percentage")
-        # else:
-        #     print(f"      ✅ Good free space percentage")
+
 
     def _sync_all_partitions_from_global_maps_excluding_traversability(self, partition_states):
         """
         UPDATED: Synchronize ALL partitions with updated global maps, but preserve partition-specific targets.
         """
-        #print(f"  Syncing global maps to all partitions (excluding traversability and preserving partition targets)")
         
         for target_partition_idx, target_partition_state in partition_states.items():
             if target_partition_state['status'] != 'active':
@@ -1985,8 +1657,6 @@ class EnvironmentsManager:
             
             # Update the partition state
             partition_states[target_partition_idx]['timestep'] = updated_timestep
-            
-            #print(f"    Synced global maps to partition {target_partition_idx} (targets preserved)")
 
     def _update_all_observations(self, partition_states):
         """
@@ -2012,7 +1682,7 @@ class EnvironmentsManager:
 
     def _update_global_maps_from_single_partition_small(self, source_partition_idx, partition_states):
         """
-        FIXED: Update global maps but handle target_map specially.
+        Update global maps but handle target_map specially.
         Target maps should remain partition-specific and not be fully synchronized.
         """
         if source_partition_idx not in partition_states:
@@ -2022,9 +1692,7 @@ class EnvironmentsManager:
         partition = self.partitions[source_partition_idx]
         region_coords = partition['region_coords']
         y_start, x_start, y_end, x_end = region_coords
-        
-        #print(f"  Updating global maps from partition {source_partition_idx}")
-        
+                
         # Define which maps to update globally (EXCLUDE target_map)
         maps_to_update = [
             'action_map', 
@@ -2036,18 +1704,14 @@ class EnvironmentsManager:
         for map_name in maps_to_update:
             # Get the current map from the partition
             partition_map = getattr(source_state.world, map_name).map
-            #print(map_name, partition_map.shape)
             
             # Extract the region that corresponds to this partition
             region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
             partition_region = partition_map[region_slice]
-            #print(f"    Extracted region {region_slice} from partition {source_partition_idx} for {map_name}")
             
             # Update the global map with this region
             self.global_maps[map_name] = self.global_maps[map_name].at[region_slice].set(partition_region)
-            
-            #print(f"    Updated global {map_name} from partition {source_partition_idx}")
-        
+
         # Handle target_map specially - update global but don't sync back to other partitions
         target_map = source_state.world.target_map.map
         region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
@@ -2055,11 +1719,10 @@ class EnvironmentsManager:
         
         # Update global target map for tracking purposes, but partitions keep their own
         self.global_maps['target_map'] = self.global_maps['target_map'].at[region_slice].set(target_region)
-        #print(f"    Updated global target_map from partition {source_partition_idx} (for tracking only)")
 
     def _update_global_maps_from_single_partition_big(self, source_partition_idx, partition_states):
         """
-        FIXED: Update global maps but handle coordinate mapping correctly.
+        Update global maps but handle coordinate mapping correctly.
         The partition maps are always 64x64, but we need to map them back to the correct
         global coordinates based on the partition's region_coords.
         """
@@ -2070,16 +1733,11 @@ class EnvironmentsManager:
         partition = self.partitions[source_partition_idx]
         region_coords = partition['region_coords']
         y_start, x_start, y_end, x_end = region_coords
-        
-        # print(f"  Updating global maps from partition {source_partition_idx}")
-        # print(f"    Partition region_coords: {region_coords}")
-        
+
         # Calculate the actual region dimensions
         region_height = y_end - y_start + 1
         region_width = x_end - x_start + 1
-        
-        # print(f"    Region dimensions: {region_height}x{region_width}")
-        
+                
         # Define which maps to update globally (EXCLUDE target_map)
         maps_to_update = [
             'action_map', 
@@ -2091,12 +1749,7 @@ class EnvironmentsManager:
         for map_name in maps_to_update:
             # Get the current map from the partition (this is always 64x64)
             partition_map = getattr(source_state.world, map_name).map
-            #print(f"    {map_name} partition shape: {partition_map.shape}")
-            
-            # FIXED: Extract only the relevant portion from the 64x64 partition map
-            # The partition map contains the region data, but it might be padded to 64x64
-            # We need to extract only the actual region size from the partition map
-            
+      
             # Calculate how much of the partition map corresponds to the actual region
             extract_height = min(region_height, 64)
             extract_width = min(region_width, 64)
@@ -2104,9 +1757,6 @@ class EnvironmentsManager:
             # Extract the relevant portion from the partition map
             # This assumes the region data starts at (0,0) in the partition map
             extracted_region = partition_map[:extract_height, :extract_width]
-            
-            # print(f"    Extracted region shape: {extracted_region.shape}")
-            # print(f"    Target global region: {region_height}x{region_width}")
             
             # Define the target slice in the global map
             global_region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
@@ -2131,18 +1781,12 @@ class EnvironmentsManager:
                 else:
                     # Crop to fit
                     extracted_region = extracted_region[:target_shape[0], :target_shape[1]]
-            
-            #print(f"    Final extracted region shape: {extracted_region.shape}")
-            
+                        
             # Update the global map with the extracted region
             try:
                 self.global_maps[map_name] = self.global_maps[map_name].at[global_region_slice].set(extracted_region)
-                #print(f"    ✓ Updated global {map_name} from partition {source_partition_idx}")
             except Exception as e:
                 print(f"    ✗ Error updating global {map_name}: {e}")
-                # print(f"      Global map shape: {self.global_maps[map_name].shape}")
-                # print(f"      Target slice: {global_region_slice}")
-                # print(f"      Extracted region shape: {extracted_region.shape}")
         
         # Handle target_map specially - update global but don't sync back to other partitions
         try:
@@ -2163,7 +1807,6 @@ class EnvironmentsManager:
             # Update global target map for tracking purposes
             global_region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
             self.global_maps['target_map'] = self.global_maps['target_map'].at[global_region_slice].set(target_region)
-            #print(f"    ✓ Updated global target_map from partition {source_partition_idx} (for tracking only)")
             
         except Exception as e:
             print(f"    ✗ Error updating global target_map: {e}")
@@ -2189,9 +1832,7 @@ class EnvironmentsManager:
     def _sync_agent_positions_across_partitions(self, partition_states):
         """
         UPDATED: Properly sync agent positions with dumped soil and dig target blocking only.
-        """
-        #print(f"  Syncing agent positions, dumped soil, and blocking other DIG TARGETS across all partitions")
-        
+        """        
         # Ensure base masks are initialized
         if not hasattr(self, 'base_traversability_masks'):
             #print("  WARNING: Base masks not initialized, initializing now...")
@@ -2217,7 +1858,6 @@ class EnvironmentsManager:
                     cell = (int(agent_positions[0][i]), int(agent_positions[1][i]))
                     occupied_cells.append(cell)
                 all_agent_positions[partition_idx] = occupied_cells
-                #print(f"    Agent {partition_idx}: {len(occupied_cells)} occupied cells")
         
         # Update each partition with clean traversability including only dig target obstacles
         for target_partition_idx, target_partition_state in partition_states.items():
@@ -2238,32 +1878,22 @@ class EnvironmentsManager:
         if not hasattr(self, 'partition_target_maps'):
             self.partition_target_maps = {}
         
-        #print("Storing partition-specific target maps...")
-        
         for partition_idx, partition_state in partition_states.items():
             if partition_state['status'] == 'active':
                 # Store the original target map for this partition
                 original_target_map = partition_state['timestep'].state.world.target_map.map.copy()
                 self.partition_target_maps[partition_idx] = original_target_map
                 
-                # Count targets for verification
-                dig_targets = jnp.sum(original_target_map == -1)
-                dump_targets = jnp.sum(original_target_map == 1)
-                
-                #print(f"  Partition {partition_idx}: {dig_targets} dig targets, {dump_targets} dump targets")
-
     def _create_world_with_global_maps_preserve_targets(self, current_world, partition_idx):
         """
-        FIXED: Create a new world state that uses global maps but preserves partition-specific targets.
+        Create a new world state that uses global maps but preserves partition-specific targets.
         """
         # Get the original partition-specific target map
         if hasattr(self, 'partition_target_maps') and partition_idx in self.partition_target_maps:
             partition_target_map = self.partition_target_maps[partition_idx]
-            #print(f"    Preserving original target map for partition {partition_idx}")
         else:
             # Fallback to current target map
             partition_target_map = current_world.target_map.map
-            #print(f"    WARNING: Using current target map for partition {partition_idx} (no stored original)")
         
         updated_world = current_world._replace(
             target_map=current_world.target_map._replace(map=partition_target_map),  # Keep partition-specific

@@ -31,15 +31,6 @@ class TerraEnvBatchWithMapOverride(TerraEnvBatch):
         Returns:
             Initial timestep
         """
-        # Print the shape of the override maps for debugging
-        # print("\nOverride Map Shapes:")
-        # print(f"Target Map Override Shape: {target_map_override.shape if target_map_override is not None else None}")
-        # print(f"Traversability Mask Override Shape: {traversability_mask_override.shape if traversability_mask_override is not None else None}")
-        # print(f"Padding Mask Override Shape: {padding_mask_override.shape if padding_mask_override is not None else None}")
-        # print(f"Dumpability Mask Override Shape: {dumpability_mask_override.shape if dumpability_mask_override is not None else None}")
-        # print(f"Dumpability Init Mask Override Shape: {dumpability_mask_init_override.shape if dumpability_mask_init_override is not None else None}")
-        # print(f"Action Map Override Shape: {action_map_override.shape if action_map_override is not None else None}")
-        
         # Determine the new edge length based on overrides
         new_edge_length = None
         if target_map_override is not None:
@@ -67,7 +58,6 @@ class TerraEnvBatchWithMapOverride(TerraEnvBatch):
             
             # Update agent config if override is provided
             if agent_config_override is not None:
-                print(f"Overriding agent config: {agent_config_override}")
                 updated_agent_config = env_cfgs.agent._replace(**agent_config_override)
             else:
                 updated_agent_config = env_cfgs.agent
@@ -77,18 +67,10 @@ class TerraEnvBatchWithMapOverride(TerraEnvBatch):
                 maps=updated_maps_config,
                 agent=updated_agent_config
             )
-        
-            print(f"Updated env_cfgs - edge_length_px: {env_cfgs.maps.edge_length_px}, agent height: {env_cfgs.agent.height}, agent width: {env_cfgs.agent.width}")
-        
+                
         # First reset with possibly updated env_cfgs
         timestep = self.reset(env_cfgs, rngs, custom_pos, custom_angle)
         
-        # Print the original shapes before override
-        # print("\nOriginal Map Shapes:")
-        # print(f"Target Map Shape: {timestep.state.world.target_map.map.shape}")
-        # print(f"Action Map Shape: {timestep.state.world.action_map.map.shape}")
-        # print(f"Environment Config: {timestep.state.env_cfg if hasattr(timestep.state, 'env_cfg') else 'No env_cfg in state'}")
-
         # Then override maps if provided - use completely new arrays
         if target_map_override is not None:
             # Add batch dimension if needed
@@ -208,7 +190,6 @@ class TerraEnvBatchWithMapOverride(TerraEnvBatch):
                     )
         # We need to manually update the observation to match the new maps
         updated_obs = dict(timestep.observation)
-
 
         # Update all map-related observations
         if target_map_override is not None and 'target_map' in updated_obs:

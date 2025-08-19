@@ -35,10 +35,6 @@ def compute_stats_llm(episode_done_once_list, episode_length_list, move_cumsum_l
     print(f"Areas: {areas}")
     print(f"Dig tiles per target map init: {dig_tiles_per_target_map_init}")
     print(f"Dug tiles per action map: {dug_tiles_per_action_map}")
-    # print(type(episode_done_once))
-    # print(type(episode_length))
-    # print(type(move_cumsum))
-    # print(type(do_cumsum))
 
     # Path efficiency -- only include finished envs
     move_cumsum *= episode_done_once
@@ -56,11 +52,6 @@ def compute_stats_llm(episode_done_once_list, episode_length_list, move_cumsum_l
     workspaces_efficiency_mean = workspaces_efficiency.mean()
     workspaces_efficiency_std = workspaces_efficiency.std()
 
-
-    # Coverage scores
-    # dug_tiles_per_action_map = (obs["action_map"] == -1).sum(
-    #     tuple([i for i in range(len(obs["action_map"].shape))][1:])
-    # )
     coverage_ratios = dug_tiles_per_action_map / dig_tiles_per_target_map_init
     coverage_scores = episode_done_once + (~episode_done_once) * coverage_ratios
     coverage_score_mean = coverage_scores.mean()
@@ -70,9 +61,7 @@ def compute_stats_llm(episode_done_once_list, episode_length_list, move_cumsum_l
 
     print("\nStats:\n")
     print(f"Completion: {completion_rate:.2f}%")
-    # print(f"First episode length average: {episode_length.mean()}")
-    # print(f"First episode length min: {episode_length.min()}")
-    # print(f"First episode length max: {episode_length.max()}")
+
     print(
         f"Path efficiency: {path_efficiency_mean:.2f} ({path_efficiency_std:.2f})"
     )
