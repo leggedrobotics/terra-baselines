@@ -16,7 +16,7 @@ The parameters are the same that are defined in the `README.md` file in the pare
 To analyze the performance of your LLM game player:
 
 ```python
-python llm/game/analyze_py.
+python llm/game/analyze_results_py.
 ```
 
 This script will:
