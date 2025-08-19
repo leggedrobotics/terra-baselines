@@ -126,13 +126,31 @@ After generating big maps (currently tested only with 128x128) it is possible to
 
 ### Running on Clusters
 
+Ensure API keys are properly configured in your cluster environment. Consult your cluster's [documentation](https://scicomp.ethz.ch/wiki/Main_Page) for specific setup instructions.
+
 For SLURM-based clusters (e.g., ETH Zürich Euler):
 
 ```bash
 sbatch run_levels.slurm
 ```
 
-Ensure API keys are properly configured in your cluster environment. Consult your cluster's [documentation](https://scicomp.ethz.ch/wiki/Main_Page) for specific setup instructions.
+Adapt the parameter of the script to the actual values. 
+This script will run the evaluation on different nodes for each levels (see mapping in a later section).
+
+For random partitioning and choosing the best partition (with higher coverage) among all the trials it is possible to use 
+
+```bash
+sbatch run_levels_random.slurm
+```
+
+where
+--n_maps is the number of test map and 
+--n_partitions_per_map is the number of trials for the random partitions.
+
+Note that in this script you need to run each level independently and also change the `config.yaml` file to use random partitions.
+
+To aggregate the results you need to use the `result_aggregator.py` script to get the final benchmarks.
+
 
 ## 🤖 Supported Models
 
