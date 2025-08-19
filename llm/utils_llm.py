@@ -45,43 +45,6 @@ def save_csv(output_file, action_list, cumulative_rewards):
 
     print(f"Results saved to {output_file}")
 
-# def create_sub_task_target_map_64x64(global_target_map_data: jnp.ndarray,
-#                                      region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
-#     """
-#     Creates a 64x64 target map for an RL agent's sub-task from any input size.
-    
-#     Retains both `-1` values (dig targets) and `1` values (dump targets) from 
-#     the specified region in the global map. Everything outside the region is set to 0 (free).
-    
-#     Args:
-#         global_target_map_data: Target map of any size (1: dump, 0: free, -1: dig).
-#         region_coords: (y_start, x_start, y_end, x_end), inclusive bounds.
-    
-#     Returns:
-#         A new 64x64 map with `-1`s and `1`s from the region; everything else is 0.
-#     """
-#     y_start, x_start, y_end, x_end = region_coords
-    
-#     # Initialize a 64x64 map with all zeros (free space)
-#     sub_task_map = jnp.zeros((64, 64), dtype=global_target_map_data.dtype)
-    
-#     # Define slice object for region
-#     region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
-    
-#     # Extract region from global map
-#     region_data = global_target_map_data[region_slice]
-    
-#     # Calculate region dimensions
-#     region_height, region_width = region_data.shape
-    
-#     # Place region data into the 64x64 map, ensuring it fits
-#     end_y = min(64, region_height)
-#     end_x = min(64, region_width)
-    
-#     sub_task_map = sub_task_map.at[:end_y, :end_x].set(region_data[:end_y, :end_x])
-    
-#     return sub_task_map
-
 def create_sub_task_target_map_64x64(global_target_map_data: jnp.ndarray,
                                      region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
     """
@@ -116,93 +79,6 @@ def create_sub_task_target_map_64x64(global_target_map_data: jnp.ndarray,
     
     return sub_task_map
 
-
-# def create_sub_task_target_map_64x64(global_target_map_data: jnp.ndarray,
-#                                       region_coords: tuple[int, int, int, int],
-#                                       partition: int = 0) -> jnp.ndarray:
-#     """
-#     Creates a 64x64 target map for an RL agent's sub-task from any input size.
-    
-#     Retains both `-1` values (dig targets) and `1` values (dump targets) from 
-#     the specified region in the global map. Everything outside the region is set to 0 (free).
-    
-#     Args:
-#         global_target_map_data: Target map of any size (1: dump, 0: free, -1: dig).
-#         region_coords: (y_start, x_start, y_end, x_end), inclusive bounds.
-#         partition: 0 for upper placement (black up, white down), 
-#                   1 for lower placement (white up, black down).
-    
-#     Returns:
-#         A new 64x64 map with `-1`s and `1`s from the region; everything else is 0.
-#     """
-#     y_start, x_start, y_end, x_end = region_coords
-    
-#     # Initialize a 64x64 map with all zeros (free space)
-#     sub_task_map = jnp.zeros((64, 64), dtype=global_target_map_data.dtype)
-    
-#     # Define slice object for region
-#     region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
-    
-#     # Extract region from global map
-#     region_data = global_target_map_data[region_slice]
-    
-#     # Calculate region dimensions
-#     region_height, region_width = region_data.shape
-    
-#     # Place region data based on partition
-#     if partition == 0:
-#         # Place at top
-#         start_y = 0
-#     else:
-#         # Place at bottom
-#         start_y = max(0, 64 - region_height)
-    
-#     # Calculate end positions
-#     end_y = min(64, start_y + region_height)
-#     end_x = min(64, region_width)
-    
-#     # Place region data
-#     sub_task_map = sub_task_map.at[start_y:end_y, :end_x].set(
-#         region_data[:end_y-start_y, :end_x]
-#     )
-    
-#     return sub_task_map
-
-# def create_sub_task_action_map_64x64(action_map_data: jnp.ndarray,
-#                                     region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
-#     """
-#     Creates a 64x64 action map for a sub-task from any input size, preserving only actions 
-#     that occurred inside the specified region. Outside the region, all values are reset to 0 (free).
-
-#     Args:
-#         action_map_data: Action map of any size (-1: dug, 0: free, >0: dumped).
-#         region_coords: (y_start, x_start, y_end, x_end), inclusive.
-
-#     Returns:
-#         A new 64x64 map with only the region's actions preserved, all else is 0.
-#     """
-#     y_start, x_start, y_end, x_end = region_coords
-
-#     # Initialize output map with zeros (free)
-#     sub_task_action_map = jnp.zeros((64, 64), dtype=action_map_data.dtype)
-
-#     # Define region slice
-#     region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
-
-#     # Extract region from input map
-#     region_data = action_map_data[region_slice]
-    
-#     # Calculate region dimensions
-#     region_height, region_width = region_data.shape
-    
-#     # Place region data into the 64x64 map, ensuring it fits
-#     end_y = min(64, region_height)
-#     end_x = min(64, region_width)
-    
-#     sub_task_action_map = sub_task_action_map.at[:end_y, :end_x].set(region_data[:end_y, :end_x])
-
-#     return sub_task_action_map
-
 def create_sub_task_action_map_64x64(action_map_data: jnp.ndarray,
                                     region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
     """
@@ -232,43 +108,6 @@ def create_sub_task_action_map_64x64(action_map_data: jnp.ndarray,
     sub_task_action_map = sub_task_action_map.at[region_slice].set(region_data)
 
     return sub_task_action_map
-
-# def create_sub_task_padding_mask_64x64(padding_mask_data: jnp.ndarray,
-#                                       region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
-#     """
-#     Creates a 64x64 padding mask for a sub-task from any input size.
-
-#     Inside the region: preserves original traversability (0 or 1).
-#     Outside the region: sets everything to 1 (non-traversable).
-
-#     Args:
-#         padding_mask_data: Mask of any size (0: traversable, 1: non-traversable).
-#         region_coords: (y_start, x_start, y_end, x_end), inclusive.
-
-#     Returns:
-#         A 64x64 mask with only the region preserved; the rest is 1.
-#     """
-#     y_start, x_start, y_end, x_end = region_coords
-
-#     # Initialize everything as non-traversable (1)
-#     sub_task_mask = jnp.ones((64, 64), dtype=padding_mask_data.dtype)
-
-#     # Define slice for region
-#     region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
-
-#     # Extract the original values from the region
-#     region_data = padding_mask_data[region_slice]
-    
-#     # Calculate region dimensions
-#     region_height, region_width = region_data.shape
-    
-#     # Place region data into the 64x64 map, ensuring it fits
-#     end_y = min(64, region_height)
-#     end_x = min(64, region_width)
-    
-#     sub_task_mask = sub_task_mask.at[:end_y, :end_x].set(region_data[:end_y, :end_x])
-
-#     return sub_task_mask
 
 def create_sub_task_padding_mask_64x64(padding_mask_data: jnp.ndarray,
                                       region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
@@ -300,44 +139,6 @@ def create_sub_task_padding_mask_64x64(padding_mask_data: jnp.ndarray,
     sub_task_mask = sub_task_mask.at[region_slice].set(region_data)
 
     return sub_task_mask
-
-# def create_sub_task_traversability_mask_64x64(traversability_mask_data: jnp.ndarray,
-#                                              region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
-#     """
-#     Creates a 64x64 traversability mask for a sub-task from any input size.
-
-#     Inside the region: preserves original values (-1: agent, 0: traversable, 1: non-traversable).
-#     Outside the region: sets everything to 1 (non-traversable).
-
-#     Args:
-#         traversability_mask_data: Mask of any size 
-#                                   (-1: agent, 0: traversable, 1: non-traversable).
-#         region_coords: (y_start, x_start, y_end, x_end), inclusive.
-
-#     Returns:
-#         A 64x64 mask with only the region preserved; the rest is 1.
-#     """
-#     y_start, x_start, y_end, x_end = region_coords
-
-#     # Start with a mask where everything is non-traversable (1)
-#     sub_task_mask = jnp.ones((64, 64), dtype=traversability_mask_data.dtype)
-
-#     # Define region slice
-#     region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
-
-#     # Extract the original values from the region (can include -1, 0, 1)
-#     region_data = traversability_mask_data[region_slice]
-    
-#     # Calculate region dimensions
-#     region_height, region_width = region_data.shape
-    
-#     # Place region data into the 64x64 map, ensuring it fits
-#     end_y = min(64, region_height)
-#     end_x = min(64, region_width)
-    
-#     sub_task_mask = sub_task_mask.at[:end_y, :end_x].set(region_data[:end_y, :end_x])
-
-#     return sub_task_mask
 
 def create_sub_task_traversability_mask_64x64(traversability_mask_data: jnp.ndarray,
                                              region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
@@ -374,43 +175,6 @@ def create_sub_task_traversability_mask_64x64(traversability_mask_data: jnp.ndar
     sub_task_mask = sub_task_mask.at[region_slice].set(region_data)
 
     return sub_task_mask
-
-# def create_sub_task_dumpability_mask_64x64(dumpability_mask_data: jnp.ndarray,
-#                                           region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
-#     """
-#     Creates a 64×64 dumpability mask for a sub-task from any input size.
-
-#     Inside the region: preserves original values (1: can dump, 0: can't dump).
-#     Outside the region: sets everything to 0 (can't dump).
-
-#     Args:
-#         dumpability_mask_data: Mask of any size (1: can dump, 0: can't).
-#         region_coords: (y_start, x_start, y_end, x_end), inclusive.
-
-#     Returns:
-#         A 64×64 mask with only the region preserved; the rest is 0.
-#     """
-#     y_start, x_start, y_end, x_end = region_coords
-
-#     # Initialize as all 0 (can't dump)
-#     sub_task_mask = jnp.zeros((64, 64), dtype=dumpability_mask_data.dtype)
-
-#     # Define region slice
-#     region_slice = (slice(y_start, y_end + 1), slice(x_start, x_end + 1))
-
-#     # Extract the original dumpability values from the region
-#     region_data = dumpability_mask_data[region_slice]
-    
-#     # Calculate region dimensions
-#     region_height, region_width = region_data.shape
-    
-#     # Place region data into the 64x64 map, ensuring it fits
-#     end_y = min(64, region_height)
-#     end_x = min(64, region_width)
-    
-#     sub_task_mask = sub_task_mask.at[:end_y, :end_x].set(region_data[:end_y, :end_x])
-
-#     return sub_task_mask
 
 def create_sub_task_dumpability_mask_64x64(dumpability_mask_data: jnp.ndarray,
                                           region_coords: tuple[int, int, int, int]) -> jnp.ndarray:
@@ -903,28 +667,7 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
             sub_tasks_manual = [
                 {'id': 0, 'region_coords': (32, 32, 95, 95), 'start_pos': (64, 64), 'start_angle': 0, 'status': 'pending'},
             ]
-            # Two overlapping 64x64 regions in the center of the 128x128 map
-            # Left-center region: (16, 16) to (79, 79)
-            # Right-center region: (48, 48) to (111, 111)
-            # Overlap area: (48, 48) to (79, 79) = 32x32 overlap
-            # sub_tasks_manual = [
-            #     {'id': 0, 'region_coords': (16, 16, 79, 79), 'start_pos': (48, 48), 'start_angle': 0, 'status': 'pending'},
-            #     {'id': 1, 'region_coords': (48, 48, 111, 111), 'start_pos': (80, 80), 'start_angle': 0, 'status': 'pending'}
-            # ]
 
-
-            # sub_tasks_manual = [
-            #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (64, 32), 'start_angle': 0, 'status': 'pending'},
-            #     {'id': 1, 'region_coords': (32, 64, 95, 127), 'start_pos': (64, 96), 'start_angle': 0, 'status': 'pending'}
-            # ]
-            # sub_tasks_manual = [
-            #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
-            #     {'id': 1, 'region_coords': (32, 48, 95, 111), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
-            # ]
-            # sub_tasks_manual = [
-            #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
-            #     {'id': 1, 'region_coords': (32, 54, 95, 117), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
-            # ]
 
     elif NUM_PARTITIONS == 2:
         if ORIGINAL_MAP_SIZE == 64:
@@ -956,7 +699,28 @@ def compute_manual_subtasks(ORIGINAL_MAP_SIZE, NUM_PARTITIONS):
                 {'id': 1, 'region_coords': (64, 0, 127, 63), 'start_pos': (96, 32), 'start_angle': 0, 'status': 'pending'}
             ]
             
+                        # Two overlapping 64x64 regions in the center of the 128x128 map
+            # Left-center region: (16, 16) to (79, 79)
+            # Right-center region: (48, 48) to (111, 111)
+            # Overlap area: (48, 48) to (79, 79) = 32x32 overlap
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (16, 16, 79, 79), 'start_pos': (48, 48), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (48, 48, 111, 111), 'start_pos': (80, 80), 'start_angle': 0, 'status': 'pending'}
+            # ]
 
+
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (64, 32), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (32, 64, 95, 127), 'start_pos': (64, 96), 'start_angle': 0, 'status': 'pending'}
+            # ]
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (32, 48, 95, 111), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
+            # ]
+            # sub_tasks_manual = [
+            #     {'id': 0, 'region_coords': (32, 0, 95, 63), 'start_pos': (32, 32), 'start_angle': 0, 'status': 'pending'},
+            #     {'id': 1, 'region_coords': (32, 54, 95, 117), 'start_pos': (32, 80), 'start_angle': 0, 'status': 'pending'}
+            # ]
             
     elif NUM_PARTITIONS == 4:
         if ORIGINAL_MAP_SIZE == 64:
