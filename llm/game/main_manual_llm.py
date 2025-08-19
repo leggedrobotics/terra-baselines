@@ -298,6 +298,7 @@ if __name__ == "__main__":
         required=True, 
         choices=["gpt-4o", 
                  "gpt-4.1", 
+                 "gpt-5",
                  "o4-mini", 
                  "o3", 
                  "o3-mini", 
