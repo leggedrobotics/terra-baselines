@@ -4,7 +4,9 @@ from jax import Array
 import flax.linen as nn
 from typing import Sequence, Union
 from terra.actions import TrackedAction, WheeledAction
-from terra.env import TerraEnvBatch
+from terra.env import TerraEnvBatch, TerraEnv
+from terra.config import BatchConfig
+
 from functools import partial
 
 
@@ -56,6 +58,55 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
 
     print(f"Model: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
     return model, params
+
+
+def get_model_ready(rng, config, env: TerraEnv, speed=False):
+    """Instantiate a model according to obs shape of environment. Using TerraEnv instead of TerraEnvBatch."""
+
+    num_embeddings_agent = 64
+    batch_cfg = BatchConfig()  # Get default config
+        
+    # Override with small map dimensions
+    map_width = 64
+    map_height = 64
+    action_type = batch_cfg.action_type
+    num_state_obs = batch_cfg.agent.num_state_obs
+    angles_cabin = batch_cfg.agent.angles_cabin
+
+    jax.debug.print("num_embeddings_agent = {x}", x=num_embeddings_agent)
+    map_min_max = (
+        tuple(config["maps_net_normalization_bounds"])
+        if not config["clip_action_maps"]
+        else (-1, 1)
+    )
+    jax.debug.print("map normalization min max = {x}", x=map_min_max)
+    model = SimplifiedCoupledCategoricalNet(
+        num_prev_actions=config["num_prev_actions"],
+        num_embeddings_agent=num_embeddings_agent,
+        map_min_max=map_min_max,
+        local_map_min_max=tuple(config["local_map_normalization_bounds"]),
+        loaded_max=config["loaded_max"],
+        action_type=action_type,
+    )
+
+    obs = [
+        jnp.zeros((config["num_envs"], num_state_obs)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], config["num_prev_actions"])),
+    ]
+    params = model.init(rng, obs)
+
+    print(f"Model: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
+    return model, params
+
 
 
 def load_neural_network(config, env):
