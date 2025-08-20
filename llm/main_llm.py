@@ -551,7 +551,6 @@ def run_experiment(llm_model_name, llm_model_key, num_timesteps, seed,
 
             do_cumsum += (action_rl == do_action) * (~episode_done_once)
 
-
             dug_tiles_per_action_map = (env_manager.global_maps['action_map'] == -1).sum()
 
         # Add map data to global collections
