@@ -629,7 +629,6 @@ class EnvironmentsManager:
                     'angles cabin': self.global_env.all_agent_angles_cabin,
                     'loaded': self.global_env.all_agent_loaded
                 }
-                #print(f"Passing {len(self.global_env.all_agent_positions)} agents to renderer")
             else:
                 print("Warning: Agent attributes not properly initialized for rendering")
                 # Initialize empty lists to prevent further errors
