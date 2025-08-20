@@ -661,7 +661,6 @@ class EnvironmentsManager:
         This shows what each agent sees simultaneously.
         """
 
-        
         active_partitions = [idx for idx, state in partition_states.items() 
                             if state['status'] == 'active']
         
