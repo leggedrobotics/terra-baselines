@@ -118,21 +118,21 @@ class MixedAgentTrainConfig:
     group: str = "tracked-skidsteer"
     num_envs_per_device: int = 2048 #1536  # Increased for better dual skidsteer training 2048
     num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
-    update_epochs: int = 3  # Reduced from 4 to 2 for faster training
-    num_minibatches: int = 8  # Reduced from 16 to 8 for faster training
-    total_timesteps: int = 15_000_000_000  # Increased from 1B to 5B for sufficient training 60_000_000_000
-    lr: float = 3.5e-4    #3e-4
-    clip_eps: float = 0.2  # Less conservative clipping for escaping local optima
-    gamma: float = 0.995
+    update_epochs: int = 5  # Reduced from 4 to 2 for faster training
+    num_minibatches: int = 32 #8  # Reduced from 16 to 8 for faster training
+    total_timesteps: int = 100_000_000_000  # Increased from 1B to 5B for sufficient training 60_000_000_000
+    lr: float = 3e-4    #3e-4
+    clip_eps: float = 0.5  # Less conservative clipping for escaping local optima
+    gamma: float = 0.9984
     gae_lambda: float = 0.95
-    ent_coef: float = 0.1  # 0.1 Higher entropy to escape "do nothing" optima and encourage exploration
+    ent_coef: float = 0.015  # 0.1 Higher entropy to escape "do nothing" optima and encourage exploration
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
     seed: int = 42
-    log_train_interval: int = 3  # Number of updates between logging train stats
-    log_eval_interval: int = 80  # Less frequent evaluation for speed
-    checkpoint_interval: int = 250  # Less frequent checkpoints for speed
+    log_train_interval: int = 1  # Number of updates between logging train stats
+    log_eval_interval: int = 50  # Less frequent evaluation for speed
+    checkpoint_interval: int = 50  # Less frequent checkpoints for speed
     
     # Model settings optimized for mixed agents
     num_prev_actions = 10
