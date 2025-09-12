@@ -28,18 +28,23 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "main"
     group: str = "default"
-    num_envs_per_device: int = 4096
+    num_envs_per_device: int = 8192
     num_steps: int = 32
     update_epochs: int = 5
-    num_minibatches: int = 32
-    total_timesteps: int = 30_000_000_000
+    num_minibatches: int = 64
+    total_timesteps: int = 60_000_000_000
     lr: float = 3e-4
     clip_eps: float = 0.5
     gamma: float = 0.995
     gae_lambda: float = 0.95
     ent_coef: float = 0.005
     vf_coef: float = 5.0
-    max_grad_norm: float = 0.5
+    max_grad_norm: float = 1.0
+    # Adaptive learning rate parameters
+    desired_kl: float = 0.01
+    lr_decay_factor: float = 1.5
+    lr_min: float = 1e-4
+    lr_max: float = 1e-3
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 1  # Number of updates between logging train stats
@@ -186,6 +191,9 @@ def ppo_update_networks(
         value = jnp.reshape(value, transitions.value.shape)
         log_prob = jnp.reshape(log_prob, transitions.log_prob.shape)
 
+        # CALCULATE KL DIVERGENCE for adaptive learning rate
+        kl_divergence = jnp.mean(transitions.log_prob - log_prob)
+
         # CALCULATE VALUE LOSS
         value_pred_clipped = transitions.value + (value - transitions.value).clip(
             -clip_eps, clip_eps
@@ -202,13 +210,13 @@ def ppo_update_networks(
         entropy = dist.entropy().mean()
 
         total_loss = actor_loss + vf_coef * value_loss - ent_coef * entropy
-        return total_loss, (value_loss, actor_loss, entropy)
+        return total_loss, (value_loss, actor_loss, entropy, kl_divergence)
 
-    (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
+    (loss, (vloss, aloss, entropy, kl_div)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
         train_state.params
     )
-    (loss, vloss, aloss, entropy, grads) = jax.lax.pmean(
-        (loss, vloss, aloss, entropy, grads), axis_name="devices"
+    (loss, vloss, aloss, entropy, kl_div, grads) = jax.lax.pmean(
+        (loss, vloss, aloss, entropy, kl_div, grads), axis_name="devices"
     )
     train_state = train_state.apply_gradients(grads=grads)
     update_info = {
@@ -216,6 +224,7 @@ def ppo_update_networks(
         "value_loss": vloss,
         "actor_loss": aloss,
         "entropy": entropy,
+        "kl_divergence": kl_div,
     }
     return train_state, update_info
 
@@ -443,6 +452,10 @@ def make_train(
         rng = jax.random.split(rng, num=config.num_devices)
         train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
         runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
+
+        # Initialize adaptive learning rate state
+        current_lr = config.lr
+
         # runner_state, loss_info = jax.lax.scan(_update_step, runner_state, None, config.num_updates)
         for i in tqdm(range(config.num_updates), desc="Training"):
             start_time = time.time()  # Start time for measuring iteration speed
@@ -459,6 +472,28 @@ def make_train(
                 * config.num_envs
                 * config.num_devices
             )
+
+            # Adaptive learning rate based on KL divergence
+            loss_info_single = unreplicate(loss_info)
+            kl_mean = loss_info_single.get('kl_divergence', 0.0)
+
+            if kl_mean > config.desired_kl * 2.0:
+                # Policy changing too fast - reduce LR
+                current_lr = max(config.lr_min, current_lr / config.lr_decay_factor)
+            elif kl_mean < config.desired_kl / 2.0 and kl_mean > 0.0:
+                # Policy changing too slowly - increase LR
+                current_lr = min(config.lr_max, current_lr * config.lr_decay_factor)
+
+            # Update optimizer with new learning rate
+            new_tx = optax.chain(
+                optax.clip_by_global_norm(config.max_grad_norm),
+                optax.adam(learning_rate=current_lr, eps=1e-5),
+            )
+            # Update train_state on all devices
+            runner_state_single = unreplicate(runner_state)
+            train_state = runner_state_single[1].replace(tx=new_tx)
+            train_state = replicate(train_state, jax.local_devices()[:config.num_devices])
+            runner_state = (runner_state[0], train_state, *runner_state[2:])
 
             tqdm.write(
                 f"Steps/s: {steps_per_second:.2f}"
@@ -479,7 +514,8 @@ def make_train(
                         "performance/steps_per_second": steps_per_second,
                         "performance/iterations_per_second": iterations_per_second,
                         "curriculum_levels": curriculum_levels,
-                        "lr": config.lr,
+                        "lr/current": current_lr,
+                        "lr/kl_divergence": loss_info_single.get('kl_divergence', 0.0),
                         **loss_info_single,
                     }
                 )
@@ -552,21 +588,21 @@ def train(config: TrainConfig):
         config=asdict(config),
         save_code=True,
     )
-    
+
     # Log config.py and train.py files to wandb
     train_py_path = os.path.abspath(__file__)  # Path to current train.py file
     config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "terra", "terra", "config.py")
-    
+
     code_artifact = wandb.Artifact(name="source_code", type="code")
-    
+
     # Add train.py
     if os.path.exists(train_py_path):
         code_artifact.add_file(train_py_path, name="train.py")
-    
+
     # Add config.py
     if os.path.exists(config_path):
         code_artifact.add_file(config_path, name="config.py")
-    
+
     # Log the artifact if any files were added
     if code_artifact.files:
         run.log_artifact(code_artifact)
