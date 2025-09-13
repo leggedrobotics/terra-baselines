@@ -28,10 +28,10 @@ class TrainConfig:
     num_devices: int = 0
     project: str = "main"
     group: str = "default"
-    num_envs_per_device: int = 8192
+    num_envs_per_device: int = 4096
     num_steps: int = 32
     update_epochs: int = 5
-    num_minibatches: int = 64
+    num_minibatches: int = 32
     total_timesteps: int = 60_000_000_000
     lr: float = 3e-4
     clip_eps: float = 0.5
