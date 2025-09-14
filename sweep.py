@@ -14,17 +14,17 @@ class TrainConfigSweep(TrainConfig):
     total_timesteps: int = 2_000_000_000
 
     # Rewards
-    existence: float = 0.0
-    collision_move: float = -0.5
-    move: float = -0.2
-    move_with_turned_wheels=-0.2
-    cabin_turn: float = -0.2
-    wheel_turn: float = -0.2
-    dig_wrong: float = -1.0
-    dump_wrong: float = 0.0
-    dig_correct: float = 1.0
-    dump_correct: float = 1.0
-    terminal: float = 50.0
+    existence: float = -0.1
+    collision_move: float = -0.2
+    move: float = -0.1
+    move_with_turned_wheels: float = -0.1
+    cabin_turn: float = -0.05
+    wheel_turn: float = -0.05
+    dig_wrong: float = -0.25
+    dump_wrong: float = -1.0
+    dig_correct: float = 0.2
+    dump_correct: float = 0.15
+    terminal: float = 100.0
 
 
 def train(config: TrainConfigSweep):
@@ -88,16 +88,17 @@ if __name__ == "__main__":
             },
             "parameters": {
                 "existence": {"values": [-0.1, -0.05, 0.0]},
-                "collision_move": {"values": [-0.2, -0.1, -0.05, 0.0]},
+                "collision_move": {"values": [-0.3, -0.2, -0.1, 0.0]},
                 "move": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
                 "move_with_turned_wheels": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
-                "cabin_turn": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
-                "wheel_turn": {"values": [-0.3, -0.2, -0.1, -0.05, 0.0]},
-                "dig_wrong": {"values": [-2.0, -1.0, -0.5, 0.0]},
-                "dump_wrong": {"values": [-2.0, -1.0, -0.5, 0.0]},
-                "dig_correct": {"values": [0.5, 1.0, 2.0, 3.0]},
-                "dump_correct": {"values": [0.5, 1.0, 2.0, 3.0]},
-                "terminal": {"values": [10.0, 25.0, 50.0]},
+                "cabin_turn": {"values": [-0.2, -0.1, -0.05, 0.0]},
+                "wheel_turn": {"values": [-0.2, -0.1, -0.05, 0.0]},
+                "dig_wrong": {"values": [-0.5, -0.4, -0.3, -0.2, -0.1]},
+                "dump_wrong": {"values": [-0.5, -0.4, -0.3, -0.2, -0.1]},
+                "dig_correct": {"values": [0.1, 0.2, 0.3, 0.4, 0.5]},
+                "dump_correct": {"values": [0.1, 0.2, 0.3, 0.4, 0.5]},
+                "lr": {"values": [1e-4, 2e-4, 3e-4, 4e-4]},
+                "ent_coef": {"values": [0.0025, 0.005, 0.0075]},
             }
         }
         sweep_id = wandb.sweep(sweep_config, project="sweep")
