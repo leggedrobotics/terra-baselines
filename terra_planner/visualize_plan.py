@@ -67,7 +67,7 @@ def plot_terrain_modifications(plan, output_dir=None, show_plots=True):
         ax1.set_ylabel('Y coordinate')
 
         # Add agent position
-        agent_x, agent_y = agent_state['pos_base']
+        agent_y, agent_x = agent_state['pos_base']  # Note: Terra coordinates are (y, x)
         loaded_before = entry['loaded_state_change']['before']
         loaded_after = entry['loaded_state_change']['after']
         ax1.plot(agent_x, agent_y, 'bo', markersize=8, label=f'Agent (before: {loaded_before}, after: {loaded_after})')
