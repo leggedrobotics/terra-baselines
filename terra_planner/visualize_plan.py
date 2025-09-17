@@ -19,10 +19,10 @@ def load_plan(plan_path):
 
 def plot_terrain_modifications(plan, output_dir=None, show_plots=True):
     """
-    Plot digging masks for each step in the plan.
+    Plot terrain modification masks for each step in the plan.
 
     Args:
-        plan: List of plan entries from extract_plan.py (only digging actions)
+        plan: List of plan entries from extract_plan.py (terrain modification actions)
         output_dir: Directory to save plots (optional)
         show_plots: Whether to display plots interactively
     """
@@ -30,7 +30,7 @@ def plot_terrain_modifications(plan, output_dir=None, show_plots=True):
         output_dir = Path(output_dir)
         output_dir.mkdir(exist_ok=True)
 
-    print(f"Found {len(plan)} digging actions in the plan")
+    print(f"Found {len(plan)} terrain modification actions in the plan")
 
     # Filter out entries with no terrain modifications
     modified_entries = []
@@ -39,10 +39,10 @@ def plot_terrain_modifications(plan, output_dir=None, show_plots=True):
         if np.sum(terrain_mask) > 0:
             modified_entries.append(entry)
 
-    print(f"{len(modified_entries)} of these actually dug terrain")
+    print(f"{len(modified_entries)} of these actually modified terrain")
 
     if len(modified_entries) == 0:
-        print("No digging actions found in the plan.")
+        print("No terrain modification actions found in the plan.")
         return
 
     for i, entry in enumerate(modified_entries):
@@ -62,17 +62,19 @@ def plot_terrain_modifications(plan, output_dir=None, show_plots=True):
 
         # Plot 1: Binary modification mask
         im1 = ax1.imshow(terrain_mask, cmap='Reds', interpolation='nearest')
-        ax1.set_title(f'Digging Mask (Binary)\nStep {step} (Entry {i+1}/{len(modified_entries)})')
+        ax1.set_title(f'Terrain Modification Mask (Binary)\nStep {step} (Entry {i+1}/{len(modified_entries)})')
         ax1.set_xlabel('X coordinate')
         ax1.set_ylabel('Y coordinate')
 
         # Add agent position
         agent_x, agent_y = agent_state['pos_base']
-        ax1.plot(agent_x, agent_y, 'bo', markersize=8, label=f'Agent (loaded: {agent_state["loaded"]})')
+        loaded_before = entry['loaded_state_change']['before']
+        loaded_after = entry['loaded_state_change']['after']
+        ax1.plot(agent_x, agent_y, 'bo', markersize=8, label=f'Agent (before: {loaded_before}, after: {loaded_after})')
         ax1.legend()
 
         # Add colorbar
-        plt.colorbar(im1, ax=ax1, label='Dug (1) / Undug (0)')
+        plt.colorbar(im1, ax=ax1, label='Modified (1) / Unmodified (0)')
 
         # Plot 2: Traversability mask for context
         im2 = ax2.imshow(traversability_mask, cmap='viridis', interpolation='nearest')
@@ -81,7 +83,7 @@ def plot_terrain_modifications(plan, output_dir=None, show_plots=True):
         ax2.set_ylabel('Y coordinate')
 
         # Add agent position on traversability map too
-        ax2.plot(agent_x, agent_y, 'ro', markersize=8, label=f'Agent (loaded: {agent_state["loaded"]})')
+        ax2.plot(agent_x, agent_y, 'ro', markersize=8, label=f'Agent (before: {loaded_before}, after: {loaded_after})')
         ax2.legend()
 
         # Add colorbar
@@ -99,15 +101,20 @@ def plot_terrain_modifications(plan, output_dir=None, show_plots=True):
             ax3.set_ylabel('Y coordinate')
 
             # Add agent position
-            ax3.plot(agent_x, agent_y, 'ko', markersize=8, label=f'Agent (loaded: {agent_state["loaded"]})')
+            ax3.plot(agent_x, agent_y, 'ko', markersize=8, label=f'Agent (before: {loaded_before}, after: {loaded_after})')
             ax3.legend()
 
             # Add colorbar
             plt.colorbar(im3, ax=ax3, label='Change in terrain value')
 
-        # Add info text - since we only save digging actions, this is always digging
+        # Add info text - determine action type based on loaded state change
         loaded_change = entry['loaded_state_change']
-        action_type = "Digging"  # Only digging actions are saved in the plan
+        if not loaded_change['before'] and loaded_change['after']:
+            action_type = "Digging"
+        elif loaded_change['before'] and not loaded_change['after']:
+            action_type = "Dumping"
+        else:
+            action_type = "Unknown terrain modification"
 
         num_modified = int(np.sum(terrain_mask))
 

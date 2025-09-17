@@ -2,7 +2,12 @@ import numpy as np
 import jax
 import argparse
 import pickle
+import sys
 from pathlib import Path
+
+# Add the parent directory to the path so we can import utils
+sys.path.append(str(Path(__file__).parent.parent))
+
 from utils.models import load_neural_network
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
