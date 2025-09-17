@@ -2,7 +2,7 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=gpu:rtx_4090:4
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
 #SBATCH --mail-user=name@mail
@@ -32,3 +32,4 @@ export DATASET_SIZE=600
 # Change to the directory containing train.py or use the full path
 cd /cluster/home/alesweber/TerraProject/terra-baselines
 python train_mixed_agents.py --agent_config mixed
+#WANDB_MODE=offline 

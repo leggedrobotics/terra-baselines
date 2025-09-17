@@ -100,14 +100,14 @@ if __name__ == "__main__":
         "-nx",
         "--n_envs_x",
         type=int,
-        default=2,
+        default=4,
         help="Number of environments on x.",
     )
     parser.add_argument(
         "-ny",
         "--n_envs_y",
         type=int,
-        default=2,
+        default=4,
         help="Number of environments on y.",
     )
     parser.add_argument(
@@ -121,7 +121,7 @@ if __name__ == "__main__":
         "-o",
         "--out_path",
         type=str,
-        default="./visualize_mixed_large_mixed-agents-skidsteer-skidsteer-local-2025-08-19-02-58-56.pkl.gif",
+        default="./potential-visualize-4-mixed-agents-skidsteer-skidsteer-local-2025-09-17-13-52-23.pkl.gif",
         #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )

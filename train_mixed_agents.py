@@ -120,12 +120,12 @@ class MixedAgentTrainConfig:
     num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
     update_epochs: int = 5  # Reduced from 4 to 2 for faster training
     num_minibatches: int = 32 #8  # Reduced from 16 to 8 for faster training
-    total_timesteps: int = 100_000_000_000  # Increased from 1B to 5B for sufficient training 60_000_000_000
+    total_timesteps: int = 120_000_000_000  # Increased from 1B to 5B for sufficient training 60_000_000_000
     lr: float = 3e-4    #3e-4
     clip_eps: float = 0.5  # Less conservative clipping for escaping local optima
     gamma: float = 0.9984
     gae_lambda: float = 0.95
-    ent_coef: float = 0.015  # 0.1 Higher entropy to escape "do nothing" optima and encourage exploration
+    ent_coef: float = 0.09  # 0.1 Higher entropy to escape "do nothing" optima and encourage exploration
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
@@ -864,7 +864,7 @@ if __name__ == "__main__":
         help="Curriculum level to switch from initial to final agent types (only for curriculum mode)"
     )
     parser.add_argument(
-        "--first_agent1_type", type=int, default=0, choices=[0, 1, 2],
+        "--first_agent1_type", type=int, default=2, choices=[0, 1, 2],
         help="First agent 1 type (used when no curriculum): 0=tracked, 1=wheeled, 2=skidsteer"
     )
     parser.add_argument(
