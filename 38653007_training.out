@@ -1,122 +1,0 @@
-Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
-wandb: Currently logged in as: aless-weber (aless-weber-eth). Use `wandb login --relogin` to force relogin
-ERROR:root:Driver not initialized (amdgpu not found in modules)
-wandb: wandb version 0.21.0 is available!  To upgrade, please run:
-wandb:  $ pip install wandb --upgrade
-wandb: Tracking run with wandb version 0.16.4
-wandb: Run data is saved locally in /cluster/home/alesweber/TerraProject/terra-baselines/wandb/run-20250728_221453-0t2udces
-wandb: Run `wandb offline` to turn off syncing.
-wandb: Syncing run mixed-agents-skidsteer-skidsteer-local-2025-07-28-22-14-41
-wandb: ⭐️ View project at https://wandb.ai/aless-weber-eth/mixed-agents
-wandb: 🚀 View run at https://wandb.ai/aless-weber-eth/mixed-agents/runs/0t2udces
-pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
-Hello from the pygame community. https://www.pygame.org/contribute.html
-🔄 Training Configuration: Mixed Agents (Tracked + SkidSteer)
-Devices: [cuda(id=0), cuda(id=1), cuda(id=2), cuda(id=3)]
-Mixed Agent Training - Devices: 4, Updates: 4768
-🤖 Fixed Agent Types: Agent1=Tracked (0), Agent2=SkidSteer (2)
-Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones'].
-Data Loader:   0%|          | 0/600 [00:00<?, ?it/s]Data Loader:   0%|          | 2/600 [00:00<00:36, 16.26it/s]Data Loader:   1%|          | 5/600 [00:00<00:28, 20.60it/s]Data Loader:   1%|▏         | 8/600 [00:00<00:26, 22.02it/s]Data Loader:   2%|▏         | 11/600 [00:00<00:26, 22.62it/s]Data Loader:   2%|▏         | 14/600 [00:00<00:25, 22.96it/s]Data Loader:   3%|▎         | 17/600 [00:00<00:25, 23.22it/s]Data Loader:   3%|▎         | 20/600 [00:00<00:25, 22.92it/s]Data Loader:   4%|▍         | 23/600 [00:01<00:26, 21.82it/s]Data Loader:   4%|▍         | 26/600 [00:01<00:27, 21.05it/s]Data Loader:   5%|▍         | 29/600 [00:01<00:27, 21.02it/s]Data Loader:   5%|▌         | 32/600 [00:01<00:26, 21.39it/s]Data Loader:   6%|▌         | 35/600 [00:01<00:26, 21.27it/s]Data Loader:   6%|▋         | 38/600 [00:01<00:25, 21.97it/s]Data Loader:   7%|▋         | 41/600 [00:01<00:25, 21.66it/s]Data Loader:   7%|▋         | 44/600 [00:02<00:25, 22.23it/s]Data Loader:   8%|▊         | 47/600 [00:02<00:25, 21.47it/s]Data Loader:   8%|▊         | 50/600 [00:02<00:26, 20.95it/s]Data Loader:   9%|▉         | 53/600 [00:02<00:26, 20.60it/s]Data Loader:   9%|▉         | 56/600 [00:02<00:26, 20.29it/s]Data Loader:  10%|▉         | 59/600 [00:02<00:26, 20.13it/s]Data Loader:  10%|█         | 62/600 [00:02<00:26, 20.02it/s]Data Loader:  11%|█         | 65/600 [00:03<00:26, 20.28it/s]Data Loader:  11%|█▏        | 68/600 [00:03<00:26, 20.12it/s]Data Loader:  12%|█▏        | 71/600 [00:03<00:25, 20.70it/s]Data Loader:  12%|█▏        | 74/600 [00:03<00:25, 20.37it/s]Data Loader:  13%|█▎        | 77/600 [00:03<00:25, 20.19it/s]Data Loader:  13%|█▎        | 80/600 [00:03<00:25, 20.01it/s]Data Loader:  14%|█▍        | 83/600 [00:03<00:25, 20.29it/s]Data Loader:  14%|█▍        | 86/600 [00:04<00:24, 21.20it/s]Data Loader:  15%|█▍        | 89/600 [00:04<00:24, 20.71it/s]Data Loader:  15%|█▌        | 92/600 [00:04<00:24, 20.40it/s]Data Loader:  16%|█▌        | 95/600 [00:04<00:24, 20.58it/s]Data Loader:  16%|█▋        | 98/600 [00:04<00:24, 20.69it/s]Data Loader:  17%|█▋        | 101/600 [00:04<00:23, 20.80it/s]Data Loader:  17%|█▋        | 104/600 [00:04<00:24, 20.39it/s]Data Loader:  18%|█▊        | 107/600 [00:05<00:24, 20.17it/s]Data Loader:  18%|█▊        | 110/600 [00:05<00:24, 20.06it/s]Data Loader:  19%|█▉        | 113/600 [00:05<00:24, 19.97it/s]Data Loader:  19%|█▉        | 115/600 [00:05<00:24, 19.93it/s]Data Loader:  20%|█▉        | 117/600 [00:05<00:24, 19.90it/s]Data Loader:  20%|██        | 120/600 [00:05<00:23, 20.64it/s]Data Loader:  20%|██        | 123/600 [00:05<00:22, 20.76it/s]Data Loader:  21%|██        | 126/600 [00:06<00:22, 21.19it/s]Data Loader:  22%|██▏       | 129/600 [00:06<00:22, 20.75it/s]Data Loader:  22%|██▏       | 132/600 [00:06<00:22, 20.48it/s]Data Loader:  22%|██▎       | 135/600 [00:06<00:22, 20.26it/s]Data Loader:  23%|██▎       | 138/600 [00:06<00:22, 20.10it/s]Data Loader:  24%|██▎       | 141/600 [00:06<00:23, 19.93it/s]Data Loader:  24%|██▍       | 144/600 [00:06<00:22, 20.20it/s]Data Loader:  24%|██▍       | 147/600 [00:07<00:22, 19.97it/s]Data Loader:  25%|██▌       | 150/600 [00:07<00:21, 20.87it/s]Data Loader:  26%|██▌       | 153/600 [00:07<00:21, 20.58it/s]Data Loader:  26%|██▌       | 156/600 [00:07<00:21, 20.66it/s]Data Loader:  26%|██▋       | 159/600 [00:07<00:21, 20.42it/s]Data Loader:  27%|██▋       | 162/600 [00:07<00:21, 20.59it/s]Data Loader:  28%|██▊       | 165/600 [00:07<00:20, 21.46it/s]Data Loader:  28%|██▊       | 168/600 [00:08<00:19, 21.72it/s]Data Loader:  28%|██▊       | 171/600 [00:08<00:19, 21.89it/s]Data Loader:  29%|██▉       | 174/600 [00:08<00:19, 21.99it/s]Data Loader:  30%|██▉       | 177/600 [00:08<00:19, 21.29it/s]Data Loader:  30%|███       | 180/600 [00:08<00:19, 21.20it/s]Data Loader:  30%|███       | 183/600 [00:08<00:20, 20.77it/s]Data Loader:  31%|███       | 186/600 [00:08<00:20, 20.47it/s]Data Loader:  32%|███▏      | 189/600 [00:09<00:20, 20.27it/s]Data Loader:  32%|███▏      | 192/600 [00:09<00:19, 20.43it/s]Data Loader:  32%|███▎      | 195/600 [00:09<00:20, 20.23it/s]Data Loader:  33%|███▎      | 198/600 [00:09<00:18, 21.17it/s]Data Loader:  34%|███▎      | 201/600 [00:09<00:18, 21.82it/s]Data Loader:  34%|███▍      | 204/600 [00:09<00:17, 22.33it/s]Data Loader:  34%|███▍      | 207/600 [00:09<00:17, 22.71it/s]Data Loader:  35%|███▌      | 210/600 [00:10<00:16, 23.00it/s]Data Loader:  36%|███▌      | 213/600 [00:10<00:16, 23.19it/s]Data Loader:  36%|███▌      | 216/600 [00:10<00:16, 23.35it/s]Data Loader:  36%|███▋      | 219/600 [00:10<00:16, 23.46it/s]Data Loader:  37%|███▋      | 222/600 [00:10<00:16, 23.49it/s]Data Loader:  38%|███▊      | 225/600 [00:10<00:16, 23.10it/s]Data Loader:  38%|███▊      | 228/600 [00:10<00:16, 22.84it/s]Data Loader:  38%|███▊      | 231/600 [00:10<00:16, 22.68it/s]Data Loader:  39%|███▉      | 234/600 [00:11<00:15, 23.01it/s]Data Loader:  40%|███▉      | 237/600 [00:11<00:15, 23.21it/s]Data Loader:  40%|████      | 240/600 [00:11<00:15, 23.35it/s]Data Loader:  40%|████      | 243/600 [00:11<00:15, 23.43it/s]Data Loader:  41%|████      | 246/600 [00:11<00:15, 23.03it/s]Data Loader:  42%|████▏     | 249/600 [00:11<00:15, 22.31it/s]Data Loader:  42%|████▏     | 252/600 [00:11<00:15, 22.28it/s]Data Loader:  42%|████▎     | 255/600 [00:12<00:16, 21.45it/s]Data Loader:  43%|████▎     | 258/600 [00:12<00:16, 20.94it/s]Data Loader:  44%|████▎     | 261/600 [00:12<00:15, 21.31it/s]Data Loader:  44%|████▍     | 264/600 [00:12<00:15, 21.17it/s]Data Loader:  44%|████▍     | 267/600 [00:12<00:15, 21.48it/s]Data Loader:  45%|████▌     | 270/600 [00:12<00:14, 22.12it/s]Data Loader:  46%|████▌     | 273/600 [00:12<00:14, 22.57it/s]Data Loader:  46%|████▌     | 276/600 [00:12<00:14, 21.65it/s]Data Loader:  46%|████▋     | 279/600 [00:13<00:14, 21.82it/s]Data Loader:  47%|████▋     | 282/600 [00:13<00:14, 21.53it/s]Data Loader:  48%|████▊     | 285/600 [00:13<00:14, 21.74it/s]Data Loader:  48%|████▊     | 288/600 [00:13<00:14, 21.48it/s]Data Loader:  48%|████▊     | 291/600 [00:13<00:14, 20.96it/s]Data Loader:  49%|████▉     | 294/600 [00:13<00:14, 21.35it/s]Data Loader:  50%|████▉     | 297/600 [00:13<00:14, 20.87it/s]Data Loader:  50%|█████     | 300/600 [00:14<00:14, 20.89it/s]Data Loader:  50%|█████     | 303/600 [00:14<00:13, 21.27it/s]Data Loader:  51%|█████     | 306/600 [00:14<00:13, 21.53it/s]Data Loader:  52%|█████▏    | 309/600 [00:14<00:13, 20.88it/s]Data Loader:  52%|█████▏    | 312/600 [00:14<00:14, 20.52it/s]Data Loader:  52%|█████▎    | 315/600 [00:14<00:14, 20.30it/s]Data Loader:  53%|█████▎    | 318/600 [00:14<00:13, 20.47it/s]Data Loader:  54%|█████▎    | 321/600 [00:15<00:13, 20.24it/s]Data Loader:  54%|█████▍    | 324/600 [00:15<00:13, 20.43it/s]Data Loader:  55%|█████▍    | 327/600 [00:15<00:13, 20.22it/s]Data Loader:  55%|█████▌    | 330/600 [00:15<00:13, 20.45it/s]Data Loader:  56%|█████▌    | 333/600 [00:15<00:12, 20.96it/s]Data Loader:  56%|█████▌    | 336/600 [00:15<00:12, 21.70it/s]Data Loader:  56%|█████▋    | 339/600 [00:15<00:12, 21.46it/s]Data Loader:  57%|█████▋    | 342/600 [00:16<00:12, 21.29it/s]Data Loader:  57%|█████▊    | 345/600 [00:16<00:11, 21.57it/s]Data Loader:  58%|█████▊    | 348/600 [00:16<00:11, 21.02it/s]Data Loader:  58%|█████▊    | 351/600 [00:16<00:12, 20.62it/s]Data Loader:  59%|█████▉    | 354/600 [00:16<00:12, 20.39it/s]Data Loader:  60%|█████▉    | 357/600 [00:16<00:12, 20.18it/s]Data Loader:  60%|██████    | 360/600 [00:17<00:11, 20.06it/s]Data Loader:  60%|██████    | 363/600 [00:17<00:11, 19.99it/s]Data Loader:  61%|██████    | 366/600 [00:17<00:11, 19.83it/s]Data Loader:  61%|██████▏   | 368/600 [00:17<00:11, 19.81it/s]Data Loader:  62%|██████▏   | 370/600 [00:17<00:11, 19.82it/s]Data Loader:  62%|██████▏   | 372/600 [00:17<00:11, 19.81it/s]Data Loader:  62%|██████▏   | 374/600 [00:17<00:11, 19.80it/s]Data Loader:  63%|██████▎   | 376/600 [00:17<00:11, 19.62it/s]Data Loader:  63%|██████▎   | 379/600 [00:17<00:10, 20.10it/s]Data Loader:  64%|██████▎   | 382/600 [00:18<00:10, 20.01it/s]Data Loader:  64%|██████▍   | 384/600 [00:18<00:10, 19.96it/s]Data Loader:  64%|██████▍   | 386/600 [00:18<00:10, 19.91it/s]Data Loader:  65%|██████▍   | 388/600 [00:18<00:10, 19.86it/s]Data Loader:  65%|██████▌   | 390/600 [00:18<00:10, 19.82it/s]Data Loader:  65%|██████▌   | 392/600 [00:18<00:10, 19.81it/s]Data Loader:  66%|██████▌   | 394/600 [00:18<00:10, 19.79it/s]Data Loader:  66%|██████▌   | 396/600 [00:18<00:10, 19.79it/s]Data Loader:  66%|██████▋   | 398/600 [00:18<00:10, 19.78it/s]Data Loader:  67%|██████▋   | 400/600 [00:19<00:10, 18.99it/s]Data Loader:  67%|██████▋   | 403/600 [00:19<00:10, 19.69it/s]Data Loader:  68%|██████▊   | 405/600 [00:19<00:09, 19.72it/s]Data Loader:  68%|██████▊   | 407/600 [00:19<00:09, 19.72it/s]Data Loader:  68%|██████▊   | 409/600 [00:19<00:09, 19.71it/s]Data Loader:  68%|██████▊   | 411/600 [00:19<00:09, 19.71it/s]Data Loader:  69%|██████▉   | 414/600 [00:19<00:09, 20.18it/s]Data Loader:  70%|██████▉   | 417/600 [00:19<00:08, 20.47it/s]Data Loader:  70%|███████   | 420/600 [00:20<00:08, 20.24it/s]Data Loader:  70%|███████   | 423/600 [00:20<00:08, 20.12it/s]Data Loader:  71%|███████   | 426/600 [00:20<00:08, 20.00it/s]Data Loader:  71%|███████▏  | 428/600 [00:20<00:08, 19.91it/s]Data Loader:  72%|███████▏  | 430/600 [00:20<00:08, 19.90it/s]Data Loader:  72%|███████▏  | 433/600 [00:20<00:08, 20.29it/s]Data Loader:  73%|███████▎  | 436/600 [00:20<00:08, 20.12it/s]Data Loader:  73%|███████▎  | 439/600 [00:20<00:08, 20.00it/s]Data Loader:  74%|███████▎  | 441/600 [00:21<00:07, 19.94it/s]Data Loader:  74%|███████▍  | 443/600 [00:21<00:07, 19.88it/s]Data Loader:  74%|███████▍  | 445/600 [00:21<00:07, 19.85it/s]Data Loader:  74%|███████▍  | 447/600 [00:21<00:07, 19.79it/s]Data Loader:  75%|███████▌  | 450/600 [00:21<00:07, 20.64it/s]Data Loader:  76%|███████▌  | 453/600 [00:21<00:07, 20.68it/s]Data Loader:  76%|███████▌  | 456/600 [00:21<00:06, 21.18it/s]Data Loader:  76%|███████▋  | 459/600 [00:21<00:06, 21.15it/s]Data Loader:  77%|███████▋  | 462/600 [00:22<00:06, 21.13it/s]Data Loader:  78%|███████▊  | 465/600 [00:22<00:06, 21.50it/s]Data Loader:  78%|███████▊  | 468/600 [00:22<00:06, 21.39it/s]Data Loader:  78%|███████▊  | 471/600 [00:22<00:05, 21.62it/s]Data Loader:  79%|███████▉  | 474/600 [00:22<00:05, 21.44it/s]Data Loader:  80%|███████▉  | 477/600 [00:22<00:05, 21.32it/s]Data Loader:  80%|████████  | 480/600 [00:22<00:05, 20.81it/s]Data Loader:  80%|████████  | 483/600 [00:23<00:05, 20.86it/s]Data Loader:  81%|████████  | 486/600 [00:23<00:05, 21.20it/s]Data Loader:  82%|████████▏ | 489/600 [00:23<00:05, 21.89it/s]Data Loader:  82%|████████▏ | 492/600 [00:23<00:04, 21.99it/s]Data Loader:  82%|████████▎ | 495/600 [00:23<00:04, 22.51it/s]Data Loader:  83%|████████▎ | 498/600 [00:23<00:04, 22.48it/s]Data Loader:  84%|████████▎ | 501/600 [00:23<00:04, 21.97it/s]Data Loader:  84%|████████▍ | 504/600 [00:24<00:04, 21.64it/s]Data Loader:  84%|████████▍ | 507/600 [00:24<00:04, 21.08it/s]Data Loader:  85%|████████▌ | 510/600 [00:24<00:04, 21.39it/s]Data Loader:  86%|████████▌ | 513/600 [00:24<00:04, 21.63it/s]Data Loader:  86%|████████▌ | 516/600 [00:24<00:03, 21.44it/s]Data Loader:  86%|████████▋ | 519/600 [00:24<00:03, 21.34it/s]Data Loader:  87%|████████▋ | 522/600 [00:24<00:03, 20.83it/s]Data Loader:  88%|████████▊ | 525/600 [00:25<00:03, 20.41it/s]Data Loader:  88%|████████▊ | 528/600 [00:25<00:03, 20.29it/s]Data Loader:  88%|████████▊ | 531/600 [00:25<00:03, 20.16it/s]Data Loader:  89%|████████▉ | 534/600 [00:25<00:03, 20.39it/s]Data Loader:  90%|████████▉ | 537/600 [00:25<00:03, 20.20it/s]Data Loader:  90%|█████████ | 540/600 [00:25<00:02, 20.78it/s]Data Loader:  90%|█████████ | 543/600 [00:25<00:02, 21.15it/s]Data Loader:  91%|█████████ | 546/600 [00:26<00:02, 21.82it/s]Data Loader:  92%|█████████▏| 549/600 [00:26<00:02, 21.57it/s]Data Loader:  92%|█████████▏| 552/600 [00:26<00:02, 21.66it/s]Data Loader:  92%|█████████▎| 555/600 [00:26<00:02, 21.33it/s]Data Loader:  93%|█████████▎| 558/600 [00:26<00:01, 21.61it/s]Data Loader:  94%|█████████▎| 561/600 [00:26<00:01, 21.03it/s]Data Loader:  94%|█████████▍| 564/600 [00:26<00:01, 20.72it/s]Data Loader:  94%|█████████▍| 567/600 [00:27<00:01, 21.29it/s]Data Loader:  95%|█████████▌| 570/600 [00:27<00:01, 21.19it/s]Data Loader:  96%|█████████▌| 573/600 [00:27<00:01, 21.10it/s]Data Loader:  96%|█████████▌| 576/600 [00:27<00:01, 21.44it/s]Data Loader:  96%|█████████▋| 579/600 [00:27<00:01, 20.95it/s]Data Loader:  97%|█████████▋| 582/600 [00:27<00:00, 20.56it/s]Data Loader:  98%|█████████▊| 585/600 [00:27<00:00, 20.70it/s]Data Loader:  98%|█████████▊| 588/600 [00:28<00:00, 20.46it/s]Data Loader:  98%|█████████▊| 591/600 [00:28<00:00, 20.25it/s]Data Loader:  99%|█████████▉| 594/600 [00:28<00:00, 20.14it/s]Data Loader: 100%|█████████▉| 597/600 [00:28<00:00, 20.74it/s]Data Loader: 100%|██████████| 600/600 [00:28<00:00, 20.82it/s]Data Loader: 100%|██████████| 600/600 [00:28<00:00, 20.96it/s]
-/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:311: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
-  env_params = jax.tree_map(
-/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:339: DeprecationWarning: jax.tree_leaves is deprecated: use jax.tree.leaves (jax v0.4.25 or newer) or jax.tree_util.tree_leaves (any JAX version).
-  print(f"🤖 Mixed Agent Network: {sum(x.size for x in jax.tree_leaves(network_params)):,} parameters")
-wandb: - 0.104 MB of 0.104 MB uploadedwandb: \ 0.104 MB of 0.104 MB uploadedwandb: | 0.104 MB of 0.104 MB uploadedwandb: / 0.154 MB of 0.165 MB uploaded (0.002 MB deduped)wandb: - 0.165 MB of 0.165 MB uploaded (0.002 MB deduped)wandb: \ 0.165 MB of 0.165 MB uploaded (0.002 MB deduped)wandb: | 0.165 MB of 0.165 MB uploaded (0.002 MB deduped)wandb:                                                                                
-wandb: W&B sync reduced upload amount by 1.3%             
-wandb: 🚀 View run mixed-agents-skidsteer-skidsteer-local-2025-07-28-22-14-41 at: https://wandb.ai/aless-weber-eth/mixed-agents/runs/0t2udces
-wandb: ️⚡ View job at https://wandb.ai/aless-weber-eth/mixed-agents/jobs/QXJ0aWZhY3RDb2xsZWN0aW9uOjY3OTA4ODc2MQ==/version_details/v36
-wandb: Synced 7 W&B file(s), 0 media file(s), 3 artifact file(s) and 1 other file(s)
-wandb: Find logs at: ./wandb/run-20250728_221453-0t2udces/logs
-Loaded 600 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
-Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
-Maps width: 64
-Maps height: 64
-Unique shapes of trench_axes_list: {(600, 3, 3)}
-Maps shape: (1, 600, 64, 64).
-Padding mask shape: (1, 600, 64, 64).
-Dumpability mask shape: (1, 600, 64, 64).
-Trench axes shape: (1, 600, 3, 3).
-Trench types shape: (1,).
-Actions shape: (1, 600, 64, 64).
-Mixed Agent Environment - Tile size shape: (4, 2048)
-num_embeddings_agent = 64
-map normalization min max = (-1, 1)
-Model: 419,680 parameters
-🤖 Mixed Agent Network: 419,680 parameters
-🔧 Agent Configuration: Agent1=Tracked (type 0), Agent2=SkidSteer (type 2)
-🧠 Network: Unified with agent type conditioning
-🚀 Starting Mixed Agent Training...
-============================================================
-📊 Configuration:
-   - Environments per device: 2048
-   - Total environments: 8192
-   - Training steps: 32
-   - Total timesteps: 5,000,000,000
-   - Learning rate: 0.0003
-   - Agent types: Tracked (0) + SkidSteer (2)
-
-🎯 Reward Configuration:
-   - Existence penalty: -0.05000000074505806
-   - Movement penalty: -0.10000000149011612
-   - Holding dirt penalty: -0.0
-   - Skid auto-load reward: 0.699999988079071
-   - Skid dump correct reward: 50.0
-   - Skid dump wrong penalty: -0.6000000238418579
-   - Move to dump zone reward: 0.0
-   - Skid lift shovel with dirt: 0.05000000074505806
-   - Skid move loaded shovel up: 0.019999999552965164
-   - Auto load dump zone penalty: -0.0
-   - Reward normalizer: 100.0
-============================================================
-tile_size: 0.6875
-agent_width: 5, agent_height: 9
-[TerraEnv.reset] action_map shape: (64, 64), type: <class 'jax._src.interpreters.partial_eval.DynamicJaxprTracer'>
-📈 Wandb session finished.
-Traceback (most recent call last):
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 979, in <module>
-    train_mixed_agents(config)
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 835, in train_mixed_agents
-    train_info = jax.block_until_ready(train_with_monitoring(rng, train_state))
-                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 789, in train_with_monitoring
-    return train_fn(rng, train_state)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 568, in train
-    timestep = reset_fn_p(env_params, reset_rng)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/env.py", line 438, in reset
-    timestep = jax.vmap(self.terra_env.reset)(
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/env.py", line 113, in reset
-    info=state._get_infos(dummy_action, False),
-         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 2798, in _get_infos
-    "action_mask": self._get_action_mask(dummy_action),
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 2791, in _get_action_mask
-    action_mask = jax.lax.switch(clamped_agent_type, mask_functions)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 2778, in get_tracked_mask
-    return self._get_action_mask_tracked()
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 2649, in _get_action_mask_tracked
-    new_state = self._handle_move_backward()
-                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 676, in _handle_move_backward
-    return jax.lax.cond(can_move, _move_backward, self._do_nothing)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 652, in _move_backward
-    state_after_dump = jax.lax.cond(
-                       ^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 1832, in _handle_dump
-    return jax.lax.cond(dump_volume > 0, _apply_dump, self._do_nothing)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 1808, in _apply_dump
-    new_last_dump_mask = jax.lax.cond(
-                         ^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra/terra/state.py", line 1799, in _store_dump_mask
-    return self.world.last_dump_mask._replace(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: 'GridWorld' object has no attribute 'last_dump_mask'. Did you mean: 'last_dig_mask'?
---------------------
-For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.

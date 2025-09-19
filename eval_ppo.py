@@ -87,6 +87,23 @@ def rollout(
     rng, _rng_reset = jax.random.split(rng)
     _rng_reset = jax.random.split(_rng_reset, num_envs)
     timestep = env.reset(env_params, _rng_reset)
+    
+    # Initialize reward_components in timestep.info to maintain consistent pytree structure
+    # This prevents JAX fori_loop errors when reward_components is added later
+    if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
+        # Add empty reward_components to match the structure that will be added in env.step
+        dummy_components = {
+            "agent1_rewards": jnp.zeros_like(timestep.reward),
+            "agent2_rewards": jnp.zeros_like(timestep.reward), 
+            "terminal": jnp.zeros_like(timestep.reward),
+            "trench": jnp.zeros_like(timestep.reward),
+            "existence": jnp.zeros_like(timestep.reward),
+        }
+        # Create new timestep with reward_components added to info
+        timestep = timestep._replace(
+            info={**timestep.info, "reward_components": dummy_components}
+        )
+    
     prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
     init_carry = (rng, RolloutStats(), timestep, prev_actions)
 

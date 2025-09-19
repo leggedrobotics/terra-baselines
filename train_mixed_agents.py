@@ -116,7 +116,7 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 2048 #1536  # Increased for better dual skidsteer training 2048
+    num_envs_per_device: int = 2560 #1536  # Increased for better dual skidsteer training 2048
     num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
     update_epochs: int = 5  # Reduced from 4 to 2 for faster training
     num_minibatches: int = 32 #8  # Reduced from 16 to 8 for faster training
@@ -125,7 +125,7 @@ class MixedAgentTrainConfig:
     clip_eps: float = 0.5  # Less conservative clipping for escaping local optima
     gamma: float = 0.9984
     gae_lambda: float = 0.95
-    ent_coef: float = 0.09  # 0.1 Higher entropy to escape "do nothing" optima and encourage exploration
+    ent_coef: float = 0.15  # 0.1 Higher entropy to escape "do nothing" optima and encourage exploration
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
@@ -538,6 +538,22 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             # TERRA: Reset envs
             reset_fn_p = jax.pmap(env.reset, axis_name="devices")  # vmapped inside
             timestep = reset_fn_p(env_params, reset_rng)
+            
+            # Initialize reward_components in timestep.info to maintain consistent pytree structure
+            # This prevents JAX scan errors when reward_components is added later
+            if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
+                # Add empty reward_components to match the structure that will be added in env.step
+                dummy_components = {
+                    "agent1_rewards": jnp.zeros_like(timestep.reward),
+                    "agent2_rewards": jnp.zeros_like(timestep.reward), 
+                    "terminal": jnp.zeros_like(timestep.reward),
+                    "trench": jnp.zeros_like(timestep.reward),
+                    "existence": jnp.zeros_like(timestep.reward),
+                }
+                # Create new timestep with reward_components added to info
+                timestep = timestep._replace(
+                    info={**timestep.info, "reward_components": dummy_components}
+                )
             prev_actions = jnp.zeros(
                 (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
             )
@@ -680,23 +696,79 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 env_params_single = timestep.env_cfg
 
                 if i % config.log_train_interval == 0:
-                    # Original logging
+                    # Consolidated logging to prevent step ordering issues
                     curriculum_levels = get_curriculum_levels(
                         env_params_single, env.batch_cfg.curriculum_global.levels
                     )
-                    wandb.log(
-                        {
-                            "performance/steps_per_second": steps_per_second,
-                            "performance/iterations_per_second": iterations_per_second,
-                            "curriculum_levels": curriculum_levels,
-                            "lr": config.lr,
-                            **loss_info_single,
-                        }
-                    )
                     
-                    # Add our custom logging
-                    log_agent_curriculum_status(timestep, i)
-                    log_environment_metrics(timestep, i)
+                    # Start with base metrics
+                    log_dict = {
+                        "performance/steps_per_second": steps_per_second,
+                        "performance/iterations_per_second": iterations_per_second,
+                        "curriculum_levels": curriculum_levels,
+                        "lr": config.lr,
+                        **loss_info_single,
+                    }
+                    
+                    # Add agent curriculum info (without separate wandb.log call)
+                    try:
+                        if hasattr(timestep, 'env_cfg') and hasattr(timestep.env_cfg, 'agent_types'):
+                            agent_types = timestep.env_cfg.agent_types
+                            if hasattr(agent_types, 'shape') and len(agent_types.shape) > 1:
+                                agent1_type = safe_jax_to_python(jnp.mean(agent_types[0, :, 0]))
+                                agent2_type = safe_jax_to_python(jnp.mean(agent_types[0, :, 1]))
+                            else:
+                                agent1_type = safe_jax_to_python(agent_types[0])
+                                agent2_type = safe_jax_to_python(agent_types[1])
+                            
+                            log_dict.update({
+                                "agent_types/agent1_tracked": int(agent1_type == 0),
+                                "agent_types/agent1_wheeled": int(agent1_type == 1),
+                                "agent_types/agent1_skidsteer": int(agent1_type == 2),
+                                "agent_types/agent2_tracked": int(agent2_type == 0),
+                                "agent_types/agent2_wheeled": int(agent2_type == 1),
+                                "agent_types/agent2_skidsteer": int(agent2_type == 2),
+                            })
+                    except Exception:
+                        pass
+                    
+                    # Add environment metrics (without separate wandb.log call)
+                    try:
+                        completion_rate = safe_jax_to_python(jnp.mean(timestep.done))
+                        log_dict["progress/episode_completion_rate"] = completion_rate
+                    except Exception:
+                        pass
+
+                    # Add reward breakdown logging (without separate wandb.log call)
+                    try:
+                        reward_components = None
+                        if hasattr(timestep, "reward_components"):
+                            reward_components = timestep.reward_components
+                        elif hasattr(timestep, "info") and isinstance(timestep.info, dict):
+                            rc = timestep.info.get("reward_components", None)
+                            reward_components = rc
+
+                        if reward_components is not None:
+                            breakdown_means = {}
+                            for k, v in reward_components.items():
+                                try:
+                                    breakdown_means[k] = safe_jax_to_python(jnp.mean(v))
+                                except Exception:
+                                    breakdown_means[k] = safe_jax_to_python(v)
+
+                            # Add to main log dict instead of separate wandb.log call
+                            for k, v in breakdown_means.items():
+                                log_dict[f"rewards/{k}"] = v
+                            
+                            
+                            
+                                
+                            # Skip bar chart for now to avoid step conflicts
+                    except Exception:
+                        pass
+                    
+                    # Single consolidated wandb.log call
+                    wandb.log(log_dict, step=i)
 
                 if i % config.checkpoint_interval == 0:
                     checkpoint = {
@@ -864,7 +936,7 @@ if __name__ == "__main__":
         help="Curriculum level to switch from initial to final agent types (only for curriculum mode)"
     )
     parser.add_argument(
-        "--first_agent1_type", type=int, default=2, choices=[0, 1, 2],
+        "--first_agent1_type", type=int, default=0, choices=[0, 1, 2],
         help="First agent 1 type (used when no curriculum): 0=tracked, 1=wheeled, 2=skidsteer"
     )
     parser.add_argument(
