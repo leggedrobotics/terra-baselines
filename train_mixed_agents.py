@@ -118,20 +118,20 @@ class MixedAgentTrainConfig:
     group: str = "tracked-skidsteer"
     num_envs_per_device: int = 2560 #1536  # Increased for better dual skidsteer training 2048
     num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
-    update_epochs: int = 5  # Reduced from 4 to 2 for faster training
-    num_minibatches: int = 32 #8  # Reduced from 16 to 8 for faster training
+    update_epochs: int = 4 #5 # Reduced from 4 to 2 for faster training
+    num_minibatches: int = 16 #32  # Reduced from 16 to 8 for faster training
     total_timesteps: int = 120_000_000_000  # Increased from 1B to 5B for sufficient training 60_000_000_000
     lr: float = 3e-4    #3e-4
-    clip_eps: float = 0.5  # Less conservative clipping for escaping local optima
-    gamma: float = 0.9984
+    clip_eps: float = 0.12 #0.5  # Less conservative clipping for escaping local optima
+    gamma: float = 0.9984 #0.9984
     gae_lambda: float = 0.95
-    ent_coef: float = 0.15  # 0.1 Higher entropy to escape "do nothing" optima and encourage exploration
-    vf_coef: float = 5.0
+    ent_coef: float = 0.12  # 0.15 Higher entropy to escape "do nothing" optima and encourage exploration
+    vf_coef: float = 3.0 #5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 1  # Number of updates between logging train stats
-    log_eval_interval: int = 50  # Less frequent evaluation for speed
+    log_eval_interval: int = 40  # Less frequent evaluation for speed
     checkpoint_interval: int = 50  # Less frequent checkpoints for speed
     
     # Model settings optimized for mixed agents

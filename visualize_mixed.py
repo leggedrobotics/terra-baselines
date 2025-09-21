@@ -114,14 +114,14 @@ if __name__ == "__main__":
         "-steps",
         "--n_steps",
         type=int,
-        default=200,
+        default=350,
         help="Number of steps.",
     )
     parser.add_argument(
         "-o",
         "--out_path",
         type=str,
-        default="./potential-visualize-14-mixed-agents-skidsteer-skidsteer-local-2025-09-18-22-33-05.pkl.gif",
+        default="./potential-visualize-17-mixed-agents-skidsteer-skidsteer-local-2025-09-20-21-17-29.pkl.gif",
         #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )
