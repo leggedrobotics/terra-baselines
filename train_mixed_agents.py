@@ -116,22 +116,22 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 2560 #1536  # Increased for better dual skidsteer training 2048
+    num_envs_per_device: int = 2048 #1536  # Increased for better dual skidsteer training 2048
     num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
-    update_epochs: int = 4 #5 # Reduced from 4 to 2 for faster training
+    update_epochs: int = 2 #4 #5 # Reduced from 4 to 2 for faster training
     num_minibatches: int = 16 #32  # Reduced from 16 to 8 for faster training
     total_timesteps: int = 120_000_000_000  # Increased from 1B to 5B for sufficient training 60_000_000_000
     lr: float = 3e-4    #3e-4
-    clip_eps: float = 0.12 #0.5  # Less conservative clipping for escaping local optima
+    clip_eps: float = 0.2 #0.5  # Less conservative clipping for escaping local optima
     gamma: float = 0.9984 #0.9984
     gae_lambda: float = 0.95
-    ent_coef: float = 0.12  # 0.15 Higher entropy to escape "do nothing" optima and encourage exploration
-    vf_coef: float = 3.0 #5.0
+    ent_coef: float = 0.06  # 0.12 Higher entropy to escape "do nothing" optima and encourage exploration
+    vf_coef: float = 2.0 #2.5#5.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 1  # Number of updates between logging train stats
-    log_eval_interval: int = 40  # Less frequent evaluation for speed
+    log_eval_interval: int = 20  # Less frequent evaluation for speed
     checkpoint_interval: int = 50  # Less frequent checkpoints for speed
     
     # Model settings optimized for mixed agents
@@ -142,6 +142,10 @@ class MixedAgentTrainConfig:
     loaded_max = 100
     num_rollouts_eval = 500  # max length of an episode in Terra for eval
     cache_clear_interval = 1000  # Less frequent cache clearing for speed
+    # Entropy scheduler (cosine decay)
+    ent_schedule_start: float = 0.15
+    ent_schedule_end: float = 0.02
+    ent_schedule_steps: int = 8000
     
     # Agent type configuration - NEW!
     first_agent1_type: int = 0  # 0=tracked, 1=wheeled, 2=skidsteer (used when no curriculum)
@@ -158,6 +162,10 @@ class MixedAgentTrainConfig:
     second_curriculum_switch_level: int = 2  # Switch to third agent types at this level
     third_agent1_type: int = 0  # Third agent 1 type (after second switch)
     third_agent2_type: int = 2  # Third agent 2 type (after second switch)
+    
+    # Checkpoint loading - NEW!
+    resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
+    load_env_from_checkpoint: bool = True  # If true, use env_config from checkpoint
 
     def __post_init__(self):
         self.num_devices = (
@@ -288,7 +296,7 @@ class ConfigurableAgentManager:
 
 
 
-def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig = None):
+def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig = None, env_params_override: EnvConfig = None):
     """Initialize states for mixed agent training - compatible with make_states interface"""
     
     # Create agent manager for flexible agent type configuration
@@ -302,8 +310,14 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     
     # Get environment parameters with agent types from config
     if env_params is None:
-        agent_types = agent_manager.get_current_agent_types()
-        env_params = create_mixed_agent_env_config(agent_types=agent_types)
+        if env_params_override is not None:
+            # Use environment config from checkpoint
+            env_params = env_params_override
+            print("Using environment config from checkpoint")
+        else:
+            # Use default agent types from config
+            agent_types = agent_manager.get_current_agent_types()
+            env_params = create_mixed_agent_env_config(agent_types=agent_types)
     
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
@@ -378,8 +392,30 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     if code_artifact.files:
         run.log_artifact(code_artifact)
 
-    # Initialize training components
-    rng, env, env_params, train_state = make_mixed_agent_states(config)
+    # Optionally load checkpoint before creating states
+    checkpoint = None
+    env_params_override = None
+    if config.resume_from is not None and os.path.exists(config.resume_from):
+        try:
+            checkpoint = helpers.load_pkl_object(config.resume_from)
+            if config.load_env_from_checkpoint and "env_config" in checkpoint:
+                env_params_override = checkpoint["env_config"]
+            print(f"Loaded checkpoint from {config.resume_from}")
+        except Exception as e:
+            print(f"Failed to load checkpoint from {config.resume_from}: {e}")
+
+    # Initialize training components (optionally with env override)
+    rng, env, env_params, train_state = make_mixed_agent_states(
+        config, env_params_override=env_params_override
+    )
+
+    # If checkpoint has model params, overwrite initialized params
+    if checkpoint is not None and "model" in checkpoint:
+        try:
+            train_state = train_state.replace(params=checkpoint["model"])
+            print("Replaced model parameters from checkpoint.")
+        except Exception as e:
+            print(f"Failed to set model parameters from checkpoint: {e}")
 
     # Create agent manager for curriculum monitoring
     agent_manager = ConfigurableAgentManager(config)
@@ -561,7 +597,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
             # TRAIN LOOP
             @partial(jax.pmap, axis_name="devices")
-            def _update_step(runner_state, _):
+            def _update_step(runner_state, ent_coef_current):
                 # COLLECT TRAJECTORIES
                 def _env_step(runner_state, _):
                     rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
@@ -598,7 +634,19 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 runner_state, transitions = jax.lax.scan(
                     _env_step, runner_state, None, config.num_steps
                 )
+#NEW Start
+                # Duplicate terminal reward to the previous (other agent's) step
+                # This credits both agents on episode end without changing env API
+                done_seq = transitions.done  # [seq, batch, ...]
+                reward_seq = transitions.reward
+                terminal_bonus = jnp.where(done_seq, reward_seq, 0.0)
+                # Shift bonus backward by 1 step; zero for the first step
+                zero_first = jnp.zeros_like(terminal_bonus[:1])
+                shifted_bonus = jnp.concatenate([zero_first, terminal_bonus[:-1]], axis=0)
+                augmented_reward = reward_seq + shifted_bonus
+                transitions = transitions.replace(reward=augmented_reward)
 
+#NEW End
                 # CALCULATE ADVANTAGE
                 rng, train_state, timestep, prev_actions, prev_reward = runner_state
                 rng, _rng = jax.random.split(rng)
@@ -619,6 +667,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             advantages=advantages,
                             targets=targets,
                             config=config,
+                            ent_coef_override=ent_coef_current,
                         )
                         return new_train_state, update_info
 
@@ -658,6 +707,19 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 # averaging over minibatches then over epochs
                 loss_info = jtu.tree_map(lambda x: x.mean(-1).mean(-1), loss_info)
 
+                # Explained variance between value predictions and returns
+                # Use transitions and targets from current update_state (first device in pmap)
+                _, _, transitions_ev, _, targets_ev = update_state
+                vpred = transitions_ev.value
+                vtrue = targets_ev
+                vpred_flat = vpred.reshape(-1)
+                vtrue_flat = vtrue.reshape(-1)
+                var_y = jnp.var(vtrue_flat)
+                explained_var = 1 - jnp.var(vtrue_flat - vpred_flat) / (var_y + 1e-8)
+                # Attach to loss_info for logging
+                loss_info = dict(loss_info)
+                loss_info["explained_variance"] = explained_var
+
                 rng, train_state = update_state[:2]
                 # EVALUATE AGENT
                 rng, _rng = jax.random.split(rng)
@@ -671,10 +733,22 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
             runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
             
+            # Entropy scheduler: cosine decay using config variables
+            ent_start = float(config.ent_schedule_start)
+            ent_end = float(config.ent_schedule_end)
+            ent_T = float(config.ent_schedule_steps)
+
             for i in tqdm(range(config.num_updates), desc="Training"):
+                f = min(1.0, i / ent_T) if ent_T > 0 else 1.0
+                # Cosine decay: starts at ent_start when f=0, ends at ent_end when f=1
+                ent_coef_current = ent_end + 0.5 * (ent_start - ent_end) * (1.0 + jnp.cos(jnp.pi * f))
+                # Linear decay from ent_start to ent_end over ent_T updates
+                # ent_coef_current = ent_start + (ent_end - ent_start) * f
+                # Broadcast scalar to devices for pmap input
+                ent_broadcast = jnp.array([ent_coef_current] * config.num_devices)
                 start_time = time.time()
                 runner_state, loss_info = jax.block_until_ready(
-                    _update_step(runner_state, None)
+                    _update_step(runner_state, ent_broadcast)
                 )
                 end_time = time.time()
 
@@ -707,6 +781,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "performance/iterations_per_second": iterations_per_second,
                         "curriculum_levels": curriculum_levels,
                         "lr": config.lr,
+                        "sched/entropy_coef": float(ent_coef_current),
                         **loss_info_single,
                     }
                     
@@ -968,7 +1043,30 @@ if __name__ == "__main__":
         help="Third agent 2 type (after second curriculum switch): 0=tracked, 1=wheeled, 2=skidsteer"
     )
     
+    # Checkpoint loading arguments
+    parser.add_argument(
+        "-r", "--resume_from", type=str, default=None,
+        help="Path to a checkpoint .pkl to resume training from."
+    )
+    env_group = parser.add_mutually_exclusive_group()
+    env_group.add_argument(
+        "--load_env_from_checkpoint",
+        dest="load_env_from_checkpoint",
+        action="store_true",
+        help="Load env_config from the checkpoint (default)."
+    )
+    env_group.add_argument(
+        "--no-load-env-from-checkpoint",
+        dest="load_env_from_checkpoint",
+        action="store_false",
+        help="Do not load env_config from checkpoint; use default/current EnvConfig()."
+    )
+    
     args, _ = parser.parse_known_args()
+    
+    # default to True unless explicitly disabled
+    if args.load_env_from_checkpoint is None:
+        args.load_env_from_checkpoint = True
 
     name = f"{args.name}-{args.machine}-{DT}"
     
@@ -1017,7 +1115,9 @@ if __name__ == "__main__":
         use_second_curriculum_switch=args.use_second_curriculum_switch,
         second_curriculum_switch_level=args.second_curriculum_switch,
         third_agent1_type=args.third_agent1_type,
-        third_agent2_type=args.third_agent2_type
+        third_agent2_type=args.third_agent2_type,
+        resume_from=args.resume_from,
+        load_env_from_checkpoint=args.load_env_from_checkpoint
     )
     
     train_mixed_agents(config) 

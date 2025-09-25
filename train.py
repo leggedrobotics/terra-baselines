@@ -149,10 +149,12 @@ def ppo_update_networks(
     advantages: jax.Array,
     targets: jax.Array,
     config,
+    ent_coef_override: float | None = None,
 ):
     clip_eps = config.clip_eps
     vf_coef = config.vf_coef
-    ent_coef = config.ent_coef
+    # Allow runtime override of entropy coefficient for schedulers
+    ent_coef = ent_coef_override if ent_coef_override is not None else config.ent_coef
 
     # NORMALIZE ADVANTAGES
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
