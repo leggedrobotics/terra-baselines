@@ -145,7 +145,7 @@ class MixedAgentTrainConfig:
     # Entropy scheduler (cosine decay)
     ent_schedule_start: float = 0.15
     ent_schedule_end: float = 0.02
-    ent_schedule_steps: int = 7000
+    ent_schedule_steps: int = 8000
     
     # Agent type configuration - NEW!
     first_agent1_type: int = 0  # 0=tracked, 1=wheeled, 2=skidsteer (used when no curriculum)
@@ -336,6 +336,12 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
 
     # Create the unified network with agent type features
     network, network_params = get_model_ready(_rng, config, env)
+    # DEBUG: print number of actions for current action type (should be 8 with NOOP)
+    try:
+        num_actions_debug = env.batch_cfg.action_type.get_num_actions()
+        print(f"🛠️  Debug: Number of actions = {num_actions_debug}")
+    except Exception as e:
+        print(f"🛠️  Debug: Failed to read number of actions: {e}")
     
     # Optimizer with mixed agent considerations
     tx = optax.chain(
