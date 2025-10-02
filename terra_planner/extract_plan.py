@@ -100,6 +100,7 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
                 'agent_state': {
                     'pos_base': (agent_state_before[0], agent_state_before[1]),
                     'angle_base': agent_state_before[2],
+                    'angle_cabin': agent_state_before[3],
                     'wheel_angle': agent_state_before[4],
                 },
                 'terrain_modification_mask': terrain_modification_mask,
