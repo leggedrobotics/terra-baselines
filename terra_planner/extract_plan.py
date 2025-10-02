@@ -81,6 +81,10 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
             changed_tiles = action_map_before != action_map_after
             terrain_modification_mask = changed_tiles.astype(jnp.bool_)
 
+            # Define dug and dump masks based on the final action map state
+            dug_mask = action_map_after < 0
+            dump_mask = action_map_after > 0
+
             if loaded_before != loaded_after:
                 if not loaded_before and loaded_after:
                     print(f"  Digging detected: {jnp.sum(changed_tiles)} tiles modified")
@@ -99,6 +103,8 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
                     'wheel_angle': agent_state_before[4],
                 },
                 'terrain_modification_mask': terrain_modification_mask,
+                'dug_mask': dug_mask.copy(),
+                'dump_mask': dump_mask.copy(),
                 'loaded_state_change': {
                     'before': loaded_before,
                     'after': loaded_after,
