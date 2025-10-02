@@ -25,6 +25,7 @@ class RolloutStats(NamedTuple):
     action_4: jax.Array = jnp.asarray(0)
     action_5: jax.Array = jnp.asarray(0)
     action_6: jax.Array = jnp.asarray(0)
+    action_7: jax.Array = jnp.asarray(0)
 
 
 # @partial(jax.pmap, axis_name="devices")
@@ -80,6 +81,7 @@ def rollout(
             action_4=stats.action_4 + (action == 4).sum(),
             action_5=stats.action_5 + (action == 5).sum(),
             action_6=stats.action_6 + (action == 6).sum(),
+            action_7=stats.action_7 + (action == 7).sum(),
         )
         carry = (rng, stats, timestep, prev_actions)
         return carry
@@ -89,20 +91,24 @@ def rollout(
     timestep = env.reset(env_params, _rng_reset)
     
     # Initialize reward_components in timestep.info to maintain consistent pytree structure
-    # This prevents JAX fori_loop errors when reward_components is added later
+    # Align with new multi-agent keys to avoid fori_loop pytree mismatch
     if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
-        # Add empty reward_components to match the structure that will be added in env.step
-        dummy_components = {
-            "agent1_rewards": jnp.zeros_like(timestep.reward),
-            "agent2_rewards": jnp.zeros_like(timestep.reward), 
-            "terminal": jnp.zeros_like(timestep.reward),
-            "trench": jnp.zeros_like(timestep.reward),
-            "existence": jnp.zeros_like(timestep.reward),
-        }
-        # Create new timestep with reward_components added to info
-        timestep = timestep._replace(
-            info={**timestep.info, "reward_components": dummy_components}
-        )
+        try:
+            batch_shape = timestep.reward.shape
+            MAX_AGENTS = 4
+            dummy_components = {
+                "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
+                "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
+                "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
+                "terminal": jnp.zeros_like(timestep.reward),
+                "trench": jnp.zeros_like(timestep.reward),
+                "existence": jnp.zeros_like(timestep.reward),
+            }
+            timestep = timestep._replace(
+                info={**timestep.info, "reward_components": dummy_components}
+            )
+        except Exception:
+            pass
     
     prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
     init_carry = (rng, RolloutStats(), timestep, prev_actions)

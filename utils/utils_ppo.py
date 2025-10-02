@@ -15,29 +15,27 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs = clip_action_map_in_obs(obs)
 
     # Create input list with indexed comments for easy reference
-    # Note: This is still a single-agent problem; agent_2 data is just additional features
+    # Updated to match the new observation structure from env.py
+    # Exclude agent_width and agent_height from the list as they're scalars and not used in the model
     obs = [
-        obs["agent_state"],              # [0] - Primary agent state
-        obs["local_map_action_neg"],     # [1] - Primary agent negative action local map
-        obs["local_map_action_pos"],     # [2] - Primary agent positive action local map
-        obs["local_map_target_neg"],     # [3] - Primary agent negative target local map
-        obs["local_map_target_pos"],     # [4] - Primary agent positive target local map
-        obs["local_map_dumpability"],    # [5] - Primary agent dumpability local map
-        obs["local_map_obstacles"],      # [6] - Primary agent obstacles local map
-        obs["action_map"],               # [7] - Global action map
-        obs["target_map"],               # [8] - Global target map
+        obs["agent_states"],             # [0] - All agent states (ordered: active first)
+        obs["agent_active"],             # [1] - Agent active mask
+        obs["num_agents"],              # [2] - Number of active agents
+        obs["local_map_action_neg"],     # [3] - Primary agent negative action local map
+        obs["local_map_action_pos"],     # [4] - Primary agent positive action local map
+        obs["local_map_target_neg"],     # [5] - Primary agent negative target local map
+        obs["local_map_target_pos"],     # [6] - Primary agent positive target local map
+        obs["local_map_dumpability"],    # [7] - Primary agent dumpability local map
+        obs["local_map_obstacles"],      # [8] - Primary agent obstacles local map
         obs["traversability_mask"],      # [9] - Traversability mask
-        obs["dumpability_mask"],         # [10] - Dumpability mask
-        prev_actions,                    # [11] - Previous actions history
-        # New features (still single-agent problem, just additional features)
-        obs["agent_state_2"],            # [12] - Secondary agent state features
-        obs["local_map_action_neg_2"],   # [13] - Secondary agent negative action local map
-        obs["local_map_action_pos_2"],   # [14] - Secondary agent positive action local map
-        obs["local_map_target_neg_2"],   # [15] - Secondary agent negative target local map
-        obs["local_map_target_pos_2"],   # [16] - Secondary agent positive target local map
-        obs["local_map_dumpability_2"],  # [17] - Secondary agent dumpability local map
-        obs["local_map_obstacles_2"],    # [18] - Secondary agent obstacles local map
-        obs["interaction_mask"],          # [19] - Interaction map
+        obs["action_map"],               # [10] - Global action map
+        obs["target_map"],               # [11] - Global target map
+        obs["agent_width"],              # [12] - Agent width (scalar)
+        obs["agent_height"],             # [13] - Agent height (scalar)
+        obs["padding_mask"],             # [14] - Padding mask
+        obs["dumpability_mask"],         # [15] - Dumpability mask
+        obs["interaction_mask"],         # [16] - Interaction map
+        prev_actions,                    # [17] - Previous actions history
     ]
     return obs
 

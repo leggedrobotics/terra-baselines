@@ -35,7 +35,7 @@ def get_excavator_obs(obs):
     Extract only excavator fields from the full observation dict.
     """
     return {
-        "agent_state": obs["agent_state"],
+        "agent_states": obs["agent_states"],
         "local_map_action_neg": obs["local_map_action_neg"],
         "local_map_action_pos": obs["local_map_action_pos"],
         "local_map_target_neg": obs["local_map_target_neg"],
@@ -68,6 +68,22 @@ def rollout_episode(
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, rl_config.num_test_rollouts)
     timestep = env.reset(env_cfgs, rng_reset)
+    # Initialize reward_components structure to match training (avoid fori_loop pytree mismatch)
+    try:
+        if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
+            batch_shape = timestep.reward.shape
+            MAX_AGENTS = 4
+            dummy_components = {
+                "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
+                "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
+                "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
+                "terminal": jnp.zeros_like(timestep.reward),
+                "trench": jnp.zeros_like(timestep.reward),
+                "existence": jnp.zeros_like(timestep.reward),
+            }
+            timestep = timestep._replace(info={**timestep.info, "reward_components": dummy_components})
+    except Exception:
+        pass
     prev_actions = jnp.zeros(
         (rl_config.num_test_rollouts, rl_config.num_prev_actions),
         dtype=jnp.int32
@@ -104,23 +120,24 @@ def rollout_episode(
     move_cumsum = None
     do_cumsum = None
     obs_seq = {}
-    AGENT_TYPE_IDX = 6  # agent_type is at index 6 in agent_state array
+    AGENT_TYPE_IDX = 6  # agent_type is at index 6 in per-agent feature
     EXCAVATOR_TYPE = 0  # excavator is type 0, skidsteer should be type 1
     while True:
         obs_seq = _append_to_obs(obs, obs_seq)
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         
         # In alternating network, slot 0 is always the active agent (whose turn it is)
-        # Print full agent_state arrays with indices for the first few steps
+        # Print full per-agent features for first few steps
         if t_counter < 5:
-            print("  -> agent_state[0]:")
-            for idx, val in enumerate(timestep.observation["agent_state"][0]):
+            print("  -> agent_states[0]:")
+            for idx, val in enumerate(timestep.observation["agent_states"][0]):
                 print(f"     idx {idx}: {val}")
-            print("  -> agent_state_2[0]:")
-            for idx, val in enumerate(timestep.observation["agent_state_2"][0]):
+            last_idx = max(0, int(timestep.observation["num_agents"]) - 1)
+            print("  -> agent_states[last_active]:")
+            for idx, val in enumerate(timestep.observation["agent_states"][last_idx]):
                 print(f"     idx {idx}: {val}")
         # Check if the active agent (slot 0) is the excavator
-        agent_type = timestep.observation["agent_state"][0, AGENT_TYPE_IDX]
+        agent_type = timestep.observation["agent_states"][0, AGENT_TYPE_IDX]
         is_excavator_turn = (agent_type == EXCAVATOR_TYPE)
         print(f"Step {t_counter}: slot 0 agent type = {agent_type}, is_excavator_turn = {is_excavator_turn}")
         

@@ -40,28 +40,36 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     map_width = env.batch_cfg.maps_dims.maps_edge_length
     map_height = env.batch_cfg.maps_dims.maps_edge_length
 
+    MAX_AGENTS = 4
+    angles_cabin = env.batch_cfg.agent.angles_cabin
+    # Build dummy obs matching utils.utils_ppo.obs_to_model_input indexing
     obs = [
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.num_state_obs)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
+        # [0] agent_states
+        jnp.zeros((config["num_envs"], MAX_AGENTS, env.batch_cfg.agent.num_state_obs)),
+        # [1] agent_active (mask)
+        jnp.zeros((config["num_envs"], MAX_AGENTS), dtype=jnp.int8),
+        # [2] num_agents
+        jnp.zeros((config["num_envs"],), dtype=jnp.int32),
+        # [3]-[8] local maps (1D per-angle summaries)
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((config["num_envs"], angles_cabin)),
+        # [9]-[11] global maps
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
+        # [12]-[13] agent dims (scalars per env) - not used by model
+        jnp.zeros((config["num_envs"],), dtype=jnp.int32),
+        jnp.zeros((config["num_envs"],), dtype=jnp.int32),
+        # [14]-[16] masks
         jnp.zeros((config["num_envs"], map_width, map_height)),
-        jnp.zeros((config["num_envs"], config["num_prev_actions"])),
-        # New agent_2 features
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.num_state_obs)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
-        jnp.zeros((config["num_envs"], env.batch_cfg.agent.angles_cabin)),
         jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((config["num_envs"], map_width, map_height)),
+        # [17] prev_actions
+        jnp.zeros((config["num_envs"], config["num_prev_actions"]), dtype=jnp.int32),
     ]
     params = model.init(rng, obs)
 
@@ -182,7 +190,7 @@ class AgentStateNet(nn.Module):
         )
 
     def __call__(self, agent_state_obs: Array):
-        # Current agent_state contains: [pos_x, pos_y, angle_base, angle_cabin, wheel_angle, loaded, agent_type, shovel_lifted]
+        # Per-agent feature contains: [pos_x, pos_y, angle_base, angle_cabin, wheel_angle, loaded, agent_type, shovel_lifted]
         x_one_hot = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)  # pos_base (x, y)
         x_two_hot = agent_state_obs[..., 2:5].astype(dtype=jnp.int32)  # angle_base, angle_cabin, wheel_angle
         x_loaded = agent_state_obs[..., [5]].astype(dtype=jnp.int32)   # loaded
@@ -218,7 +226,7 @@ class AgentStateNet(nn.Module):
 
 class LocalMapNet(nn.Module):
     """
-    Pre-process one or multiple maps.
+    Pre-process six 1D local maps (length-12 each), concatenate, then MLP.
     """
 
     map_min_max: Sequence[int]
@@ -233,27 +241,32 @@ class LocalMapNet(nn.Module):
 
     def __call__(self, local_maps: Sequence[Array]):
         """
-        Processes a sequence of local maps.
+        Processes a sequence of six 1D local maps.
+        Expects order: action_neg, action_pos, target_neg, target_pos, dumpability, obstacles.
         """
-        x_action_neg = normalize(local_maps[0], self.map_min_max[0], self.map_min_max[1])
-        x_action_pos = normalize(local_maps[1], self.map_min_max[0], self.map_min_max[1])
-        x_target_neg = normalize(local_maps[2], self.map_min_max[0], self.map_min_max[1])
-        x_target_pos = normalize(local_maps[3], self.map_min_max[0], self.map_min_max[1])
-        x_dumpability = local_maps[4]
-        x_obstacles = local_maps[5]
-        x = jnp.concatenate(
-            (
-                x_action_neg[..., None],
-                x_action_pos[..., None],
-                x_target_neg[..., None],
-                x_target_pos[..., None],
-                x_dumpability[..., None],
-                x_obstacles[..., None],
-            ),
-            -1,
-        )
+        # Normalize first four maps (heights)
+        m0 = normalize(local_maps[0], self.map_min_max[0], self.map_min_max[1])
+        m1 = normalize(local_maps[1], self.map_min_max[0], self.map_min_max[1])
+        m2 = normalize(local_maps[2], self.map_min_max[0], self.map_min_max[1])
+        m3 = normalize(local_maps[3], self.map_min_max[0], self.map_min_max[1])
+        m4 = local_maps[4]
+        m5 = local_maps[5]
 
-        x = self.mlp(x.reshape(*x.shape[:-2], -1))
+        # Ensure batch dimension
+        def ensure_batch(x: Array) -> Array:
+            return x[None, :] if x.ndim == 1 else x
+
+        m0 = ensure_batch(m0)
+        m1 = ensure_batch(m1)
+        m2 = ensure_batch(m2)
+        m3 = ensure_batch(m3)
+        m4 = ensure_batch(m4)
+        m5 = ensure_batch(m5)
+
+        # Concatenate into (B, 72)
+        x = jnp.concatenate((m0, m1, m2, m3, m4, m5), axis=-1)
+        # Single MLP over concatenated vector
+        x = self.mlp(x)
         return x
 
 
@@ -320,7 +333,7 @@ class MapsNet(nn.Module):
 
     def __call__(self, obs: dict[str, Array]):
         """
-        obs["agent_state"],
+        obs["agent_states"],
         obs["local_map_action_neg"],
         obs["local_map_action_pos"],
         obs["local_map_target_neg"],
@@ -332,17 +345,19 @@ class MapsNet(nn.Module):
         obs["traversability_mask"],
         obs["dumpability_mask"],
         """
-        action_map = obs[7]
-        target_map = obs[8]
-        traversability_map = obs[9]
-        dumpability_mask = obs[10]
-        interaction_mask = obs[19]
+        traversability_map = obs[0]
+        action_map = obs[1]
+        target_map = obs[2]
+        padding_mask = obs[3]
+        dumpability_mask = obs[4]
+        interaction_mask = obs[5]
 
         x = jnp.concatenate(
             (
-                action_map[..., None],
                 traversability_map[..., None],
+                action_map[..., None],
                 target_map[..., None],
+                padding_mask[..., None],
                 dumpability_mask[..., None],
                 interaction_mask[..., None],
             ),
@@ -375,7 +390,8 @@ class PreviousActionsNet(nn.Module):
         self.activation = nn.relu
 
     def __call__(self, obs: dict[str, Array]):
-        x_actions = obs[11][:,1::2].astype(jnp.int32)
+        # Use the full single-stream history of previous actions
+        x_actions = obs[17].astype(jnp.int32)
         x_actions = self.embedding(x_actions)
 
         x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
@@ -446,58 +462,68 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
     def __call__(self, obs: Array) -> Array:
         # OPTIMIZED: Batched processing for both agents
-        # Batch agent states together for single forward pass
-        agent_states_batch = jnp.concatenate([obs[0], obs[12]], axis=0)
-        x_agent_states_batch = self.agent_state_net(agent_states_batch)
-        # Split back to individual agents
-        x_agent_state, x_agent_state_2 = jnp.split(x_agent_states_batch, 2, axis=0)
+        # Variable agents: obs[0] is [B, MAX_AGENTS, num_state_obs], obs[2] is num_agents
+        agent_states_all = obs[0]
+        # Handle possible extra dims (e.g., (B,1) or (B,1,1)) for num_agents
+        num_agents = jnp.squeeze(obs[2]).astype(jnp.int32)
+        # Encode all agents individually, mask inactive ones, and concatenate
+        B = agent_states_all.shape[0]
+        MAX_AGENTS = agent_states_all.shape[1]
+        # Flatten agents into batch
+        agent_states_flat = agent_states_all.reshape(B * MAX_AGENTS, -1)
+        x_agents_flat = self.agent_state_net(agent_states_flat)
+        # Restore agent axis
+        x_agents = x_agents_flat.reshape(B, MAX_AGENTS, -1)
+        # Build active mask from obs[1] directly (robust to shape quirks)
+        active_mask_raw = obs[1]
+        active_mask = jnp.squeeze(active_mask_raw).astype(jnp.bool_)
+        # Ensure shape [B, MAX_AGENTS]
+        if active_mask.ndim == 1:
+            active_mask = active_mask[None, :].repeat(B, axis=0)
+        # Zero out inactive agent embeddings
+        x_agents = jnp.where(active_mask[..., None], x_agents, 0)
+        # Concatenate all agent embeddings into a single vector
+        x_agents_concat = x_agents.reshape(B, -1)
         
-        # OPTIMIZED: Batch local maps for both agents together
-        # Agent 1 local maps: obs[1:7], Agent 2 local maps: obs[13:19]
-        local_maps_1 = [obs[1], obs[2], obs[3], obs[4], obs[5], obs[6]]
-        local_maps_2 = [obs[13], obs[14], obs[15], obs[16], obs[17], obs[18]]
+        # Process only active agent local maps (ignore other agents' locals)
+        # Debug: check what's actually at each index
+        print(f"DEBUG: obs[3] shape: {obs[3].shape}")
+        print(f"DEBUG: obs[4] shape: {obs[4].shape}")
+        print(f"DEBUG: obs[5] shape: {obs[5].shape}")
+        print(f"DEBUG: obs[6] shape: {obs[6].shape}")
+        print(f"DEBUG: obs[7] shape: {obs[7].shape}")
+        print(f"DEBUG: obs[8] shape: {obs[8].shape}")
         
-        # Batch both agents' local maps for more efficient processing
-        local_maps_batch = []
-        for i in range(6):  # 6 local map types
-            # Concatenate corresponding local maps from both agents
-            batched_map = jnp.concatenate([local_maps_1[i], local_maps_2[i]], axis=0)
-            local_maps_batch.append(batched_map)
-        
-        # Single forward pass for both agents' local maps
-        x_local_batch = self.local_map_net(local_maps_batch)
-        # Split back to individual agents
-        x_local_map, x_local_map_2 = jnp.split(x_local_batch, 2, axis=0)
+        # Local maps are at indices 3-8: action_neg, action_pos, target_neg, target_pos, dumpability, obstacles
+        local_maps_1 = [obs[3], obs[4], obs[5], obs[6], obs[7], obs[8]]
+        x_local_active = self.local_map_net(local_maps_1)
         
         # Process global maps and actions (unchanged)
-        x_maps = self.maps_net(obs)
+        # Global maps are at indices 9, 10, 11, 14, 15, 16: traversability_mask, action_map, target_map, padding_mask, dumpability_mask, interaction_mask
+        map_obs = [
+            obs[9],   # traversability_mask
+            obs[10],  # action_map
+            obs[11],  # target_map
+            obs[14],  # padding_mask
+            obs[15],  # dumpability_mask
+            obs[16],  # interaction_mask
+        ]
+        x_maps = self.maps_net(map_obs)
         x_actions = self.actions_net(obs)
         
         # Flatten local map outputs if they have spatial dimensions
-        x_local_map_flat = x_local_map.reshape(x_local_map.shape[0], -1)
-        x_local_map_2_flat = x_local_map_2.reshape(x_local_map_2.shape[0], -1)
+        x_local_active_flat = x_local_active.reshape(x_local_active.shape[0], -1)
         
         # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
         # Local maps are also included.
-        combined_features_1 = jnp.concatenate(
-            (x_agent_state, x_actions, x_local_map_flat), 
-            axis=-1
-        )
-        combined_features_2 = jnp.concatenate(
-            (x_agent_state_2, x_local_map_2_flat), 
-            axis=-1
-        )
-        
-        # Process through intermediate MLP
-        # combined_features_1 = self.intermediate_mlp(combined_features_1)
-        # combined_features_2 = self.intermediate_mlp(combined_features_2)
+        # Build a single combined feature vector (all agent states + actions + active local maps)
         combined_features = jnp.concatenate(
-            (combined_features_1, combined_features_2), 
-            axis=-1
+            (x_agents_concat, x_actions, x_local_active_flat),
+            axis=-1,
         )
         combined_features = self.activation(combined_features)
-        
-        # Concatenate MLP output with MapNet output
+
+        # Concatenate combined features with MapNet output
         x = jnp.concatenate((combined_features, x_maps), axis=-1)
         
         # Apply final activation

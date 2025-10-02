@@ -116,11 +116,11 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 2048 #1536  # Increased for better dual skidsteer training 2048
+    num_envs_per_device: int = 1536 #2048 #1536  # Increased for better dual skidsteer training 2048
     num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
     update_epochs: int = 2 #4 #5 # Reduced from 4 to 2 for faster training
     num_minibatches: int = 16 #32  # Reduced from 16 to 8 for faster training
-    total_timesteps: int = 120_000_000_000  # Increased from 1B to 5B for sufficient training 60_000_000_000
+    total_timesteps: int = 100_000_000_000  # Increased from 1B to 5B for sufficient training 60_000_000_000
     lr: float = 3e-4    #3e-4
     clip_eps: float = 0.2 #0.5  # Less conservative clipping for escaping local optima
     gamma: float = 0.9984 #0.9984
@@ -162,6 +162,10 @@ class MixedAgentTrainConfig:
     second_curriculum_switch_level: int = 2  # Switch to third agent types at this level
     third_agent1_type: int = 0  # Third agent 1 type (after second switch)
     third_agent2_type: int = 2  # Third agent 2 type (after second switch)
+    # Optional override to specify an arbitrary list of agent types, e.g. (2,0,0,2)
+    agent_types_override: tuple | None = None
+    # Debug assertions and one-time validations
+    debug: bool = False
     
     # Checkpoint loading - NEW!
     resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
@@ -315,9 +319,21 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
             env_params = env_params_override
             print("Using environment config from checkpoint")
         else:
-            # Use default agent types from config
-            agent_types = agent_manager.get_current_agent_types()
+            # Use override if provided, else manager's current types
+            if config.agent_types_override is not None:
+                agent_types = tuple(config.agent_types_override)
+            else:
+                agent_types = agent_manager.get_current_agent_types()
             env_params = create_mixed_agent_env_config(agent_types=agent_types)
+            # Verbose training configuration summary
+            type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+            print("🧩 Agent Types (effective):", agent_types)
+            print("🧩 Agent Types (names):", 
+                  " + ".join(type_names.get(t, f"Unknown({t})") for t in agent_types))
+            if config.agent_types_override is not None:
+                print("✅ Using --agent_types override")
+            else:
+                print("ℹ️  Using preset/curriculum agent types (no override provided)")
     
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
@@ -580,14 +596,60 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             # TERRA: Reset envs
             reset_fn_p = jax.pmap(env.reset, axis_name="devices")  # vmapped inside
             timestep = reset_fn_p(env_params, reset_rng)
+            # One-time sanity debug on host for device 0, env 0
+            if config.debug:
+                try:
+                    obs_host = jax.tree_map(lambda x: jax.device_get(x)[0, 0], timestep.observation)
+                    agent_states = obs_host.get("agent_states")
+                    agent_active = obs_host.get("agent_active")
+                    num_agents = obs_host.get("num_agents")
+                    lm_keys = [
+                        "local_map_action_neg",
+                        "local_map_action_pos",
+                        "local_map_target_neg",
+                        "local_map_target_pos",
+                        "local_map_dumpability",
+                        "local_map_obstacles",
+                    ]
+                    print("=== One-time Mixed-Agents Sanity Check (device0/env0) ===")
+                    print(f"agent_states shape: {getattr(agent_states, 'shape', None)}")
+                    print(f"agent_active: {agent_active}")
+                    print(f"num_agents: {int(num_agents) if hasattr(num_agents, 'item') else num_agents}")
+                    # active-first mask check
+                    try:
+                        na = int(num_agents)
+                        prefix_ok = bool(jnp.all(agent_active[:na] == 1))
+                        suffix_ok = bool(jnp.all(agent_active[na:] == 0))
+                        print(f"active_first_mask_ok: {prefix_ok and suffix_ok}")
+                    except Exception as _:
+                        pass
+                    for k in lm_keys:
+                        v = obs_host.get(k)
+                        print(f"{k} shape: {getattr(v, 'shape', None)}")
+                    # key global maps
+                    for k in ["traversability_mask", "action_map", "target_map", "padding_mask"]:
+                        v = obs_host.get(k)
+                        print(f"{k} shape: {getattr(v, 'shape', None)}")
+                    # Verify acting agent reorder: current agent features should be close to index 0
+                    # This is a heuristic check: compare positions and identifiers
+                    a0 = agent_states[0]
+                    # We can’t access internal state here; rely on mask structure: first entry must be active
+                    print(f"agent_states[0][:4] (pos/angles preview): {a0[:4]}")
+                    print("==========================================================")
+                except Exception as _:
+                    pass
             
             # Initialize reward_components in timestep.info to maintain consistent pytree structure
             # This prevents JAX scan errors when reward_components is added later
             if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
-                # Add empty reward_components to match the structure that will be added in env.step
+                # Add empty reward_components to match the structure produced in env.step/state._get_reward
+                # Shapes follow timestep.reward's batch shape; agent vectors add a MAX_AGENTS axis (4)
+                batch_shape = timestep.reward.shape
+                MAX_AGENTS = 4
                 dummy_components = {
-                    "agent1_rewards": jnp.zeros_like(timestep.reward),
-                    "agent2_rewards": jnp.zeros_like(timestep.reward), 
+                    "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
+                    "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
+                    "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
                     "terminal": jnp.zeros_like(timestep.reward),
                     "trench": jnp.zeros_like(timestep.reward),
                     "existence": jnp.zeros_like(timestep.reward),
@@ -830,16 +892,39 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             reward_components = rc
 
                         if reward_components is not None:
+                            # Support per-agent rewards vector and masks
                             breakdown_means = {}
-                            for k, v in reward_components.items():
+                            agent_rewards = reward_components.get("agent_rewards", None)
+                            agent_active = reward_components.get("agent_active", None)
+                            num_agents = reward_components.get("num_agents", None)
+                            # Scalar components
+                            for k in ["terminal", "trench", "existence"]:
+                                if k in reward_components:
+                                    breakdown_means[k] = safe_jax_to_python(reward_components[k])
+                            # Vector per-agent rewards
+                            if agent_rewards is not None:
                                 try:
-                                    breakdown_means[k] = safe_jax_to_python(jnp.mean(v))
+                                    ar = agent_rewards
+                                    # Log each available agent index separately
+                                    for idx in range(ar.shape[-1]):
+                                        key = f"agent_{idx}"
+                                        breakdown_means[f"{key}"] = safe_jax_to_python(jnp.mean(ar[..., idx]))
                                 except Exception:
-                                    breakdown_means[k] = safe_jax_to_python(v)
-
-                            # Add to main log dict instead of separate wandb.log call
+                                    pass
+                            # Add to main log dict
                             for k, v in breakdown_means.items():
                                 log_dict[f"rewards/{k}"] = v
+                            # Also log masks if present
+                            if agent_active is not None:
+                                try:
+                                    log_dict["agents/active_count"] = safe_jax_to_python(jnp.sum(agent_active))
+                                except Exception:
+                                    pass
+                            if num_agents is not None:
+                                try:
+                                    log_dict["agents/num_agents"] = safe_jax_to_python(num_agents)
+                                except Exception:
+                                    pass
                             
                             
                             
@@ -888,6 +973,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
                             "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
                             "eval/DO": eval_stats.action_6 / n,
+                            "eval/DO_NOTHING %": eval_stats.action_7 / n,
                             "eval/positive_terminations": eval_stats.positive_terminations
                             / config.num_envs_per_device,
                             "eval/total_terminations": eval_stats.terminations
@@ -1013,6 +1099,14 @@ if __name__ == "__main__":
         help="Agent configuration: 'excavators' (both tracked), 'mixed' (tracked+skidsteer), 'curriculum' (excavators→mixed)"
     )
     parser.add_argument(
+        "--agent_types", type=str, default="(2,0,0)",
+        help="Override agent types with a Python tuple, e.g. '(2,0,0,2)' (default)"
+    )
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="Enable one-time sanity assertions/prints for agent ordering and masks"
+    )
+    parser.add_argument(
         "--curriculum_switch", type=int, default=1,
         help="Curriculum level to switch from initial to final agent types (only for curriculum mode)"
     )
@@ -1076,7 +1170,19 @@ if __name__ == "__main__":
 
     name = f"{args.name}-{args.machine}-{DT}"
     
-    # Configure agent types based on preset
+    # Configure agent types based on preset or override
+    agent_types_override = None
+    if args.agent_types is not None:
+        try:
+            import ast
+            parsed = ast.literal_eval(args.agent_types)
+            if isinstance(parsed, tuple):
+                agent_types_override = tuple(int(x) for x in parsed)
+                print(f"➡️  Overriding agent types: {agent_types_override}")
+            else:
+                raise ValueError("--agent_types must be a Python tuple like (2,0,0,2)")
+        except Exception as e:
+            print(f"⚠️  Failed to parse --agent_types '{args.agent_types}': {e}")
     if args.agent_config == "excavators":
         # Both agents are tracked excavators
         first_agent1_type, first_agent2_type = args.first_agent1_type, args.first_agent2_type
@@ -1123,7 +1229,9 @@ if __name__ == "__main__":
         third_agent1_type=args.third_agent1_type,
         third_agent2_type=args.third_agent2_type,
         resume_from=args.resume_from,
-        load_env_from_checkpoint=args.load_env_from_checkpoint
+        load_env_from_checkpoint=args.load_env_from_checkpoint,
+        agent_types_override=agent_types_override,
+        debug=args.debug
     )
     
     train_mixed_agents(config) 

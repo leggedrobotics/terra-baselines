@@ -162,7 +162,8 @@ def ppo_update_networks(
     def _loss_fn(params):
         # Terra: Reshape
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
-        print(f"ppo_update_networks {transitions.obs['agent_state'].shape=}")
+        if 'agent_states' in transitions.obs:
+            print(f"ppo_update_networks agent_states[0] shape={transitions.obs['agent_states'][:,0,:].shape}")
         print(f"ppo_update_networks {transitions.prev_actions.shape=}")
         transitions_obs_reshaped = jax.tree_map(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
@@ -172,7 +173,8 @@ def ppo_update_networks(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
             transitions.prev_actions,
         )
-        print(f"ppo_update_networks {transitions_obs_reshaped['agent_state'].shape=}")
+        if 'agent_states' in transitions_obs_reshaped:
+            print(f"ppo_update_networks agent_states[0] shape={transitions_obs_reshaped['agent_states'][:,0,:].shape}")
         print(f"ppo_update_networks {transitions_actions_reshaped.shape=}")
 
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
@@ -248,10 +250,11 @@ def get_curriculum_levels(env_cfg, global_curriculum_levels, timestep=None):
     
     if timestep is not None and hasattr(timestep, 'observation'):
         obs = timestep.observation
-        if 'agent_state' in obs and 'agent_state_2' in obs:
-            # Agent type is at index 6 in agent_state arrays
-            agent_types_1 = obs['agent_state'][:, 6].astype(jnp.int32)  # Extract agent type column
-            agent_types_2 = obs['agent_state_2'][:, 6].astype(jnp.int32)
+        if 'agent_states' in obs and 'num_agents' in obs:
+            # Agent type is at index 6 in per-agent feature vector
+            agent_types_1 = obs['agent_states'][:, 0, 6].astype(jnp.int32)
+            last_idx = jnp.maximum(0, obs['num_agents'] - 1)
+            agent_types_2 = obs['agent_states'][jnp.arange(obs['agent_states'].shape[0]), last_idx, 6].astype(jnp.int32)
     
     # Fallback to default mixed agent setup if no observation data
     if agent_types_1 is None or agent_types_2 is None:
