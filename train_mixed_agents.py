@@ -144,7 +144,7 @@ class MixedAgentTrainConfig:
     cache_clear_interval = 1000  # Less frequent cache clearing for speed
     # Entropy scheduler (cosine decay)
     ent_schedule_start: float = 0.15
-    ent_schedule_end: float = 0.02
+    ent_schedule_end: float = 0.005
     ent_schedule_steps: int = 8000
     
     # Agent type configuration - NEW!
@@ -1099,7 +1099,7 @@ if __name__ == "__main__":
         help="Agent configuration: 'excavators' (both tracked), 'mixed' (tracked+skidsteer), 'curriculum' (excavators→mixed)"
     )
     parser.add_argument(
-        "--agent_types", type=str, default="(2,0,0)",
+        "--agent_types", type=str, default="(0,2)",
         help="Override agent types with a Python tuple, e.g. '(2,0,0,2)' (default)"
     )
     parser.add_argument(

@@ -121,7 +121,7 @@ if __name__ == "__main__":
         "-o",
         "--out_path",
         type=str,
-        default="./potential-visualize-39-mixed-agents-skidsteer-skidsteer-local-2025-09-30-11-14-23.pkl.gif",
+        default="./potential-visualize-41-mixed-agents-skidsteer-skidsteer-local-2025-10-03-00-16-45.pkl.gif",
         #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )
@@ -146,9 +146,8 @@ if __name__ == "__main__":
     def replicate_field(x):
         if x is None:
             return None
-        # Handle agent_types tuple specially
-        if isinstance(x, tuple) and len(x) == 2:
-            # Convert tuple to array and replicate for each environment
+        # Handle tuples generically (e.g., agent_types of length 1–4)
+        if isinstance(x, tuple):
             return jnp.array(x)[None, ...].repeat(n_envs, 0)
         # Handle scalars (int, float, bool) - just replicate the value
         elif isinstance(x, (int, float, bool)):
@@ -200,16 +199,23 @@ if __name__ == "__main__":
     )
 
     
-    # Render each frame with dirt gradient
+    # Render each frame with dirt gradient (hide interaction map in visualization)
     for i, o in enumerate(tqdm(obs_seq, desc="Rendering")):
         # Try using state action_map instead of observation action_map
         if i < len(state_seq):
             # Create modified observation with raw state action_map
             modified_obs = dict(o)
             modified_obs['action_map'] = state_seq[i].world.action_map.map
+            # Hide interaction cones by zeroing the correct key used by renderer
+            if 'interaction_mask' in modified_obs:
+                modified_obs['interaction_mask'] = jnp.zeros_like(modified_obs['interaction_mask'])
             env.terra_env.render_obs_pygame(modified_obs, generate_gif=True)
         else:
-            env.terra_env.render_obs_pygame(o, generate_gif=True)
+            # Hide interaction cones by zeroing the correct key used by renderer
+            obs_no_interact = dict(o)
+            if 'interaction_mask' in obs_no_interact:
+                obs_no_interact['interaction_mask'] = jnp.zeros_like(obs_no_interact['interaction_mask'])
+            env.terra_env.render_obs_pygame(obs_no_interact, generate_gif=True)
 
     env.terra_env.rendering_engine.create_gif(args.out_path)
     print(f"GIF saved to {args.out_path}") 

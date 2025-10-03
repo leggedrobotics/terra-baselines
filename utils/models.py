@@ -486,13 +486,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         x_agents_concat = x_agents.reshape(B, -1)
         
         # Process only active agent local maps (ignore other agents' locals)
-        # Debug: check what's actually at each index
-        print(f"DEBUG: obs[3] shape: {obs[3].shape}")
-        print(f"DEBUG: obs[4] shape: {obs[4].shape}")
-        print(f"DEBUG: obs[5] shape: {obs[5].shape}")
-        print(f"DEBUG: obs[6] shape: {obs[6].shape}")
-        print(f"DEBUG: obs[7] shape: {obs[7].shape}")
-        print(f"DEBUG: obs[8] shape: {obs[8].shape}")
+        # Debug prints removed for cleaner training logs
         
         # Local maps are at indices 3-8: action_neg, action_pos, target_neg, target_pos, dumpability, obstacles
         local_maps_1 = [obs[3], obs[4], obs[5], obs[6], obs[7], obs[8]]
