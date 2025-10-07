@@ -135,7 +135,7 @@ class MixedAgentTrainConfig:
     checkpoint_interval: int = 50  # Less frequent checkpoints for speed
     
     # Model settings optimized for mixed agents
-    num_prev_actions = 10
+    num_prev_actions = 10  # will be overridden to 5 * num_agents at runtime
     clip_action_maps = True  # clips the action maps to [-1, 1]
     local_map_normalization_bounds = [-16, 16]
     maps_net_normalization_bounds = [-10, 10]  # Required field for network initialization
@@ -145,7 +145,7 @@ class MixedAgentTrainConfig:
     # Entropy scheduler (cosine decay)
     ent_schedule_start: float = 0.15
     ent_schedule_end: float = 0.005
-    ent_schedule_steps: int = 8000
+    ent_schedule_steps: int = 9500
     
     # Agent type configuration - NEW!
     first_agent1_type: int = 0  # 0=tracked, 1=wheeled, 2=skidsteer (used when no curriculum)
@@ -350,14 +350,34 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     rng = jax.random.PRNGKey(config.seed)
     rng, _rng = jax.random.split(rng)
 
-    # Create the unified network with agent type features
+    # Infer num_prev_actions as 5 per agent without triggering a reset/pmap
+    try:
+        MAX_AGENTS = 4
+        # Priority 1: explicit override
+        if config.agent_types_override is not None:
+            na = len(tuple(config.agent_types_override))
+        # Priority 2: env params we just batched include agent_types with trailing num_agents dim
+        elif hasattr(env_params, 'agent_types') and hasattr(env_params.agent_types, 'shape'):
+            na = int(env_params.agent_types.shape[-1])
+        # Priority 3: batch config on env, if present as a tuple/list
+        elif hasattr(env.batch_cfg, 'agent_types') and isinstance(env.batch_cfg.agent_types, (tuple, list)):
+            na = len(env.batch_cfg.agent_types)
+        else:
+            na = MAX_AGENTS
+        na = max(1, min(MAX_AGENTS, int(na)))
+        config.num_prev_actions = int(5 * na)
+        print(f"Setting num_prev_actions to {config.num_prev_actions} (5 per agent × {na} agents)")
+    except Exception as e:
+        print(f"Warning: failed to infer num_agents for num_prev_actions ({e}); keeping {config.num_prev_actions}")
+
+    # Create the unified network with agent type features (now that num_prev_actions is set)
     network, network_params = get_model_ready(_rng, config, env)
     # DEBUG: print number of actions for current action type (should be 8 with NOOP)
     try:
         num_actions_debug = env.batch_cfg.action_type.get_num_actions()
-        print(f"🛠️  Debug: Number of actions = {num_actions_debug}")
+        print(f"🛠️ Debug: Number of actions = {num_actions_debug}")
     except Exception as e:
-        print(f"🛠️  Debug: Failed to read number of actions: {e}")
+        print(f"🛠️ Debug: Failed to read number of actions: {e}")
     
     # Optimizer with mixed agent considerations
     tx = optax.chain(
@@ -665,9 +685,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
             # TRAIN LOOP
             @partial(jax.pmap, axis_name="devices")
-            def _update_step(runner_state, ent_coef_current):
+            def _update_step(runner_state, ent_coef_current, update_idx):
                 # COLLECT TRAJECTORIES
-                def _env_step(runner_state, _):
+                def _env_step(runner_state, step_idx):
                     rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
 
                     # SELECT ACTION
@@ -680,6 +700,47 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
                     action_env = wrap_action(action, env.batch_cfg.action_type)
                     timestep = env.step(prev_timestep, action_env, _rng_env)
+
+                    # DEBUG: Print first 4 cycles of the FIRST update only (device 0, env 0)
+                    def _do_debug_print():
+                        dev_idx = jax.lax.axis_index("devices")
+                        def _print_if_dev0():
+                            # Print current, next, prev indices and the agent_type at those slots for env 0
+                            comps = timestep.info.get("reward_components", {})
+                            num_agents = comps.get("num_agents", None)
+                            # agent_types may be batched [devices, envs, num_agents] or a 1D tuple/list
+                            agent_types_raw = prev_timestep.env_cfg.agent_types
+                            # Derive current index from step index (alternating scheduler): cur = step_idx % num_agents
+                            na0 = jnp.int32(num_agents[0]) if num_agents is not None else jnp.int32(2)
+                            na0 = jnp.maximum(na0, 1)
+                            cur0 = step_idx % na0
+                            nxt0 = (cur0 + 1) % na0
+                            prv0 = (cur0 + na0 - 1) % na0
+                            # Normalize to a 1D indexable vector for env 0
+                            def _to_vec(x):
+                                try:
+                                    # jnp array with shape (devices, envs, num_agents)
+                                    if hasattr(x, 'shape') and len(x.shape) == 3:
+                                        return x[0, 0]
+                                    # jnp array with shape (num_agents,)
+                                    if hasattr(x, 'shape') and len(x.shape) == 1:
+                                        return x
+                                except Exception:
+                                    pass
+                                # Fallback for tuple/list
+                                return jnp.array(list(x))
+                            at_env0 = _to_vec(agent_types_raw)
+                            at_cur = at_env0[cur0]
+                            at_nxt = at_env0[nxt0]
+                            at_prv = at_env0[prv0]
+                            jax.debug.print(
+                                "[SWAP step={}] cur_idx={} nxt_idx={} prv_idx={} types(cur,nxt,prv)=({}, {}, {})",
+                                step_idx, cur0, nxt0, prv0, at_cur, at_nxt, at_prv
+                            )
+                            return 0
+                        return jax.lax.cond(dev_idx == 0, _print_if_dev0, lambda: 0)
+                    if getattr(config, "debug", False):
+                        _ = jax.lax.cond((update_idx == 0) & (step_idx < 4), _do_debug_print, lambda: 0)
                     transition = Transition(
                         done=timestep.done,
                         action=action,
@@ -700,18 +761,41 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
                 # transitions: [seq_len, batch_size, ...]
                 runner_state, transitions = jax.lax.scan(
-                    _env_step, runner_state, None, config.num_steps
+                    _env_step, runner_state, jnp.arange(config.num_steps), config.num_steps
                 )
 #NEW Start
-                # Duplicate terminal reward to the previous (other agent's) step
-                # This credits both agents on episode end without changing env API
-                done_seq = transitions.done  # [seq, batch, ...]
-                reward_seq = transitions.reward
-                terminal_bonus = jnp.where(done_seq, reward_seq, 0.0)
-                # Shift bonus backward by 1 step; zero for the first step
-                zero_first = jnp.zeros_like(terminal_bonus[:1])
-                shifted_bonus = jnp.concatenate([zero_first, terminal_bonus[:-1]], axis=0)
-                augmented_reward = reward_seq + shifted_bonus
+                # Distribute terminal reward to the last num_agents alternating steps
+                # This attributes the shared terminal to all agents that acted in the final round
+                done_seq = transitions.done            # [seq, batch]
+                reward_seq = transitions.reward        # [seq, batch]
+                # Terminal bonus only on terminal steps
+                terminal_bonus = jnp.where(done_seq, reward_seq, 0.0)  # [seq, batch]
+
+                # Get num_agents per env (assumed constant across sequence); shape [batch]
+                # transitions.obs stores prev_timestep.observation
+                num_agents_per_env = transitions.obs["num_agents"][0]  # [batch]
+                # Clip to supported window 1..MAX_AGENTS
+                MAX_AGENTS = 4
+                num_agents_per_env = jnp.clip(num_agents_per_env.astype(jnp.int32), 1, MAX_AGENTS)
+
+                # Build windowed backfill: sum of shifts 0..K-1, where K=num_agents_per_env
+                # shifted[k] = terminal_bonus shifted backward by k (zeros for first k rows)
+                def shift_back(arr, k):
+                    zeros = jnp.zeros_like(arr[:k])
+                    return jnp.concatenate([zeros, arr[:-k]], axis=0) if k > 0 else arr
+
+                shifted_stack = []
+                # Start at k=1 to avoid including the unshifted terminal bonus (no double-count)
+                for k in range(1, MAX_AGENTS):
+                    shifted_k = shift_back(terminal_bonus, k)  # [seq, batch]
+                    # Mask this shift per env if k < num_agents
+                    use_k = (num_agents_per_env > k).astype(jnp.float32)  # [batch]
+                    shifted_k = shifted_k * use_k  # broadcast over seq
+                    shifted_stack.append(shifted_k)
+                window_sum = jnp.stack(shifted_stack, axis=0).sum(axis=0)  # [seq, batch]
+
+                # With k starting at 1, we don't include the terminal step itself in the sum
+                augmented_reward = reward_seq + window_sum
                 transitions = transitions.replace(reward=augmented_reward)
 
 #NEW End
@@ -816,7 +900,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 ent_broadcast = jnp.array([ent_coef_current] * config.num_devices)
                 start_time = time.time()
                 runner_state, loss_info = jax.block_until_ready(
-                    _update_step(runner_state, ent_broadcast)
+                    _update_step(runner_state, ent_broadcast, jnp.array([i] * config.num_devices))
                 )
                 end_time = time.time()
 
@@ -1099,7 +1183,7 @@ if __name__ == "__main__":
         help="Agent configuration: 'excavators' (both tracked), 'mixed' (tracked+skidsteer), 'curriculum' (excavators→mixed)"
     )
     parser.add_argument(
-        "--agent_types", type=str, default="(0,2)",
+        "--agent_types", type=str, default="(0,2,0,2)",
         help="Override agent types with a Python tuple, e.g. '(2,0,0,2)' (default)"
     )
     parser.add_argument(

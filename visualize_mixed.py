@@ -121,7 +121,7 @@ if __name__ == "__main__":
         "-o",
         "--out_path",
         type=str,
-        default="./potential-visualize-41-mixed-agents-skidsteer-skidsteer-local-2025-10-03-00-16-45.pkl.gif",
+        default="./potential-visualize-52-4agent-mixed-agents-skidsteer-skidsteer-local-2025-10-06-18-15-02.pkl.gif",
         #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )
