@@ -22,6 +22,10 @@ import os
 jax.config.update("jax_threefry_partitionable", True)
 
 
+
+#Helper file, use train_mixed_agents.py for training
+
+
 @dataclass
 class TrainConfig:
     name: str
