@@ -33,7 +33,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         map_min_max=map_min_max,
         local_map_min_max=tuple(config["local_map_normalization_bounds"]),
         loaded_max=config["loaded_max"],
-        agent_types_max=2,  # Maximum agent type value (0=tracked, 1=wheeled, 2=skidsteer)
+        agent_types_max=3,  # Maximum agent type value (0=tracked, 1=wheeled, 2=skidsteer, 3=truck)
         action_type=env.batch_cfg.action_type,
     )
 
@@ -149,7 +149,7 @@ class AgentStateNet(nn.Module):
 
     num_embeddings: int
     loaded_max: int
-    agent_types_max: int  # Maximum number of agent types (0, 1, 2)
+    agent_types_max: int  # Maximum agent type value (0..agent_types_max), e.g., 3 includes truck
     mlp_use_layernorm: bool
     num_embedding_features: int = 8
     hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
@@ -412,7 +412,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     local_map_min_max: Sequence[int]
     loaded_max: int
     action_type: Union[TrackedAction, WheeledAction]
-    agent_types_max: int = 2  # Maximum agent type value (0=tracked, 1=wheeled, 2=skidsteer)
+    agent_types_max: int = 3  # Maximum agent type value (0=tracked, 1=wheeled, 2=skidsteer, 3=truck)
     hidden_dim_pi: Sequence[int] = (128, 32)
     hidden_dim_v: Sequence[int] = (128, 32, 1)
     mlp_use_layernorm: bool = False

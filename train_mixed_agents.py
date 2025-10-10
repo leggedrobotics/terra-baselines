@@ -90,7 +90,7 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 1536 #2048 #1536  # Increased for better dual skidsteer training 2048
+    num_envs_per_device: int = 1792  # Increased for better dual skidsteer training 2048
     num_steps: int = 32  # Keep longer rollouts for better temporal learning  32
     update_epochs: int = 2 #4 #5 # Reduced from 4 to 2 for faster training
     num_minibatches: int = 16 #32  # Reduced from 16 to 8 for faster training
@@ -196,7 +196,7 @@ class ConfigurableAgentManager:
     
     def get_agent_curriculum_info(self) -> dict:
         a1, a2 = self.get_current_agent_types()
-        type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+        type_names = {0: "Excavator (Tracked)", 1: "Excavator (Wheeled)", 2: "SkidSteer", 3: "Truck"}
         return {
             "agent1_type": a1,
             "agent2_type": a2,
@@ -239,7 +239,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                 agent_types = EnvConfig().agent_types
             env_params = create_mixed_agent_env_config(agent_types=agent_types)
             # Verbose training configuration summary
-            type_names = {0: "Tracked", 1: "Wheeled", 2: "SkidSteer"}
+            type_names = {0: "Excavator (Tracked)", 1: "Excavator (Wheeled)", 2: "SkidSteer", 3: "Truck"}
             print("🧩 Agent Types (effective):", agent_types)
             print("🧩 Agent Types (names):", 
                   " + ".join(type_names.get(t, f"Unknown({t})") for t in agent_types))
@@ -870,7 +870,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             else:
                 a1 = int(at_final[0])
                 a2 = int(at_final[1])
-            type_names = {0: "tracked", 1: "wheeled", 2: "skidsteer"}
+            type_names = {0: "Excavator (Tracked)", 1: "Excavator (Wheeled)", 2: "SkidSteer", 3: "Truck"}
             agent_types_str = f"{type_names.get(a1, 'unknown')}_{type_names.get(a2, 'unknown')}"
         except Exception:
             agent_types_str = "unknown_unknown"
@@ -918,7 +918,7 @@ if __name__ == "__main__":
     )
     # Removed agent_config modes; use --agent_types only
     parser.add_argument(
-        "--agent_types", type=str, default="(0)",
+        "--agent_types", type=str, default="(0,2,3)",
         help="Override agent types with a Python tuple, e.g. '(2,0,2,0)' (default)"
     )
     parser.add_argument(
