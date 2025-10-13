@@ -6,20 +6,29 @@ using a unified network with agent-type conditioning.
 Quick start
 ===========
 - Set agents via --agent_types override (dynamic number of agents, up to 4).
+- Set action types via --action_types override (0=tracked, 1=wheeled).
 - Map curriculum is handled in the environment; no agent-type curriculum here.
 
 Examples
 ========
-# Two agents: tracked + skidsteer
+# Two agents: tracked excavator + skidsteer (both tracked movement)
 python train_mixed_agents.py --agent_types "(0,2)" --name "tracked-skid"
 
-# Four agents: custom mix
-python train_mixed_agents.py --agent_types "(0,2,0,2)" --name "quad-mixed"
+# Two agents: wheeled excavator + skidsteer (both wheeled movement)
+python train_mixed_agents.py --agent_types "(0,2)" --action_types "(1,1)" --name "wheeled-mixed"
+
+# Mixed movement: tracked excavator + wheeled skidsteer
+python train_mixed_agents.py --agent_types "(0,2)" --action_types "(0,1)" --name "mixed-movement"
+
+# Four agents: custom mix with different action types
+python train_mixed_agents.py --agent_types "(0,2,0,2)" --action_types "(0,1,0,1)" --name "quad-mixed"
 
 Notes
 =====
-- Agent types: 0=tracked, 1=wheeled, 2=skidsteer
+- Agent types: 0=excavator, 1=truck, 2=skidsteer
+- Action types: 0=tracked, 1=wheeled
 - If --agent_types is omitted, defaults from EnvConfig are used.
+- If --action_types is omitted, all agents use tracked movement (0) by default.
 """
 
 import jax
@@ -124,6 +133,8 @@ class MixedAgentTrainConfig:
     # Removed agent-type curriculum; use override only
     # Optional override to specify an arbitrary list of agent types, e.g. (2,0,0,2)
     agent_types_override: tuple | None = None
+    # Optional override to specify action types for each agent, e.g. (0,1,0,1) for tracked/wheeled
+    action_types_override: tuple | None = None
     # Debug assertions and one-time validations
     debug: bool = False
     
@@ -156,7 +167,7 @@ class MixedAgentTrainConfig:
         return getattr(self, key)
 
 
-def create_mixed_agent_env_config(agent_types=(0, 2)):
+def create_mixed_agent_env_config(agent_types=(0, 2), action_types=(0, 0)):
     """Create environment configuration optimized for mixed agent training"""
     
     # Use the existing dense rewards from config - they already include skid steer rewards
@@ -164,6 +175,9 @@ def create_mixed_agent_env_config(agent_types=(0, 2)):
     
     # Set the agent types from the training configuration
     env_config = env_config._replace(agent_types=agent_types)
+    
+    # Set the action types from the training configuration
+    env_config = env_config._replace(action_types=action_types)
     
     # You can override specific settings if needed for mixed agent training
     # env_config = env_config._replace(
@@ -193,6 +207,19 @@ class ConfigurableAgentManager:
         if len(ats) == 1:
             return (int(ats[0]), int(ats[0]))
         return (0, 2)
+    
+    def get_current_action_types(self, *_, **__) -> tuple[int, int]:
+        if self.config.action_types_override is not None:
+            ats = tuple(self.config.action_types_override)
+        else:
+            # Default to tracked actions (0) for all agents
+            ats = (0, 0)
+        # Ensure we always return a 2-tuple for prints; extra types still supported elsewhere
+        if len(ats) >= 2:
+            return (int(ats[0]), int(ats[1]))
+        if len(ats) == 1:
+            return (int(ats[0]), int(ats[0]))
+        return (0, 0)
     
     def get_agent_curriculum_info(self) -> dict:
         a1, a2 = self.get_current_agent_types()
@@ -237,14 +264,27 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                 agent_types = tuple(config.agent_types_override)
             else:
                 agent_types = EnvConfig().agent_types
-            env_params = create_mixed_agent_env_config(agent_types=agent_types)
+            
+            # Use action types override if provided, otherwise use default (0,0)
+            action_types = config.action_types_override if config.action_types_override is not None else (0, 0)
+            env_params = create_mixed_agent_env_config(agent_types=agent_types, action_types=action_types)
             # Verbose training configuration summary
-            type_names = {0: "Excavator (Tracked)", 1: "Excavator (Wheeled)", 2: "SkidSteer", 3: "Truck"}
+            type_names = {0: "Excavator", 1: "Truck", 2: "SkidSteer"}
             print("🧩 Agent Types (effective):", agent_types)
             print("🧩 Agent Types (names):", 
                   " + ".join(type_names.get(t, f"Unknown({t})") for t in agent_types))
             if config.agent_types_override is not None:
                 print("✅ Using --agent_types override")
+            
+            # Print action types information
+            action_type_names = {0: "Tracked", 1: "Wheeled"}
+            print("🚗 Action Types (effective):", action_types)
+            print("🚗 Action Types (names):", 
+                  " + ".join(action_type_names.get(t, f"Unknown({t})") for t in action_types))
+            if config.action_types_override is not None:
+                print("✅ Using --action_types override")
+            else:
+                print("🚗 Using default action types (all tracked)")
     
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
@@ -364,45 +404,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     def log_environment_metrics(timestep, update_num):
         """Log environment metrics for all mixed agent training"""
         try:
-            # Extract data from timestep observation
-            obs = timestep.observation
-            
-            # 1. Agent type distribution from env_cfg - average across all environments on first device
-            agent_types = timestep.env_cfg.agent_types
-            if hasattr(agent_types, 'shape') and len(agent_types.shape) > 1:
-                # If batched, average across all environments on first device
-                # Shape is typically (num_devices, num_envs_per_device, num_agents)
-                agent1_type = safe_jax_to_python(jnp.mean(agent_types[0, :, 0]))  # Average across all envs on device 0
-                agent2_type = safe_jax_to_python(jnp.mean(agent_types[0, :, 1]))  # Average across all envs on device 0
-            else:
-                # If not batched, take directly
-                agent1_type = safe_jax_to_python(agent_types[0])
-                agent2_type = safe_jax_to_python(agent_types[1])
-            
-            # Count agent types (this will be the same for all environments in the batch)
-            agent1_tracked = int(agent1_type == 0)
-            agent1_wheeled = int(agent1_type == 1)
-            agent1_skidsteer = int(agent1_type == 2)
-            agent2_tracked = int(agent2_type == 0)
-            agent2_wheeled = int(agent2_type == 1)
-            agent2_skidsteer = int(agent2_type == 2)
-            
-            # 2. Basic episode metrics
+            # Basic episode metrics
             episode_done = timestep.done
             completion_rate = safe_jax_to_python(jnp.mean(episode_done))
-            
-            # 3. Calculate completion percentage for each environment
-            # Removed completion calculation as it was not working properly
             
             # Log the metrics - ensure step is always positive and increasing
             if update_num > 0:  # Only log if we have a valid step number
                 wandb.log({
-                    "agent_types/agent1_tracked": agent1_tracked,
-                    "agent_types/agent1_wheeled": agent1_wheeled,
-                    "agent_types/agent1_skidsteer": agent1_skidsteer,
-                    "agent_types/agent2_tracked": agent2_tracked,
-                    "agent_types/agent2_wheeled": agent2_wheeled,
-                    "agent_types/agent2_skidsteer": agent2_skidsteer,
                     "progress/episode_completion_rate": completion_rate,
                 }, step=update_num)
                 
@@ -412,12 +420,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             # Optionally log a minimal set of metrics without step to avoid the warning
             try:
                 wandb.log({
-                    "agent_types/agent1_tracked": 0,
-                    "agent_types/agent1_wheeled": 0,
-                    "agent_types/agent1_skidsteer": 0,
-                    "agent_types/agent2_tracked": 0,
-                    "agent_types/agent2_wheeled": 0,
-                    "agent_types/agent2_skidsteer": 0,
                     "progress/episode_completion_rate": 0.0,
                 })
             except:
@@ -870,7 +872,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             else:
                 a1 = int(at_final[0])
                 a2 = int(at_final[1])
-            type_names = {0: "Excavator (Tracked)", 1: "Excavator (Wheeled)", 2: "SkidSteer", 3: "Truck"}
+            type_names = {0: "Excavator", 1: "Truck", 2: "SkidSteer"}
             agent_types_str = f"{type_names.get(a1, 'unknown')}_{type_names.get(a2, 'unknown')}"
         except Exception:
             agent_types_str = "unknown_unknown"
@@ -918,8 +920,12 @@ if __name__ == "__main__":
     )
     # Removed agent_config modes; use --agent_types only
     parser.add_argument(
-        "--agent_types", type=str, default="(0,2,3)",
+        "--agent_types", type=str, default="(0,1)",
         help="Override agent types with a Python tuple, e.g. '(2,0,2,0)' (default)"
+    )
+    parser.add_argument(
+        "--action_types", type=str, default="(0,1)",
+        help="Override action types with a Python tuple, e.g. '(1)' for wheeled"
     )
     parser.add_argument(
         "--debug", action="store_true",
@@ -971,6 +977,25 @@ if __name__ == "__main__":
             print(f"➡️  Overriding agent types: {agent_types_override}")
         except Exception as e:
             print(f"⚠️  Failed to parse --agent_types '{args.agent_types}': {e}")
+    
+    # Configure action types based on override
+    action_types_override = None
+    if args.action_types is not None:
+        try:
+            import ast
+            parsed = ast.literal_eval(args.action_types)
+            # Normalize to a tuple of ints; accept tuple, list, or single int
+            if isinstance(parsed, tuple):
+                action_types_override = tuple(int(x) for x in parsed)
+            elif isinstance(parsed, list):
+                action_types_override = tuple(int(x) for x in parsed)
+            elif isinstance(parsed, (int,)):
+                action_types_override = (int(parsed),)
+            else:
+                raise ValueError("--action_types must be a tuple/list like (0,1,0,1) or a single int like (0)")
+            print(f"➡️  Overriding action types: {action_types_override}")
+        except Exception as e:
+            print(f"⚠️  Failed to parse --action_types '{args.action_types}': {e}")
     config = MixedAgentTrainConfig(
         name=name, 
         num_devices=args.num_devices,
@@ -978,6 +1003,7 @@ if __name__ == "__main__":
         resume_from=args.resume_from,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,
+        action_types_override=action_types_override,
         debug=args.debug
     )
     
