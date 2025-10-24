@@ -173,4 +173,4 @@ tools/
 # Ignore all gif files
 *.gif
 *.out
-#*.png
+*.png

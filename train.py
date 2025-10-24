@@ -22,8 +22,8 @@ import os
 jax.config.update("jax_threefry_partitionable", True)
 
 
-
-#Helper file, use train_mixed_agents.py for training
+#REMARK:
+#Helper file, use train_mixed.py for training
 
 
 @dataclass

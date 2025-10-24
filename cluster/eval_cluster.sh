@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
-#SBATCH --gpus=gpu:rtx_4090:1
+#SBATCH --gpus=gpu:rtx_3090:1
 #SBATCH --time=2:00:00
 #SBATCH --mem-per-cpu=8G
-#SBATCH --job-name="eval-$(date +"%Y-%m-%dT%H:%M")"
+#SBATCH --job-name="eval"
 #SBATCH --output=%j_eval.out
 
 # Disable audio and set dummy display for cluster nodes
@@ -25,9 +25,9 @@ eval "$($CONDA_ROOT/bin/conda shell.bash hook)"
 conda activate $CONDA_ENV
 
 # Set environment variables and run evaluation
-export DATASET_PATH=/cluster/home/alesweber/TerraProject/terra/data/terra/train/
-export DATASET_SIZE=200
+export DATASET_PATH=/cluster/project/rsl/alesweber/TerraProject/terra/data/terra/train/
+export DATASET_SIZE=100
 
 # Change to the directory containing eval_mixed.py
-cd /cluster/home/alesweber/TerraProject/terra-baselines
-python eval_mixed.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-08-08-14-35-14_FINAL-eval-trench.pkl
+cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
+python eval_mixed.py --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-10-23-18-17-57.pkl

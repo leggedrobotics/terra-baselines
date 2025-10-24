@@ -17,7 +17,7 @@ from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
 from terra.config import EnvConfig
 import sys
-from train_mixed_agents import MixedAgentTrainConfig
+from train_mixed import MixedAgentTrainConfig
 sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
 
 def rollout_episode(
@@ -100,14 +100,14 @@ if __name__ == "__main__":
         "-nx",
         "--n_envs_x",
         type=int,
-        default=4,
+        default=3,
         help="Number of environments on x.",
     )
     parser.add_argument(
         "-ny",
         "--n_envs_y",
         type=int,
-        default=4,
+        default=3,
         help="Number of environments on y.",
     )
     parser.add_argument(
@@ -121,7 +121,7 @@ if __name__ == "__main__":
         "-o",
         "--out_path",
         type=str,
-        default="./potential-visualize-61-2agent-mixed-agents-skidsteer-skidsteer-local-2025-10-10-16-29-25.pkl.gif",
+        default="./potential-visualize-73-1agent-trenches-mixed-agents-skidsteer-skidsteer-local-2025-10-23-18-22-02.pkl.gif",
         #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )
