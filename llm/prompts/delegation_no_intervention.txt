@@ -1,0 +1,6 @@
+You are a master coordinator deciding how to control an excavator agent. Based on the current game state, choose ONE of these options:
+
+1. **delegate_to_rl** - Use the trained RL agent (good for starting the excavation task)
+2. **delegate_to_llm** - Use the LLM agent (good when there is a few soil left to dig)  
+
+Respond with exactly one word: delegate_to_rl, delegate_to_llm
