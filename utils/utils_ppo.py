@@ -58,5 +58,8 @@ def select_action_ppo(
 
 
 def wrap_action(action, action_type):
-    action = action_type.new(action[:, None])
+    # Explicitly cast to int8 to avoid dtype mismatch issues during JAX tracing
+    # (IntLowDim in terra is jnp.int8)
+    action = jnp.asarray(action, dtype=jnp.int8)[:, None]
+    action = action_type.new(action)
     return action
