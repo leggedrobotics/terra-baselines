@@ -3,7 +3,8 @@ Terra Baselines provides a set of tools to train and evaluate RL policies on the
 
 ## Features
 - Train on multiple devices using PPO with `train.py` (based on [XLand-MiniGrid](https://github.com/corl-team/xland-minigrid))
-- Generate metrics for your checkpoint with `eval.py`
+- **[Experimental]** AlphaZero-style training with MCTS self-play using `train_mcts_alphaZero.py`
+- Generate metrics for your checkpoint with `eval.py` (supports MCTS at inference)
 - Visualize rollouts of your checkpoint with `visualize.py`
 - Run a grid search on the hyperparameters with `train_sweep.py` (orchestrated with [wandb](https://wandb.ai/))
 
@@ -97,6 +98,92 @@ wandb agent $SWEEP_ID &
 wandb agent $SWEEP_ID &
 wait
 ```
+
+## AlphaZero-Style Training (Experimental)
+
+Train a policy using AlphaZero-style learning with MCTS self-play using `train_mcts_alphaZero.py`. This approach uses Monte Carlo Tree Search during data collection to generate improved policy targets.
+
+### How It Works
+
+1. **Self-Play with MCTS**: The agent plays episodes using MCTS to select actions. MCTS explores the game tree and produces action probabilities based on visit counts.
+2. **Policy Distillation**: The neural network is trained to match the MCTS policy (cross-entropy loss) and predict returns (MSE loss).
+3. **Iterative Improvement**: As the policy improves, MCTS produces better targets, creating a virtuous cycle.
+
+### Run Training
+
+```bash
+DATASET_PATH=/path/to/dataset DATASET_SIZE=1000 python train_mcts_alphaZero.py
+```
+
+### Configuration
+
+Key parameters in `TrainConfig`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `num_envs` | 256 | Number of parallel environments |
+| `num_simulations` | 64 | MCTS simulations per action |
+| `max_episode_steps` | 300 | Maximum steps per episode |
+| `batch_size` | 256 | Training batch size |
+| `gamma` | 0.99 | Discount factor |
+| `policy_lr` | 3e-4 | Learning rate |
+
+### Current Status & Known Issues
+
+> **Warning:** This implementation is experimental and may not achieve stable learning yet.
+
+**Potential improvements needed:**
+
+1. **Replay Buffer** - Currently trains only on the most recent rollout data. AlphaZero typically uses a replay buffer (500K-1M samples) to maintain diversity and prevent catastrophic forgetting.
+
+2. **Reduced Training Steps** - Training on all 76,800 samples (300 steps × 256 envs) per iteration may cause overfitting. Consider limiting to ~32 batches per iteration.
+
+3. **Value Normalization** - Returns can vary in scale. Normalizing returns before training may help balance policy and value losses.
+
+4. **Exploration Decay** - The `gumbel_scale` parameter controls exploration. Consider decreasing it over training.
+
+### Example Fix: Adding a Replay Buffer
+
+```python
+from collections import deque
+import numpy as np
+
+class ReplayBuffer:
+    def __init__(self, max_size=500_000):
+        self.buffer = deque(maxlen=max_size)
+    
+    def add_batch(self, obs_dict, prev_actions, pi, returns):
+        batch_size = returns.shape[0]
+        for i in range(batch_size):
+            self.buffer.append({
+                'obs': jax.tree.map(lambda x: x[i], obs_dict),
+                'prev_actions': prev_actions[i],
+                'pi': pi[i],
+                'returns': returns[i]
+            })
+    
+    def sample(self, batch_size):
+        indices = np.random.choice(len(self.buffer), batch_size, replace=False)
+        batch = [self.buffer[i] for i in indices]
+        return {
+            'obs': jax.tree.map(lambda *xs: jnp.stack(xs), *[b['obs'] for b in batch]),
+            'prev_actions': jnp.stack([b['prev_actions'] for b in batch]),
+            'pi': jnp.stack([b['pi'] for b in batch]),
+            'returns': jnp.stack([b['returns'] for b in batch])
+        }
+```
+
+### Monitoring Training
+
+Training logs to wandb with metrics:
+- `train/policy_loss` - Cross-entropy between network policy and MCTS policy
+- `train/value_loss` - MSE between predicted and actual returns
+- `eval/reward` - Average reward during evaluation
+- `eval/terminations` - Number of successful task completions
+
+A healthy training run should show decreasing policy loss as the network learns to match MCTS outputs.
+
+---
 
 ## Eval with Monte Carlo Tree Search
 Evaluate your checkpoint with standard metrics using
