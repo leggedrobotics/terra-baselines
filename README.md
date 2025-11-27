@@ -198,6 +198,8 @@ DATASET_PATH=/path/to/dataset DATASET_SIZE=<num_maps_per_type> python eval.py -r
 | `--debug` | Print detailed action comparisons for first 20 steps |
 | `-sim <N>` | Number of MCTS simulations (default: 32) |
 
+> ⚠️ **Dtype Note:** MCTS requires specific dtype handling for JAX compatibility. The `fix_env_cfg_dtypes()` function converts agent config fields to `int8` to prevent type promotion issues during tree search.
+
 Example with MCTS planning:
 ```
 DATASET_PATH=/path/to/dataset DATASET_SIZE=1000 python eval.py -run checkpoints/tracked-dense.pkl -n 32 -steps 300
