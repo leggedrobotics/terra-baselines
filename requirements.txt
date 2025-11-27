@@ -7,3 +7,4 @@ matplotlib
 pygame
 wandb
 tensorflow_probability
+mctx

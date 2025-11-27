@@ -161,7 +161,7 @@ This generates multi-panel plots showing:
 - Terrain change values and action map evolution
 - Combined overlays of all modifications
 
-## Baselines
+## Baselines (Without MCTS at inference)
 We train 2 models capable of solving both foundation and trench type of environments. They differentiate themselves based on the type of agent (wheeled or tracked), and the type of curriculum used to train them (dense reward with single level, or sparse reward with curriculum). All models are trained on 64x64 maps and are stored in the `checkpoints/` folder.
 
 | Checkpoint           | Map Type  | $C_r$ | $S_p$ | $S_w$ | $Coverage$ |
