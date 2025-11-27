@@ -21,9 +21,28 @@ from utils.utils_ppo import obs_to_model_input, wrap_action
 from utils.models import get_model_ready
 
 
+def fix_env_cfg_dtypes(env_cfgs):
+    """
+    Fix the dtypes in env_cfgs to prevent JAX type promotion issues.
+    Python ints in the config cause int32 promotion during JAX operations.
+    We need to ensure config values that are used in JAX ops have int8 dtype.
+    """
+    # Fix agent config integer fields that participate in JAX operations
+    fixed_agent = env_cfgs.agent._replace(
+        angles_base=jnp.int8(env_cfgs.agent.angles_base),
+        angles_cabin=jnp.int8(env_cfgs.agent.angles_cabin),
+        max_wheel_angle=jnp.int8(env_cfgs.agent.max_wheel_angle),
+        move_tiles=jnp.int8(env_cfgs.agent.move_tiles),
+        dig_depth=jnp.int8(env_cfgs.agent.dig_depth),
+        height=jnp.int8(env_cfgs.agent.height),
+        width=jnp.int8(env_cfgs.agent.width),
+    )
+    return env_cfgs._replace(agent=fixed_agent)
+
+
 @dataclass(frozen=True)
 class TrainConfig:
-    name: str = "medium-64sim-all-data-g2.0-continue"
+    name: str = "alphazero-fixed-v1"
     project: str = "terra-alphazero"
     group: str = "default"
 
@@ -38,23 +57,28 @@ class TrainConfig:
     num_simulations: int = 64
     value_target: str = "maxq"
 
-    batch_size: int = 32
-    policy_lr: float = 7e-5
-    value_lr: float = 7e-5
-    max_grad_norm: float = 0.1
+    batch_size: int = 256
+    policy_lr: float = 3e-4
+    value_lr: float = 3e-4
+    max_grad_norm: float = 0.5
 
     seed: int = 42
 
     log_interval: int = 1
-    eval_interval: int = 2
-    checkpoint_interval: int = 5
+    eval_interval: int = 5
+    checkpoint_interval: int = 10
 
     total_timesteps: int = 30_000_000_000
-    clip_action_maps = True
-    mask_out_arm_extension = True
-    local_map_normalization_bounds = [-16, 16]
-    loaded_max = 100
-    num_rollouts_eval = 300
+    clip_action_maps: bool = True
+    mask_out_arm_extension: bool = True
+    local_map_normalization_bounds: tuple = (-16, 16)
+    maps_net_normalization_bounds: tuple = (-16, 16)
+    loaded_max: int = 100
+    num_rollouts_eval: int = 300
+    
+    # Required by model
+    num_prev_actions: int = 5
+    num_test_rollouts: int = 32  # For evaluation
 
     def __getitem__(self, key):
         return getattr(self, key)
@@ -70,7 +94,13 @@ class SelfPlayTransition:
 
 
 def make_recurrent_fn(env: TerraEnvBatch, apply_fn, gamma, config: TrainConfig):
-    """Build root & recurrent functions for mctx using the single network."""
+    """Build root & recurrent functions for mctx using the single network.
+    
+    Key fixes:
+    1. Properly tracks prev_actions through MCTS simulations
+    2. Handles terminal states correctly - zeros value/discount when done
+       to prevent MCTS from simulating across episode boundaries
+    """
 
     def env_step_fn(env_states, actions, rng):
         bsize = env_states.done.shape[0]
@@ -78,69 +108,116 @@ def make_recurrent_fn(env: TerraEnvBatch, apply_fn, gamma, config: TrainConfig):
         wrapped_acts = wrap_action(actions.astype(jnp.int32), env.batch_cfg.action_type)
         return env.step(env_states, wrapped_acts, rngs)
 
-    def root_fn(params, env_states):
-        obs_inp = obs_to_model_input(env_states.observation, config)
-        # the network returns (value, logits)
+    def root_fn(params, env_states, prev_actions):
+        """Create root node for MCTS. Embedding = (timestep, prev_actions)."""
+        obs_inp = obs_to_model_input(env_states.observation, prev_actions, config)
         v, logits = apply_fn(params, obs_inp)
         return mctx.RootFnOutput(
             prior_logits=logits,
             value=v[:, 0],
-            embedding=env_states
+            embedding=(env_states, prev_actions)
         )
 
     def recurrent_fn(params, rng_key, actions, embedding):
-        next_env_states = env_step_fn(embedding, actions, rng_key)
-        obs_inp = obs_to_model_input(next_env_states.observation, config)
+        """MCTS transition function with proper terminal state handling."""
+        env_states, prev_actions = embedding
+        
+        # Check if already done BEFORE stepping (to avoid simulating from reset states)
+        was_done = env_states.done
+        
+        # Step environment
+        next_env_states = env_step_fn(env_states, actions, rng_key)
+        
+        # Update prev_actions for the simulation
+        next_prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+        next_prev_actions = next_prev_actions.at[:, 0].set(actions)
+        
+        # Compute network outputs
+        obs_inp = obs_to_model_input(next_env_states.observation, next_prev_actions, config)
         v, logits = apply_fn(params, obs_inp)
-        reward  = next_env_states.reward
-        done    = next_env_states.done
-        discount= (1.0 - done) * gamma
+        
+        reward = next_env_states.reward
+        done = next_env_states.done
+        
+        # KEY FIX: Handle terminal states properly
+        # If was_done: we're simulating from a reset state (invalid), zero everything
+        # If done: episode just ended, zero future value/discount
+        terminal_mask = done | was_done
+        
+        # Zero reward for already-done states (those were invalid transitions)
+        safe_reward = jnp.where(was_done, 0.0, reward)
+        
+        # Zero discount for terminal states (no future value)
+        discount = jnp.where(terminal_mask, 0.0, gamma)
+        
+        # Zero value for terminal states
+        safe_value = jnp.where(terminal_mask, 0.0, v[:, 0])
+        
+        # Mask logits for terminal states to prevent further expansion
+        # (set to very negative so softmax gives ~uniform, but discount=0 prevents use)
+        masked_logits = jnp.where(
+            terminal_mask[:, None],
+            jnp.full_like(logits, -1e9),
+            logits
+        )
+        
         return mctx.RecurrentFnOutput(
-            reward=reward,
+            reward=safe_reward,
             discount=discount,
-            prior_logits=logits,
-            value=v[:, 0]
-        ), next_env_states
+            prior_logits=masked_logits,
+            value=safe_value
+        ), (next_env_states, next_prev_actions)
 
     return root_fn, recurrent_fn
 
 
 @partial(jit, static_argnames=("num_simulations", "env", "root_fn", "recurrent_fn", "config"))
-def one_mcts_step(rng, env, states, done_mask, params,
+def one_mcts_step(rng, env, states, prev_actions, params,
                   root_fn, recurrent_fn,
                   num_simulations,
                   config):
     """
-    A single environment step for *all* envs in 'states', skipping where done_mask=1.
+    A single MCTS-guided environment step for all envs in 'states'.
 
     1) MCTS => action, pi_mcts
     2) Env step => next state
-    3) Return (next_states, actions, pi_mcts).
+    3) Update prev_actions
+    4) Return (next_states, next_prev_actions, actions, pi_mcts).
     """
-    # invalid actions mask
     B = states.done.shape[0]
-    invalid_mask = jnp.zeros((B, 9), dtype=jnp.bool_)
-    invalid_mask = invalid_mask.at[:,-2].set(True).at[:,-3].set(True)
+    num_actions = 7  # Terra has 7 actions for tracked agent
+    
+    # Invalid actions mask (if needed - currently none masked)
+    invalid_mask = jnp.zeros((B, num_actions), dtype=jnp.bool_)
 
     rng, rng_mcts, rng_step = jrandom.split(rng, 3)
-    root = root_fn(params, states)
+    
+    # Create root with prev_actions
+    root = root_fn(params, states, prev_actions)
+    
+    # Run MCTS
     out = mctx.gumbel_muzero_policy(
         params=params,
         rng_key=rng_mcts,
         root=root,
         recurrent_fn=recurrent_fn,
         num_simulations=num_simulations,
-        invalid_actions=invalid_mask,   # <--- pass here
-        gumbel_scale=2.0,
+        invalid_actions=invalid_mask,
+        gumbel_scale=1.0,
     )
     actions = out.action            # shape [B]
     pi_mcts = out.action_weights    # shape [B, num_actions]
 
-    rngs_step = jrandom.split(rng_step, states.done.shape[0])
+    # Step environment
+    rngs_step = jrandom.split(rng_step, B)
     wrapped = wrap_action(actions.astype(jnp.int32), env.batch_cfg.action_type)
     next_states = env.step(states, wrapped, rngs_step)
+    
+    # Update prev_actions
+    next_prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+    next_prev_actions = next_prev_actions.at[:, 0].set(actions)
 
-    return rng, next_states, actions, pi_mcts
+    return rng, next_states, next_prev_actions, actions, pi_mcts
 
 
 def build_obs_buffer_template(obs_dict, max_steps):
@@ -198,156 +275,70 @@ def collect_episodes_jitted(
     root_fn,         # MCTS root function
     recurrent_fn,    # MCTS recurrent function
     config,
-    states
+    states,
+    prev_actions,    # [B, num_prev_actions]
 ):
+    """Collect self-play data using MCTS, keeping everything on GPU."""
     B = config.num_envs
     max_steps = config.max_episode_steps
+    num_actions = 7  # Terra tracked agent
 
-    # 1) Reset environment
-    # rng_keys = jax.random.split(rng, B)
-    # states   = env.reset(env_params, rng_keys)  # shape [B]
-
-    # 2) Prepare buffers
+    # Prepare buffers for observations, policies, prev_actions, rewards, dones
     obs_buf = build_obs_buffer_template(states.observation, max_steps)
-    num_actions = 9
     pi_buf = jnp.zeros((max_steps, B, num_actions), dtype=jnp.float32)
-
-    # (NEW) We'll also store the raw reward and done flag at each step
+    prev_actions_buf = jnp.zeros((max_steps, B, config.num_prev_actions), dtype=jnp.int32)
     reward_buf = jnp.zeros((max_steps, B), dtype=jnp.float32)
-    done_buf   = jnp.zeros((max_steps, B), dtype=jnp.bool_)
+    done_buf = jnp.zeros((max_steps, B), dtype=jnp.bool_)
 
     step0 = jnp.array(0, dtype=jnp.int32)
-    init_carry = (states, step0, rng, obs_buf, pi_buf, reward_buf, done_buf)
+    init_carry = (states, prev_actions, step0, rng, obs_buf, pi_buf, prev_actions_buf, reward_buf, done_buf)
 
     def cond_fun(carry):
-        (states, step, rng, obs_buf, pi_buf, reward_buf, done_buf) = carry
-        all_done = jnp.all(states.done)
+        (states, prev_actions, step, rng, obs_buf, pi_buf, prev_actions_buf, reward_buf, done_buf) = carry
         return step < max_steps
 
     def body_fun(carry):
-        (states, step, rng, obs_buf, pi_buf, reward_buf, done_buf) = carry
-        rng, next_states, actions, pi_mcts = one_mcts_step(
-            rng, env, states, states.done, params,
+        (states, prev_actions, step, rng, obs_buf, pi_buf, prev_actions_buf, reward_buf, done_buf) = carry
+        
+        # Run MCTS step
+        rng, next_states, next_prev_actions, actions, pi_mcts = one_mcts_step(
+            rng, env, states, prev_actions, params,
             root_fn, recurrent_fn, config.num_simulations, config
         )
 
-        # store current obs in obs_buf
+        # Store current obs
         obs_buf = jax.tree_map(
             lambda buf, val: buf.at[step].set(val),
             obs_buf,
             states.observation
         )
-        # store pi_mcts
+        # Store MCTS policy
         pi_buf = pi_buf.at[step].set(pi_mcts)
-
-        # (NEW) store the reward & done from NEXT state
+        # Store prev_actions (needed for training)
+        prev_actions_buf = prev_actions_buf.at[step].set(prev_actions)
+        # Store reward & done from NEXT state
         reward_buf = reward_buf.at[step].set(next_states.reward)
-        done_buf   = done_buf.at[step].set(next_states.done)
+        done_buf = done_buf.at[step].set(next_states.done)
 
-        return (next_states, step + 1, rng, obs_buf, pi_buf, reward_buf, done_buf)
+        return (next_states, next_prev_actions, step + 1, rng, obs_buf, pi_buf, prev_actions_buf, reward_buf, done_buf)
 
-    states_final, step_final, rng_final, obs_buf_final, pi_buf_final, reward_buf_final, done_buf_final = \
-        lax.while_loop(cond_fun, body_fun, init_carry)
+    final_carry = lax.while_loop(cond_fun, body_fun, init_carry)
+    (states_final, prev_actions_final, step_final, rng_final, 
+     obs_buf_final, pi_buf_final, prev_actions_buf_final, reward_buf_final, done_buf_final) = final_carry
 
-    ########################################
-    # (NEW) Post-processing: compute discounted returns for each step
-    ########################################
-    # step_final tells us how many time steps were actually used (<= max_steps).
-    # We'll slice the valid portion.
-    # reward_buf_used = reward_buf_final[:step_final]  # shape [step_final, B]
-    # done_buf_used   = done_buf_final[:step_final]    # shape [step_final, B]
-
-    # returns_buf has shape [step_final, B].
+    # Compute discounted returns
     returns_buf = discount_cumsum(reward_buf_final, done_buf_final, config.gamma)
 
-    ########################################
-    # Return everything we need
-    ########################################
     return (
-        obs_buf_final,      # dict-of-arrays [max_steps, B, ...]
-        pi_buf_final,       # [max_steps, B, num_actions]
-        returns_buf,        # (NEW) discounted returns, shape [step_final, B]
+        obs_buf_final,          # dict-of-arrays [max_steps, B, ...]
+        pi_buf_final,           # [max_steps, B, num_actions]
+        prev_actions_buf_final, # [max_steps, B, num_prev_actions]
+        returns_buf,            # [max_steps, B]
         step_final,
         rng_final,
-        states_final
+        states_final,
+        prev_actions_final,
     )
-
-# def collect_episodes(
-#     rng,
-#     env: TerraEnvBatch,
-#     env_params,
-#     params,
-#     root_fn,
-#     recurrent_fn,
-#     config: TrainConfig
-# ):
-#     """
-#     Collect up to config.max_episode_steps for config.num_envs in parallel, then store the data:
-#       obs[i] => pi[i], for each step in each environment,
-#       final_return = sum_of_rewards for that environment.
-#     """
-#     rng_keys = jrandom.split(rng, config.num_envs)
-#     states   = env.reset(env_params, rng_keys)  # shape [B]
-
-#     B = states.done.shape[0]
-#     done  = states.done
-#     step  = 0
-
-#     obs_buffers  = [[] for _ in range(B)]
-#     pi_buffers   = [[] for _ in range(B)]
-#     rew_buffers = [[] for _ in range(B)]   # <--- store step rewards
-
-#     rng_main = rng
-
-#     while (not bool(jnp.all(done))) and (step < config.max_episode_steps):
-#         rng_main, next_states, actions, pi_mcts = one_mcts_step(
-#             rng_main, env, states, done,
-#             params,
-#             root_fn, recurrent_fn,
-#             config.num_simulations,
-#             config
-#         )
-#         done_np = jax.device_get(done)
-#         states_obs_np = {}
-#         for k, arr in states.observation.items():
-#             states_obs_np[k] = jax.device_get(arr)
-#         pi_mcts_np = jax.device_get(pi_mcts)
-#         rew_np    = jax.device_get(next_states.reward)
-#         for i in range(B):
-#             if not done_np[i]:
-#                 sub_dict = {kk: states_obs_np[kk][i] for kk in states_obs_np.keys()}
-#                 obs_buffers[i].append(sub_dict)
-#                 pi_buffers[i].append(pi_mcts_np[i])
-#                 rew_buffers[i].append(float(rew_np[i]))  # store step reward as float
-
-#         done = jnp.logical_or(done, next_states.done)
-#         states = next_states
-#         step += 1
-
-#     transitions = []
-#     for i in range(B):
-#         # We have T = len(obs_buffers[i]) steps
-#         T = len(obs_buffers[i])
-#         if T==0: 
-#             continue
-#         # compute discounted return for each step
-#         returns = []
-#         running = 0.0
-#         for t in reversed(range(T)):
-#             running = rew_buffers[i][t] + config.gamma * running
-#             returns.append(running)
-#         returns.reverse()  # match forward indices
-
-#         for t in range(len(obs_buffers[i])):
-#             transitions.append(
-#                 SelfPlayTransition(
-#                     obs=obs_buffers[i][t],
-#                     pi_mcts=jnp.array(pi_buffers[i][t], dtype=jnp.float32),
-#                     final_return=returns[t]
-#                 )
-#             )
-#     return transitions, rng_main
-
 
 @partial(jit, static_argnames=("apply_fn",))
 def alpha_zero_loss(apply_fn, params, obs_batch, pi_batch, returns_batch):
@@ -411,6 +402,9 @@ def train_step(train_state: TrainState,
 
 
 def train_alphazero(config: TrainConfig):
+    """AlphaZero-style training with MCTS self-play."""
+    import time
+    
     # wandb
     run = wandb.init(
         project=config.project,
@@ -424,135 +418,138 @@ def train_alphazero(config: TrainConfig):
     rng = jrandom.PRNGKey(config.seed)
     env = TerraEnvBatch()
     env_params = EnvConfig()
-    env_params = jax.tree_map(lambda x: jnp.array(x).repeat(config.num_envs, axis=0), env_params)
+    env_params = jax.tree.map(lambda x: jnp.array(x).repeat(config.num_envs, axis=0), env_params)
+    
+    # Fix dtypes to prevent JAX type promotion issues during MCTS
+    env_params = fix_env_cfg_dtypes(env_params)
 
-    # Build network using get_model_ready (a single net for both policy & value)
+    # Build network
     network, network_params = get_model_ready(rng, config, env)
-    # Preload pretrained weights from checkpoint
-    log = helpers.load_pkl_object("checkpoints/medium-64sim-all-data-g2.0-debug.pkl")
-    network_params = log["model_params"]
+    
+    # Optionally load pretrained weights
+    # log = helpers.load_pkl_object("checkpoints/your-checkpoint.pkl")
+    # network_params = log["model_params"]
 
-    tx = optax.chain(optax.clip_by_global_norm(config.max_grad_norm), optax.adam(config.policy_lr))
+    tx = optax.chain(
+        optax.clip_by_global_norm(config.max_grad_norm), 
+        optax.adam(config.policy_lr)
+    )
 
     train_state = TrainState.create(apply_fn=network.apply, params=network_params, tx=tx)
 
-    # Create recurrent functions using the single network
+    # Create recurrent functions for MCTS
     root_fn, rec_fn = make_recurrent_fn(env, network.apply, config.gamma, config)
-
-
-    # #evalutate at start
-    # eval_stats = eval_ppo.rollout(
-    #         rng, env, env_params,
-    #         train_state,
-    #         config
-    # )
-    # wandb.log({
-    #     "eval/reward": float(eval_stats.reward) / config.num_envs,
-    #     "eval/max_reward": float(eval_stats.max_reward),
-    #     "eval/min_reward": float(eval_stats.min_reward),
-    #     "eval/episodes": float(eval_stats.episodes),
-    #     "eval/terminations": float(eval_stats.terminations),
-    #     "eval/positive_terminations": float(eval_stats.positive_terminations),
-    # }, step=0)  
-    # print("Eval stats: ", {
-    #     "eval/reward": float(eval_stats.reward) / config.num_envs,
-    #     "eval/max_reward": float(eval_stats.max_reward),
-    #     "eval/min_reward": float(eval_stats.min_reward),
-    #     "eval/episodes": float(eval_stats.episodes),
-    #     "eval/terminations": float(eval_stats.terminations),
-    #     "eval/positive_terminations": float(eval_stats.positive_terminations),
-    # })
 
     B = config.num_envs
 
-    rng_keys = jax.random.split(rng, B)
-    states   = env.reset(env_params, rng_keys)  # shape [B]
+    # Initialize environment and prev_actions
+    rng, rng_reset = jrandom.split(rng)
+    rng_keys = jrandom.split(rng_reset, B)
+    states = env.reset(env_params, rng_keys)
+    prev_actions = jnp.zeros((B, config.num_prev_actions), dtype=jnp.int32)
 
+    print(f"Starting AlphaZero training with {B} environments, {config.num_simulations} MCTS sims")
+    
     for iteration in range(config.num_iterations):
-        print("start collect episodes")
+        start_time = time.time()
+        
         # A) Collect data via MCTS self-play
         (
-            obs_buf,       # dict-of-arrays: [max_steps, B, ...]
-            pi_buf,        # [max_steps, B, num_actions]
-            returns_buf,   # (NEW) [step_final, B]
+            obs_buf,            # dict-of-arrays: [max_steps, B, ...]
+            pi_buf,             # [max_steps, B, num_actions]
+            prev_actions_buf,   # [max_steps, B, num_prev_actions]
+            returns_buf,        # [max_steps, B]
             step_final,
             rng,
-            states_final
+            states_final,
+            prev_actions_final,
         ) = collect_episodes_jitted(
             rng, env, env_params,
             train_state.params,
             root_fn, rec_fn, config,
-            states
+            states, prev_actions
         )
 
+        # Continue from where we left off
         states = states_final
+        prev_actions = prev_actions_final
         
+        collect_time = time.time() - start_time
 
-        # B) Flatten or slice time+batch dimension for training
-        # 'step_final' is how many steps we actually used.
-        # We slice obs_buf and pi_buf accordingly.
-        T = step_final  # integer <= max_steps
+        # B) Prepare training data
+        T = config.max_episode_steps  # Use full buffer since we run for max_steps
 
-        # slice each obs_dict from [max_steps, B, ...] -> [T, B, ...]
-        obs_dict_slice = jax.tree_map(lambda arr: arr[:T], obs_buf)
-        pi_buf_slice   = pi_buf[:T]  # shape [T, B, num_actions]
-
-        # flatten [T, B] -> [T*B]
-        obs_dict_flat = jax.tree_map(
+        # Flatten [T, B] -> [T*B]
+        obs_dict_flat = jax.tree.map(
             lambda arr: arr.reshape((T * B,) + arr.shape[2:]),
-            obs_dict_slice
+            obs_buf
         )
-        pi_buf_flat = pi_buf_slice.reshape((T * B, pi_buf.shape[-1]))
+        pi_buf_flat = pi_buf.reshape((T * B, pi_buf.shape[-1]))
+        prev_actions_flat = prev_actions_buf.reshape((T * B, config.num_prev_actions))
         returns_buf_flat = returns_buf.reshape((T * B,))
 
-        # C) Train in mini-batches
+        # C) Shuffle data for better training
+        rng, rng_shuffle = jrandom.split(rng)
         total_samples = T * B
-        idx = 0
+        perm = jrandom.permutation(rng_shuffle, total_samples)
+        
+        obs_dict_flat = jax.tree.map(lambda x: x[perm], obs_dict_flat)
+        pi_buf_flat = pi_buf_flat[perm]
+        prev_actions_flat = prev_actions_flat[perm]
+        returns_buf_flat = returns_buf_flat[perm]
+
+        # D) Train in mini-batches
+        train_start = time.time()
         batch_size = config.batch_size
+        num_batches = total_samples // batch_size
         losses = []
 
-        while idx < total_samples:
-            slice_end = idx + batch_size
-            obs_dict_batch = jax.tree_map(lambda x: x[idx:slice_end], obs_dict_flat)
-            pi_batch       = pi_buf_flat[idx:slice_end]
-            ret_batch      = returns_buf_flat[idx:slice_end]
-            idx = slice_end
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * batch_size
+            end_idx = start_idx + batch_size
+            
+            obs_dict_batch = jax.tree.map(lambda x: x[start_idx:end_idx], obs_dict_flat)
+            pi_batch = pi_buf_flat[start_idx:end_idx]
+            prev_actions_batch = prev_actions_flat[start_idx:end_idx]
+            ret_batch = returns_buf_flat[start_idx:end_idx]
 
-            # convert to model input
-            inp = obs_to_model_input(obs_dict_batch, config)
+            # Convert to model input (with prev_actions)
+            inp = obs_to_model_input(obs_dict_batch, prev_actions_batch, config)
 
-            # single step of gradient descent
+            # Gradient step
             train_state, (loss_val, pol_l, val_l, reg_l) = train_step(
                 train_state, inp, pi_batch, ret_batch, network.apply
             )
             losses.append((loss_val, pol_l, val_l, reg_l))
 
+        train_time = time.time() - train_start
+
+        # Compute mean losses
         if losses:
-            arr_loss = jnp.array([l[0] for l in losses])
-            arr_pl   = jnp.array([l[1] for l in losses])
-            arr_vl   = jnp.array([l[2] for l in losses])
-            arr_rl   = jnp.array([l[3] for l in losses])
-
-            mean_loss = float(arr_loss.mean())
-            mean_pl   = float(arr_pl.mean())
-            mean_vl   = float(arr_vl.mean())
-            mean_rl   = float(arr_rl.mean())
+            mean_loss = float(jnp.mean(jnp.array([l[0] for l in losses])))
+            mean_pl = float(jnp.mean(jnp.array([l[1] for l in losses])))
+            mean_vl = float(jnp.mean(jnp.array([l[2] for l in losses])))
+            mean_rl = float(jnp.mean(jnp.array([l[3] for l in losses])))
         else:
-            mean_loss = 0
-            mean_pl   = 0
-            mean_vl   = 0
-            mean_rl = 0
+            mean_loss = mean_pl = mean_vl = mean_rl = 0
 
+        # Log to wandb
         wandb.log({
             "iteration": iteration,
             "train/total_loss": mean_loss,
             "train/policy_loss": mean_pl,
-            "train/value_loss":  mean_vl,
-            "train/regularization_loss": mean_rl
+            "train/value_loss": mean_vl,
+            "train/regularization_loss": mean_rl,
+            "timing/collect_time": collect_time,
+            "timing/train_time": train_time,
+            "timing/samples_per_sec": total_samples / (collect_time + train_time),
         }, step=iteration)
 
-        # Evaluate raw policy
-        if (iteration+1) % config.eval_interval == 0:
+        print(f"Iter {iteration}: loss={mean_loss:.4f} (pol={mean_pl:.4f}, val={mean_vl:.4f}) | "
+              f"collect={collect_time:.1f}s, train={train_time:.1f}s")
+
+        # Evaluate
+        if (iteration + 1) % config.eval_interval == 0:
             eval_stats = eval_ppo.rollout(
                 rng, env, env_params,
                 train_state,
@@ -566,29 +563,20 @@ def train_alphazero(config: TrainConfig):
                 "eval/terminations": float(eval_stats.terminations),
                 "eval/positive_terminations": float(eval_stats.positive_terminations),
             }, step=iteration)
+            print(f"  Eval: reward={float(eval_stats.reward)/config.num_envs:.2f}, "
+                  f"terminations={float(eval_stats.terminations)}")
 
-            # log action counts
-            wandb.log({
-                "action_counts/action_0": float(eval_stats.action_0) / config.num_envs,
-                "action_counts/action_1": float(eval_stats.action_1) / config.num_envs,
-                "action_counts/action_2": float(eval_stats.action_2) / config.num_envs,
-                "action_counts/action_3": float(eval_stats.action_3) / config.num_envs,
-                "action_counts/action_4": float(eval_stats.action_4) / config.num_envs,
-                "action_counts/action_5": float(eval_stats.action_5) / config.num_envs,
-                "action_counts/action_6": float(eval_stats.action_6) / config.num_envs,
-                "action_counts/action_7": float(eval_stats.action_7) / config.num_envs,
-                "action_counts/action_8": float(eval_stats.action_8) / config.num_envs,
-            }, step=iteration)
-
-        # checkpoint
-        if (iteration+1) % config.checkpoint_interval == 0:
+        # Checkpoint
+        if (iteration + 1) % config.checkpoint_interval == 0:
             ckpt = {
                 "iteration": iteration,
                 "model_params": train_state.params,
+                "model": train_state.params,  # For compatibility with eval.py
                 "train_config": config,
                 "env_config": env_params,
             }
             helpers.save_pkl_object(ckpt, f"checkpoints/{config.name}.pkl")
+            print(f"  Saved checkpoint to checkpoints/{config.name}.pkl")
 
     run.finish()
     return train_state
