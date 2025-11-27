@@ -98,11 +98,30 @@ wandb agent $SWEEP_ID &
 wait
 ```
 
-## Eval
+## Eval with Monte Carlo Tree Search
 Evaluate your checkpoint with standard metrics using
 ```
 DATASET_PATH=/path/to/dataset DATASET_SIZE=<num_maps_per_type> python eval.py -run <checkpoint_path> -n <num_environments> -steps <num_steps>
 ```
+
+### Options
+| Flag | Description |
+|------|-------------|
+| `--no-mcts` | Use greedy PPO policy instead of MCTS |
+| `--debug` | Print detailed action comparisons for first 20 steps |
+| `-sim <N>` | Number of MCTS simulations (default: 32) |
+
+Example with MCTS planning:
+```
+DATASET_PATH=/path/to/dataset DATASET_SIZE=1000 python eval.py -run checkpoints/tracked-dense.pkl -n 32 -steps 300
+```
+
+Example with greedy PPO (faster, no tree search):
+```
+DATASET_PATH=/path/to/dataset DATASET_SIZE=1000 python eval.py -run checkpoints/tracked-dense.pkl -n 32 -steps 300 --no-mcts
+```
+
+> **Note:** `eval_legacy.py` contains the original evaluation script without MCTS support.
 
 ## Visualize
 Visualize the rollout of your policy with
