@@ -26,8 +26,8 @@ conda activate $CONDA_ENV
 
 # Set environment variables and run evaluation
 export DATASET_PATH=/cluster/project/rsl/alesweber/TerraProject/terra/data/terra/train/
-export DATASET_SIZE=100
+export DATASET_SIZE=200
 
 # Change to the directory containing eval_mixed.py
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
-python eval_mixed.py --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-10-23-18-17-57.pkl
+python eval_mixed.py --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-12-05-16-26-20.pkl

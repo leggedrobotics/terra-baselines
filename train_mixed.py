@@ -87,7 +87,7 @@ class MixedAgentTrainConfig:
     num_steps: int = 32  
     update_epochs: int = 2 
     num_minibatches: int = 16 
-    total_timesteps: int = 80_000_000_000  
+    total_timesteps: int = 50_000_000_000  
     lr: float = 3e-4   
     clip_eps: float = 0.2 
     gamma: float = 0.9984 
@@ -98,8 +98,8 @@ class MixedAgentTrainConfig:
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 1  # Number of updates between logging train stats
-    log_eval_interval: int = 20  
-    checkpoint_interval: int = 50  
+    log_eval_interval: int = 30  
+    checkpoint_interval: int = 100  
     
     # Model settings optimized for mixed agents
     num_prev_actions = 10  # will be overridden to 5 * num_agents at runtime
@@ -834,11 +834,11 @@ if __name__ == "__main__":
         help="Learning rate"
     )
     parser.add_argument(
-        "--agent_types", type=str, default="(0,2)",
+        "--agent_types", type=str, default="(2,)",   # 0=excavator, 1=truck, 2=skidsteer
         help="Override agent types with a Python tuple, e.g. '(2,0,2,0)'"
     )
     parser.add_argument(
-        "--action_types", type=str, default="(0,0)",
+        "--action_types", type=str, default="(0,)",
         help="Override action types with a Python tuple, e.g. '(1)' for wheeled"
     )
     parser.add_argument(

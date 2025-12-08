@@ -4,8 +4,8 @@
 #SBATCH --gpus=gpu:2
 #SBATCH --time=4:00:00
 #SBATCH --mem-per-cpu=4G
-#SBATCH --job-name="visualization-$(date +"%Y-%m-%dT%H:%M")"
-#SBATCH --output=%j_visualization.out
+#SBATCH --job-name="extract-$(date +"%Y-%m-%dT%H:%M")"
+#SBATCH --output=%j_extract.out
 
 # Disable audio and set dummy display for cluster nodes
 export SDL_AUDIODRIVER=dummy
@@ -25,14 +25,14 @@ eval "$($CONDA_ROOT/bin/conda shell.bash hook)"
 conda activate $CONDA_ENV
 
 # Set environment variables and run visualization
-export DATASET_PATH=/cluster/project/rsl/alesweber/TerraProject/terra/data/terra/train/
-export DATASET_SIZE=25
+export DATASET_PATH=/cluster/project/rsl/alesweber/TerraProject/terra-baselines/isaac_sim/
+export DATASET_SIZE=1
 
 
 # Change to the directory containing visualize.py
-cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
+cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines/isaac_sim
 #JAX_PLATFORMS=cpu  python visualize_mixed.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-08-08-13-52-00.pkl
-python visualize_mixed.py --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-12-04-10-45-39.pkl
+python extract_map.py -policy /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-11-26-18-12-50.pkl
 #mixed-agents-skidsteer-skidsteer-local-2025-08-07-16-58-21_FINAL.pkl
 
 #JAX_PLATFORMS=cpu 

@@ -174,3 +174,7 @@ tools/
 *.gif
 *.out
 *.png
+*.txt
+*.json
+*.svg
+*.pdf
