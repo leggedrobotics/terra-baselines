@@ -267,7 +267,7 @@ This table provides a high-level overview of the environment setups. Click the l
 | **Git commit (terra-baselines)** | [`8d5ebbde`](https://github.com/leggedrobotics/terra-baselines/commit/8d5ebbdeedc45885096109f83ff08a463185ce0a) | |
 | **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,1)" --action_types "(0,0)"` |
 | **Eval script** | `terra-baselines/eval_mixed.py` | |
-| **Map generation path** | `terra/terra/env_generation/generate_foundations_dumpzones_v3.py` | **<-- UPDATED PATH** |
+| **Map generation path** | `terra/terra/env_generation/generate_foundations_dumpzones_v3.py` | |
 | **Distance map path** | `terra/tools/generate_distance_maps.py` | |
 
 #### 3.2 Foundations (Dumpzone) - Multi Agent - Excavator and Truck Roads
