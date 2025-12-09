@@ -191,7 +191,7 @@ This table provides a high-level overview of the environment setups. Click the l
 | **Agents Type** | `0` (**excavator**) | |
 | **Action Type** | `0` (tracked) | |
 | **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
-| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Git commit (terra-baselines)** | [`8d5ebbde`](https://github.com/leggedrobotics/terra-baselines/commit/8d5ebbdeedc45885096109f83ff08a463185ce0a) | |
 | **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,)" --action_types "(0,)"` |
 | **Eval script** | `terra-baselines/eval_mixed.py` | |
 | **Map generation path** | `terra/terra/env_generation/generate_relocations_harder.py` | |
@@ -207,7 +207,7 @@ This table provides a high-level overview of the environment setups. Click the l
 | **Agents Type** | `2` (**skidsteer**) | |
 | **Action Type** | `0` (tracked) | |
 | **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
-| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Git commit (terra-baselines)** | [`8d5ebbde`](https://github.com/leggedrobotics/terra-baselines/commit/8d5ebbdeedc45885096109f83ff08a463185ce0a) | |
 | **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(2,)" --action_types "(0,)"` |
 | **Eval script** | `terra-baselines/eval_mixed.py` | |
 | **Map generation path** | `terra/terra/env_generation/generate_relocations_harder.py` | |
@@ -227,7 +227,7 @@ This table provides a high-level overview of the environment setups. Click the l
 | **Agents Type** | `0` (**excavator**) | |
 | **Action Type** | `0` (tracked) | |
 | **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
-| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Git commit (terra-baselines)** | [`8d5ebbde`](https://github.com/leggedrobotics/terra-baselines/commit/8d5ebbdeedc45885096109f83ff08a463185ce0a) | |
 | **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,)" --action_types "(0,)"` |
 | **Eval script** | `terra-baselines/eval_mixed.py` | |
 | **Map generation path** | `terra/terra/env_generation/generate_dataset.py` | |
@@ -247,7 +247,7 @@ This table provides a high-level overview of the environment setups. Click the l
 | **Agents Type** | `0,2` (**excavator, skidsteer**) | |
 | **Action Type** | `0,0` (tracked, tracked) | |
 | **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
-| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Git commit (terra-baselines)** | [`8d5ebbde`](https://github.com/leggedrobotics/terra-baselines/commit/8d5ebbdeedc45885096109f83ff08a463185ce0a) | |
 | **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,2)" --action_types "(0,0)"` |
 | **Eval script** | `terra-baselines/eval_mixed.py` | |
 | **Map generation path** | `terra/terra/env_generation/generate_foundations_dumpzones_v3.py` | |
@@ -264,7 +264,7 @@ This table provides a high-level overview of the environment setups. Click the l
 | **Action Type** | `0,0` (tracked, tracked) | |
 | **truck_road_restricted** | `False` | Set in terra config.py |
 | **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
-| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Git commit (terra-baselines)** | [`8d5ebbde`](https://github.com/leggedrobotics/terra-baselines/commit/8d5ebbdeedc45885096109f83ff08a463185ce0a) | |
 | **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,1)" --action_types "(0,0)"` |
 | **Eval script** | `terra-baselines/eval_mixed.py` | |
 | **Map generation path** | `terra/terra/env_generation/generate_foundations_dumpzones_v3.py` | **<-- UPDATED PATH** |
@@ -281,7 +281,7 @@ This table provides a high-level overview of the environment setups. Click the l
 | **Action Type** | `0,0` (tracked, tracked) | |
 | **truck_road_restricted** | `True` | Set in terra config.py |
 | **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
-| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Git commit (terra-baselines)** | [`8d5ebbde`](https://github.com/leggedrobotics/terra-baselines/commit/8d5ebbdeedc45885096109f83ff08a463185ce0a) | |
 | **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,1)" --action_types "(0,0)"` |
 | **Eval script** | `terra-baselines/eval_mixed.py` | |
 | **Map generation path** | `terra/terra/env_generation/generate_foundations_roads.py` | |
@@ -302,7 +302,7 @@ This table provides a high-level overview of the environment setups. Click the l
 | **Action Type** | `0,0,0` (tracked, tracked, tracked) | |
 | **truck_road_restricted** | `True` | Set in terra config.py |
 | **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
-| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Git commit (terra-baselines)** | [`8d5ebbde`](https://github.com/leggedrobotics/terra-baselines/commit/8d5ebbdeedc45885096109f83ff08a463185ce0a) | |
 | **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,0,1)" --action_types "(0,0,0)"` |
 | **Eval script** | `terra-baselines/eval_mixed.py` | |
 | **Map generation path** | `terra/terra/env_generation/generate_foundations_roads.py` | |
