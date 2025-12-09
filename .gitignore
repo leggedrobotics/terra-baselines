@@ -178,3 +178,9 @@ tools/
 *.json
 *.svg
 *.pdf
+
+visualize_distance_potential.py
+visualize_geodesic_snake.py
+visualize_soil_collapse.py
+multi_agent_telescoping_flowchart.py
+plot_evaluation_results.py
