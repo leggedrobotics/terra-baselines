@@ -243,9 +243,12 @@ def rollout_episode(
 
     # Workspaces efficiency -- only include finished envs
     reference_workspace_area = 0.5 * np.pi * (8**2)
-    team_do_events = per_agent_do_events[0] + per_agent_do_events.get(1, 0) + per_agent_do_events.get(2, 0)
-    n_dig_actions = team_do_events // 2
-    workspaces_efficiency = (reference_workspace_area * (n_dig_actions / areas))[episode_done_once]
+    # Excavators and skidsteers: 2 DO events per cycle (dig + dump), trucks: 1 DO event per dump (loading is automatic)
+    excavator_ops = per_agent_do_events[0] // 2  # dig-dump cycles
+    skidsteer_ops = per_agent_do_events.get(2, 0) // 2  # dig-dump cycles
+    truck_ops = per_agent_do_events.get(1, 0)  # dump operations (no division, loading is automatic)
+    team_workspace_ops = excavator_ops + skidsteer_ops + truck_ops
+    workspaces_efficiency = (reference_workspace_area * (team_workspace_ops / areas))[episode_done_once]
     workspaces_efficiency_mean = workspaces_efficiency.mean()
     workspaces_efficiency_std = workspaces_efficiency.std()
 
@@ -329,12 +332,16 @@ def rollout_episode(
         except Exception:
             per_agent_path_eff_mean[k] = jnp.array(0.0)
 
-    # Per-agent workspace efficiency: reference_area * (do_events//2 / area)
+    # Per-agent workspace efficiency: reference_area * (operations / area)
+    # Excavators/skidsteers: divide by 2 (dig-dump cycles), trucks: no division (dump operations)
     per_agent_workspace_eff_mean = {}
     for k, v in per_agent_do_events.items():
         try:
-            n_dig = (v // 2)
-            ws_eff = jnp.where(episode_done_once, reference_workspace_area * (n_dig / areas), 0)
+            if k == 1:  # Truck: each DO event is 1 operation (dump only, loading is automatic)
+                n_ops = v
+            else:  # Excavator (0) or Skidsteer (2): divide by 2 (dig-dump cycles)
+                n_ops = v // 2
+            ws_eff = jnp.where(episode_done_once, reference_workspace_area * (n_ops / areas), 0)
             per_agent_workspace_eff_mean[k] = ws_eff.sum() / jnp.maximum(episode_done_once.sum(), 1)
         except Exception:
             per_agent_workspace_eff_mean[k] = jnp.array(0.0)

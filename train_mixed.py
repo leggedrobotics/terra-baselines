@@ -834,7 +834,7 @@ if __name__ == "__main__":
         help="Learning rate"
     )
     parser.add_argument(
-        "--agent_types", type=str, default="(2,)",   # 0=excavator, 1=truck, 2=skidsteer
+        "--agent_types", type=str, default="(0,)",   # 0=excavator, 1=truck, 2=skidsteer
         help="Override agent types with a Python tuple, e.g. '(2,0,2,0)'"
     )
     parser.add_argument(

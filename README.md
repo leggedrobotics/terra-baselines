@@ -155,3 +155,155 @@ Here's a collection of rollouts for the models we trained.
 ![img](assets/tracked-dense.gif)
 #### `wheeled-dense.pkl`
 ![img](assets/wheeled-dense.gif)
+
+
+## 🏗️ Terra Environment Setup Catalog
+
+This document is a **manual catalog** of all experimental setups used in the paper, including maps, agents, and configurations.
+
+---
+
+### Summary of Experimental Setups
+
+This table provides a high-level overview of the environment setups. Click the links for the detailed setup configuration.
+
+| Setup Name | Category | Map Family | Agents Type | Action Type | Details Link |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Single Agent Relocation (Excavator)** | relocation | `relocations_harder` | `0` (excavator) | `0` (tracked) | [Setup 1.1](#11-relocations-harder--single-agent---excavator) |
+| **Single Agent Relocation (Skidsteer)** | relocation | `relocations_harder` | `2` (skidsteer) | `0` (tracked) | [Setup 1.2](#12-relocations-harder--single-agent---skidsteer) |
+| **Single Agent Foundation** | foundation | `foundations` | `0` (excavator) | `0` (tracked) | [Setup 2.1](#21-foundation--single-agent) |
+| **Excavator and Skidsteer** | foundation with dumpzones | `foundations_dumpzones_v3` | `0,2` | `0,0` | [Setup 3.1](#31-foundations-dumpzone---multi-agent---excavator-and-skidsteer) |
+| **Excavator and Truck No Roads** | foundation with dumpzones | `foundations_dumpzones_v3` | `0,1` | `0,0` | [Setup 3.2-A](#32-foundations-dumpzone---multi-agent---excavator-and-truck-no-roads) |
+| **Excavator and Truck Roads** | foundation with dumpzones | `foundations_dumpzones_roads` | `0,1` | `0,0` | [Setup 3.2-B](#32-foundations-dumpzone---multi-agent---excavator-and-truck-roads) |
+| **Excavators and Truck Roads** | foundation with dumpzones | `foundations_dumpzones_roads` | `0,0,1` | `0,0,0` | [Setup 4.1](#4-foundation-maps-dumpzone---triple-agent) |
+
+---
+
+### 1. Relocation Maps
+
+#### 1.1 Relocations (Harder) – Single Agent - Excavator
+
+| Parameter | Value | Notes |
+| :--- | :--- | :--- |
+| **Setup name** | Single Agent Relocation | |
+| **Category** | relocation | |
+| **Map family** | `relocations_harder` | |
+| **Agents Type** | `0` (**excavator**) | |
+| **Action Type** | `0` (tracked) | |
+| **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
+| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,)" --action_types "(0,)"` |
+| **Eval script** | `terra-baselines/eval_mixed.py` | |
+| **Map generation path** | `terra/terra/env_generation/generate_relocations_harder.py` | |
+| **Distance map path** | `terra/tools/generate_distance_maps.py` | |
+
+#### 1.2 Relocations (Harder) – Single Agent - Skidsteer
+
+| Parameter | Value | Notes |
+| :--- | :--- | :--- |
+| **Setup name** | Single Agent Relocation | |
+| **Category** | relocation | |
+| **Map family** | `relocations_harder` | |
+| **Agents Type** | `2` (**skidsteer**) | |
+| **Action Type** | `0` (tracked) | |
+| **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
+| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(2,)" --action_types "(0,)"` |
+| **Eval script** | `terra-baselines/eval_mixed.py` | |
+| **Map generation path** | `terra/terra/env_generation/generate_relocations_harder.py` | |
+| **Distance map path** | `terra/tools/generate_distance_maps.py` | |
+
+---
+
+### 2. Foundation Maps (Normal)
+
+#### 2.1 Foundation – Single Agent
+
+| Parameter | Value | Notes |
+| :--- | :--- | :--- |
+| **Setup name** | Single Agent Foundation | |
+| **Category** | foundation | |
+| **Map family** | `foundations` | |
+| **Agents Type** | `0` (**excavator**) | |
+| **Action Type** | `0` (tracked) | |
+| **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
+| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,)" --action_types "(0,)"` |
+| **Eval script** | `terra-baselines/eval_mixed.py` | |
+| **Map generation path** | `terra/terra/env_generation/generate_dataset.py` | |
+| **Distance map path** | `terra/tools/generate_distance_maps.py` | |
+
+---
+
+### 3. Foundation Maps (Dumpzone) - Multi Agent
+
+#### 3.1 Foundations (Dumpzone) - Multi Agent - Excavator and Skidsteer
+
+| Parameter | Value | Notes |
+| :--- | :--- | :--- |
+| **Setup name** | Excavator and Skidsteer | |
+| **Category** | foundation with dumpzones | |
+| **Map family** | `foundations_dumpzones_v3` | |
+| **Agents Type** | `0,2` (**excavator, skidsteer**) | |
+| **Action Type** | `0,0` (tracked, tracked) | |
+| **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
+| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,2)" --action_types "(0,0)"` |
+| **Eval script** | `terra-baselines/eval_mixed.py` | |
+| **Map generation path** | `terra/terra/env_generation/generate_foundations_dumpzones_v3.py` | |
+| **Distance map path** | `terra/tools/generate_distance_maps.py` | |
+
+#### 3.2 Foundations (Dumpzone) - Multi Agent - Excavator and Truck No Roads
+
+| Parameter | Value | Notes |
+| :--- | :--- | :--- |
+| **Setup name** | Excavator and Truck No Roads | |
+| **Category** | foundation with dumpzones | |
+| **Map family** | `foundations_dumpzones_v3` | |
+| **Agents Type** | `0,1` (**excavator, truck**) | |
+| **Action Type** | `0,0` (tracked, tracked) | |
+| **truck_road_restricted** | `False` | Set in terra config.py |
+| **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
+| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,1)" --action_types "(0,0)"` |
+| **Eval script** | `terra-baselines/eval_mixed.py` | |
+| **Map generation path** | `terra/terra/env_generation/generate_foundations_dumpzones_v3.py` | **<-- UPDATED PATH** |
+| **Distance map path** | `terra/tools/generate_distance_maps.py` | |
+
+#### 3.2 Foundations (Dumpzone) - Multi Agent - Excavator and Truck Roads
+
+| Parameter | Value | Notes |
+| :--- | :--- | :--- |
+| **Setup name** | Excavator and Truck Roads | |
+| **Category** | foundation with dumpzones roads | |
+| **Map family** | `foundations_dumpzones_roads` | |
+| **Agents Type** | `0,1` (**excavator, truck**) | |
+| **Action Type** | `0,0` (tracked, tracked) | |
+| **truck_road_restricted** | `True` | Set in terra config.py |
+| **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
+| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,1)" --action_types "(0,0)"` |
+| **Eval script** | `terra-baselines/eval_mixed.py` | |
+| **Map generation path** | `terra/terra/env_generation/generate_foundations_roads.py` | |
+| **Distance map path** | `terra/tools/generate_distance_maps_roads.py` | |
+
+---
+
+### 4. Foundation Maps (Dumpzone) - Triple Agent
+
+#### 4.1 Excavators and Truck Roads
+
+| Parameter | Value | Notes |
+| :--- | :--- | :--- |
+| **Setup name** | Excavators and Truck Roads | |
+| **Category** | foundation with dumpzones roads| |
+| **Map family** | `foundations_dumpzones_roads` | |
+| **Agents Type** | `0,0,1` (**2 x excavator, truck**) | |
+| **Action Type** | `0,0,0` (tracked, tracked, tracked) | |
+| **truck_road_restricted** | `True` | Set in terra config.py |
+| **Git commit (terra)** | [`c2d063a8`](https://github.com/leggedrobotics/terra/commit/c2d063a8223958c8c7a378eaf9e40f056db23dc6) | |
+| **Git commit (terra-baselines)** | `[HASH_BASELINES](https://github.com/YOUR_ORG/terra-baselines/commit/HASH_BASELINES)` | **👈 REPLACE PLACEHOLDERS** |
+| **Training script** | `terra-baselines/train_mixed.py` | Command: `--agent_types "(0,0,1)" --action_types "(0,0,0)"` |
+| **Eval script** | `terra-baselines/eval_mixed.py` | |
+| **Map generation path** | `terra/terra/env_generation/generate_foundations_roads.py` | |
+| **Distance map path** | `terra/tools/generate_distance_maps_roads.py` | |
