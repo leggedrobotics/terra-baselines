@@ -1,86 +1,0 @@
-Many modules are hidden in this stack. Use "module --show_hidden spider SOFTWARE" if you are not able to find the required software
-wandb: Currently logged in as: aless-weber (aless-weber-eth). Use `wandb login --relogin` to force relogin
-ERROR:root:Driver not initialized (amdgpu not found in modules)
-wandb: wandb version 0.21.0 is available!  To upgrade, please run:
-wandb:  $ pip install wandb --upgrade
-wandb: Tracking run with wandb version 0.16.4
-wandb: Run data is saved locally in /cluster/home/alesweber/TerraProject/terra-baselines/wandb/run-20250728_164424-ig7tv3g3
-wandb: Run `wandb offline` to turn off syncing.
-wandb: Syncing run mixed-agents-skidsteer-skidsteer-local-2025-07-28-16-44-15
-wandb: ⭐️ View project at https://wandb.ai/aless-weber-eth/mixed-agents
-wandb: 🚀 View run at https://wandb.ai/aless-weber-eth/mixed-agents/runs/ig7tv3g3
-pygame 2.5.2 (SDL 2.28.2, Python 3.12.2)
-Hello from the pygame community. https://www.pygame.org/contribute.html
-🔄 Training Configuration: Mixed Agents (Tracked + Tracked)
-Devices: [cuda(id=0), cuda(id=1), cuda(id=2), cuda(id=3)]
-Mixed Agent Training - Devices: 4, Updates: 4768
-🤖 Fixed Agent Types: Agent1=Tracked (0), Agent2=Tracked (0)
-Loading maps from ['/cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones'].
-Data Loader:   0%|          | 0/600 [00:00<?, ?it/s]Data Loader:   1%|          | 5/600 [00:00<00:13, 44.76it/s]Data Loader:   2%|▏         | 11/600 [00:00<00:11, 51.20it/s]Data Loader:   3%|▎         | 17/600 [00:00<00:10, 53.34it/s]Data Loader:   4%|▍         | 23/600 [00:00<00:11, 50.19it/s]Data Loader:   5%|▍         | 29/600 [00:00<00:11, 47.85it/s]Data Loader:   6%|▌         | 34/600 [00:00<00:11, 48.23it/s]Data Loader:   7%|▋         | 40/600 [00:00<00:11, 48.94it/s]Data Loader:   8%|▊         | 45/600 [00:00<00:11, 48.79it/s]Data Loader:   8%|▊         | 50/600 [00:01<00:12, 44.56it/s]Data Loader:   9%|▉         | 55/600 [00:01<00:12, 43.79it/s]Data Loader:  10%|█         | 60/600 [00:01<00:12, 43.24it/s]Data Loader:  11%|█         | 65/600 [00:01<00:12, 43.58it/s]Data Loader:  12%|█▏        | 70/600 [00:01<00:11, 44.40it/s]Data Loader:  12%|█▎        | 75/600 [00:01<00:12, 43.66it/s]Data Loader:  13%|█▎        | 80/600 [00:01<00:12, 43.23it/s]Data Loader:  14%|█▍        | 85/600 [00:01<00:11, 44.89it/s]Data Loader:  15%|█▌        | 90/600 [00:01<00:11, 44.63it/s]Data Loader:  16%|█▌        | 95/600 [00:02<00:11, 44.47it/s]Data Loader:  17%|█▋        | 100/600 [00:02<00:11, 44.34it/s]Data Loader:  18%|█▊        | 105/600 [00:02<00:11, 44.31it/s]Data Loader:  18%|█▊        | 110/600 [00:02<00:11, 43.71it/s]Data Loader:  19%|█▉        | 115/600 [00:02<00:11, 43.15it/s]Data Loader:  20%|██        | 120/600 [00:02<00:10, 44.09it/s]Data Loader:  21%|██        | 125/600 [00:02<00:10, 44.78it/s]Data Loader:  22%|██▏       | 130/600 [00:02<00:10, 44.58it/s]Data Loader:  22%|██▎       | 135/600 [00:02<00:10, 43.77it/s]Data Loader:  23%|██▎       | 140/600 [00:03<00:10, 43.21it/s]Data Loader:  24%|██▍       | 145/600 [00:03<00:10, 43.47it/s]Data Loader:  25%|██▌       | 150/600 [00:03<00:09, 45.02it/s]Data Loader:  26%|██▌       | 155/600 [00:03<00:09, 44.73it/s]Data Loader:  27%|██▋       | 160/600 [00:03<00:10, 43.86it/s]Data Loader:  28%|██▊       | 166/600 [00:03<00:09, 46.45it/s]Data Loader:  28%|██▊       | 171/600 [00:03<00:09, 47.18it/s]Data Loader:  29%|██▉       | 176/600 [00:03<00:09, 46.97it/s]Data Loader:  30%|███       | 181/600 [00:03<00:09, 46.09it/s]Data Loader:  31%|███       | 186/600 [00:04<00:09, 44.74it/s]Data Loader:  32%|███▏      | 191/600 [00:04<00:09, 44.53it/s]Data Loader:  33%|███▎      | 196/600 [00:04<00:09, 44.41it/s]Data Loader:  34%|███▎      | 202/600 [00:04<00:08, 47.58it/s]Data Loader:  35%|███▍      | 208/600 [00:04<00:07, 49.81it/s]Data Loader:  36%|███▌      | 214/600 [00:04<00:07, 51.52it/s]Data Loader:  37%|███▋      | 220/600 [00:04<00:07, 52.86it/s]Data Loader:  38%|███▊      | 226/600 [00:04<00:07, 52.20it/s]Data Loader:  39%|███▊      | 232/600 [00:05<00:07, 52.46it/s]Data Loader:  40%|███▉      | 238/600 [00:05<00:06, 53.37it/s]Data Loader:  41%|████      | 244/600 [00:05<00:06, 53.94it/s]Data Loader:  42%|████▏     | 250/600 [00:05<00:06, 51.91it/s]Data Loader:  43%|████▎     | 256/600 [00:05<00:07, 48.16it/s]Data Loader:  44%|████▎     | 261/600 [00:05<00:07, 47.22it/s]Data Loader:  44%|████▍     | 266/600 [00:05<00:07, 46.99it/s]Data Loader:  45%|████▌     | 272/600 [00:05<00:06, 49.43it/s]Data Loader:  46%|████▌     | 277/600 [00:05<00:06, 48.12it/s]Data Loader:  47%|████▋     | 282/600 [00:06<00:06, 47.78it/s]Data Loader:  48%|████▊     | 287/600 [00:06<00:06, 47.32it/s]Data Loader:  49%|████▊     | 292/600 [00:06<00:06, 47.08it/s]Data Loader:  50%|████▉     | 297/600 [00:06<00:06, 46.18it/s]Data Loader:  50%|█████     | 302/600 [00:06<00:06, 46.29it/s]Data Loader:  51%|█████     | 307/600 [00:06<00:06, 47.10it/s]Data Loader:  52%|█████▏    | 312/600 [00:06<00:06, 45.47it/s]Data Loader:  53%|█████▎    | 317/600 [00:06<00:06, 44.38it/s]Data Loader:  54%|█████▎    | 322/600 [00:06<00:06, 44.34it/s]Data Loader:  55%|█████▍    | 327/600 [00:07<00:06, 44.28it/s]Data Loader:  55%|█████▌    | 332/600 [00:07<00:05, 44.98it/s]Data Loader:  56%|█████▋    | 338/600 [00:07<00:05, 47.46it/s]Data Loader:  57%|█████▋    | 343/600 [00:07<00:05, 46.46it/s]Data Loader:  58%|█████▊    | 348/600 [00:07<00:05, 46.52it/s]Data Loader:  59%|█████▉    | 353/600 [00:07<00:05, 44.99it/s]Data Loader:  60%|█████▉    | 358/600 [00:07<00:05, 44.24it/s]Data Loader:  60%|██████    | 363/600 [00:07<00:05, 43.54it/s]Data Loader:  61%|██████▏   | 368/600 [00:07<00:05, 43.06it/s]Data Loader:  62%|██████▏   | 373/600 [00:08<00:05, 42.80it/s]Data Loader:  63%|██████▎   | 378/600 [00:08<00:05, 43.24it/s]Data Loader:  64%|██████▍   | 383/600 [00:08<00:05, 42.93it/s]Data Loader:  65%|██████▍   | 388/600 [00:08<00:04, 42.71it/s]Data Loader:  66%|██████▌   | 393/600 [00:08<00:04, 42.55it/s]Data Loader:  66%|██████▋   | 398/600 [00:08<00:04, 42.43it/s]Data Loader:  67%|██████▋   | 403/600 [00:08<00:04, 42.99it/s]Data Loader:  68%|██████▊   | 408/600 [00:08<00:04, 42.75it/s]Data Loader:  69%|██████▉   | 413/600 [00:09<00:04, 43.08it/s]Data Loader:  70%|██████▉   | 418/600 [00:09<00:04, 43.27it/s]Data Loader:  70%|███████   | 423/600 [00:09<00:04, 42.93it/s]Data Loader:  71%|███████▏  | 428/600 [00:09<00:04, 42.69it/s]Data Loader:  72%|███████▏  | 433/600 [00:09<00:03, 43.13it/s]Data Loader:  73%|███████▎  | 438/600 [00:09<00:03, 42.81it/s]Data Loader:  74%|███████▍  | 443/600 [00:09<00:03, 42.64it/s]Data Loader:  75%|███████▍  | 448/600 [00:09<00:03, 43.19it/s]Data Loader:  76%|███████▌  | 453/600 [00:09<00:03, 44.19it/s]Data Loader:  76%|███████▋  | 458/600 [00:10<00:03, 44.47it/s]Data Loader:  77%|███████▋  | 463/600 [00:10<00:03, 45.01it/s]Data Loader:  78%|███████▊  | 468/600 [00:10<00:02, 45.48it/s]Data Loader:  79%|███████▉  | 473/600 [00:10<00:02, 45.83it/s]Data Loader:  80%|███████▉  | 478/600 [00:10<00:02, 46.08it/s]Data Loader:  80%|████████  | 483/600 [00:10<00:02, 45.50it/s]Data Loader:  82%|████████▏ | 489/600 [00:10<00:02, 47.39it/s]Data Loader:  82%|████████▎ | 495/600 [00:10<00:02, 49.00it/s]Data Loader:  83%|████████▎ | 500/600 [00:10<00:02, 49.09it/s]Data Loader:  84%|████████▍ | 505/600 [00:11<00:01, 47.60it/s]Data Loader:  85%|████████▌ | 510/600 [00:11<00:01, 47.28it/s]Data Loader:  86%|████████▌ | 515/600 [00:11<00:01, 47.09it/s]Data Loader:  87%|████████▋ | 520/600 [00:11<00:01, 46.94it/s]Data Loader:  88%|████████▊ | 525/600 [00:11<00:01, 45.42it/s]Data Loader:  88%|████████▊ | 530/600 [00:11<00:01, 44.39it/s]Data Loader:  89%|████████▉ | 535/600 [00:11<00:01, 44.36it/s]Data Loader:  90%|█████████ | 540/600 [00:11<00:01, 45.01it/s]Data Loader:  91%|█████████ | 546/600 [00:11<00:01, 47.28it/s]Data Loader:  92%|█████████▏| 551/600 [00:12<00:01, 46.98it/s]Data Loader:  93%|█████████▎| 556/600 [00:12<00:00, 46.78it/s]Data Loader:  94%|█████████▎| 561/600 [00:12<00:00, 46.76it/s]Data Loader:  94%|█████████▍| 566/600 [00:12<00:00, 46.02it/s]Data Loader:  95%|█████████▌| 571/600 [00:12<00:00, 46.13it/s]Data Loader:  96%|█████████▌| 576/600 [00:12<00:00, 47.04it/s]Data Loader:  97%|█████████▋| 581/600 [00:12<00:00, 45.38it/s]Data Loader:  98%|█████████▊| 586/600 [00:12<00:00, 45.03it/s]Data Loader:  98%|█████████▊| 591/600 [00:12<00:00, 44.11it/s]Data Loader:  99%|█████████▉| 596/600 [00:13<00:00, 44.14it/s]Data Loader: 100%|██████████| 600/600 [00:13<00:00, 45.77it/s]
-/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:344: DeprecationWarning: jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) or jax.tree_util.tree_map (any JAX version).
-  env_params = jax.tree_map(
-/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py:372: DeprecationWarning: jax.tree_leaves is deprecated: use jax.tree.leaves (jax v0.4.25 or newer) or jax.tree_util.tree_leaves (any JAX version).
-  print(f"🤖 Mixed Agent Network: {sum(x.size for x in jax.tree_leaves(network_params)):,} parameters")
-wandb: - 0.170 MB of 0.170 MB uploaded (0.031 MB deduped)wandb: \ 0.170 MB of 0.170 MB uploaded (0.031 MB deduped)wandb: | 0.170 MB of 0.170 MB uploaded (0.031 MB deduped)wandb: / 0.170 MB of 0.170 MB uploaded (0.031 MB deduped)wandb: - 0.210 MB of 0.220 MB uploaded (0.034 MB deduped)wandb: \ 0.210 MB of 0.220 MB uploaded (0.034 MB deduped)wandb: | 0.220 MB of 0.220 MB uploaded (0.034 MB deduped)wandb:                                                                                
-wandb: W&B sync reduced upload amount by 15.2%             
-wandb: 🚀 View run mixed-agents-skidsteer-skidsteer-local-2025-07-28-16-44-15 at: https://wandb.ai/aless-weber-eth/mixed-agents/runs/ig7tv3g3
-wandb: ️⚡ View job at https://wandb.ai/aless-weber-eth/mixed-agents/jobs/QXJ0aWZhY3RDb2xsZWN0aW9uOjY3OTA4ODc2MQ==/version_details/v30
-wandb: Synced 7 W&B file(s), 0 media file(s), 6 artifact file(s) and 1 other file(s)
-wandb: Find logs at: ./wandb/run-20250728_164424-ig7tv3g3/logs
-Loaded 600 maps from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
-Did NOT load any metadata file from /cluster/home/alesweber/TerraProject/terra/data/terra/train/foundations_dumpzones.
-Maps width: 64
-Maps height: 64
-Unique shapes of trench_axes_list: {(600, 3, 3)}
-Maps shape: (1, 600, 64, 64).
-Padding mask shape: (1, 600, 64, 64).
-Dumpability mask shape: (1, 600, 64, 64).
-Trench axes shape: (1, 600, 3, 3).
-Trench types shape: (1,).
-Actions shape: (1, 600, 64, 64).
-Mixed Agent Environment - Tile size shape: (4, 2048)
-num_embeddings_agent = 64
-map normalization min max = (-1, 1)
-Model: 419,680 parameters
-🤖 Mixed Agent Network: 419,680 parameters
-🔧 Agent Configuration: Agent1=Tracked (type 0), Agent2=Tracked (type 0)
-🧠 Network: Unified with agent type conditioning
-🚀 Starting Mixed Agent Training...
-============================================================
-📊 Configuration:
-   - Environments per device: 2048
-   - Total environments: 8192
-   - Training steps: 32
-   - Total timesteps: 5,000,000,000
-   - Learning rate: 0.0003
-   - Agent types: Tracked (0) + Tracked (0)
-
-🎯 Reward Configuration:
-   - Existence penalty: -0.05000000074505806
-   - Movement penalty: -0.10000000149011612
-   - Holding dirt penalty: -0.0
-   - Skid auto-load reward: 0.699999988079071
-   - Skid dump correct reward: 50.0
-   - Skid dump wrong penalty: -0.6000000238418579
-   - Move to dump zone reward: 0.0
-   - Skid lift shovel with dirt: 0.05000000074505806
-   - Skid move loaded shovel up: 0.019999999552965164
-   - Auto load dump zone penalty: -0.0
-   - Reward normalizer: 100.0
-============================================================
-📈 Wandb session finished.
-Traceback (most recent call last):
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 980, in <module>
-    train_mixed_agents(config)
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 836, in train_mixed_agents
-    train_info = jax.block_until_ready(train_with_monitoring(rng, train_state))
-                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 773, in train_with_monitoring
-    return modified_train(rng, train_state)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/cluster/home/alesweber/TerraProject/terra-baselines/train_mixed_agents.py", line 572, in modified_train
-    timestep = env.reset(env_params)
-               ^^^^^^^^^^^^^^^^^^^^^
-TypeError: TerraEnvBatch.reset() missing 1 required positional argument: 'rng_key'
---------------------
-For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.

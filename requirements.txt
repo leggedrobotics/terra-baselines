@@ -1,9 +1,0 @@
-jax
-jaxlib
-chex
-tqdm
-flax
-matplotlib
-pygame
-wandb
-tensorflow_probability
