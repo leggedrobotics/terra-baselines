@@ -6,6 +6,7 @@ import pickle
 import sys
 import re
 from pathlib import Path
+from typing import Any
 
 # Add the parent directory to the path so we can import utils
 sys.path.append(str(Path(__file__).parent.parent))
@@ -35,7 +36,70 @@ def _to_serializable(obj):
     return obj
 
 
-def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed):
+def _load_single_map_arrays(map_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    target = np.load(map_path / "images" / "img_1.npy")
+    occupancy = np.load(map_path / "occupancy" / "img_1.npy")
+    dumpability = np.load(map_path / "dumpability" / "img_1.npy")
+    return target, occupancy.astype(bool), dumpability.astype(bool)
+
+
+def _render_plan_gif(
+    plan: list[dict[str, Any]],
+    map_path: Path,
+    out_path: Path,
+    scale: int = 8,
+    duration_ms: int = 200,
+):
+    """Render a lightweight plan GIF (DO-waypoints only) without running the environment.
+
+    If the plan has 0 waypoints, render a single frame of the base map so the CLI
+    can still produce an artifact without failing.
+    """
+    from PIL import Image, ImageDraw
+
+    target, occupancy, dumpability = _load_single_map_arrays(map_path)
+    h, w = target.shape
+
+    def render_frame(entry):
+        dug_mask = np.asarray(entry.get("dug_mask", np.zeros((h, w), dtype=bool))).astype(bool)
+        dump_mask = np.asarray(entry.get("dump_mask", np.zeros((h, w), dtype=bool))).astype(bool)
+        pos = entry.get("agent_state", {}).get("pos_base", None)
+        agent_xy = (float(pos[0]), float(pos[1])) if pos is not None else None
+
+        rgb = np.full((h, w, 3), 245, dtype=np.uint8)
+        rgb[occupancy] = (20, 20, 20)
+        rgb[target < 0] = (255, 220, 220)
+        rgb[target > 0] = (220, 255, 220)
+        rgb[(~occupancy) & (~dumpability)] = (235, 235, 235)
+        rgb[dug_mask] = (70, 130, 255)
+        rgb[dump_mask] = (255, 170, 60)
+
+        img = Image.fromarray(rgb, mode="RGB").resize((w * scale, h * scale), Image.NEAREST)
+        if agent_xy is not None:
+            draw = ImageDraw.Draw(img)
+            x, y = agent_xy
+            cx = int(round(x * scale))
+            cy = int(round(y * scale))
+            r = max(2, scale // 2)
+            draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(0, 0, 0), width=2)
+        return img
+
+    frames = [render_frame(e) for e in plan] if plan else [render_frame({})]
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    frames[0].save(out_path, save_all=True, append_images=frames[1:], duration=duration_ms, loop=0)
+
+
+def extract_plan(
+    env,
+    model,
+    model_params,
+    env_cfgs,
+    rl_config,
+    max_frames,
+    seed,
+    render_rollout_gif: bool = False,
+    rollout_gif_every: int = 1,
+):
     """Extract plan by capturing action_map and robot state on DO actions."""
     print(f"Using seed={seed}")
     rng = jax.random.PRNGKey(seed)
@@ -47,21 +111,31 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
         dtype=jnp.int32
     )
 
-    # Determine action type and DO action
-    action_type = env.batch_cfg.action_type
-    if action_type == TrackedAction:
-        do_action = TrackedActionType.DO
-    elif action_type == WheeledAction:
-        do_action = WheeledActionType.DO
-    else:
-        raise ValueError(f"Unknown action type: {action_type}")
-
-    print(f"Action type: {action_type.__name__}, DO action value: {do_action}")
+    def _get_current_action_class_and_do(timestep):
+        """
+        Determine the currently acting agent's action class from the *state*
+        (not env.batch_cfg), so this works for mixed / overridden action types.
+        """
+        # In this codebase, the currently acting agent is always in slot 0.
+        a = timestep.state.agent.agent_states[0]
+        # Avoid JAX scalar-conversion pitfalls (action_type may be shaped like (1,) or (1,1)).
+        action_type_val = int(np.array(a.action_type).reshape(-1)[0])
+        if action_type_val == 0:
+            return TrackedAction, int(TrackedActionType.DO)
+        if action_type_val == 1:
+            return WheeledAction, int(WheeledActionType.DO)
+        raise ValueError(f"Unknown action_type={action_type_val}")
 
     # Plan storage
     plan = []
 
     t_counter = 0
+
+    if render_rollout_gif:
+        obs0 = dict(timestep.observation)
+        if "interaction_mask" in obs0:
+            obs0["interaction_mask"] = jnp.zeros_like(obs0["interaction_mask"])
+        env.terra_env.render_obs_pygame(obs0, generate_gif=True)
 
     while True:
         rng, rng_act, rng_step = jax.random.split(rng, 3)
@@ -74,6 +148,9 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
         v, logits_pi = model.apply(model_params, obs_model)
         pi = tfp.distributions.Categorical(logits=logits_pi)
         action = pi.sample(seed=rng_act)
+
+        # Determine current action class from state (tracked vs wheeled)
+        action_cls, do_action = _get_current_action_class_and_do(timestep)
 
         # Check if DO action and record state BEFORE executing the action
         if action[0] == do_action:
@@ -100,7 +177,7 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
             # Take step in environment
             rng_step = jax.random.split(rng_step, 1)
             timestep = env.step(
-                timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
+                timestep, wrap_action(action, action_cls), rng_step
             )
 
             # Get state AFTER executing the action
@@ -153,10 +230,16 @@ def extract_plan(env, model, model_params, env_cfgs, rl_config, max_frames, seed
             # Take step in environment
             rng_step = jax.random.split(rng_step, 1)
             timestep = env.step(
-                timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
+                timestep, wrap_action(action, action_cls), rng_step
             )
 
         t_counter += 1
+
+        if render_rollout_gif and (t_counter % max(1, int(rollout_gif_every)) == 0):
+            obs1 = dict(timestep.observation)
+            if "interaction_mask" in obs1:
+                obs1["interaction_mask"] = jnp.zeros_like(obs1["interaction_mask"])
+            env.terra_env.render_obs_pygame(obs1, generate_gif=True)
 
         # Single debug line per step: which agent acted and what action was taken
         agent_state_curr = timestep.observation["agent_states"][0, 0]
@@ -221,6 +304,22 @@ def main():
         action="store_true",
         help="Also save a JSON representation of the plan (default: False, only saves PKL)"
     )
+    parser.add_argument(
+        "--render_plan_gif",
+        action="store_true",
+        help="Render a lightweight plan GIF (DO-waypoints only) next to the output plan.",
+    )
+    parser.add_argument(
+        "--render_rollout_gif",
+        action="store_true",
+        help="Render a full rollout GIF (every step) using Terra's renderer.",
+    )
+    parser.add_argument(
+        "--rollout_gif_every",
+        type=int,
+        default=1,
+        help="Render every Nth step into the rollout GIF (default: 1).",
+    )
 
     args = parser.parse_args()
 
@@ -241,7 +340,14 @@ def main():
     # Create environment
     env_cfgs = log["env_config"]
     env_cfgs = jax.tree_map(lambda x: x[0][None, ...], env_cfgs)
-    env = TerraEnvBatch(rendering=False, shuffle_maps=False, single_map_path=args.map_path)
+    env = TerraEnvBatch(
+        rendering=args.render_rollout_gif,
+        n_envs_x_rendering=1,
+        n_envs_y_rendering=1,
+        display=False,
+        shuffle_maps=False,
+        single_map_path=args.map_path,
+    )
 
     # Load neural network
     model = load_neural_network(config, env)
@@ -255,7 +361,9 @@ def main():
         env_cfgs,
         config,
         max_frames=args.n_steps,
-        seed=args.seed
+        seed=args.seed,
+        render_rollout_gif=args.render_rollout_gif,
+        rollout_gif_every=args.rollout_gif_every,
     )
 
     # Save plan
@@ -328,6 +436,18 @@ def main():
         with open(json_path, 'w', encoding='utf-8') as f:
             f.write(json_str)
         print(f"Also saved JSON representation to {json_path}")
+
+    # Optional: render plan GIF from the extracted waypoints
+    if args.render_plan_gif:
+        gif_path = output_path.with_suffix(".gif") if output_path.suffix else Path(f"{output_path}.gif")
+        _render_plan_gif(plan, Path(args.map_path), gif_path)
+        print(f"Also saved plan GIF to {gif_path}")
+
+    # Optional: render rollout GIF from Terra renderer
+    if args.render_rollout_gif:
+        rollout_gif_path = output_path.with_name(output_path.stem + "_rollout.gif")
+        env.terra_env.rendering_engine.create_gif(str(rollout_gif_path))
+        print(f"Also saved rollout GIF to {rollout_gif_path}")
     
     print(f"Total DO actions: {len(plan)}")
 
