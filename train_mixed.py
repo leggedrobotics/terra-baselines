@@ -834,6 +834,10 @@ if __name__ == "__main__":
         help="Learning rate"
     )
     parser.add_argument(
+        "--num_envs_per_device", type=int, default=512,
+        help="Number of parallel envs per device (was hardcoded to 1792)"
+    )
+    parser.add_argument(
         "--agent_types", type=str, default="(0,)",   # 0=excavator, 1=truck, 2=skidsteer
         help="Override agent types with a Python tuple, e.g. '(2,0,2,0)'"
     )
@@ -914,6 +918,7 @@ if __name__ == "__main__":
         name=name, 
         num_devices=args.num_devices,
         lr=args.lr,
+        num_envs_per_device=args.num_envs_per_device,
         resume_from=args.resume_from,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,
