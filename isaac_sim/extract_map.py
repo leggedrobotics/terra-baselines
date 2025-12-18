@@ -43,6 +43,92 @@ def _load_single_map_arrays(map_path: Path) -> tuple[np.ndarray, np.ndarray, np.
     return target, occupancy.astype(bool), dumpability.astype(bool)
 
 
+def _as_py_bool(x: Any) -> bool:
+    try:
+        return bool(np.asarray(x).reshape(-1)[0])
+    except Exception:
+        return bool(x)
+
+
+def _mask_any_true(x: Any) -> bool:
+    if x is None:
+        return False
+    try:
+        arr = np.asarray(x).astype(bool)
+    except Exception:
+        return False
+    if arr.size == 0:
+        return False
+    return bool(arr.any())
+
+
+def _filter_empty_dig_dump_pairs(plan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """
+    Keep only valid dig/dump waypoint pairs.
+
+    - Dig waypoint is detected by loaded_state_change False -> True.
+    - Dump waypoint is detected by loaded_state_change True -> False.
+    - Pairs are tracked per agent_index (so interleaved multi-agent DO actions don't break pairing).
+    - If either side of a pair is "empty" (no terrain change), drop *both* waypoints.
+      * Empty means terrain_modification_mask has 0 true cells.
+    - Any DO waypoint that is neither dig nor dump is dropped.
+    """
+    keep = [False] * len(plan)
+    pending_dig: dict[int, int] = {}
+
+    stats = {
+        "raw_waypoints": len(plan),
+        "kept_waypoints": 0,
+        "dropped_unpaired_digs": 0,
+        "dropped_unpaired_dumps": 0,
+        "dropped_empty_pairs": 0,
+        "dropped_non_pair_waypoints": 0,
+    }
+
+    for idx, entry in enumerate(plan):
+        agent_index = int(entry.get("agent_index", 0))
+        lsc = entry.get("loaded_state_change", {}) or {}
+        before = _as_py_bool(lsc.get("before", False))
+        after = _as_py_bool(lsc.get("after", False))
+
+        is_dig = (not before) and after
+        is_dump = before and (not after)
+
+        if is_dig:
+            if agent_index in pending_dig:
+                stats["dropped_unpaired_digs"] += 1
+            pending_dig[agent_index] = idx
+            continue
+
+        if is_dump:
+            dig_idx = pending_dig.pop(agent_index, None)
+            if dig_idx is None:
+                stats["dropped_unpaired_dumps"] += 1
+                continue
+
+            dig_entry = plan[dig_idx]
+            # "Empty" means: this DO action produced no tile changes. Use the per-waypoint
+            # terrain_modification_mask (diff between action_map before/after) rather than
+            # cumulative dug/dump masks, which can be non-empty even when nothing changed.
+            dig_ok = _mask_any_true(dig_entry.get("terrain_modification_mask"))
+            dump_ok = _mask_any_true(entry.get("terrain_modification_mask"))
+
+            if dig_ok and dump_ok:
+                keep[dig_idx] = True
+                keep[idx] = True
+            else:
+                stats["dropped_empty_pairs"] += 1
+            continue
+
+        stats["dropped_non_pair_waypoints"] += 1
+
+    stats["dropped_unpaired_digs"] += len(pending_dig)
+
+    filtered = [entry for i, entry in enumerate(plan) if keep[i]]
+    stats["kept_waypoints"] = len(filtered)
+    return filtered, stats
+
+
 def _render_plan_gif(
     plan: list[dict[str, Any]],
     map_path: Path,
@@ -101,7 +187,6 @@ def extract_plan(
     rollout_gif_every: int = 1,
 ):
     """Extract plan by capturing action_map and robot state on DO actions."""
-    print(f"Using seed={seed}")
     rng = jax.random.PRNGKey(seed)
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, 1)  # Just one environment
@@ -247,11 +332,6 @@ def extract_plan(
         num_agents_obs = timestep.observation["num_agents"]
         num_agents_curr = int(np.array(num_agents_obs).reshape(-1)[0])
         agent_index_curr = (t_counter - 1) % max(num_agents_curr, 1)
-        print(
-            f"Step {t_counter}: Action={int(action[0])}, "
-            f"agent_type={agent_type_curr}, agent_index={agent_index_curr}, "
-            f"num_agents={num_agents_curr}"
-        )
 
         # Check if done
         if jnp.all(timestep.info["task_done"]).item() or t_counter == max_frames:
@@ -261,6 +341,15 @@ def extract_plan(
 
 
 def main():
+    def _canon_lists(x):
+        """Convert Python lists to tuples/arrays so JAX pytrees stay replace-able."""
+        if isinstance(x, list):
+            try:
+                return jnp.asarray(x)
+            except Exception:
+                return tuple(_canon_lists(v) for v in x)
+        return x
+
     parser = argparse.ArgumentParser(description="Extract plan from policy")
     parser.add_argument(
         "-policy",
@@ -323,9 +412,8 @@ def main():
 
     args = parser.parse_args()
 
-    # Load policy
     log = load_pkl_object(args.policy_path)
-    config = log["train_config"]
+    config = jax.tree_map(_canon_lists, log["train_config"])
     config.num_test_rollouts = 1  # Only one environment
     config.num_devices = 1
 
@@ -338,7 +426,7 @@ def main():
     print(f"Added maps_net_normalization_bounds: {config.maps_net_normalization_bounds}")
 
     # Create environment
-    env_cfgs = log["env_config"]
+    env_cfgs = jax.tree_map(_canon_lists, log["env_config"])
     env_cfgs = jax.tree_map(lambda x: x[0][None, ...], env_cfgs)
     env = TerraEnvBatch(
         rendering=args.render_rollout_gif,
@@ -366,8 +454,21 @@ def main():
         rollout_gif_every=args.rollout_gif_every,
     )
 
+    raw_len = len(plan)
+    plan, filter_stats = _filter_empty_dig_dump_pairs(plan)
+    if raw_len != len(plan):
+        print(
+            "Filtered DO waypoints into dig/dump pairs: "
+            f"{filter_stats['kept_waypoints']}/{filter_stats['raw_waypoints']} kept, "
+            f"{filter_stats['dropped_empty_pairs']} empty pairs dropped, "
+            f"{filter_stats['dropped_unpaired_digs']} unpaired digs dropped, "
+            f"{filter_stats['dropped_unpaired_dumps']} unpaired dumps dropped, "
+            f"{filter_stats['dropped_non_pair_waypoints']} non-pair DO waypoints dropped."
+        )
+
     # Save plan
     output_path = Path(args.output_path)
+    print("[main] Saving PKL plan", flush=True)
     with open(output_path, 'wb') as f:
         pickle.dump(plan, f)
 
@@ -449,7 +550,7 @@ def main():
         env.terra_env.rendering_engine.create_gif(str(rollout_gif_path))
         print(f"Also saved rollout GIF to {rollout_gif_path}")
     
-    print(f"Total DO actions: {len(plan)}")
+    print(f"Total DO actions (filtered): {len(plan)}")
 
 
 if __name__ == "__main__":
