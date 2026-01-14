@@ -62,67 +62,51 @@ def _mask_any_true(x: Any) -> bool:
     return bool(arr.any())
 
 
-def _filter_empty_dig_dump_pairs(plan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def _filter_empty_do_actions(plan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """
-    Keep only valid dig/dump waypoint pairs.
-
-    - Dig waypoint is detected by loaded_state_change False -> True.
-    - Dump waypoint is detected by loaded_state_change True -> False.
-    - Pairs are tracked per agent_index (so interleaved multi-agent DO actions don't break pairing).
-    - If either side of a pair is "empty" (no terrain change), drop *both* waypoints.
-      * Empty means terrain_modification_mask has 0 true cells.
-    - Any DO waypoint that is neither dig nor dump is dropped.
+    Filter out empty/meaningless DO actions.
+    
+    Keep:
+    - All digging actions (loaded: False → True)
+    - All dumping actions (loaded: True → False)
+    - Any DO action that modified terrain (tiles changed > 0)
+    
+    Drop:
+    - Only DO actions where loaded state is unchanged AND no tiles were modified
     """
     keep = [False] * len(plan)
-    pending_dig: dict[int, int] = {}
-
+    
     stats = {
         "raw_waypoints": len(plan),
         "kept_waypoints": 0,
-        "dropped_unpaired_digs": 0,
-        "dropped_unpaired_dumps": 0,
-        "dropped_empty_pairs": 0,
-        "dropped_non_pair_waypoints": 0,
+        "kept_digging": 0,
+        "kept_dumping": 0,
+        "kept_with_terrain_change": 0,
+        "dropped_empty_unchanged": 0,
     }
 
     for idx, entry in enumerate(plan):
-        agent_index = int(entry.get("agent_index", 0))
         lsc = entry.get("loaded_state_change", {}) or {}
         before = _as_py_bool(lsc.get("before", False))
         after = _as_py_bool(lsc.get("after", False))
-
+        
         is_dig = (not before) and after
         is_dump = before and (not after)
-
+        has_terrain_change = _mask_any_true(entry.get("terrain_modification_mask"))
+        
         if is_dig:
-            if agent_index in pending_dig:
-                stats["dropped_unpaired_digs"] += 1
-            pending_dig[agent_index] = idx
-            continue
-
-        if is_dump:
-            dig_idx = pending_dig.pop(agent_index, None)
-            if dig_idx is None:
-                stats["dropped_unpaired_dumps"] += 1
-                continue
-
-            dig_entry = plan[dig_idx]
-            # "Empty" means: this DO action produced no tile changes. Use the per-waypoint
-            # terrain_modification_mask (diff between action_map before/after) rather than
-            # cumulative dug/dump masks, which can be non-empty even when nothing changed.
-            dig_ok = _mask_any_true(dig_entry.get("terrain_modification_mask"))
-            dump_ok = _mask_any_true(entry.get("terrain_modification_mask"))
-
-            if dig_ok and dump_ok:
-                keep[dig_idx] = True
-                keep[idx] = True
-            else:
-                stats["dropped_empty_pairs"] += 1
-            continue
-
-        stats["dropped_non_pair_waypoints"] += 1
-
-    stats["dropped_unpaired_digs"] += len(pending_dig)
+            keep[idx] = True
+            stats["kept_digging"] += 1
+        elif is_dump:
+            keep[idx] = True
+            stats["kept_dumping"] += 1
+        elif has_terrain_change:
+            # Rare case: loaded state unchanged but terrain modified
+            keep[idx] = True
+            stats["kept_with_terrain_change"] += 1
+        else:
+            # Empty/unchanged DO action - drop it
+            stats["dropped_empty_unchanged"] += 1
 
     filtered = [entry for i, entry in enumerate(plan) if keep[i]]
     stats["kept_waypoints"] = len(filtered)
@@ -191,20 +175,37 @@ def extract_plan(
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, 1)  # Just one environment
     timestep = env.reset(env_cfgs, rng_reset)
+    
+    # Print agent summary at start
+    agent_type_names = {0: "excavator", 1: "truck", 2: "skidsteer"}
+    num_agents_init = int(np.array(timestep.observation["num_agents"]).reshape(-1)[0])
+    print(f"\n=== Agent Configuration ===")
+    print(f"Number of agents: {num_agents_init}")
+    # Get agent types from observation (agent_states has shape [B, MAX_AGENTS, feat])
+    # Feature index 6 is agent_type
+    agent_states_init = timestep.observation["agent_states"][0]  # [MAX_AGENTS, feat]
+    for i in range(num_agents_init):
+        agent_type_val = int(agent_states_init[i, 6])
+        agent_type_str = agent_type_names.get(agent_type_val, f"unknown({agent_type_val})")
+        print(f"  Agent {i}: {agent_type_str} (type={agent_type_val})")
+    print(f"===========================\n")
+    
     prev_actions = jnp.zeros(
         (1, rl_config.num_prev_actions),
         dtype=jnp.int32
     )
 
-    def _get_current_action_class_and_do(timestep):
+    def _get_current_action_class_and_do(timestep, t_counter):
         """
         Determine the currently acting agent's action class from the *state*
         (not env.batch_cfg), so this works for mixed / overridden action types.
         """
-        # In this codebase, the currently acting agent is always in slot 0.
-        a = timestep.state.agent.agent_states[0]
-        # Avoid JAX scalar-conversion pitfalls (action_type may be shaped like (1,) or (1,1)).
-        action_type_val = int(np.array(a.action_type).reshape(-1)[0])
+        # Compute agent index - agents act in round-robin order and can't skip
+        num_agents = int(np.array(timestep.observation["num_agents"]).reshape(-1)[0])
+        agent_index = t_counter % max(num_agents, 1)
+        # Access agent state by fixed slot index
+        agent_state = timestep.state.agent.agent_states[agent_index]
+        action_type_val = int(np.array(agent_state.action_type).flatten()[0])
         if action_type_val == 0:
             return TrackedAction, int(TrackedActionType.DO)
         if action_type_val == 1:
@@ -235,25 +236,26 @@ def extract_plan(
         action = pi.sample(seed=rng_act)
 
         # Determine current action class from state (tracked vs wheeled)
-        action_cls, do_action = _get_current_action_class_and_do(timestep)
+        action_cls, do_action = _get_current_action_class_and_do(timestep, t_counter)
 
         # Check if DO action and record state BEFORE executing the action
         if action[0] == do_action:
-            print(f"DO action at step {t_counter}")
+            # Compute agent index - agents act in round-robin order and can't skip
+            num_agents = int(np.array(timestep.observation["num_agents"]).reshape(-1)[0])
+            agent_index = t_counter % max(num_agents, 1)
+            
+            # Access the acting agent's state by its fixed slot index
+            acting_agent_state_before = timestep.state.agent.agent_states[agent_index]
+            # Use np.array().item() to handle batch dimensions in state fields
+            loaded_before = bool(np.array(acting_agent_state_before.loaded).flatten()[0])
+            agent_type_before = int(np.array(acting_agent_state_before.agent_type).flatten()[0])
+            
+            # Agent type names for display
+            agent_type_names = {0: "excavator", 1: "truck", 2: "skidsteer"}
+            agent_type_str = agent_type_names.get(agent_type_before, f"unknown({agent_type_before})")
+            
             action_map_before = jnp.squeeze(timestep.observation["action_map"]).copy()
             traversability_mask = jnp.squeeze(timestep.observation["traversability_mask"]).copy()
-            # Multi-agent: "agent_states" has shape [B, MAX_AGENTS, feat],
-            # with the currently acting agent always in slot 0.
-            agent_state_before = timestep.observation["agent_states"][0, 0].copy()
-            loaded_before = jnp.bool_(agent_state_before[5])
-            agent_type_before = jnp.int32(agent_state_before[6])
-            # Derive a stable "agent index" by cycling over the number of agents.
-            # num_agents comes from the observation; we assume agents act in
-            # round-robin order across timesteps.
-            num_agents_obs = timestep.observation["num_agents"]
-            # num_agents may be a scalar or shape [B]; convert to Python int.
-            num_agents = int(np.array(num_agents_obs).reshape(-1)[0])
-            agent_index = t_counter % max(num_agents, 1)
 
             # Update previous actions
             prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
@@ -266,23 +268,38 @@ def extract_plan(
             )
 
             # Get state AFTER executing the action
+            # IMPORTANT: After env.step(), observation["agent_states"][0, 0] is the NEXT agent (rotated view).
+            # We need to access the acting agent's state by its fixed slot index from timestep.state.
             action_map_after = jnp.squeeze(timestep.observation["action_map"]).copy()
-            agent_state_after = timestep.observation["agent_states"][0, 0].copy()
-            loaded_after = jnp.bool_(agent_state_after[5])
+            # Access the acting agent's state directly from the state object by slot index
+            acting_agent_state_after = timestep.state.agent.agent_states[agent_index]
+            loaded_after = bool(np.array(acting_agent_state_after.loaded).flatten()[0])
 
             changed_tiles = action_map_before != action_map_after
             terrain_modification_mask = changed_tiles.astype(jnp.bool_)
             dug_mask = (action_map_after < 0)
             dump_mask = (action_map_after > 0)
 
-            if loaded_before != loaded_after:
-                if not loaded_before and loaded_after:
-                    print(f"  Digging detected: {jnp.sum(changed_tiles)} tiles modified")
-                elif loaded_before and not loaded_after:
-                    print(f"  Dumping detected: {jnp.sum(changed_tiles)} tiles modified")
+            # Determine dig_type for digging actions:
+            # "lift_dug_dirt" = picking up previously dumped dirt (action_map_before > 0 in changed tiles)
+            # "dig_new_soil" = digging fresh terrain from target
+            dig_type = None
+            action_type_label = ""
+            if not loaded_before and loaded_after:
+                # This is a digging action - check if we're lifting dumped dirt or digging new soil
+                # Similar logic to state.py: moving_dumped_dirt = selected_tiles_sum > 0
+                # where selected_tiles_sum = flattened_action_map @ dig_mask
+                dumped_dirt_in_changed_tiles = jnp.sum(action_map_before[changed_tiles] > 0)
+                moving_dumped_dirt = dumped_dirt_in_changed_tiles > 0
+                dig_type = "lift_dug_dirt" if bool(moving_dumped_dirt) else "dig_new_soil"
+                action_type_label = f" (digging: {dig_type})"
+            elif loaded_before and not loaded_after:
+                action_type_label = " (dumping)"
             else:
-                # Case 3: loaded state did not change, but still check for modifications
-                print(f"  Loaded state unchanged ({loaded_before}), {jnp.sum(changed_tiles)} tiles modified")
+                # Case 3: loaded state did not change
+                action_type_label = f" (unchanged, loaded={bool(loaded_before)})"
+            
+            print(f"DO action at step {t_counter} by agent {agent_index} ({agent_type_str}){action_type_label}, {jnp.sum(changed_tiles)} tiles modified")
 
             # Order keys to match foundation-plan.json format
             # Convert numeric values to floats to match foundation-plan.json
@@ -293,10 +310,11 @@ def extract_plan(
                 'dug_mask': dug_mask.copy(),
                 'dump_mask': dump_mask.copy(),
                 'agent_state': {
-                    'pos_base': [float(agent_state_before[0]), float(agent_state_before[1])],
-                    'angle_base': float(agent_state_before[2]),
-                    'angle_cabin': float(agent_state_before[3]),
-                    'wheel_angle': float(agent_state_before[4]),
+                    'pos_base': [float(np.array(acting_agent_state_before.pos_base).flatten()[0]), 
+                                 float(np.array(acting_agent_state_before.pos_base).flatten()[1])],
+                    'angle_base': float(np.array(acting_agent_state_before.angle_base).flatten()[0]),
+                    'angle_cabin': float(np.array(acting_agent_state_before.angle_cabin).flatten()[0]),
+                    'wheel_angle': float(np.array(acting_agent_state_before.wheel_angle).flatten()[0]),
                 },
                 'loaded_state_change': {
                     'before': loaded_before,
@@ -306,6 +324,9 @@ def extract_plan(
                 'agent_type': agent_type_before,
                 'agent_index': agent_index,
             }
+            # Add dig_type only for digging actions (when we go from unloaded to loaded)
+            if dig_type is not None:
+                plan_entry['dig_type'] = dig_type
             plan.append(plan_entry)
         else:
             # Update previous actions
@@ -326,12 +347,6 @@ def extract_plan(
                 obs1["interaction_mask"] = jnp.zeros_like(obs1["interaction_mask"])
             env.terra_env.render_obs_pygame(obs1, generate_gif=True)
 
-        # Single debug line per step: which agent acted and what action was taken
-        agent_state_curr = timestep.observation["agent_states"][0, 0]
-        agent_type_curr = int(agent_state_curr[6])
-        num_agents_obs = timestep.observation["num_agents"]
-        num_agents_curr = int(np.array(num_agents_obs).reshape(-1)[0])
-        agent_index_curr = (t_counter - 1) % max(num_agents_curr, 1)
 
         # Check if done
         if jnp.all(timestep.info["task_done"]).item() or t_counter == max_frames:
@@ -359,7 +374,7 @@ def main():
         help="Path to the policy .pkl file"
     )
     # By default, use a map located in a local "test_map" subfolder next to this script.
-    default_map_path = str((Path(__file__).parent / "test_map2").resolve())
+    default_map_path = str((Path(__file__).parent / "test_map_v3").resolve())
     parser.add_argument(
         "-map",
         "--map_path",
@@ -427,7 +442,17 @@ def main():
 
     # Create environment
     env_cfgs = jax.tree_map(_canon_lists, log["env_config"])
-    env_cfgs = jax.tree_map(lambda x: x[0][None, ...], env_cfgs)
+    def _extract_single_env(x):
+        """Extract first env config, handling scalars/bools that can't be subscripted.
+        
+        Ensures output has at least rank 1 for vmap compatibility.
+        """
+        try:
+            return x[0][None, ...]
+        except (TypeError, IndexError):
+            # Scalar or bool - wrap in 1D array for vmap compatibility
+            return jnp.atleast_1d(x)
+    env_cfgs = jax.tree_map(_extract_single_env, env_cfgs)
     env = TerraEnvBatch(
         rendering=args.render_rollout_gif,
         n_envs_x_rendering=1,
@@ -455,15 +480,13 @@ def main():
     )
 
     raw_len = len(plan)
-    plan, filter_stats = _filter_empty_dig_dump_pairs(plan)
+    plan, filter_stats = _filter_empty_do_actions(plan)
     if raw_len != len(plan):
         print(
-            "Filtered DO waypoints into dig/dump pairs: "
-            f"{filter_stats['kept_waypoints']}/{filter_stats['raw_waypoints']} kept, "
-            f"{filter_stats['dropped_empty_pairs']} empty pairs dropped, "
-            f"{filter_stats['dropped_unpaired_digs']} unpaired digs dropped, "
-            f"{filter_stats['dropped_unpaired_dumps']} unpaired dumps dropped, "
-            f"{filter_stats['dropped_non_pair_waypoints']} non-pair DO waypoints dropped."
+            f"Filtered DO waypoints: {filter_stats['kept_waypoints']}/{filter_stats['raw_waypoints']} kept "
+            f"({filter_stats['kept_digging']} digging, {filter_stats['kept_dumping']} dumping, "
+            f"{filter_stats['kept_with_terrain_change']} terrain-only), "
+            f"{filter_stats['dropped_empty_unchanged']} empty/unchanged dropped."
         )
 
     # Save plan
