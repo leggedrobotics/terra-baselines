@@ -2,32 +2,92 @@
 """
 Training script for mixed-agent environments using a unified network with agent-type conditioning.
 
-Quick start
-===========
-- Set agents via --agent_types override (dynamic number of agents, up to 4).
-- Set action types via --action_types override (0=tracked, 1=wheeled).
-- Map curriculum is handled in the environment; no agent-type curriculum here.
+================================================================================
+CONFIGURATION SYSTEM
+================================================================================
 
-Examples
-========
-# Two agents: tracked excavator + skidsteer (both tracked movement)
-python train_mixed_agents.py --agent_types "(0,2)" --name "tracked-skid"
+Configurations are defined in: configs/training_configs.yaml
 
-# Two agents: wheeled excavator + skidsteer (both wheeled movement)
-python train_mixed_agents.py --agent_types "(0,2)" --action_types "(1,1)" --name "wheeled-mixed"
+This YAML file contains named presets that specify:
+- agent_types: Which agents to use (0=excavator, 1=truck, 2=skidsteer)
+- action_types: Movement type per agent (0=tracked, 1=wheeled)
+- reward_multipliers: Tuning parameters for reward shaping
+- maps: Which map datasets to train on
+- capacity overrides: truck_capacity, skidsteer_capacity, truck_road_restricted
 
-# Mixed movement: tracked excavator + wheeled skidsteer
-python train_mixed_agents.py --agent_types "(0,2)" --action_types "(0,1)" --name "mixed-movement"
+Available Presets (run `python configs/training_configs.py` for details):
+---------------------------------------------------------------------------
+  Solo:        solo_excavator, solo_skidsteer
+  Two-agent:   excavator_skidsteer, excavator_truck, excavator_truck_roads, dual_excavator
+  Three-agent: excavators_truck
+  Trench:      trench_excavator
+  Wheeled:     wheeled_excavator
 
-# Four agents: custom mix with different action types
-python train_mixed_agents.py --agent_types "(0,2,0,2)" --action_types "(0,1,1,0)" --name "quad-mixed"
+Check configs/training_configs.yaml for more details.
 
-Notes
-=====
-- Agent types: 0=excavator, 1=truck, 2=skidsteer
-- Action types: 0=tracked, 1=wheeled
-- If --agent_types is omitted, defaults from EnvConfig are used.
-- If --action_types is omitted, all agents use tracked movement (0) by default.
+================================================================================
+QUICK START
+================================================================================
+
+# Use a preset configuration
+python train_mixed.py --config excavator_truck
+
+# Use a preset with custom name for wandb
+python train_mixed.py --config excavator_skidsteer --name "my-experiment"
+
+# Override a specific parameter from the preset
+python train_mixed.py --config excavator_truck --transport_relocate_mult 2.5
+
+# List all available presets
+python configs/training_configs.py
+
+================================================================================
+MANUAL OVERRIDES (without using presets)
+================================================================================
+
+# Two agents: excavator + skidsteer (tracked)
+python train_mixed.py --agent_types "(0,2)" --action_types "(0,0)"
+
+# Four agents: 2 excavators + 2 skidsteers with mixed movement
+python train_mixed.py --agent_types "(0,2,0,2)" --action_types "(0,1,0,1)"
+
+================================================================================
+ADDING NEW CONFIGURATIONS
+================================================================================
+
+Edit configs/training_configs.yaml to add new presets:
+
+    my_new_config:
+      description: My custom training setup
+      agent_types: [0, 2, 2]
+      action_types: [0, 0, 0]
+      reward_multipliers:
+        dump_bonus_mult: 0.5
+        excavator_relocate_dumped_mult: 0.3
+        excavator_relocate_dug_dirt_mult: 1.5
+        transport_relocate_mult: 2.0
+      maps:
+        - path: foundations_dumpzones_v3
+          max_steps: 900
+
+================================================================================
+REFERENCE
+================================================================================
+
+Agent Types:
+  0 = Excavator (digs and dumps)
+  1 = Truck (transport, road-restricted optional)
+  2 = Skidsteer (transport)
+
+Action Types:
+  0 = Tracked movement
+  1 = Wheeled movement
+
+Reward Multipliers:
+  dump_bonus_mult              - Bonus for correct dumping
+  excavator_relocate_dumped_mult   - Excavator reward for moving already-dumped dirt
+  excavator_relocate_dug_dirt_mult - Excavator reward for moving freshly dug dirt
+  transport_relocate_mult      - Transport agent (truck/skidsteer) relocating dirt reward
 """
 
 import jax
@@ -35,7 +95,7 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 from utils.models import get_model_ready
 from terra.env import TerraEnvBatch
-from terra.config import EnvConfig, BatchConfig, Rewards
+from terra.config import EnvConfig, BatchConfig, Rewards, CurriculumGlobalConfig, RewardsType
 from flax.training.train_state import TrainState
 import optax
 import wandb
@@ -78,12 +138,16 @@ def safe_jax_to_python(value):
 
 @dataclass 
 class MixedAgentTrainConfig:
-    """Configuration for training mixed agent environments"""
+    """Configuration for training mixed agent environments
+    
+    Supports loading from named presets via --config <name>.
+    See configs/training_configs.py for available presets.
+    """
     name: str
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
-    num_envs_per_device: int = 1792  
+    num_envs_per_device: int = 2048
     num_steps: int = 32  
     update_epochs: int = 2 
     num_minibatches: int = 16 
@@ -122,9 +186,28 @@ class MixedAgentTrainConfig:
     # Debug assertions and one-time validations
     debug: bool = False
     
-    # Checkpoint loading - NEW!
+    # Checkpoint loading
     resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
     load_env_from_checkpoint: bool = True  # If true, use env_config from checkpoint
+    
+    # Named configuration preset (loads from configs/training_configs.py)
+    config_name: str | None = None  # e.g., "excavator_truck", "solo_excavator"
+    
+    # Reward multipliers (can be set via config preset or CLI)
+    dump_bonus_mult: float | None = None
+    excavator_relocate_dumped_mult: float | None = None
+    excavator_relocate_dug_dirt_mult: float | None = None
+    transport_relocate_mult: float | None = None
+    
+    # Capacity overrides
+    truck_capacity: int | None = None
+    skidsteer_capacity: int | None = None
+    truck_road_restricted: bool | None = None
+    
+    # Curriculum/maps override (from YAML config)
+    # Format: list of dicts with keys: maps_path, max_steps_in_episode, rewards_type, apply_trench_rewards
+    curriculum_levels_override: list | None = None
+
 
     def __post_init__(self):
         self.num_devices = (
@@ -149,8 +232,32 @@ class MixedAgentTrainConfig:
         return getattr(self, key)
 
 
-def create_mixed_agent_env_config(agent_types=(0, 2), action_types=(0, 0)):
-    """Create environment configuration optimized for mixed agent training"""
+def create_mixed_agent_env_config(
+    agent_types=(0, 2), 
+    action_types=(0, 0),
+    # Optional reward multipliers
+    dump_bonus_mult=None,
+    excavator_relocate_dumped_mult=None,
+    excavator_relocate_dug_dirt_mult=None,
+    transport_relocate_mult=None,
+    # Optional capacity overrides
+    truck_capacity=None,
+    skidsteer_capacity=None,
+    truck_road_restricted=None,
+):
+    """Create environment configuration optimized for mixed agent training
+    
+    Args:
+        agent_types: Tuple of agent type IDs (0=excavator, 1=truck, 2=skidsteer)
+        action_types: Tuple of action type IDs (0=tracked, 1=wheeled)
+        dump_bonus_mult: Multiplier for dump rewards
+        excavator_relocate_dumped_mult: Multiplier for excavator relocating dumped material
+        excavator_relocate_dug_dirt_mult: Multiplier for excavator relocating dug dirt
+        transport_relocate_mult: Multiplier for transport relocation rewards
+        truck_capacity: Override for truck capacity
+        skidsteer_capacity: Override for skidsteer capacity
+        truck_road_restricted: Whether trucks are restricted to roads
+    """
     
     # Use the existing dense rewards from config
     env_config = EnvConfig()  # This automatically uses Rewards.dense() which includes all our rewards
@@ -160,6 +267,24 @@ def create_mixed_agent_env_config(agent_types=(0, 2), action_types=(0, 0)):
     
     # Set the action types from the training configuration
     env_config = env_config._replace(action_types=action_types)
+    
+    # Apply reward multipliers if provided
+    if dump_bonus_mult is not None:
+        env_config = env_config._replace(dump_bonus_mult=dump_bonus_mult)
+    if excavator_relocate_dumped_mult is not None:
+        env_config = env_config._replace(excavator_relocate_dumped_mult=excavator_relocate_dumped_mult)
+    if excavator_relocate_dug_dirt_mult is not None:
+        env_config = env_config._replace(excavator_relocate_dug_dirt_mult=excavator_relocate_dug_dirt_mult)
+    if transport_relocate_mult is not None:
+        env_config = env_config._replace(transport_relocate_mult=transport_relocate_mult)
+    
+    # Apply capacity overrides if provided
+    if truck_capacity is not None:
+        env_config = env_config._replace(truck_capacity=truck_capacity)
+    if skidsteer_capacity is not None:
+        env_config = env_config._replace(skidsteer_capacity=skidsteer_capacity)
+    if truck_road_restricted is not None:
+        env_config = env_config._replace(truck_road_restricted=truck_road_restricted)
     
     return env_config
 
@@ -201,8 +326,20 @@ class ConfigurableAgentManager:
 def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig = None, env_params_override: EnvConfig = None):
     """Initialize states for mixed agent training - compatible with make_states interface"""
     
-    # Create batch config - this determines the agent types used
-    batch_cfg = BatchConfig()
+    # Create batch config - override curriculum levels if provided
+    if config.curriculum_levels_override is not None and len(config.curriculum_levels_override) > 0:
+        # Create custom CurriculumGlobalConfig with the override levels
+        custom_curriculum = CurriculumGlobalConfig()
+        # We need to create a new class with the overridden levels since it's a NamedTuple
+        # NamedTuples can't have mutable class attributes overridden, so we work around this
+        class CustomCurriculumGlobalConfig(CurriculumGlobalConfig):
+            levels = config.curriculum_levels_override
+        
+        batch_cfg = BatchConfig(curriculum_global=CustomCurriculumGlobalConfig())
+        print(f"📍 Using maps from config: {[lvl['maps_path'] for lvl in config.curriculum_levels_override]}")
+    else:
+        batch_cfg = BatchConfig()
+        print("📍 Using default maps from config.py")
     
     # Initialize environment with configurable agents
     env = TerraEnvBatch(batch_cfg=batch_cfg)
@@ -222,7 +359,19 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
             
             # Use action types override if provided, otherwise use default (0,0)
             action_types = config.action_types_override if config.action_types_override is not None else (0, 0)
-            env_params = create_mixed_agent_env_config(agent_types=agent_types, action_types=action_types)
+            env_params = create_mixed_agent_env_config(
+                agent_types=agent_types, 
+                action_types=action_types,
+                # Pass reward multipliers from config
+                dump_bonus_mult=config.dump_bonus_mult,
+                excavator_relocate_dumped_mult=config.excavator_relocate_dumped_mult,
+                excavator_relocate_dug_dirt_mult=config.excavator_relocate_dug_dirt_mult,
+                transport_relocate_mult=config.transport_relocate_mult,
+                # Pass capacity overrides
+                truck_capacity=config.truck_capacity,
+                skidsteer_capacity=config.skidsteer_capacity,
+                truck_road_restricted=config.truck_road_restricted,
+            )
             # Verbose training configuration summary
             type_names = {0: "Excavator", 1: "Truck", 2: "SkidSteer"}
             print("🧩 Agent Types (effective):", agent_types)
@@ -240,6 +389,19 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                 print("✅ Using --action_types override")
             else:
                 print("🚗 Using default action types (all tracked)")
+            
+            # Print reward multipliers if any were set
+            if any([config.dump_bonus_mult, config.excavator_relocate_dumped_mult,
+                    config.excavator_relocate_dug_dirt_mult, config.transport_relocate_mult]):
+                print("📊 Reward Multipliers:")
+                if config.dump_bonus_mult is not None:
+                    print(f"   dump_bonus_mult: {config.dump_bonus_mult}")
+                if config.excavator_relocate_dumped_mult is not None:
+                    print(f"   excavator_relocate_dumped_mult: {config.excavator_relocate_dumped_mult}")
+                if config.excavator_relocate_dug_dirt_mult is not None:
+                    print(f"   excavator_relocate_dug_dirt_mult: {config.excavator_relocate_dug_dirt_mult}")
+                if config.transport_relocate_mult is not None:
+                    print(f"   transport_relocate_mult: {config.transport_relocate_mult}")
     
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
@@ -842,16 +1004,41 @@ if __name__ == "__main__":
         help="Total environment timesteps across all devices"
     )
     parser.add_argument(
-        "--agent_types", type=str, default="(0,)",   # 0=excavator, 1=truck, 2=skidsteer
-        help="Override agent types with a Python tuple, e.g. '(2,0,2,0)'"
+        "--agent_types", type=str, default=None,   # 0=excavator, 1=truck, 2=skidsteer
+        help="Override agent types with a Python tuple, e.g. '(2,0,2,0)'. Overrides --config."
     )
     parser.add_argument(
-        "--action_types", type=str, default="(0,)",
-        help="Override action types with a Python tuple, e.g. '(1)' for wheeled"
+        "--action_types", type=str, default=None,
+        help="Override action types with a Python tuple, e.g. '(1,)' for wheeled. Overrides --config."
     )
     parser.add_argument(
         "--debug", action="store_true",
         help="Enable one-time sanity assertions/prints for agent ordering and masks"
+    )
+    
+    # Named configuration preset
+    parser.add_argument(
+        "-c", "--config", type=str, default=None,
+        help="Load a named training config preset (e.g., 'excavator_truck', 'solo_excavator'). "
+             "Run 'python configs/training_configs.py' to see available presets."
+    )
+    
+    # Reward multiplier arguments
+    parser.add_argument(
+        "--dump_bonus_mult", type=float, default=None,
+        help="Multiplier for dump rewards (overrides config preset)"
+    )
+    parser.add_argument(
+        "--excavator_relocate_dumped_mult", type=float, default=None,
+        help="Multiplier for excavator relocating dumped material (overrides config preset)"
+    )
+    parser.add_argument(
+        "--excavator_relocate_dug_dirt_mult", type=float, default=None,
+        help="Multiplier for excavator relocating dug dirt (overrides config preset)"
+    )
+    parser.add_argument(
+        "--transport_relocate_mult", type=float, default=None,
+        help="Multiplier for transport relocation rewards (overrides config preset)"
     )
     
     # Checkpoint loading arguments
@@ -878,11 +1065,63 @@ if __name__ == "__main__":
     # default to True unless explicitly disabled
     if args.load_env_from_checkpoint is None:
         args.load_env_from_checkpoint = True
-
-    name = f"{args.name}-{args.machine}-{DT}"
     
-    # Configure agent types based on preset or override
+    # Initialize config values from preset if --config is provided
     agent_types_override = None
+    action_types_override = None
+    dump_bonus_mult = None
+    excavator_relocate_dumped_mult = None
+    excavator_relocate_dug_dirt_mult = None
+    transport_relocate_mult = None
+    truck_capacity = None
+    skidsteer_capacity = None
+    truck_road_restricted = None
+    curriculum_levels_override = None
+    
+    if args.config is not None:
+        try:
+            from configs.training_configs import get_config, list_configs
+            preset = get_config(args.config)
+            print(f"\n📦 Loading config preset: '{args.config}'")
+            print(f"   Description: {preset.description}")
+            
+            # Apply preset values
+            agent_types_override = preset.agent_types
+            action_types_override = preset.action_types
+            
+            # Apply reward multipliers from preset
+            dump_bonus_mult = preset.reward_multipliers.dump_bonus_mult
+            excavator_relocate_dumped_mult = preset.reward_multipliers.excavator_relocate_dumped_mult
+            excavator_relocate_dug_dirt_mult = preset.reward_multipliers.excavator_relocate_dug_dirt_mult
+            transport_relocate_mult = preset.reward_multipliers.transport_relocate_mult
+            
+            # Apply capacity overrides from preset
+            truck_capacity = preset.truck_capacity
+            skidsteer_capacity = preset.skidsteer_capacity
+            truck_road_restricted = preset.truck_road_restricted
+            
+            # Apply maps/curriculum from preset (convert MapLevel objects to dict format)
+            if preset.maps and len(preset.maps) > 0:
+                from terra.config import RewardsType
+                curriculum_levels_override = []
+                for map_level in preset.maps:
+                    # Convert rewards_type string to enum
+                    rewards_type = RewardsType.DENSE if map_level.rewards_type == "DENSE" else RewardsType.SPARSE
+                    curriculum_levels_override.append({
+                        "maps_path": map_level.maps_path,
+                        "max_steps_in_episode": map_level.max_steps_in_episode,
+                        "rewards_type": rewards_type,
+                        "apply_trench_rewards": map_level.apply_trench_rewards,
+                    })
+            
+        except ImportError as e:
+            print(f"⚠️  Failed to import training configs: {e}")
+            print("   Make sure configs/training_configs.py exists")
+        except ValueError as e:
+            print(f"⚠️  {e}")
+            print("   Run 'python configs/training_configs.py' to see available presets")
+    
+    # Override with explicit CLI arguments (these take precedence over preset)
     if args.agent_types is not None:
         try:
             import ast
@@ -896,12 +1135,10 @@ if __name__ == "__main__":
                 agent_types_override = (int(parsed),)
             else:
                 raise ValueError("--agent_types must be a tuple/list like (2,0,0,2) or a single int like (0)")
-            print(f"➡️  Overriding agent types: {agent_types_override}")
+            print(f"➡️  CLI override agent types: {agent_types_override}")
         except Exception as e:
             print(f"⚠️  Failed to parse --agent_types '{args.agent_types}': {e}")
     
-    # Configure action types based on override
-    action_types_override = None
     if args.action_types is not None:
         try:
             import ast
@@ -915,9 +1152,28 @@ if __name__ == "__main__":
                 action_types_override = (int(parsed),)
             else:
                 raise ValueError("--action_types must be a tuple/list like (0,1,0,1) or a single int like (0)")
-            print(f"➡️  Overriding action types: {action_types_override}")
+            print(f"➡️  CLI override action types: {action_types_override}")
         except Exception as e:
             print(f"⚠️  Failed to parse --action_types '{args.action_types}': {e}")
+    
+    # CLI reward multiplier overrides take precedence
+    if args.dump_bonus_mult is not None:
+        dump_bonus_mult = args.dump_bonus_mult
+    if args.excavator_relocate_dumped_mult is not None:
+        excavator_relocate_dumped_mult = args.excavator_relocate_dumped_mult
+    if args.excavator_relocate_dug_dirt_mult is not None:
+        excavator_relocate_dug_dirt_mult = args.excavator_relocate_dug_dirt_mult
+    if args.transport_relocate_mult is not None:
+        transport_relocate_mult = args.transport_relocate_mult
+    
+    # Use default agent types if nothing was set
+    if agent_types_override is None:
+        agent_types_override = (0,)  # Default to single excavator
+    if action_types_override is None:
+        action_types_override = (0,)  # Default to tracked
+    
+    name = f"{args.name}-{args.machine}-{DT}"
+    
     config = MixedAgentTrainConfig(
         name=name, 
         num_devices=args.num_devices,
@@ -928,7 +1184,16 @@ if __name__ == "__main__":
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,
         action_types_override=action_types_override,
-        debug=args.debug
+        debug=args.debug,
+        config_name=args.config,
+        dump_bonus_mult=dump_bonus_mult,
+        excavator_relocate_dumped_mult=excavator_relocate_dumped_mult,
+        excavator_relocate_dug_dirt_mult=excavator_relocate_dug_dirt_mult,
+        transport_relocate_mult=transport_relocate_mult,
+        truck_capacity=truck_capacity,
+        skidsteer_capacity=skidsteer_capacity,
+        truck_road_restricted=truck_road_restricted,
+        curriculum_levels_override=curriculum_levels_override,
     )
     
     train_mixed_agents(config) 

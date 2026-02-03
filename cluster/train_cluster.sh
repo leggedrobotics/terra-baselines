@@ -31,5 +31,5 @@ export DATASET_SIZE=600
 
 # Change to the directory containing train.py or use the full path
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
-python train_mixed.py
+python train_mixed.py --config solo_excavator_more_dumpbonus
 #WANDB_MODE=offline 

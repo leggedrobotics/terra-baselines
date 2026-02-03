@@ -4,7 +4,7 @@
 #SBATCH --gpus=gpu:2
 #SBATCH --time=4:00:00
 #SBATCH --mem-per-cpu=4G
-#SBATCH --job-name="extract-$(date +"%Y-%m-%dT%H:%M")"
+#SBATCH --job-name="extract"
 #SBATCH --output=%j_extract.out
 
 # Disable audio and set dummy display for cluster nodes

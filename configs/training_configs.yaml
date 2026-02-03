@@ -1,0 +1,215 @@
+# =============================================================================
+# Terra Training Configurations
+# =============================================================================
+# 
+# Usage:
+#   python train_mixed.py --config excavator_truck
+#   python train_mixed.py --config solo_excavator --transport_relocate_mult 2.0
+#
+# Agent types: 0=excavator, 1=truck, 2=skidsteer
+# Action types: 0=tracked, 1=wheeled
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Solo Agent Configurations
+# -----------------------------------------------------------------------------
+
+solo_excavator:
+  description: Single excavator agent with tracked movement
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: foundations
+      max_steps: 500
+
+
+solo_excavator_more_dumpbonus:
+  description: Single excavator agent with tracked movement more dumpbonus
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 1
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: foundations
+      max_steps: 500
+
+
+solo_excavator_dumpzone:
+  description: Single excavator agent with tracked movement and dumpzone maps
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: foundations_dumpzones_v3
+      max_steps: 600
+
+solo_skidsteer:
+  description: Single skidsteer agent
+  agent_types: [2]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    transport_relocate_mult: 1.5
+  maps:
+    - path: relocations_harder
+      max_steps: 600
+
+# -----------------------------------------------------------------------------
+# Two-Agent Configurations
+# -----------------------------------------------------------------------------
+
+excavator_skidsteer:
+  description: Excavator + Skidsteer combination (tracked movement)
+  agent_types: [0, 2]
+  action_types: [0, 0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 0.2
+    excavator_relocate_dug_dirt_mult: 1.5
+    transport_relocate_mult: 1.5
+  maps:
+    - path: foundations_dumpzones_v3
+      max_steps: 800
+
+excavator_truck:
+  description: Excavator + Truck combination for transport tasks
+  agent_types: [0, 1]
+  action_types: [0, 0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 0.2
+    excavator_relocate_dug_dirt_mult: 1.5
+    transport_relocate_mult: 2.0
+  truck_capacity: 52
+  truck_road_restricted: false
+  maps:
+    - path: foundations_dumpzones_v3
+      max_steps: 800
+
+excavator_truck_roads:
+  description: Excavator + Truck with road restrictions
+  agent_types: [0, 1]
+  action_types: [0, 0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 0.2
+    excavator_relocate_dug_dirt_mult: 1.5
+    transport_relocate_mult: 2.0
+  truck_capacity: 52
+  truck_road_restricted: true
+  maps:
+    - path: foundations_dumpzones_roads
+      max_steps: 800
+
+dual_excavator:
+  description: Two excavators working together
+  agent_types: [0, 0]
+  action_types: [0, 0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 0.2
+    excavator_relocate_dug_dirt_mult: 1.5
+    transport_relocate_mult: 1.5
+  maps:
+    - path: foundations_dumpzones_v3
+      max_steps: 800
+
+# -----------------------------------------------------------------------------
+# Three-Agent Configurations
+# -----------------------------------------------------------------------------
+
+
+
+excavators_truck:
+  description: "Mixed team: 2 excavators + truck"
+  agent_types: [0, 0, 1]
+  action_types: [0, 0, 0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 0.2
+    excavator_relocate_dug_dirt_mult: 1.5
+    transport_relocate_mult: 1.8
+  truck_capacity: 52
+  truck_road_restricted: true
+  maps:
+    - path: foundations_dumpzones_roads
+      max_steps: 800
+
+
+# -----------------------------------------------------------------------------
+# Trench-Focused Configurations
+# -----------------------------------------------------------------------------
+
+trench_excavator:
+  description: Excavator specialized for trench digging
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: trenches/single
+      max_steps: 500
+      apply_trench_rewards: true
+
+trench_dumpzone:
+  description: Excavator + Skidsteer for trench tasks
+  agent_types: [0, 2]
+  action_types: [0, 0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 0.2
+    excavator_relocate_dug_dirt_mult: 1.5
+    transport_relocate_mult: 1.5
+  maps:
+    - path: trenches/single_dumpzone_v2
+      max_steps: 800
+      apply_trench_rewards: true
+
+
+full_excavator:
+  description: Excavator generalized
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: foundations
+      max_steps: 500
+    - path: foundations_1.5
+      max_steps: 600
+    - path: trenches/single
+      max_steps: 500
+      apply_trench_rewards: true
+    - path: foundations
+      max_steps: 500
+# -----------------------------------------------------------------------------
+# Wheeled Configurations
+# -----------------------------------------------------------------------------
+
+wheeled_solo_excavator:
+  description: Single excavator with wheeled movement
+  agent_types: [0]
+  action_types: [1]  # Wheeled
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 0.2
+    excavator_relocate_dug_dirt_mult: 1.5
+    transport_relocate_mult: 1.5
+  maps:
+    - path: foundations
+      max_steps: 700
+
