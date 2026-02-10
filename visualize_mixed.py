@@ -1,6 +1,10 @@
 """
 Visualization script for mixed agent training (Tracked Excavator + Skid Steer).
 Functionality is identical to visualize.py, but defaults and documentation are for mixed agent checkpoints.
+
+Usage:
+    python visualize_mixed.py -run checkpoint.pkl --config excavator_skidsteer
+    python visualize_mixed.py -run checkpoint.pkl --config solo_excavator -nx 4 -ny 4
 """
 
 import numpy as np
@@ -15,7 +19,7 @@ from terra.state import State
 import matplotlib.animation as animation
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
-from terra.config import EnvConfig
+from terra.config import EnvConfig, BatchConfig, CurriculumGlobalConfig, RewardsType
 import sys
 from train_mixed import MixedAgentTrainConfig
 sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
@@ -121,7 +125,7 @@ if __name__ == "__main__":
         "-o",
         "--out_path",
         type=str,
-        default="./potential-visualize-99-2agent-mixed-agents-skidsteer-skidsteer-local-2025-12-04-10-45-39.pkl.gif",
+        default="./potential-visualize-100-1agent-mixed-agents-skidsteer-skidsteer-local-2026-02-03-11-14-37.pkl.gif",
         #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )
@@ -131,6 +135,12 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="Random seed for the environment.",
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Named config preset to load maps from (e.g., 'solo_excavator', 'excavator_skidsteer'). See configs/training_configs.yaml",
     )
     args, _ = parser.parse_known_args()
     n_envs = args.n_envs_x * args.n_envs_y
@@ -158,31 +168,50 @@ if __name__ == "__main__":
     
     env_cfgs = jax.tree_map(replicate_field, env_cfgs)
     
-    # Fix for 128x128 maps: override environment configuration to use correct map dimensions
-    # The checkpoint was trained on 64x64 maps, but we want to visualize 128x128 maps
-    # if hasattr(env_cfgs, 'maps') and hasattr(env_cfgs.maps, 'edge_length_m'):
-    #     # Override the edge_length_m to use 88.0 meters for 128x128 maps
-    #     # This ensures the physical map size matches the 128x128 resolution
-    #     original_edge_length = env_cfgs.maps.edge_length_m
-    #     if isinstance(original_edge_length, (list, tuple)):
-    #         # If it's already an array, set each element to 88.0
-    #         scaled_edge_length = [88.0 for _ in original_edge_length]
-    #     else:
-    #         # If it's a scalar, set it to 88.0
-    #         scaled_edge_length = 88.0
-        
-    #     # Update the edge_length_m for all environments
-    #     env_cfgs = env_cfgs._replace(
-    #         maps=env_cfgs.maps._replace(edge_length_m=scaled_edge_length)
-    #     )
-    #     print(f"Overriding edge_length_m from {original_edge_length} to {scaled_edge_length} for 128x128 visualization")
-    suffle_maps = True
+    # Load maps from YAML config if --config is specified
+    batch_cfg = None
+    if args.config is not None:
+        try:
+            from configs.training_configs import get_config
+            preset = get_config(args.config)
+            print(f"\n📦 Loading config preset: '{args.config}'")
+            print(f"   Description: {preset.description}")
+            
+            # Convert MapLevel objects to curriculum levels format
+            if preset.maps and len(preset.maps) > 0:
+                curriculum_levels = []
+                for map_level in preset.maps:
+                    rewards_type = RewardsType.DENSE if map_level.rewards_type == "DENSE" else RewardsType.SPARSE
+                    curriculum_levels.append({
+                        "maps_path": map_level.maps_path,
+                        "max_steps_in_episode": map_level.max_steps_in_episode,
+                        "rewards_type": rewards_type,
+                        "apply_trench_rewards": map_level.apply_trench_rewards,
+                    })
+                
+                # Create custom CurriculumGlobalConfig with overridden levels
+                class CustomCurriculumGlobalConfig(CurriculumGlobalConfig):
+                    levels = curriculum_levels
+                
+                batch_cfg = BatchConfig(curriculum_global=CustomCurriculumGlobalConfig())
+                print(f"📍 Using maps from config: {[lvl['maps_path'] for lvl in curriculum_levels]}")
+        except ImportError as e:
+            print(f"⚠️  Failed to import training configs: {e}")
+        except ValueError as e:
+            print(f"⚠️  {e}")
+    
+    if batch_cfg is None:
+        print("📍 Using default maps from config.py")
+        batch_cfg = BatchConfig()
+    
+    shuffle_maps = True
     env = TerraEnvBatch(
+        batch_cfg=batch_cfg,
         rendering=True,
         n_envs_x_rendering=args.n_envs_x,
         n_envs_y_rendering=args.n_envs_y,
         display=False,
-        shuffle_maps=suffle_maps,
+        shuffle_maps=shuffle_maps,
     )
     config.num_embeddings_agent_min = 60
 
