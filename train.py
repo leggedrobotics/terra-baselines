@@ -329,8 +329,28 @@ def make_train(
         )
 
         # TERRA: Reset envs
-        reset_fn_p = jax.pmap(env.reset, axis_name="devices")  # vmapped inside
-        timestep = reset_fn_p(env_params, reset_rng)
+        (
+            env_params_reset,
+            target_maps,
+            padding_masks,
+            trench_axes,
+            trench_type,
+            dumpability_mask_init,
+            action_maps,
+            distance_maps,
+        ) = env.prepare_reset(env_params, reset_rng)
+        reset_fn_p = jax.pmap(env.reset_prepared, axis_name="devices")
+        timestep = reset_fn_p(
+            env_params_reset,
+            reset_rng,
+            target_maps,
+            padding_masks,
+            trench_axes,
+            trench_type,
+            dumpability_mask_init,
+            action_maps,
+            distance_maps,
+        )
         prev_actions = jnp.zeros(
             (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
         )

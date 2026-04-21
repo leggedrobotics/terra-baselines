@@ -31,5 +31,17 @@ export DATASET_SIZE=600
 
 # Change to the directory containing train.py or use the full path
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
-python train_mixed.py --config solo_excavator_more_dumpbonus
+#python train_mixed.py --config trench_excavator 
+
+python train_mixed.py --config solo_excavator \
+    --num_envs_per_device 1024 \
+    # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-08-14-36-34.pkl \
+    # --map_path /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference/maps/hongg_trench_3 \
+    # --replay_map_count 5 --target_map_repeat 10 \
+    # --total_timesteps 5_000_000_000
+
+
+
+
+
 #WANDB_MODE=offline 

@@ -19,7 +19,7 @@ from terra.state import State
 import matplotlib.animation as animation
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
-from terra.config import EnvConfig, BatchConfig, CurriculumGlobalConfig, RewardsType
+from terra.config import EnvConfig, BatchConfig, CurriculumGlobalConfig, RewardsType, CurriculumConfig
 import sys
 from train_mixed import MixedAgentTrainConfig
 sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
@@ -125,7 +125,7 @@ if __name__ == "__main__":
         "-o",
         "--out_path",
         type=str,
-        default="./potential-visualize-100-1agent-mixed-agents-skidsteer-skidsteer-local-2026-02-03-11-14-37.pkl.gif",
+        default="./trench-excavator-cabin_alignment-6-2026-04-08-14-36-34.pkl.gif",
         #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )
@@ -150,23 +150,110 @@ if __name__ == "__main__":
     config.num_test_rollouts = n_envs
     config.num_devices = 1
 
-    env_cfgs = log["env_config"]
+    # Checkpoints often store a *batched* env_config (tree-mapped to arrays for pmap/vmap),
+    # which breaks attribute access like `env_cfg.curriculum.level` inside TerraEnvBatch reset/map loading.
+    # For visualization we *unbatch* the checkpoint env_config back into a structured EnvConfig
+    # (take the first element along leading batch axes) and then replicate to `n_envs`.
+    env_cfgs_ckpt = log.get("env_config", None)
+
+    def _take0(v):
+        """Take first element along leading axes until it looks unbatched."""
+        try:
+            arr = jnp.asarray(v)
+        except Exception:
+            return v
+        # Peel leading batch axes if present.
+        while arr.ndim >= 1 and arr.shape[0] > 1:
+            arr = arr[0]
+        # If leading axis is size-1, also peel it (common checkpoint batching).
+        while arr.ndim >= 1 and arr.shape[0] == 1:
+            arr = arr[0]
+        return arr
+
+    def _unbatch_namedtuple(nt):
+        updates = {}
+        for f in getattr(nt, "_fields", ()):
+            v = getattr(nt, f)
+            if hasattr(v, "_fields"):
+                updates[f] = _unbatch_namedtuple(v)
+            else:
+                updates[f] = _take0(v)
+        return nt._replace(**updates)
+
+    if env_cfgs_ckpt is not None and hasattr(env_cfgs_ckpt, "_fields"):
+        env_cfgs = _unbatch_namedtuple(env_cfgs_ckpt)
+        # Ensure agent_types/action_types are Python tuples (not JAX arrays) for downstream code.
+        try:
+            env_cfgs = env_cfgs._replace(
+                agent_types=tuple(int(x) for x in jnp.asarray(env_cfgs.agent_types).tolist()),
+                action_types=tuple(int(x) for x in jnp.asarray(env_cfgs.action_types).tolist()),
+            )
+        except Exception:
+            pass
+    else:
+        env_cfgs = EnvConfig()
+
+    # Ensure curriculum is a proper CurriculumConfig (some checkpoints store it as a batched array).
+    # Visualization only needs a valid integer level for map selection.
+    try:
+        if not hasattr(env_cfgs.curriculum, "_fields"):
+            env_cfgs = env_cfgs._replace(curriculum=CurriculumConfig())
+    except Exception:
+        env_cfgs = EnvConfig()
+
+    # Robustly sanitize new scalar fields that can be malformed when loading older checkpoints
+    # with changed EnvConfig layout.
+    def _safe_scalar_float(v, default):
+        try:
+            arr = jnp.asarray(v)
+            if arr.size == 0:
+                return jnp.float32(default)
+            return jnp.asarray(arr.reshape(-1)[0], dtype=jnp.float32)
+        except Exception:
+            return jnp.float32(default)
+
+    env_cfgs = env_cfgs._replace(
+        cabin_alignment_coefficient=_safe_scalar_float(
+            getattr(env_cfgs, "cabin_alignment_coefficient", -0.04), -0.04
+        )
+    )
     
-    # Custom handling for different field types
-    def replicate_field(x):
+    # Replicate env_cfg leaves to `n_envs` without converting nested NamedTuples
+    # (EnvConfig.curriculum must remain a CurriculumConfig so `.level` exists under vmap/jit).
+    def _replicate_value(x):
         if x is None:
             return None
-        # Handle tuples generically (e.g., agent_types of length 1–4)
-        if isinstance(x, tuple):
-            return jnp.array(x)[None, ...].repeat(n_envs, 0)
-        # Handle scalars (int, float, bool) - just replicate the value
-        elif isinstance(x, (int, float, bool)):
-            return jnp.array([x] * n_envs)
-        # Handle arrays - take first element and replicate
-        else:
-            return x[0][None, ...].repeat(n_envs, 0)
-    
-    env_cfgs = jax.tree_map(replicate_field, env_cfgs)
+        # Plain tuples (e.g., agent_types/action_types): make [n_envs, ...]
+        if isinstance(x, tuple) and not hasattr(x, "_fields"):
+            return jnp.asarray(x)[None, ...].repeat(n_envs, 0)
+        # Python scalars -> [n_envs]
+        if isinstance(x, (int, float, bool)):
+            return jnp.asarray([x] * n_envs)
+        # Arrays / array-likes
+        x_arr = jnp.asarray(x)
+        if x_arr.ndim >= 1 and x_arr.shape[0] == 1:
+            return x_arr[0][None, ...].repeat(n_envs, 0)
+        return x_arr[None, ...].repeat(n_envs, 0)
+
+    def _replicate_namedtuple(nt):
+        updates = {}
+        for f in getattr(nt, "_fields", ()):
+            v = getattr(nt, f)
+            if hasattr(v, "_fields"):  # nested NamedTuple
+                updates[f] = _replicate_namedtuple(v)
+            else:
+                updates[f] = _replicate_value(v)
+        return nt._replace(**updates)
+
+    if hasattr(env_cfgs, "_fields"):
+        env_cfgs = _replicate_namedtuple(env_cfgs)
+    else:
+        # Fallback: treat as pytree, but keep plain tuples as leaves.
+        env_cfgs = jax.tree_util.tree_map(
+            _replicate_value,
+            env_cfgs,
+            is_leaf=lambda x: isinstance(x, tuple) and not hasattr(x, "_fields"),
+        )
     
     # Load maps from YAML config if --config is specified
     batch_cfg = None
@@ -195,6 +282,18 @@ if __name__ == "__main__":
                 
                 batch_cfg = BatchConfig(curriculum_global=CustomCurriculumGlobalConfig())
                 print(f"📍 Using maps from config: {[lvl['maps_path'] for lvl in curriculum_levels]}")
+
+                # Since visualization uses a no-op curriculum manager, explicitly apply
+                # the first level's runtime env settings to avoid stale/misaligned values
+                # from checkpoint env_config (e.g. wrong max_steps causing early termination).
+                first_level = curriculum_levels[0]
+                env_cfgs = env_cfgs._replace(
+                    # Keep leading batch dimension for vmap over env_cfgs
+                    agent_types=jnp.asarray(tuple(preset.agent_types), dtype=jnp.int32)[None, ...].repeat(n_envs, 0),
+                    action_types=jnp.asarray(tuple(preset.action_types), dtype=jnp.int32)[None, ...].repeat(n_envs, 0),
+                    max_steps_in_episode=jnp.full((n_envs,), int(first_level["max_steps_in_episode"]), dtype=jnp.int32),
+                    apply_trench_rewards=jnp.full((n_envs,), bool(first_level["apply_trench_rewards"]), dtype=jnp.bool_),
+                )
         except ImportError as e:
             print(f"⚠️  Failed to import training configs: {e}")
         except ValueError as e:
@@ -213,6 +312,18 @@ if __name__ == "__main__":
         display=False,
         shuffle_maps=shuffle_maps,
     )
+
+    # For visualization, freeze curriculum: use the checkpoint env_config as-is
+    # and avoid changing levels or rewards over time. This also sidesteps
+    # curriculum NamedTuple tracing issues under vmap.
+    class _NoopCurriculumManager:
+        def reset_cfgs(self, env_cfgs):
+            return env_cfgs
+
+        def update_cfgs(self, timesteps, rng):
+            return timesteps
+
+    env.curriculum_manager = _NoopCurriculumManager()
     config.num_embeddings_agent_min = 60
 
     model = load_neural_network(config, env)

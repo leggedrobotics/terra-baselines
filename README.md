@@ -80,6 +80,7 @@ python train_mixed.py --config excavator_truck
 | Config Name | Agents | Maps | Description |
 |-------------|--------|------|-------------|
 | `solo_excavator` | Excavator | `foundations` | Single excavator, no dumpzones |
+| `solo_excavator_more_dumpbonus` | Excavator | `foundations` | Single excavator, higher dump bonus |
 | `solo_excavator_dumpzone` | Excavator | `foundations_dumpzones_v3` | Single excavator with dumpzones |
 | `solo_skidsteer` | Skidsteer | `relocations_harder` | Single skidsteer relocation |
 | `excavator_skidsteer` | Excavator + Skidsteer | `foundations_dumpzones_v3` | Two-agent foundation |
@@ -88,7 +89,9 @@ python train_mixed.py --config excavator_truck
 | `dual_excavator` | 2 Excavators | `foundations_dumpzones_v3` | Two excavators working together |
 | `excavators_truck` | 2 Excavators + Truck | `foundations_dumpzones_roads` | Three-agent with road restriction |
 | `trench_excavator` | Excavator | `trenches/single` | Trench digging |
-| `trench_dual` | Excavator + Skidsteer | `trenches/single_dumpzone_v2` | Trench with transport |
+| `trench_masked_excavator` | Excavator | `trenches/single_masked_ring` | Trench digging, masked ring variant |
+| `trench_dumpzone` | Excavator + Skidsteer | `trenches/single_dumpzone_v2` | Trench with transport |
+| `full_excavator` | Excavator | `foundations`, `foundations_1.5`, `trenches/single` | Generalist, multi-map curriculum |
 | `wheeled_solo_excavator` | Excavator (wheeled) | `foundations` | Wheeled movement |
 
 ### Config File Structure
@@ -226,6 +229,8 @@ Here's a collection of rollouts for the models we trained.
 ## 🏗️ Terra Environment Setup Catalog
 
 This document is a **manual catalog** of all experimental setups used in the paper, including maps, agents, and configurations.
+
+> **Note on distance maps.** As of the latest commits, the map-generation scripts listed below under _Map generation path_ automatically produce distance maps at the end of conversion. The _Distance map path_ rows (`terra/tools/generate_distance_maps.py` / `generate_distance_maps_roads.py`) are kept for reference and for regenerating distance maps in-place on pre-existing datasets; they are no longer required as a separate step when generating a new dataset.
 
 ---
 

@@ -93,6 +93,7 @@ Reward Multipliers:
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
+import numpy as np
 from utils.models import get_model_ready
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig, BatchConfig, Rewards, CurriculumGlobalConfig, RewardsType
@@ -109,7 +110,11 @@ from flax.jax_utils import replicate, unreplicate
 from flax import struct
 import utils.helpers as helpers
 from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, policy
+import json
 import os
+import shutil
+import tempfile
+from pathlib import Path
 
 # Import the base training infrastructure
 from train import get_curriculum_levels, calculate_gae, ppo_update_networks, Transition
@@ -134,6 +139,178 @@ def safe_jax_to_python(value):
             return str(value)
     else:
         return value
+
+
+def _sorted_map_indices(images_dir: Path) -> list[int]:
+    indices = []
+    for image_path in images_dir.glob("img_*.npy"):
+        try:
+            indices.append(int(image_path.stem.split("_")[1]))
+        except (IndexError, ValueError):
+            continue
+    return sorted(indices)
+
+
+def _load_optional_array(path: Path):
+    if path.exists():
+        return np.load(path)
+    return None
+
+
+def _copy_or_fill_array(src: Path | None, dst: Path, fallback_array) -> None:
+    if src is not None and src.exists():
+        shutil.copy2(src, dst)
+    else:
+        np.save(dst, fallback_array)
+
+
+def _maybe_load_single_map_metadata(map_path: Path):
+    metadata_file = map_path / "metadata" / "map.json"
+    if metadata_file.exists():
+        return metadata_file
+    flat_metadata_file = map_path / "metadata.json"
+    if flat_metadata_file.exists():
+        return flat_metadata_file
+    return None
+
+
+def _metadata_has_trench_axes(metadata_path: Path | None) -> bool:
+    if metadata_path is None or not metadata_path.exists():
+        return False
+    try:
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+    except Exception:
+        return False
+    trench_axes = metadata.get("axes_ABC")
+    return isinstance(trench_axes, list) and len(trench_axes) > 0
+
+
+def _build_mixed_dataset_pool(
+    curriculum_levels: list[dict],
+    target_map_path: str,
+    replay_map_count: int,
+    target_map_repeat: int,
+) -> tuple[list[dict], str, int]:
+    dataset_root = os.getenv("DATASET_PATH", "")
+    if not dataset_root:
+        raise RuntimeError("DATASET_PATH must be set to build a mixed target-map training pool.")
+
+    if replay_map_count <= 0:
+        raise ValueError("replay_map_count must be > 0 when building a mixed dataset pool.")
+    if target_map_repeat <= 0:
+        raise ValueError("target_map_repeat must be > 0 when building a mixed dataset pool.")
+    if not curriculum_levels:
+        raise ValueError("curriculum_levels_override must be set when building a mixed dataset pool.")
+
+    target_map_dir = Path(target_map_path).resolve()
+    if not target_map_dir.exists():
+        raise FileNotFoundError(f"Target map path does not exist: {target_map_dir}")
+
+    target_image = _load_optional_array(target_map_dir / "images" / "img_1.npy")
+    if target_image is None:
+        target_image = _load_optional_array(target_map_dir / "image.npy")
+    if target_image is None:
+        raise FileNotFoundError(f"Could not find target-map image data under {target_map_dir}")
+
+    target_occupancy = _load_optional_array(target_map_dir / "occupancy" / "img_1.npy")
+    if target_occupancy is None:
+        target_occupancy = _load_optional_array(target_map_dir / "occupancy.npy")
+    target_dumpability = _load_optional_array(target_map_dir / "dumpability" / "img_1.npy")
+    if target_dumpability is None:
+        target_dumpability = _load_optional_array(target_map_dir / "dumpability.npy")
+    target_distance = _load_optional_array(target_map_dir / "distance" / "img_1.npy")
+    if target_distance is None:
+        target_distance = _load_optional_array(target_map_dir / "distance.npy")
+    if target_occupancy is None or target_dumpability is None or target_distance is None:
+        raise FileNotFoundError(
+            f"Target map at {target_map_dir} is missing occupancy, dumpability, or distance data."
+        )
+    target_actions = _load_optional_array(target_map_dir / "actions" / "img_1.npy")
+    if target_actions is None:
+        target_actions = _load_optional_array(target_map_dir / "actions.npy")
+    if target_actions is None:
+        target_actions = np.zeros_like(target_image)
+    target_metadata = _maybe_load_single_map_metadata(target_map_dir)
+    target_metadata_has_trench_axes = _metadata_has_trench_axes(target_metadata)
+
+    temp_root = Path(tempfile.mkdtemp(prefix="terra_mixed_pool_", dir="/tmp"))
+    mixed_levels = []
+    mixed_pool_size = replay_map_count + target_map_repeat
+
+    for level_idx, level in enumerate(curriculum_levels):
+        source_dir = Path(dataset_root) / level["maps_path"]
+        if not source_dir.exists():
+            raise FileNotFoundError(f"Configured dataset path does not exist: {source_dir}")
+
+        indices = _sorted_map_indices(source_dir / "images")
+        if not indices:
+            raise RuntimeError(f"No dataset maps found under {source_dir / 'images'}")
+        selected_indices = indices[-min(replay_map_count, len(indices)) :]
+        if len(selected_indices) < replay_map_count:
+            selected_indices.extend([selected_indices[-1]] * (replay_map_count - len(selected_indices)))
+
+        level_dir = temp_root / f"level_{level_idx}"
+        for subdir in ["images", "occupancy", "dumpability", "distance", "actions", "metadata"]:
+            (level_dir / subdir).mkdir(parents=True, exist_ok=True)
+
+        dataset_has_actions = (source_dir / "actions").exists()
+        dataset_metadata_files = [source_dir / "metadata" / f"trench_{i}.json" for i in selected_indices]
+        keep_metadata = target_metadata_has_trench_axes and all(
+            path.exists() for path in dataset_metadata_files
+        )
+
+        out_idx = 1
+        for src_idx in selected_indices:
+            image_path = source_dir / "images" / f"img_{src_idx}.npy"
+            occupancy_path = source_dir / "occupancy" / f"img_{src_idx}.npy"
+            dumpability_path = source_dir / "dumpability" / f"img_{src_idx}.npy"
+            distance_path = source_dir / "distance" / f"img_{src_idx}.npy"
+            if not all(path.exists() for path in [image_path, occupancy_path, dumpability_path, distance_path]):
+                raise FileNotFoundError(f"Dataset map {src_idx} in {source_dir} is incomplete.")
+
+            shutil.copy2(image_path, level_dir / "images" / f"img_{out_idx}.npy")
+            shutil.copy2(occupancy_path, level_dir / "occupancy" / f"img_{out_idx}.npy")
+            shutil.copy2(dumpability_path, level_dir / "dumpability" / f"img_{out_idx}.npy")
+            shutil.copy2(distance_path, level_dir / "distance" / f"img_{out_idx}.npy")
+
+            if dataset_has_actions:
+                _copy_or_fill_array(
+                    source_dir / "actions" / f"img_{src_idx}.npy",
+                    level_dir / "actions" / f"img_{out_idx}.npy",
+                    np.zeros_like(target_image),
+                )
+            else:
+                np.save(level_dir / "actions" / f"img_{out_idx}.npy", np.zeros_like(target_image))
+
+            if keep_metadata:
+                shutil.copy2(
+                    source_dir / "metadata" / f"trench_{src_idx}.json",
+                    level_dir / "metadata" / f"trench_{out_idx}.json",
+                )
+            out_idx += 1
+
+        for _ in range(target_map_repeat):
+            np.save(level_dir / "images" / f"img_{out_idx}.npy", target_image)
+            np.save(level_dir / "occupancy" / f"img_{out_idx}.npy", target_occupancy)
+            np.save(level_dir / "dumpability" / f"img_{out_idx}.npy", target_dumpability)
+            np.save(level_dir / "distance" / f"img_{out_idx}.npy", target_distance)
+            np.save(level_dir / "actions" / f"img_{out_idx}.npy", target_actions)
+            if keep_metadata:
+                shutil.copy2(
+                    target_metadata,
+                    level_dir / "metadata" / f"trench_{out_idx}.json",
+                )
+            out_idx += 1
+
+        if not keep_metadata:
+            shutil.rmtree(level_dir / "metadata")
+
+        mixed_level = dict(level)
+        mixed_level["maps_path"] = f"level_{level_idx}"
+        mixed_levels.append(mixed_level)
+
+    return mixed_levels, str(temp_root), mixed_pool_size
 
 
 @dataclass 
@@ -207,6 +384,12 @@ class MixedAgentTrainConfig:
     # Curriculum/maps override (from YAML config)
     # Format: list of dicts with keys: maps_path, max_steps_in_episode, rewards_type, apply_trench_rewards
     curriculum_levels_override: list | None = None
+    # Optional single-map training path. When set, map loading uses this path directly
+    # and does not rely on DATASET_PATH / DATASET_SIZE.
+    single_map_path: str | None = None
+    # Mixed fine-tuning mode: sample recent config maps and oversample the target map.
+    replay_map_count: int = 0
+    target_map_repeat: int = 0
 
 
     def __post_init__(self):
@@ -325,24 +508,53 @@ class ConfigurableAgentManager:
 
 def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig = None, env_params_override: EnvConfig = None):
     """Initialize states for mixed agent training - compatible with make_states interface"""
-    
+    curriculum_levels = config.curriculum_levels_override
+    single_map_path = config.single_map_path
+
+    if (
+        single_map_path is not None
+        and config.replay_map_count > 0
+        and config.target_map_repeat > 0
+    ):
+        curriculum_levels, mixed_dataset_root, mixed_pool_size = _build_mixed_dataset_pool(
+            curriculum_levels=curriculum_levels,
+            target_map_path=single_map_path,
+            replay_map_count=config.replay_map_count,
+            target_map_repeat=config.target_map_repeat,
+        )
+        os.environ["DATASET_PATH"] = mixed_dataset_root
+        os.environ["DATASET_SIZE"] = str(mixed_pool_size)
+        single_map_path = None
+        print(
+            "📍 Using mixed target-map pool: "
+            f"{config.replay_map_count} recent maps + "
+            f"{config.target_map_repeat} target-map repeats per curriculum level"
+        )
+        print(f"📍 Mixed dataset root: {mixed_dataset_root}")
+
     # Create batch config - override curriculum levels if provided
-    if config.curriculum_levels_override is not None and len(config.curriculum_levels_override) > 0:
+    if curriculum_levels is not None and len(curriculum_levels) > 0:
         # Create custom CurriculumGlobalConfig with the override levels
         custom_curriculum = CurriculumGlobalConfig()
         # We need to create a new class with the overridden levels since it's a NamedTuple
         # NamedTuples can't have mutable class attributes overridden, so we work around this
         class CustomCurriculumGlobalConfig(CurriculumGlobalConfig):
-            levels = config.curriculum_levels_override
+            levels = curriculum_levels
         
         batch_cfg = BatchConfig(curriculum_global=CustomCurriculumGlobalConfig())
-        print(f"📍 Using maps from config: {[lvl['maps_path'] for lvl in config.curriculum_levels_override]}")
+        print(f"📍 Using maps from config: {[lvl['maps_path'] for lvl in curriculum_levels]}")
     else:
         batch_cfg = BatchConfig()
         print("📍 Using default maps from config.py")
     
     # Initialize environment with configurable agents
-    env = TerraEnvBatch(batch_cfg=batch_cfg)
+    env = TerraEnvBatch(
+        batch_cfg=batch_cfg,
+        shuffle_maps=False,
+        single_map_path=single_map_path,
+    )
+    if single_map_path is not None:
+        print(f"📍 Using single map path: {single_map_path}")
     
     # Get environment parameters with agent types from config
     if env_params is None:
@@ -406,14 +618,20 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
 
+    print("⏱️  Batching env_params...", flush=True)
+    t_env_params = time.time()
     env_params = jax.tree_map(
         lambda x: jnp.array(x)[None, None]
         .repeat(num_devices, 0)
         .repeat(num_envs_per_device, 1),
         env_params,
     )
+    print(
+        f"⏱️  Batching env_params done in {time.time() - t_env_params:.2f}s",
+        flush=True,
+    )
     
-    print(f"Mixed Agent Environment - Tile size shape: {env_params.tile_size.shape}")
+    print(f"Mixed Agent Environment - Tile size shape: {env_params.tile_size.shape}", flush=True)
 
     rng = jax.random.PRNGKey(config.seed)
     rng, _rng = jax.random.split(rng)
@@ -434,18 +652,24 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
             na = MAX_AGENTS
         na = max(1, min(MAX_AGENTS, int(na)))
         config.num_prev_actions = int(5 * na)
-        print(f"Setting num_prev_actions to {config.num_prev_actions} (5 per agent × {na} agents)")
+        print(f"Setting num_prev_actions to {config.num_prev_actions} (5 per agent × {na} agents)", flush=True)
     except Exception as e:
-        print(f"Warning: failed to infer num_agents for num_prev_actions ({e}); keeping {config.num_prev_actions}")
+        print(f"Warning: failed to infer num_agents for num_prev_actions ({e}); keeping {config.num_prev_actions}", flush=True)
 
     # Create the unified network with agent type features (now that num_prev_actions is set)
+    print("⏱️  Initializing model...", flush=True)
+    t_model_init = time.time()
     network, network_params = get_model_ready(_rng, config, env)
+    print(
+        f"⏱️  Model init done in {time.time() - t_model_init:.2f}s",
+        flush=True,
+    )
     # Debug: print number of actions for current action type (kept as requested)
     try:
         num_actions_debug = env.batch_cfg.action_type.get_num_actions()
-        print(f"🛠️ Debug: Number of actions = {num_actions_debug}")
+        print(f"🛠️ Debug: Number of actions = {num_actions_debug}", flush=True)
     except Exception as e:
-        print(f"🛠️ Debug: Failed to read number of actions: {e}")
+        print(f"🛠️ Debug: Failed to read number of actions: {e}", flush=True)
     
     # Optimizer with mixed agent considerations
     tx = optax.chain(
@@ -458,7 +682,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     )
     
     
-    print(f"Network: Unified with agent type conditioning")
+    print(f"Network: Unified with agent type conditioning", flush=True)
     
     return rng, env, env_params, train_state
 
@@ -554,8 +778,28 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             )
 
             # TERRA: Reset envs
-            reset_fn_p = jax.pmap(env.reset, axis_name="devices")  # vmapped inside
-            timestep = reset_fn_p(env_params, reset_rng)
+            (
+                env_params_reset,
+                target_maps,
+                padding_masks,
+                trench_axes,
+                trench_type,
+                dumpability_mask_init,
+                action_maps,
+                distance_maps,
+            ) = env.prepare_reset(env_params, reset_rng)
+            reset_fn_p = jax.pmap(env.reset_prepared, axis_name="devices")
+            timestep = reset_fn_p(
+                env_params_reset,
+                reset_rng,
+                target_maps,
+                padding_masks,
+                trench_axes,
+                trench_type,
+                dumpability_mask_init,
+                action_maps,
+                distance_maps,
+            )
             # Removed one-time debug sanity prints
             
             # Initialize reward_components in timestep.info to maintain consistent pytree structure
@@ -933,6 +1177,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     
     print("=" * 60)
     print("🚀 Starting Mixed Agent Training...")
+    print("⚙️  JAX is now compiling the control-flow graph. This is normal and taking a few minutes...", flush=True)
 
     try:
         t = time.time()
@@ -996,8 +1241,8 @@ if __name__ == "__main__":
         help="Learning rate"
     )
     parser.add_argument(
-        "--num_envs_per_device", type=int, default=512,
-        help="Number of parallel envs per device (was hardcoded to 1792)"
+        "--num_envs_per_device", type=int, default=1024,
+        help="Number of parallel envs per device"
     )
     parser.add_argument(
         "--total_timesteps", type=int, default=50_000_000_000,
@@ -1021,6 +1266,35 @@ if __name__ == "__main__":
         "-c", "--config", type=str, default=None,
         help="Load a named training config preset (e.g., 'excavator_truck', 'solo_excavator'). "
              "Run 'python configs/training_configs.py' to see available presets."
+    )
+    parser.add_argument(
+        "--map_path",
+        type=str,
+        default=None,
+        help=(
+            "Optional single-map folder/file path for training. "
+            "By default this enables pure single-map training. "
+            "If --replay_map_count and --target_map_repeat are also set, "
+            "the map is mixed with recent config-dataset maps instead."
+        ),
+    )
+    parser.add_argument(
+        "--replay_map_count",
+        type=int,
+        default=0,
+        help=(
+            "When used with --map_path, keep the last N maps from each config dataset "
+            "and mix them with repeated copies of the target map."
+        ),
+    )
+    parser.add_argument(
+        "--target_map_repeat",
+        type=int,
+        default=0,
+        help=(
+            "When used with --map_path and --replay_map_count, add the target map this many "
+            "times to the mixed training pool."
+        ),
     )
     
     # Reward multiplier arguments
@@ -1155,6 +1429,13 @@ if __name__ == "__main__":
             print(f"➡️  CLI override action types: {action_types_override}")
         except Exception as e:
             print(f"⚠️  Failed to parse --action_types '{args.action_types}': {e}")
+
+    if (args.replay_map_count > 0 or args.target_map_repeat > 0) and args.map_path is None:
+        raise ValueError("Mixed target-map replay requires --map_path.")
+    if (args.replay_map_count > 0 or args.target_map_repeat > 0) and args.config is None:
+        raise ValueError("Mixed target-map replay requires --config so the dataset source is defined.")
+    if (args.replay_map_count > 0) != (args.target_map_repeat > 0):
+        raise ValueError("Set both --replay_map_count and --target_map_repeat to use mixed target-map replay.")
     
     # CLI reward multiplier overrides take precedence
     if args.dump_bonus_mult is not None:
@@ -1171,6 +1452,15 @@ if __name__ == "__main__":
         agent_types_override = (0,)  # Default to single excavator
     if action_types_override is None:
         action_types_override = (0,)  # Default to tracked
+    
+    # Validate: skidsteers (agent_type=2) cannot use wheeled movement (action_type=1)
+    for i in range(min(len(agent_types_override), len(action_types_override))):
+        if agent_types_override[i] == 2 and action_types_override[i] == 1:
+            raise ValueError(
+                f"Agent {i}: Skidsteer (agent_type=2) does not support wheeled movement "
+                f"(action_type=1). Skidsteers require tracked movement (action_type=0) "
+                f"for auto-load, push-mode, and reverse-dump mechanics."
+            )
     
     name = f"{args.name}-{args.machine}-{DT}"
     
@@ -1194,6 +1484,9 @@ if __name__ == "__main__":
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,
         curriculum_levels_override=curriculum_levels_override,
+        single_map_path=args.map_path,
+        replay_map_count=args.replay_map_count,
+        target_map_repeat=args.target_map_repeat,
     )
     
     train_mixed_agents(config) 

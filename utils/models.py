@@ -10,6 +10,7 @@ from functools import partial
 
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     """Instantiate a model according to obs shape of environment."""
+    init_batch_size = 1
     num_embeddings_agent = jnp.max(
         jnp.array(
             [
@@ -20,13 +21,13 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             dtype=jnp.int16,
         )
     ).item()
-    jax.debug.print("num_embeddings_agent = {x}", x=num_embeddings_agent)
+    print(f"num_embeddings_agent = {num_embeddings_agent}")
     map_min_max = (
         tuple(config["maps_net_normalization_bounds"])
         if not config["clip_action_maps"]
         else (-1, 1)
     )
-    jax.debug.print("map normalization min max = {x}", x=map_min_max)
+    print(f"map normalization min max = {map_min_max}")
     model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=config["num_prev_actions"],
         num_embeddings_agent=num_embeddings_agent,
@@ -45,31 +46,31 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     # Build dummy obs matching utils.utils_ppo.obs_to_model_input indexing
     obs = [
         # [0] agent_states
-        jnp.zeros((config["num_envs"], MAX_AGENTS, env.batch_cfg.agent.num_state_obs)),
+        jnp.zeros((init_batch_size, MAX_AGENTS, env.batch_cfg.agent.num_state_obs)),
         # [1] agent_active (mask)
-        jnp.zeros((config["num_envs"], MAX_AGENTS), dtype=jnp.int8),
+        jnp.zeros((init_batch_size, MAX_AGENTS), dtype=jnp.int8),
         # [2] num_agents
-        jnp.zeros((config["num_envs"],), dtype=jnp.int32),
+        jnp.zeros((init_batch_size,), dtype=jnp.int32),
         # [3]-[8] local maps (1D per-angle summaries)
-        jnp.zeros((config["num_envs"], angles_cabin)),
-        jnp.zeros((config["num_envs"], angles_cabin)),
-        jnp.zeros((config["num_envs"], angles_cabin)),
-        jnp.zeros((config["num_envs"], angles_cabin)),
-        jnp.zeros((config["num_envs"], angles_cabin)),
-        jnp.zeros((config["num_envs"], angles_cabin)),
+        jnp.zeros((init_batch_size, angles_cabin)),
+        jnp.zeros((init_batch_size, angles_cabin)),
+        jnp.zeros((init_batch_size, angles_cabin)),
+        jnp.zeros((init_batch_size, angles_cabin)),
+        jnp.zeros((init_batch_size, angles_cabin)),
+        jnp.zeros((init_batch_size, angles_cabin)),
         # [9]-[11] global maps
-        jnp.zeros((config["num_envs"], map_width, map_height)),
-        jnp.zeros((config["num_envs"], map_width, map_height)),
-        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((init_batch_size, map_width, map_height)),
+        jnp.zeros((init_batch_size, map_width, map_height)),
+        jnp.zeros((init_batch_size, map_width, map_height)),
         # [12]-[13] agent dims (scalars per env) - not used by model
-        jnp.zeros((config["num_envs"],), dtype=jnp.int32),
-        jnp.zeros((config["num_envs"],), dtype=jnp.int32),
+        jnp.zeros((init_batch_size,), dtype=jnp.int32),
+        jnp.zeros((init_batch_size,), dtype=jnp.int32),
         # [14]-[16] masks
-        jnp.zeros((config["num_envs"], map_width, map_height)),
-        jnp.zeros((config["num_envs"], map_width, map_height)),
-        jnp.zeros((config["num_envs"], map_width, map_height)),
+        jnp.zeros((init_batch_size, map_width, map_height)),
+        jnp.zeros((init_batch_size, map_width, map_height)),
+        jnp.zeros((init_batch_size, map_width, map_height)),
         # [17] prev_actions
-        jnp.zeros((config["num_envs"], config["num_prev_actions"]), dtype=jnp.int32),
+        jnp.zeros((init_batch_size, config["num_prev_actions"]), dtype=jnp.int32),
     ]
     params = model.init(rng, obs)
 
