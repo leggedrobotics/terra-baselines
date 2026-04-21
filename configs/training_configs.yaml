@@ -24,8 +24,8 @@ solo_excavator:
     excavator_relocate_dumped_mult: 1.5
     excavator_relocate_dug_dirt_mult: 1.5
   maps:
-    - path: foundations
-      max_steps: 500
+    - path: foundations_real_ring
+      max_steps: 550
 
 
 solo_excavator_more_dumpbonus:

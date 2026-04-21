@@ -125,7 +125,7 @@ if __name__ == "__main__":
         "-o",
         "--out_path",
         type=str,
-        default="./trench-excavator-cabin_alignment-6-2026-04-08-14-36-34.pkl.gif",
+        default="./solo-excavator-1-2026-04-21-13-36-45.pkl.gif",
         #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )

@@ -1,4 +1,6 @@
 # utilities for PPO training and evaluation
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 from flax.training.train_state import TrainState
@@ -28,8 +30,7 @@ class RolloutStats(NamedTuple):
     action_7: jax.Array = jnp.asarray(0)
 
 
-# @partial(jax.pmap, axis_name="devices")
-def rollout(
+def _rollout_impl(
     rng: jax.Array,
     env,
     env_params,
@@ -118,3 +119,23 @@ def rollout(
         0, num_rollouts, lambda i, carry: _body_fn(carry), init_carry
     )
     return final_carry[1]
+
+
+# Cache of pmapped rollout functions keyed by (id(env), id(config)). `env` and
+# `config` are closed over (not passed as pmap args) because they are not
+# pytrees and `MixedAgentTrainConfig` is not hashable, which would trip
+# `static_broadcasted_argnums`. Closure means each new (env, config) pair
+# retraces once; identical pairs reuse the compiled pmap.
+_PMAPPED_ROLLOUT_CACHE: dict = {}
+
+
+def rollout(rng, env, env_params, train_state, config):
+    key = (id(env), id(config))
+    pmapped = _PMAPPED_ROLLOUT_CACHE.get(key)
+    if pmapped is None:
+        def _closure(rng_, env_params_, train_state_):
+            return _rollout_impl(rng_, env, env_params_, train_state_, config)
+
+        pmapped = jax.pmap(_closure, axis_name="devices")
+        _PMAPPED_ROLLOUT_CACHE[key] = pmapped
+    return pmapped(rng, env_params, train_state)

@@ -33,6 +33,6 @@ export DATASET_SIZE=25
 # Change to the directory containing visualize.py
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
 
-python visualize_mixed.py --config trench_masked_excavator --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-08-14-36-34.pkl
+python visualize_mixed.py --config solo_excavator --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-21-13-36-45.pkl
 
 #JAX_PLATFORMS=cpu 

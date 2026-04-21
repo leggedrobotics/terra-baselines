@@ -339,8 +339,8 @@ class MixedAgentTrainConfig:
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 1  # Number of updates between logging train stats
-    log_eval_interval: int = 30  
-    checkpoint_interval: int = 100  
+    log_eval_interval: int = 100
+    checkpoint_interval: int = 100
     
     # Model settings optimized for mixed agents
     num_prev_actions = 10  # will be overridden to 5 * num_agents at runtime
@@ -348,7 +348,7 @@ class MixedAgentTrainConfig:
     local_map_normalization_bounds = [-16, 16]
     maps_net_normalization_bounds = [-10, 10]  # Required field for network initialization
     loaded_max = 100
-    num_rollouts_eval = 500  # max length of an episode in Terra for eval
+    num_rollouts_eval = 200  # max length of an episode in Terra for eval
     cache_clear_interval = 1000  # Less frequent cache clearing for speed
     # Entropy scheduler (cosine decay)
     ent_schedule_start: float = 0.15
@@ -1113,15 +1113,45 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
 
                 if i % config.log_eval_interval == 0:
-                    eval_stats = eval_ppo.rollout(
-                        rng_rollout,
+                    # Eval runs as pmap across all devices. Feed replicated train_state
+                    # and env_params (pulled from the unreduced runner_state) and a
+                    # per-device rng. Results come back with a leading device axis; we
+                    # aggregate across devices host-side so reward/action % are global.
+                    train_state_replicated = runner_state[1]
+                    env_params_replicated = runner_state[2].env_cfg
+                    rng_rollout_per_device = jax.random.split(
+                        rng_rollout, num=config.num_devices
+                    )
+                    eval_stats_per_device = eval_ppo.rollout(
+                        rng_rollout_per_device,
                         env,
-                        env_params_single,
-                        train_state,
+                        env_params_replicated,
+                        train_state_replicated,
                         config,
                     )
+                    # Combine per-device stats: sums for counts/rewards, max/min for
+                    # extrema, and keep length from device 0 (identical across devices).
+                    eval_stats = eval_stats_per_device._replace(
+                        max_reward=eval_stats_per_device.max_reward.max(),
+                        min_reward=eval_stats_per_device.min_reward.min(),
+                        reward=eval_stats_per_device.reward.sum(),
+                        length=eval_stats_per_device.length[0],
+                        episodes=eval_stats_per_device.episodes.sum(),
+                        positive_terminations=eval_stats_per_device.positive_terminations.sum(),
+                        terminations=eval_stats_per_device.terminations.sum(),
+                        positive_terminations_steps=eval_stats_per_device.positive_terminations_steps.sum(),
+                        action_0=eval_stats_per_device.action_0.sum(),
+                        action_1=eval_stats_per_device.action_1.sum(),
+                        action_2=eval_stats_per_device.action_2.sum(),
+                        action_3=eval_stats_per_device.action_3.sum(),
+                        action_4=eval_stats_per_device.action_4.sum(),
+                        action_5=eval_stats_per_device.action_5.sum(),
+                        action_6=eval_stats_per_device.action_6.sum(),
+                        action_7=eval_stats_per_device.action_7.sum(),
+                    )
 
-                    n = config.num_envs_per_device * eval_stats.length
+                    # Total envs that contributed to the sums across all devices.
+                    n = config.num_envs_per_device * config.num_devices * eval_stats.length
                     avg_positive_episode_length = jnp.where(
                         eval_stats.positive_terminations > 0,
                         eval_stats.positive_terminations_steps / eval_stats.positive_terminations,
@@ -1142,9 +1172,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             "eval/DO": eval_stats.action_6 / n,
                             "eval/DO_NOTHING %": eval_stats.action_7 / n,
                             "eval/positive_terminations": eval_stats.positive_terminations
-                            / config.num_envs_per_device,
+                            / (config.num_envs_per_device * config.num_devices),
                             "eval/total_terminations": eval_stats.terminations
-                            / config.num_envs_per_device,
+                            / (config.num_envs_per_device * config.num_devices),
                             "eval/avg_positive_episode_length": avg_positive_episode_length
                         }
                     )
