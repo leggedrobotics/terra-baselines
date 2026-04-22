@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
-#SBATCH --gpus=gpu:rtx_3090:1
+#SBATCH --gpus=gpu:1
 #SBATCH --time=2:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --job-name="eval"
@@ -30,4 +30,4 @@ export DATASET_SIZE=200
 
 # Change to the directory containing eval_mixed.py
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
-python eval_mixed.py --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-12-09-21-18-49.pkl
+python eval_mixed.py --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-22-10-20-06.pkl --map_name hongg_archi_3

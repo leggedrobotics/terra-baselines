@@ -24,8 +24,12 @@ from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
 from terra.config import EnvConfig
 import sys
+from pathlib import Path
 from train_mixed import MixedAgentTrainConfig
 sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
+
+# Default maps dir matches inference_single_map.py convention.
+_DEFAULT_MAPS_DIR = Path(__file__).parent / "inference" / "maps"
 
 
 def _append_to_obs(o, obs_log):
@@ -172,11 +176,22 @@ def rollout_episode(
         next_obs = timestep.observation
         done = timestep.info["task_done"]
 
-        # Per-agent accumulation for all envs (active agent is index 0 per env)
+        # Per-agent accumulation for all envs (active agent is index 0 per env).
+        # Gate every per-env update on ~episode_done_once so finished envs stop
+        # accumulating movement / do events for the remaining rollout steps.
+        # Without this, metrics like move_m, do_events, path_efficiency, and
+        # workspaces_efficiency get inflated by post-terminal activity.
         try:
             agent_states_batch = obs["agent_states"]  # [B, MAX_AGENTS, feat]
             active_pos_batch = agent_states_batch[:, 0, 0:2]  # [B, 2]
             active_type_batch = agent_states_batch[:, 0, AGENT_TYPE_IDX].astype(jnp.int32)  # [B]
+
+            if episode_done_once is None:
+                active_env_mask = jnp.ones(active_type_batch.shape[0], dtype=jnp.bool_)
+            else:
+                active_env_mask = ~episode_done_once  # [B]
+            active_env_f = active_env_mask.astype(jnp.float32)
+            active_env_i = active_env_mask.astype(jnp.int32)
 
             # Movement distance per agent type across batch
             for atype in (0, 1, 2):
@@ -185,14 +200,21 @@ def rollout_episode(
                     last_pos_per_agent[atype] = active_pos_batch
                 else:
                     delta = jnp.linalg.norm(active_pos_batch - last_pos_per_agent[atype], axis=1)  # [B]
-                    per_agent_move_m[atype] = per_agent_move_m[atype] + delta * tile_size * mask.astype(jnp.float32)
-                    # Update last pos only for envs where this type acted
-                    last_pos_per_agent[atype] = jnp.where(mask[:, None], active_pos_batch, last_pos_per_agent[atype])
+                    per_agent_move_m[atype] = (
+                        per_agent_move_m[atype]
+                        + delta * tile_size * mask.astype(jnp.float32) * active_env_f
+                    )
+                    # Update last pos only for envs where this type acted AND is still running.
+                    update_pos_mask = mask & active_env_mask
+                    last_pos_per_agent[atype] = jnp.where(
+                        update_pos_mask[:, None], active_pos_batch, last_pos_per_agent[atype]
+                    )
 
             # Do events: detect any change in action_map per env, attribute to active agent type
             if prev_action_map is not None:
                 changed = (obs["action_map"] != prev_action_map)  # [B, H, W]
                 any_change = changed.reshape((changed.shape[0], -1)).any(axis=1).astype(jnp.int32)  # [B]
+                any_change = any_change * active_env_i  # zero out finished envs
                 for atype in (0, 1, 2):
                     mask = (active_type_batch == atype).astype(jnp.int32)
                     per_agent_do_events[atype] = per_agent_do_events[atype] + any_change * mask
@@ -559,7 +581,35 @@ if __name__ == "__main__":
         default=0,
         help="Random seed for the environment.",
     )
+    parser.add_argument(
+        "--map_name",
+        type=str,
+        default=None,
+        help=(
+            "If set, evaluate only on the single map `inference/maps/<map_name>`. "
+            "All --n_envs rollouts use this map with different seeds."
+        ),
+    )
+    parser.add_argument(
+        "--map_path",
+        type=str,
+        default=None,
+        help=(
+            "Explicit path to a single-map folder (overrides --map_name). "
+            "Same convention as inference_single_map.py."
+        ),
+    )
     args, _ = parser.parse_known_args()
+
+    single_map_path = None
+    if args.map_path:
+        single_map_path = args.map_path
+    elif args.map_name:
+        single_map_path = str(_DEFAULT_MAPS_DIR / args.map_name)
+    if single_map_path is not None:
+        if not Path(single_map_path).exists():
+            raise FileNotFoundError(f"--map_path/--map_name resolves to missing folder: {single_map_path}")
+        print(f"Single-map eval: evaluating {args.n_envs} rollouts on '{single_map_path}'")
     n_envs = args.n_envs
 
     log = load_pkl_object(f"{args.run_name}")
@@ -617,8 +667,13 @@ if __name__ == "__main__":
     batch_cfg = BatchConfig(action_type=WheeledAction if all_wheeled else TrackedAction)
     print(f"selected batch action_type: {'WheeledAction' if batch_cfg.action_type is WheeledAction else 'TrackedAction'}")
     
-    shuffle_maps = True
-    env = TerraEnvBatch(batch_cfg=batch_cfg, rendering=False, shuffle_maps=shuffle_maps)
+    shuffle_maps = single_map_path is None
+    env = TerraEnvBatch(
+        batch_cfg=batch_cfg,
+        rendering=False,
+        shuffle_maps=shuffle_maps,
+        single_map_path=single_map_path,
+    )
     config.num_embeddings_agent_min = 60
 
     model = load_neural_network(config, env)

@@ -34,11 +34,11 @@ cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
 #python train_mixed.py --config trench_excavator 
 
 python train_mixed.py --config solo_excavator \
-    --num_envs_per_device 1024 \
-    # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-08-14-36-34.pkl \
-    # --map_path /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference/maps/hongg_trench_3 \
-    # --replay_map_count 5 --target_map_repeat 10 \
-    # --total_timesteps 5_000_000_000
+    --num_envs_per_device 128 \
+    --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-21-13-36-45.pkl \
+    --map_path /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference/maps/hongg_archi_3 \
+    --replay_map_count 15 --target_map_repeat 10 \
+    --total_timesteps 5_000_000_000
 
 
 
