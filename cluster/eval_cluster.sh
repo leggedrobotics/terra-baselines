@@ -30,4 +30,4 @@ export DATASET_SIZE=200
 
 # Change to the directory containing eval_mixed.py
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
-python eval_mixed.py --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-22-10-20-06.pkl --map_name hongg_archi_3
+python eval_mixed.py --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-21-13-36-45.pkl --map_name hongg_archi_3 -n 100
