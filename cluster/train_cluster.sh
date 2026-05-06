@@ -2,7 +2,7 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=gpu:4
-#SBATCH --time=24:00:00
+#SBATCH --time=14:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
 #SBATCH --mail-user=name@mail
@@ -34,11 +34,11 @@ cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
 #python train_mixed.py --config trench_excavator 
 
 python train_mixed.py --config solo_excavator \
-    --num_envs_per_device 128 \
-    --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-21-13-36-45.pkl \
-    --map_path /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference/maps/hongg_archi_3 \
-    --replay_map_count 15 --target_map_repeat 10 \
-    --total_timesteps 5_000_000_000
+    # --num_envs_per_device 128 \
+    # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-21-13-36-45.pkl \
+    # --map_path /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference/maps/hongg_archi_3 \
+    # --replay_map_count 15 --target_map_repeat 10 \
+    # --total_timesteps 5_000_000_000
 
 
 

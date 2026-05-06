@@ -3,7 +3,7 @@
 # srun --cpus-per-task=8 --mem-per-cpu=8G --gres=gpu:rtx_4090:8 --time=12:00:00 terra-baselines/cluster/train_srun.sh
 #
 # Or for shorter test runs:
-# srun --cpus-per-task=4 --mem-per-cpu=4G --gres=gpu:rtx_4090:1 --time=2:00:00 terra-baselines/cluster/train_srun.sh
+# srun --cpus-per-task=1 --mem-per-cpu=4G --gres=gpu:rtx_4090:1 --time=2:00:00 terra-baselines/cluster/train_srun.sh
 
 # Set up environment
 module load eth_proxy
@@ -23,4 +23,4 @@ export DATASET_SIZE=200
 
 # Change to the correct directory
 cd /cluster/home/alesweber/TerraProject/terra-baselines
-python train.py
+python train_mixed.py --config solo_excavator \
