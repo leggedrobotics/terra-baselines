@@ -27,15 +27,19 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs["local_map_target_pos"],     # [6] - Primary agent positive target local map
         obs["local_map_dumpability"],    # [7] - Primary agent dumpability local map
         obs["local_map_obstacles"],      # [8] - Primary agent obstacles local map
-        obs["traversability_mask"],      # [9] - Traversability mask
-        obs["action_map"],               # [10] - Global action map
-        obs["target_map"],               # [11] - Global target map
-        obs["agent_width"],              # [12] - Agent width (scalar)
-        obs["agent_height"],             # [13] - Agent height (scalar)
-        obs["padding_mask"],             # [14] - Padding mask
-        obs["dumpability_mask"],         # [15] - Dumpability mask
-        obs["interaction_mask"],         # [16] - Interaction map
-        prev_actions,                    # [17] - Previous actions history
+        obs["local_map_border_workspace"],    # [9] - Border tiles currently in workspace
+        obs["local_map_edge_alignment_error"],# [10] - Workspace border alignment error sum
+        obs["local_map_border_diggable"],     # [11] - Workspace border tiles currently diggable
+        obs["traversability_mask"],      # [12] - Traversability mask
+        obs["reachability_mask"],        # [13] - Reachability mask (optional; zero when disabled)
+        obs["action_map"],               # [14] - Global action map
+        obs["target_map"],               # [15] - Global target map
+        obs["agent_width"],              # [16] - Agent width (scalar)
+        obs["agent_height"],             # [17] - Agent height (scalar)
+        obs["padding_mask"],             # [18] - Padding mask
+        obs["dumpability_mask"],         # [19] - Dumpability mask
+        obs["interaction_mask"],         # [20] - Interaction map
+        prev_actions,                    # [21] - Previous actions history
     ]
     return obs
 

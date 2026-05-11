@@ -44,6 +44,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     MAX_AGENTS = 4
     angles_cabin = env.batch_cfg.agent.angles_cabin
     # Build dummy obs matching utils.utils_ppo.obs_to_model_input indexing
+    # (new layout includes reachability_mask at index [13]).
     obs = [
         # [0] agent_states
         jnp.zeros((init_batch_size, MAX_AGENTS, env.batch_cfg.agent.num_state_obs)),
@@ -51,27 +52,33 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((init_batch_size, MAX_AGENTS), dtype=jnp.int8),
         # [2] num_agents
         jnp.zeros((init_batch_size,), dtype=jnp.int32),
-        # [3]-[8] local maps (1D per-angle summaries)
+        # [3]-[11] local maps (1D per-angle summaries)
         jnp.zeros((init_batch_size, angles_cabin)),
         jnp.zeros((init_batch_size, angles_cabin)),
         jnp.zeros((init_batch_size, angles_cabin)),
         jnp.zeros((init_batch_size, angles_cabin)),
         jnp.zeros((init_batch_size, angles_cabin)),
         jnp.zeros((init_batch_size, angles_cabin)),
-        # [9]-[11] global maps
+        jnp.zeros((init_batch_size, angles_cabin)),
+        jnp.zeros((init_batch_size, angles_cabin)),
+        jnp.zeros((init_batch_size, angles_cabin)),
+        # [12]-[15] global maps
         jnp.zeros((init_batch_size, map_width, map_height)),
         jnp.zeros((init_batch_size, map_width, map_height)),
         jnp.zeros((init_batch_size, map_width, map_height)),
-        # [12]-[13] agent dims (scalars per env) - not used by model
+        jnp.zeros((init_batch_size, map_width, map_height)),
+        # [16]-[17] agent dims (scalars per env) - not used by model
         jnp.zeros((init_batch_size,), dtype=jnp.int32),
         jnp.zeros((init_batch_size,), dtype=jnp.int32),
-        # [14]-[16] masks
+        # [18]-[20] masks
         jnp.zeros((init_batch_size, map_width, map_height)),
         jnp.zeros((init_batch_size, map_width, map_height)),
         jnp.zeros((init_batch_size, map_width, map_height)),
-        # [17] prev_actions
+        # [21] prev_actions
         jnp.zeros((init_batch_size, config["num_prev_actions"]), dtype=jnp.int32),
     ]
+    print(f"model.init obs_len = {len(obs)}")
+    print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
     params = model.init(rng, obs)
 
     print(f"Model: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
@@ -227,7 +234,7 @@ class AgentStateNet(nn.Module):
 
 class LocalMapNet(nn.Module):
     """
-    Pre-process six 1D local maps (length-12 each), concatenate, then MLP.
+    Pre-process local 1D maps, concatenate, then MLP.
     """
 
     map_min_max: Sequence[int]
@@ -242,8 +249,10 @@ class LocalMapNet(nn.Module):
 
     def __call__(self, local_maps: Sequence[Array]):
         """
-        Processes a sequence of six 1D local maps.
-        Expects order: action_neg, action_pos, target_neg, target_pos, dumpability, obstacles.
+        Processes local 1D maps.
+        Expects order:
+        action_neg, action_pos, target_neg, target_pos, dumpability, obstacles,
+        border_workspace, edge_alignment_error, border_diggable.
         """
         # Normalize first four maps (heights)
         m0 = normalize(local_maps[0], self.map_min_max[0], self.map_min_max[1])
@@ -252,10 +261,17 @@ class LocalMapNet(nn.Module):
         m3 = normalize(local_maps[3], self.map_min_max[0], self.map_min_max[1])
         m4 = local_maps[4]
         m5 = local_maps[5]
+        m6 = local_maps[6]
+        m7 = local_maps[7]
+        m8 = local_maps[8]
 
         # Ensure batch dimension
         def ensure_batch(x: Array) -> Array:
-            return x[None, :] if x.ndim == 1 else x
+            if x.ndim == 1:
+                return x[None, :]
+            if x.ndim > 2:
+                return x.reshape((x.shape[0], -1))
+            return x
 
         m0 = ensure_batch(m0)
         m1 = ensure_batch(m1)
@@ -263,9 +279,12 @@ class LocalMapNet(nn.Module):
         m3 = ensure_batch(m3)
         m4 = ensure_batch(m4)
         m5 = ensure_batch(m5)
+        m6 = ensure_batch(m6)
+        m7 = ensure_batch(m7)
+        m8 = ensure_batch(m8)
 
-        # Concatenate into (B, 72)
-        x = jnp.concatenate((m0, m1, m2, m3, m4, m5), axis=-1)
+        # Concatenate into (B, large vector)
+        x = jnp.concatenate((m0, m1, m2, m3, m4, m5, m6, m7, m8), axis=-1)
         # Single MLP over concatenated vector
         x = self.mlp(x)
         return x
@@ -347,15 +366,17 @@ class MapsNet(nn.Module):
         obs["dumpability_mask"],
         """
         traversability_map = obs[0]
-        action_map = obs[1]
-        target_map = obs[2]
-        padding_mask = obs[3]
-        dumpability_mask = obs[4]
-        interaction_mask = obs[5]
+        reachability_map = obs[1]
+        action_map = obs[2]
+        target_map = obs[3]
+        padding_mask = obs[4]
+        dumpability_mask = obs[5]
+        interaction_mask = obs[6]
 
         x = jnp.concatenate(
             (
                 traversability_map[..., None],
+                reachability_map[..., None],
                 action_map[..., None],
                 target_map[..., None],
                 padding_mask[..., None],
@@ -392,7 +413,11 @@ class PreviousActionsNet(nn.Module):
 
     def __call__(self, obs: dict[str, Array]):
         # Use the full single-stream history of previous actions
-        x_actions = obs[17].astype(jnp.int32)
+        # Support both layouts:
+        # - new layout (len=22): prev_actions at [21]
+        # - legacy layout (len=21): prev_actions at [20]
+        action_idx = 21 if len(obs) >= 22 else 20
+        x_actions = obs[action_idx].astype(jnp.int32)
         x_actions = self.embedding(x_actions)
 
         x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
@@ -489,25 +514,57 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         # Process only active agent local maps (ignore other agents' locals)
         # Debug prints removed for cleaner training logs
         
-        # Local maps are at indices 3-8: action_neg, action_pos, target_neg, target_pos, dumpability, obstacles
-        local_maps_1 = [obs[3], obs[4], obs[5], obs[6], obs[7], obs[8]]
+        # Local maps are at indices 3-11
+        local_maps_1 = [obs[3], obs[4], obs[5], obs[6], obs[7], obs[8], obs[9], obs[10], obs[11]]
         x_local_active = self.local_map_net(local_maps_1)
         
-        # Process global maps and actions (unchanged)
-        # Global maps are at indices 9, 10, 11, 14, 15, 16: traversability_mask, action_map, target_map, padding_mask, dumpability_mask, interaction_mask
-        map_obs = [
-            obs[9],   # traversability_mask
-            obs[10],  # action_map
-            obs[11],  # target_map
-            obs[14],  # padding_mask
-            obs[15],  # dumpability_mask
-            obs[16],  # interaction_mask
-        ]
+        # Process global maps. Support both observation layouts:
+        # - New layout (len=22): includes reachability at [13]
+        # - Legacy layout (len=21): no reachability channel
+        has_reachability = len(obs) >= 22
+        if has_reachability:
+            map_obs = [
+                obs[12],  # traversability_mask
+                obs[13],  # reachability_mask
+                obs[14],  # action_map
+                obs[15],  # target_map
+                obs[18],  # padding_mask
+                obs[19],  # dumpability_mask
+                obs[20],  # interaction_mask
+            ]
+        else:
+            map_obs = [
+                obs[12],  # traversability_mask
+                jnp.zeros_like(obs[12]),  # reachability_mask (absent in legacy layout)
+                obs[13],  # action_map
+                obs[14],  # target_map
+                obs[17],  # padding_mask
+                obs[18],  # dumpability_mask
+                obs[19],  # interaction_mask
+            ]
         x_maps = self.maps_net(map_obs)
         x_actions = self.actions_net(obs)
         
-        # Flatten local map outputs if they have spatial dimensions
-        x_local_active_flat = x_local_active.reshape(x_local_active.shape[0], -1)
+        # Force feature branches to [B, F] before concatenation.
+        def to_2d(x: Array, name: str) -> Array:
+            if x.ndim == 1:
+                return x[None, :]
+            if x.ndim > 2:
+                return x.reshape((x.shape[0], -1))
+            return x
+
+        x_local_active_flat = to_2d(x_local_active, "x_local_active")
+        x_actions = to_2d(x_actions, "x_actions")
+        x_maps = to_2d(x_maps, "x_maps")
+
+        if not (x_agents_concat.ndim == x_actions.ndim == x_local_active_flat.ndim == x_maps.ndim == 2):
+            raise ValueError(
+                f"Feature rank mismatch before concat: "
+                f"x_agents_concat={x_agents_concat.shape}, "
+                f"x_actions={x_actions.shape}, "
+                f"x_local_active={x_local_active_flat.shape}, "
+                f"x_maps={x_maps.shape}"
+            )
         
         # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
         # Local maps are also included.
@@ -553,7 +610,8 @@ class PreviousActionsNet2(nn.Module):
         self.activation = nn.relu
 
     def __call__(self, obs: dict[str, Array]):
-        x_actions = obs[19].astype(jnp.int32)  # Agent 2 previous actions
+        action_idx = 21 if len(obs) >= 22 else 20
+        x_actions = obs[action_idx].astype(jnp.int32)  # Agent 2 previous actions
         x_actions = self.embedding(x_actions)
 
         x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)

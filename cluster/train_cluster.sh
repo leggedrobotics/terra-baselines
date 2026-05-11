@@ -2,7 +2,7 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=gpu:4
-#SBATCH --time=14:00:00
+#SBATCH --time=18:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
 #SBATCH --mail-user=name@mail

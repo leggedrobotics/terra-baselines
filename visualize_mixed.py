@@ -123,9 +123,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "-o",
-        "--out_path",
+        "--out_path",  
         type=str,
-        default="./solo-excavator-1-2026-04-21-13-36-45.pkl.gif",
+        default="./solo-excavator-3-2026-05-11-12-23-30.pkl.gif",
         #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )
