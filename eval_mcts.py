@@ -22,8 +22,13 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from tensorflow_probability.substrates import jax as tfp
 
-from utils.models import load_neural_network
+from utils.models import (
+    infer_edge_features_dim_from_model_params,
+    infer_use_action_mask_from_train_config,
+    load_neural_network,
+)
 from utils.helpers import load_pkl_object
+from utils.action_masking import apply_action_mask
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from terra.env import TerraEnvBatch
 from terra.config import BatchConfig
@@ -90,6 +95,8 @@ def make_mcts_step_fn(model, env, config):
 
     def apply_model(params, inp):
         val, logits_pi = model.apply(params, inp)
+        if getattr(config, "use_action_mask", False):
+            logits_pi = apply_action_mask(logits_pi, inp[22])
         pi = tfp.distributions.Categorical(logits=logits_pi)
         return val, pi
 
@@ -312,6 +319,8 @@ def rollout_episode(
             rng, rng_act, rng_step = jrandom.split(rng, 3)
             obs_model = obs_to_model_input(timestep.observation, prev_actions, rl_config)
             v, logits_pi = model.apply(model_params, obs_model)
+            if getattr(rl_config, "use_action_mask", False):
+                logits_pi = apply_action_mask(logits_pi, obs_model[22])
             if deterministic:
                 action = jnp.argmax(logits_pi, axis=-1)
             else:
@@ -699,6 +708,8 @@ if __name__ == "__main__":
     n_envs = args.n_envs
     log = load_pkl_object(f"{args.run_name}")
     config = log["train_config"]
+    config.edge_features_dim = infer_edge_features_dim_from_model_params(log["model"])
+    config.use_action_mask = infer_use_action_mask_from_train_config(config, default=False)
     config.num_test_rollouts = n_envs
     config.num_devices = 1
     # MCTS params (only used when --use-mcts)

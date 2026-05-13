@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
+from utils.action_masking import apply_action_mask
 
 
 def clip_action_map_in_obs(obs):
@@ -13,6 +14,31 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
     # Feature engineering
     if train_cfg.clip_action_maps:
         obs = clip_action_map_in_obs(obs)
+    use_action_mask = (
+        train_cfg.get("use_action_mask", False)
+        if isinstance(train_cfg, dict)
+        else getattr(train_cfg, "use_action_mask", False)
+    )
+    edge_features_dim = (
+        train_cfg.get("edge_features_dim", 10 if use_action_mask else 0)
+        if isinstance(train_cfg, dict)
+        else getattr(train_cfg, "edge_features_dim", 10 if use_action_mask else 0)
+    )
+    batch_size = obs["agent_states"].shape[0]
+    if edge_features_dim:
+        edge_features = obs["edge_features"].reshape((batch_size, -1))[
+            :, :edge_features_dim
+        ]
+    else:
+        edge_features = jnp.zeros((batch_size, 0), dtype=jnp.float32)
+
+    if use_action_mask:
+        action_mask = obs["action_mask"]
+    else:
+        action_mask = obs.get(
+            "action_mask",
+            jnp.ones((batch_size, 8), dtype=jnp.bool_),
+        )
 
     # Create input list with indexed comments for easy reference
     # Updated to match the new observation structure from env.py
@@ -40,6 +66,8 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs["dumpability_mask"],         # [19] - Dumpability mask
         obs["interaction_mask"],         # [20] - Interaction map
         prev_actions,                    # [21] - Previous actions history
+        action_mask,                     # [22] - Coarse primitive action availability
+        edge_features,                   # [23] - Edge affordance/progress features
     ]
     return obs
 
@@ -48,8 +76,11 @@ def policy(
     apply_fn,
     params,
     obs,
+    use_action_mask=False,
 ):
     value, logits_pi = apply_fn(params, obs)
+    if use_action_mask:
+        logits_pi = apply_action_mask(logits_pi, obs[22])
     pi = tfp.distributions.Categorical(logits=logits_pi)
     return value, pi
 
@@ -64,7 +95,12 @@ def select_action_ppo(
     # Prepare policy input from Terra State
     obs = obs_to_model_input(obs, prev_actions, config)
 
-    value, pi = policy(train_state.apply_fn, train_state.params, obs)
+    value, pi = policy(
+        train_state.apply_fn,
+        train_state.params,
+        obs,
+        use_action_mask=getattr(config, "use_action_mask", False),
+    )
     action = pi.sample(seed=rng)
     log_prob = pi.log_prob(action)
     return action, log_prob, value[:, 0], pi

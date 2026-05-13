@@ -9,10 +9,15 @@ import jax
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from tqdm import tqdm
-from utils.models import load_neural_network
+from utils.models import (
+    infer_edge_features_dim_from_model_params,
+    infer_use_action_mask_from_train_config,
+    load_neural_network,
+)
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
+from utils.action_masking import apply_action_mask
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from terra.state import State
 from train import TrainConfig
@@ -131,6 +136,8 @@ def rollout_episode_with_paths(
         if model is not None:
             obs = obs_to_model_input(timestep.observation, prev_actions, rl_config)
             v, logits_pi = model.apply(model_params, obs)
+            if getattr(rl_config, "use_action_mask", False):
+                logits_pi = apply_action_mask(logits_pi, obs[22])
             pi = tfp.distributions.Categorical(logits=logits_pi)
             action = pi.sample(seed=rng_act)
             prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
@@ -243,10 +250,10 @@ def create_path_overlay_gif(obs_seq, state_seq, agent_paths, agent_distances, ag
         1: (0, 255, 0),      # Green for Truck  
         2: (0, 0, 255),      # Blue for Skidsteer
         3: (255, 255, 0),    # Yellow for any other type
-        4: (255, 0, 255),    # Magenta fallback
-        5: (0, 255, 255),    # Cyan fallback
-        6: (255, 128, 0),    # Orange fallback
-        7: (128, 0, 255)     # Purple fallback
+        4: (255, 0, 255),    # Magenta
+        5: (0, 255, 255),    # Cyan
+        6: (255, 128, 0),    # Orange
+        7: (128, 0, 255)     # Purple
     }
     
     agent_names = {
@@ -375,13 +382,13 @@ def create_path_overlay_gif(obs_seq, state_seq, agent_paths, agent_distances, ag
             frame = pygame.surfarray.array3d(screen_surface)
             rendering_engine.frames.append(frame.swapaxes(0, 1))
         else:
-            # Fallback for frames beyond state_seq
+            # Render any remaining observation-only frames.
             obs_no_interact = dict(o)
             if 'interaction_mask' in obs_no_interact:
                 obs_no_interact['interaction_mask'] = jnp.zeros_like(obs_no_interact['interaction_mask'])
             env.terra_env.render_obs_pygame(obs_no_interact, generate_gif=False)
             
-            # Capture frame for fallback case too
+            # Capture this frame too.
             screen_surface = pygame.display.get_surface()
             frame = pygame.surfarray.array3d(screen_surface)
             rendering_engine.frames.append(frame.swapaxes(0, 1))
@@ -450,6 +457,8 @@ if __name__ == "__main__":
 
     log = load_pkl_object(f"{args.run_name}")
     config = log["train_config"]
+    config.edge_features_dim = infer_edge_features_dim_from_model_params(log["model"])
+    config.use_action_mask = infer_use_action_mask_from_train_config(config, default=False)
     config.num_test_rollouts = 1  # Single environment
     config.num_devices = 1
 

@@ -10,10 +10,15 @@ Usage:
 import numpy as np
 import jax
 from tqdm import tqdm
-from utils.models import load_neural_network
+from utils.models import (
+    infer_edge_features_dim_from_model_params,
+    infer_use_action_mask_from_train_config,
+    load_neural_network,
+)
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
+from utils.action_masking import apply_action_mask
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from terra.state import State
 import matplotlib.animation as animation
@@ -51,6 +56,8 @@ def rollout_episode(
         if model is not None:
             obs = obs_to_model_input(timestep.observation, prev_actions, rl_config)
             v, logits_pi = model.apply(model_params, obs)
+            if getattr(rl_config, "use_action_mask", False):
+                logits_pi = apply_action_mask(logits_pi, obs[22])
             pi = tfp.distributions.Categorical(logits=logits_pi)
             action = pi.sample(seed=rng_act)
             prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
@@ -147,6 +154,8 @@ if __name__ == "__main__":
 
     log = load_pkl_object(f"{args.run_name}")
     config = log["train_config"]
+    config.edge_features_dim = infer_edge_features_dim_from_model_params(log["model"])
+    config.use_action_mask = infer_use_action_mask_from_train_config(config, default=False)
     config.num_test_rollouts = n_envs
     config.num_devices = 1
 
@@ -171,14 +180,7 @@ if __name__ == "__main__":
         return arr
 
     def _unbatch_namedtuple(nt):
-        updates = {}
-        for f in getattr(nt, "_fields", ()):
-            v = getattr(nt, f)
-            if hasattr(v, "_fields"):
-                updates[f] = _unbatch_namedtuple(v)
-            else:
-                updates[f] = _take0(v)
-        return nt._replace(**updates)
+        return jax.tree_util.tree_map(_take0, nt)
 
     if env_cfgs_ckpt is not None and hasattr(env_cfgs_ckpt, "_fields"):
         env_cfgs = _unbatch_namedtuple(env_cfgs_ckpt)
@@ -359,4 +361,4 @@ if __name__ == "__main__":
             env.terra_env.render_obs_pygame(obs_no_interact, generate_gif=True)
 
     env.terra_env.rendering_engine.create_gif(args.out_path)
-    print(f"GIF saved to {args.out_path}") 
+    print(f"GIF saved to {args.out_path}")

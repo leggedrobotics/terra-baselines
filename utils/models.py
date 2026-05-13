@@ -8,6 +8,48 @@ from terra.env import TerraEnvBatch
 from functools import partial
 
 
+def _config_get(config, key, default=None):
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
+def infer_edge_features_dim_from_model_params(model_params):
+    """Infer old-vs-new edge feature width from a checkpoint's final MLP input."""
+    params = model_params.get("params", model_params)
+    kernel = params["mlp_v"]["layers_0"]["kernel"]
+    final_input_dim = int(kernel.shape[0])
+
+    # Historical successful solo checkpoints before edge features used 544.
+    # Current edge-feature models use 544 + 10.
+    if final_input_dim <= 544:
+        return 0
+    edge_features_dim = final_input_dim - 544
+    assert edge_features_dim == 10, (
+        f"Unexpected edge feature width inferred from checkpoint: {edge_features_dim}"
+    )
+    return edge_features_dim
+
+
+def infer_use_action_mask_from_train_config(config, default=False):
+    """Return saved action-mask setting without inheriting newer class defaults.
+
+    Old checkpoints were pickled before `use_action_mask` existed. Unpickling
+    them with today's dataclass makes `getattr(config, "use_action_mask")`
+    fall through to the new class default, which changes replay behavior.
+    """
+    if isinstance(config, dict):
+        return bool(config.get("use_action_mask", default))
+
+    if hasattr(config, "_fields") and "use_action_mask" in config._fields:
+        return bool(getattr(config, "use_action_mask"))
+
+    if hasattr(config, "__dict__") and "use_action_mask" in vars(config):
+        return bool(vars(config)["use_action_mask"])
+
+    return bool(default)
+
+
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     """Instantiate a model according to obs shape of environment."""
     init_batch_size = 1
@@ -56,6 +98,10 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             "local_map_hidden_dim_layers_mlp": (384, 96),
         }
 
+    use_action_mask = bool(_config_get(config, "use_action_mask", False))
+    edge_features_dim = int(
+        _config_get(config, "edge_features_dim", 10 if use_action_mask else 0)
+    )
     model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=config["num_prev_actions"],
         num_embeddings_agent=num_embeddings_agent,
@@ -105,6 +151,13 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((init_batch_size, map_width, map_height)),
         # [21] prev_actions
         jnp.zeros((init_batch_size, config["num_prev_actions"]), dtype=jnp.int32),
+        # [22] action_mask
+        jnp.ones(
+            (init_batch_size, env.batch_cfg.action_type.get_num_actions()),
+            dtype=jnp.bool_,
+        ),
+        # [23] edge_features
+        jnp.zeros((init_batch_size, edge_features_dim), dtype=jnp.float32),
     ]
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
@@ -608,11 +661,20 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 f"x_maps={x_maps.shape}"
             )
         
+        edge_features_idx = 23 if len(obs) >= 24 else None
+        if edge_features_idx is None:
+            edge_features = jnp.zeros((x_agents_concat.shape[0], 0), dtype=jnp.float32)
+        else:
+            edge_features = obs[edge_features_idx].reshape(
+                obs[edge_features_idx].shape[0],
+                -1,
+            )
+
         # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
         # Local maps are also included.
         # Build a single combined feature vector (all agent states + actions + active local maps)
         combined_features = jnp.concatenate(
-            (x_agents_concat, x_actions, x_local_active_flat),
+            (x_agents_concat, x_actions, x_local_active_flat, edge_features),
             axis=-1,
         )
         combined_features = self.activation(combined_features)
