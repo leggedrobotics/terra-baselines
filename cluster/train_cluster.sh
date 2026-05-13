@@ -2,7 +2,7 @@
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=gpu:4
-#SBATCH --time=18:00:00
+#SBATCH --time=24:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
 #SBATCH --mail-user=name@mail
@@ -31,9 +31,9 @@ export DATASET_SIZE=600
 
 # Change to the directory containing train.py or use the full path
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
-#python train_mixed.py --config trench_excavator 
 
-python train_mixed.py --config solo_excavator \
+python train_mixed.py --config solo_excavator --model_size medium \
+    # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-05-12-11-18-01.pkl
     # --num_envs_per_device 128 \
     # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-21-13-36-45.pkl \
     # --map_path /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference/maps/hongg_archi_3 \
@@ -45,3 +45,5 @@ python train_mixed.py --config solo_excavator \
 
 
 #WANDB_MODE=offline 
+# solo_excavator solo_excavator_dumpzone  
+# model_size: small, medium, large

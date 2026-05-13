@@ -390,6 +390,7 @@ class MixedAgentTrainConfig:
     # Mixed fine-tuning mode: sample recent config maps and oversample the target map.
     replay_map_count: int = 0
     target_map_repeat: int = 0
+    model_size: str = "base"
 
 
     def __post_init__(self):
@@ -657,6 +658,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
         print(f"Warning: failed to infer num_agents for num_prev_actions ({e}); keeping {config.num_prev_actions}", flush=True)
 
     # Create the unified network with agent type features (now that num_prev_actions is set)
+    print(f"🧠 Model size preset: {getattr(config, 'model_size', 'base')}", flush=True)
     print("⏱️  Initializing model...", flush=True)
     t_model_init = time.time()
     network, network_params = get_model_ready(_rng, config, env)
@@ -1208,6 +1210,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     print(f"   - Training steps: {config.num_steps}")
     print(f"   - Total timesteps: {config.total_timesteps:,}")
     print(f"   - Learning rate: {config.lr}")
+    enforce_border_alignment = bool(jnp.ravel(env_params.enforce_foundation_border_alignment)[0])
+    enable_reachability_obs = bool(jnp.ravel(env_params.enable_reachability_obs)[0])
+    print(f"   - enforce_foundation_border_alignment: {enforce_border_alignment}")
+    print(f"   - enable_reachability_obs: {enable_reachability_obs}")
     
     print("=" * 60)
     print("🚀 Starting Mixed Agent Training...")
@@ -1281,6 +1287,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--total_timesteps", type=int, default=50_000_000_000,
         help="Total environment timesteps across all devices"
+    )
+    parser.add_argument(
+        "--model_size", type=str, default="base", choices=["base", "medium", "large"],
+        help="Model capacity preset. 'medium' and 'large' progressively widen CNN and policy/value heads."
     )
     parser.add_argument(
         "--agent_types", type=str, default=None,   # 0=excavator, 1=truck, 2=skidsteer
@@ -1521,6 +1531,7 @@ if __name__ == "__main__":
         single_map_path=args.map_path,
         replay_map_count=args.replay_map_count,
         target_map_repeat=args.target_map_repeat,
+        model_size=args.model_size,
     )
     
     train_mixed_agents(config) 

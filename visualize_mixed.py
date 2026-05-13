@@ -125,7 +125,7 @@ if __name__ == "__main__":
         "-o",
         "--out_path",  
         type=str,
-        default="./solo-excavator-3-2026-05-11-12-23-30.pkl.gif",
+        default="./solo-excavator-5-2026-05-12-11-18-01.pkl.gif",
         #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
         help="Output path.",
     )
@@ -326,6 +326,7 @@ if __name__ == "__main__":
     env.curriculum_manager = _NoopCurriculumManager()
     config.num_embeddings_agent_min = 60
 
+    print(f"🧠 Model size preset: {getattr(config, 'model_size', 'base')}")
     model = load_neural_network(config, env)
     model_params = log["model"]
     obs_seq, cum_rewards, state_seq = rollout_episode(

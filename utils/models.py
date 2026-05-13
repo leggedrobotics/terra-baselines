@@ -28,6 +28,34 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         else (-1, 1)
     )
     print(f"map normalization min max = {map_min_max}")
+    model_size = getattr(config, "model_size", "base")
+    if model_size not in ("base", "medium", "large"):
+        raise ValueError(
+            f"Unsupported model_size='{model_size}'. Expected 'base', 'medium', or 'large'."
+        )
+
+    model_kwargs = {}
+    if model_size == "medium":
+        model_kwargs = {
+            "cnn_channels": (24, 48, 48),
+            "cnn_dense_layers": (192, 48),
+            "hidden_dim_pi": (160, 48),
+            "hidden_dim_v": (160, 48, 1),
+            "intermediate_mlp_layers": (320, 160),
+            "intermediate_mlp_dim": 160,
+            "local_map_hidden_dim_layers_mlp": (320, 64),
+        }
+    if model_size == "large":
+        model_kwargs = {
+            "cnn_channels": (32, 64, 64),
+            "cnn_dense_layers": (256, 64),
+            "hidden_dim_pi": (192, 64),
+            "hidden_dim_v": (192, 64, 1),
+            "intermediate_mlp_layers": (384, 192),
+            "intermediate_mlp_dim": 192,
+            "local_map_hidden_dim_layers_mlp": (384, 96),
+        }
+
     model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=config["num_prev_actions"],
         num_embeddings_agent=num_embeddings_agent,
@@ -36,6 +64,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         loaded_max=config["loaded_max"],
         agent_types_max=2,  # Maximum agent type value (0=excavator, 1=truck, 2=skidsteer)
         action_type=env.batch_cfg.action_type,
+        **model_kwargs,
     )
 
     map_width = env.batch_cfg.maps_dims.maps_edge_length
@@ -292,20 +321,22 @@ class LocalMapNet(nn.Module):
 
 class AtariCNN(nn.Module):
     """From https://github.com/deepmind/dqn_zoo/blob/master/dqn_zoo/networks.py"""
+    conv_channels: Sequence[int] = (16, 32, 32)
+    dense_layers: Sequence[int] = (128, 32)
 
     @nn.compact
     def __call__(self, x):
-        x = nn.Conv(features=16, kernel_size=(8, 8), strides=(4, 4))(x)
+        x = nn.Conv(features=self.conv_channels[0], kernel_size=(8, 8), strides=(4, 4))(x)
         x = nn.relu(x)
-        x = nn.Conv(features=32, kernel_size=(4, 4), strides=(2, 2))(x)
+        x = nn.Conv(features=self.conv_channels[1], kernel_size=(4, 4), strides=(2, 2))(x)
         x = nn.relu(x)
-        x = nn.Conv(features=32, kernel_size=(3, 3), strides=(1, 1))(x)
+        x = nn.Conv(features=self.conv_channels[2], kernel_size=(3, 3), strides=(1, 1))(x)
         x = nn.relu(x)
         x = x.reshape((x.shape[0], -1))
 
-        x = nn.Dense(features=128)(x)
+        x = nn.Dense(features=self.dense_layers[0])(x)
         x = nn.relu(x)
-        x = nn.Dense(features=32)(x)
+        x = nn.Dense(features=self.dense_layers[1])(x)
         return x
 
 
@@ -347,9 +378,11 @@ class MapsNet(nn.Module):
     """
 
     map_min_max: Sequence[int]
+    cnn_channels: Sequence[int] = (16, 32, 32)
+    cnn_dense_layers: Sequence[int] = (128, 32)
 
     def setup(self) -> None:
-        self.cnn = AtariCNN()
+        self.cnn = AtariCNN(conv_channels=self.cnn_channels, dense_layers=self.cnn_dense_layers)
 
     def __call__(self, obs: dict[str, Array]):
         """
@@ -444,6 +477,9 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     mlp_use_layernorm: bool = False
     intermediate_mlp_dim: int = 128
     intermediate_mlp_layers: Sequence[int] = (256, 128)
+    cnn_channels: Sequence[int] = (16, 32, 32)
+    cnn_dense_layers: Sequence[int] = (128, 32)
+    local_map_hidden_dim_layers_mlp: Sequence[int] = (256, 32)
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
@@ -460,7 +496,9 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         )
 
         self.local_map_net = LocalMapNet(
-            map_min_max=self.local_map_min_max, mlp_use_layernorm=self.mlp_use_layernorm
+            map_min_max=self.local_map_min_max,
+            mlp_use_layernorm=self.mlp_use_layernorm,
+            hidden_dim_layers_mlp=self.local_map_hidden_dim_layers_mlp,
         )
 
         self.agent_state_net = AgentStateNet(
@@ -470,7 +508,11 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             mlp_use_layernorm=self.mlp_use_layernorm,
         )
 
-        self.maps_net = MapsNet(self.map_min_max)
+        self.maps_net = MapsNet(
+            self.map_min_max,
+            cnn_channels=self.cnn_channels,
+            cnn_dense_layers=self.cnn_dense_layers,
+        )
 
         self.actions_net = PreviousActionsNet(
             num_actions=num_actions,
