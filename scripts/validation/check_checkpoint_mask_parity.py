@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from tensorflow_probability.substrates import jax as tfp
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from terra.actions import TrackedAction, WheeledAction
 from terra.config import BatchConfig, CurriculumGlobalConfig, EnvConfig, RewardsType

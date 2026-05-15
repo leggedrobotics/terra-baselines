@@ -12,7 +12,7 @@ from typing import Iterable
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def _parse_int_tuple(value: str) -> tuple[int, ...]:
@@ -167,7 +167,7 @@ def test_training_accounting() -> None:
         "resume num_prev_actions inference should prefer checkpoint env_config over CLI default",
     )
 
-    repo_root = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     for script_name in ("train.py", "train_mixed.py"):
         tree = ast.parse((repo_root / script_name).read_text())
         reset_calls = [

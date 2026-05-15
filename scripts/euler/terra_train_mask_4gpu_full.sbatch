@@ -56,7 +56,7 @@ export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cu
 mkdir -p "$WANDB_DIR" "$WORK/logs"
 cd "$WORK/terra-baselines"
 
-"$VENV/bin/python" "$WORK/scripts/check_jax_runtime.py" --min-devices 4
+"$VENV/bin/python" "$WORK/terra-baselines/scripts/euler/check_jax_runtime.py" --min-devices 4
 
 "$VENV/bin/python" train_mixed.py \
   --config solo_excavator \

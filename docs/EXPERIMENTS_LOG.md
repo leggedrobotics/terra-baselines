@@ -14,13 +14,13 @@ Architecture selected after repo/research review:
 Setup:
 
 - Edited `utils/models.py` and `train_mixed.py` in `terra-baselines_mask_wip`.
-- Added `scripts/terra_train_resmap64_phase_4gpu.sbatch`.
+- Added `scripts/euler/terra_train_resmap64_phase_4gpu.sbatch`.
 - Synced paired local WIP worktrees to `/cluster/home/lterenzi/codex_terra_edge_validation`:
   - `/home/lorenzo/moleworks/terra_mask_wip` -> `terra`
   - `/home/lorenzo/moleworks/terra-baselines_mask_wip` -> `terra-baselines`
 - Local CPU gates before submission:
-  - `python -m py_compile train_mixed.py utils/models.py utils/utils_ppo.py eval_ppo.py scripts/validate_edge_mask_changes.py`
-  - `scripts/validate_edge_mask_changes.py --case training-accounting --jax-platforms cpu`
+  - `python -m py_compile train_mixed.py utils/models.py utils/utils_ppo.py eval_ppo.py scripts/validation/validate_edge_mask_changes.py`
+  - `scripts/validation/validate_edge_mask_changes.py --case training-accounting --jax-platforms cpu`
   - `--case ppo-mask --jax-platforms cpu`
   - `--case model-policy --jax-platforms cpu`
   - `--case state-action-mask --jax-platforms cpu --disable-jit`
@@ -79,8 +79,8 @@ Setup:
 - Synced local `terra_mask_wip` and `terra-baselines_mask_wip` to `/cluster/home/lterenzi/codex_terra_edge_validation`.
 - Included the observation-mutation fix in `utils/utils_ppo.py` so policy input clipping no longer mutates rollout observations.
 - Local CPU gates before submission:
-  - `python -m py_compile utils/utils_ppo.py train_mixed.py scripts/validate_edge_mask_changes.py`
-  - `scripts/validate_edge_mask_changes.py --case ppo-mask --jax-platforms cpu`
+  - `python -m py_compile utils/utils_ppo.py train_mixed.py scripts/validation/validate_edge_mask_changes.py`
+  - `scripts/validation/validate_edge_mask_changes.py --case ppo-mask --jax-platforms cpu`
   - `--case training-accounting --jax-platforms cpu`
   - `--case model-policy --jax-platforms cpu`
   - `--case state-action-mask --jax-platforms cpu --disable-jit`
@@ -89,12 +89,12 @@ Setup:
   - `--case env-action-mask --jax-platforms cpu --dataset-path /home/lorenzo/moleworks/terra_data/train --dataset-size 1`
   - `--case synthetic-step-fast-reset --jax-platforms cpu --disable-jit`
   - `--case synthetic-batch-step-fast-reset --jax-platforms cpu`
-- Added `scripts/terra_train_mask_4gpu_full.sbatch`.
+- Added `scripts/euler/terra_train_mask_4gpu_full.sbatch`.
   - Partition/time: `gpuhe.120h`, `10-00:00:00`.
   - GPU request: `--gpus=gpu:nvidia_geforce_rtx_4090:4`.
   - Node restriction: `--nodelist=eu-g6-[001-080]`.
   - Runtime guard: exits before JAX if the allocation is not exactly four `NVIDIA GeForce RTX 4090` GPUs.
-  - Runtime preflight: `scripts/check_jax_runtime.py --min-devices 4` checks CUDA library paths, JAX GPU visibility, jitted conv backward, and NCCL all-reduce.
+  - Runtime preflight: `scripts/euler/check_jax_runtime.py --min-devices 4` checks CUDA library paths, JAX GPU visibility, jitted conv backward, and NCCL all-reduce.
   - Training: `train_mixed.py --config solo_excavator --num_devices 4 --num_envs_per_device 1024 --num_steps 32 --update_epochs 2 --num_minibatches 16 --total_timesteps 50000000000 --enable_action_mask`.
   - W&B: `WANDB_MODE=online`, `WANDB_ENTITY=aless-weber-eth`, `WANDB_PROJECT=mixed-agents`.
 - Slurm dry-run resolved to a four-GPU RTX 4090 node.
@@ -114,7 +114,7 @@ Update 2026-05-15:
 - Latest checkpoint pulled locally:
   `/home/lorenzo/moleworks/terra-baselines_mask_wip/checkpoints/terra-mask-multiagent-4gpu-online-euler-pr-2026-05-15-00-50-06.pkl`.
 - Local deterministic benchmark:
-  `scripts/benchmark_checkpoint_masked.py ... --config solo_excavator --num-envs 16 --num-steps 550 --seed 0 --modes masked unmasked`.
+  `scripts/analysis/benchmark_checkpoint_masked.py ... --config solo_excavator --num-envs 16 --num-steps 550 --seed 0 --modes masked unmasked`.
   Results:
   - Masked rollout: `2/16` success, `avg_return=2.390`, `max_return=9.959`, `invalid_selected_rate=0.0`, `dig_coverage=0.774`, `dump_coverage=0.935`.
   - Raw unmasked logits: `0/16` success, `avg_return=-2.819`, `invalid_selected_rate=0.599`, `dig_coverage=0.462`, `dump_coverage=0.874`.
@@ -140,10 +140,10 @@ Setup:
 - Synced local `terra` and `terra-baselines` `multi-agent` worktrees to `/cluster/home/lterenzi/codex_terra_edge_validation`.
 - Remote gates passed in the Euler workspace:
   - `python -m py_compile` for changed Python files.
-  - `scripts/validate_edge_mask_changes.py --case ppo-mask --jax-platforms cpu`
-  - `scripts/validate_edge_mask_changes.py --case model-policy --jax-platforms cpu`
-  - `scripts/validate_edge_mask_changes.py --case training-accounting --jax-platforms cpu`
-- Submitted initial offline Slurm array `66301608_[0-1]` with `scripts/terra_train_ringmaps_2gpu4090_mask_ab.sbatch`.
+  - `scripts/validation/validate_edge_mask_changes.py --case ppo-mask --jax-platforms cpu`
+  - `scripts/validation/validate_edge_mask_changes.py --case model-policy --jax-platforms cpu`
+  - `scripts/validation/validate_edge_mask_changes.py --case training-accounting --jax-platforms cpu`
+- Submitted initial offline Slurm array `66301608_[0-1]` with an earlier one-off 2-GPU mask A/B Slurm script.
 - Each task requests `--gpus=gpu:nvidia_geforce_rtx_4090:2`, runs CUDA/cuDNN/NCCL preflight with `--min-devices 2`, then trains `train_mixed.py --config solo_excavator`.
 - Training shape: `2` GPUs, `1024` envs/GPU, `num_steps=32`, `update_epochs=2`, `num_minibatches=16`, `total_timesteps=6553600` (`100` updates).
 - Task `0`: `--enable_action_mask`.
@@ -152,9 +152,9 @@ Setup:
   - `66301608_0` mask completed, elapsed `00:19:52`, final warm throughput about `61.7k` env steps/s.
   - `66301608_1` no-mask completed, elapsed `00:19:29`, final warm throughput about `61.7k` env steps/s.
   - These runs used `WANDB_MODE=offline`, so they are useful runtime evidence but not live W&B evidence.
-- Updated the script to `WANDB_MODE=online`, `WANDB_ENTITY=aless-weber-eth`, `WANDB_PROJECT=mixed-agents`, and run names `terra-ringmaps-2gpu4090-{mask,nomask}-pretrained-online-ab`.
+- Updated that one-off script to `WANDB_MODE=online`, `WANDB_ENTITY=aless-weber-eth`, `WANDB_PROJECT=mixed-agents`, and run names `terra-ringmaps-2gpu4090-{mask,nomask}-pretrained-online-ab`.
 - Submitted online Slurm array `66308783_[0-1]`, then cancelled it while still pending because the requested run should be full-length rather than a 100-update A/B.
-- Added full-length online script `scripts/terra_train_ringmaps_2gpu4090_full_mask_ab.sbatch`.
+- Added a full-length online one-off Slurm script for the 2-GPU A/B.
 - Submitted full-length online Slurm array `66311700_[0-1]`:
   - Partition/time: `gpuhe.120h`, `10-00:00:00`.
   - Shape: `2` RTX 4090s, `1024` envs/GPU, `num_steps=32`, `update_epochs=2`, `num_minibatches=16`.
@@ -172,12 +172,14 @@ Update:
 - Cancelled `66311700_[0-1]` after about `16h36m` because both runs were advancing but still showed the no-success learning signature after about `2B` env steps.
   - Mask: about `31k` updates, `eval/positive_terminations=0`, `eval/rewards=0.0034`, `eval/max_reward=0.86`, `eval/DO_NOTHING %=0.52`.
   - No-mask: about `30k` updates, `eval/positive_terminations=0`, `eval/rewards=0.00044`, `eval/max_reward=0.91`, `eval/DO_NOTHING %=0.58`.
-- Added `scripts/terra_train_ringmaps_4gpu4090_baseline.sbatch` to launch a current-branch no-mask baseline with the historical 4-GPU shape.
+- Added a one-off 4-GPU Slurm script to launch a current-branch no-mask baseline with the historical 4-GPU shape.
 - Submitted baseline Slurm job `66397924`.
   - Shape: `4` RTX 4090s, `1024` envs/GPU, `4096` envs total, `total_timesteps=50000000000`.
   - Masking: explicit `--disable_action_mask`.
   - W&B: online, `aless-weber-eth/mixed-agents`.
   - Status at submission: pending on priority in `gpuhe.120h`.
+- Cleanup note: the one-off ringmaps Slurm scripts above were retired before PR handoff. The
+  reusable Euler scripts kept in this branch are the current masked full run and resmap run.
 
 ## 2026-05-12 Ringmaps Mask Parity and Training A/B
 

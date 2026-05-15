@@ -53,7 +53,7 @@ for gpu_name in "${GPU_NAMES[@]}"; do
   esac
 done
 
-"$VENV/bin/python" "$WORK/scripts/check_jax_runtime.py" --min-devices 4
+"$VENV/bin/python" "$WORK/terra-baselines/scripts/euler/check_jax_runtime.py" --min-devices 4
 
 COMMON_ARGS=(
   --config solo_excavator

@@ -12,9 +12,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from benchmark_checkpoint_masked import (  # noqa: E402
+from scripts.analysis.benchmark_checkpoint_masked import (  # noqa: E402
     _build_env_config,
     _select_action,
     _unbatch_env_config,
