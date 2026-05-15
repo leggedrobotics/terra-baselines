@@ -30,7 +30,7 @@ from train_mixed import MixedAgentTrainConfig
 sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
 
 def rollout_episode(
-    env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed
+    env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed, deterministic=False
 ):
     print(f"Using {seed=}")
     rng = jax.random.PRNGKey(seed)
@@ -58,8 +58,11 @@ def rollout_episode(
             v, logits_pi = model.apply(model_params, obs)
             if getattr(rl_config, "use_action_mask", False):
                 logits_pi = apply_action_mask(logits_pi, obs[22])
-            pi = tfp.distributions.Categorical(logits=logits_pi)
-            action = pi.sample(seed=rng_act)
+            if deterministic:
+                action = jnp.argmax(logits_pi, axis=-1)
+            else:
+                pi = tfp.distributions.Categorical(logits=logits_pi)
+                action = pi.sample(seed=rng_act)
             prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
             prev_actions = prev_actions.at[:, 0].set(action)
         else:
@@ -149,6 +152,22 @@ if __name__ == "__main__":
         default=None,
         help="Named config preset to load maps from (e.g., 'solo_excavator', 'excavator_skidsteer'). See configs/training_configs.yaml",
     )
+    parser.add_argument(
+        "-d",
+        "--deterministic",
+        action="store_true",
+        help="Use argmax actions instead of sampling.",
+    )
+    parser.add_argument(
+        "--force_action_mask",
+        action="store_true",
+        help="Apply the observation action mask even if the checkpoint was trained without masking.",
+    )
+    parser.add_argument(
+        "--disable_action_mask",
+        action="store_true",
+        help="Disable action masking even if the checkpoint records it.",
+    )
     args, _ = parser.parse_known_args()
     n_envs = args.n_envs_x * args.n_envs_y
 
@@ -156,8 +175,14 @@ if __name__ == "__main__":
     config = log["train_config"]
     config.edge_features_dim = infer_edge_features_dim_from_model_params(log["model"])
     config.use_action_mask = infer_use_action_mask_from_train_config(config, default=False)
+    if args.force_action_mask:
+        config.use_action_mask = True
+    if args.disable_action_mask:
+        config.use_action_mask = False
     config.num_test_rollouts = n_envs
     config.num_devices = 1
+    print(f"Action mask enabled: {config.use_action_mask}")
+    print(f"Deterministic: {args.deterministic}")
 
     # Checkpoints often store a *batched* env_config (tree-mapped to arrays for pmap/vmap),
     # which breaks attribute access like `env_cfg.curriculum.level` inside TerraEnvBatch reset/map loading.
@@ -339,6 +364,7 @@ if __name__ == "__main__":
         config,
         max_frames=args.n_steps,
         seed=args.seed,
+        deterministic=args.deterministic,
     )
 
     

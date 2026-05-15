@@ -6,8 +6,10 @@ from utils.action_masking import apply_action_mask
 
 def clip_action_map_in_obs(obs):
     """Clip action maps to [-1, 1] on the intuition that a binary map is enough for the agent to take decisions."""
-    obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
-    return obs
+    return {
+        **obs,
+        "action_map": jnp.clip(obs["action_map"], a_min=-1, a_max=1),
+    }
 
 
 def obs_to_model_input(obs, prev_actions, train_cfg):

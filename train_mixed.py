@@ -349,6 +349,10 @@ class MixedAgentTrainConfig:
     use_action_mask: bool = False
     action_mask_cli_override: bool | None = None
     edge_features_dim: int = 0
+    map_encoder: str = "atari"
+    map_feature_dim: int = 32
+    use_map_derived_channels: bool = False
+    separate_actor_critic_trunks: bool = False
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 1  # Number of updates between logging train stats
@@ -361,7 +365,7 @@ class MixedAgentTrainConfig:
     local_map_normalization_bounds = [-16, 16]
     maps_net_normalization_bounds = [-10, 10]  # Required field for network initialization
     loaded_max = 100
-    num_rollouts_eval = 200  # max length of an episode in Terra for eval
+    num_rollouts_eval: int = 550  # max length of an episode in Terra for eval
     cache_clear_interval = 1000  # Less frequent cache clearing for speed
     # Entropy scheduler (cosine decay)
     ent_schedule_start: float = 0.15
@@ -421,12 +425,23 @@ class MixedAgentTrainConfig:
         self.actual_total_timesteps = self.num_updates * self.env_steps_per_update
         if self.use_action_mask and self.edge_features_dim == 0:
             self.edge_features_dim = 10
+        if self.map_encoder == "atari":
+            self.map_feature_dim = 32
+        elif self.map_encoder == "resnet_delayed" and self.map_feature_dim == 32:
+            self.map_feature_dim = 128
 
         print(f"Devices: {jax.devices()}")
         print(
             "Mixed Agent Training - "
             f"Devices: {self.num_devices}, Updates: {self.num_updates}, "
             f"Env steps/update: {self.env_steps_per_update}"
+        )
+        print(
+            "Model architecture - "
+            f"map_encoder={self.map_encoder}, "
+            f"map_feature_dim={self.map_feature_dim}, "
+            f"derived_channels={self.use_map_derived_channels}, "
+            f"separate_trunks={self.separate_actor_critic_trunks}"
         )
         print(f"Using overridden agent types: {self.agent_types_override}")
 
@@ -768,17 +783,44 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 )
             if "model" not in checkpoint:
                 raise KeyError("checkpoint has no 'model' parameters")
-            if "model" in checkpoint:
-                config.edge_features_dim = infer_edge_features_dim_from_model_params(
-                    checkpoint["model"]
-                )
             if "train_config" in checkpoint:
+                checkpoint_config = checkpoint["train_config"]
+                if hasattr(checkpoint_config, "edge_features_dim"):
+                    config.edge_features_dim = int(checkpoint_config.edge_features_dim)
+                else:
+                    config.edge_features_dim = infer_edge_features_dim_from_model_params(
+                        checkpoint["model"]
+                    )
+                config.map_encoder = str(
+                    getattr(checkpoint_config, "map_encoder", config.map_encoder)
+                )
+                config.map_feature_dim = int(
+                    getattr(checkpoint_config, "map_feature_dim", config.map_feature_dim)
+                )
+                config.use_map_derived_channels = bool(
+                    getattr(
+                        checkpoint_config,
+                        "use_map_derived_channels",
+                        config.use_map_derived_channels,
+                    )
+                )
+                config.separate_actor_critic_trunks = bool(
+                    getattr(
+                        checkpoint_config,
+                        "separate_actor_critic_trunks",
+                        config.separate_actor_critic_trunks,
+                    )
+                )
                 checkpoint_use_action_mask = infer_use_action_mask_from_train_config(
-                    checkpoint["train_config"],
+                    checkpoint_config,
                     default=False,
                 )
                 if config.action_mask_cli_override is None:
                     config.use_action_mask = checkpoint_use_action_mask
+            else:
+                config.edge_features_dim = infer_edge_features_dim_from_model_params(
+                    checkpoint["model"]
+                )
             print(f"Loaded checkpoint from {config.resume_from}")
         except Exception as e:
             raise RuntimeError(f"Failed to load checkpoint from {config.resume_from}") from e
@@ -1221,6 +1263,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             / (config.num_envs_per_device * config.num_devices),
                             "eval/total_terminations": eval_stats.terminations
                             / (config.num_envs_per_device * config.num_devices),
+                            "eval/success_rate": eval_stats.positive_terminations
+                            / (config.num_envs_per_device * config.num_devices),
+                            "eval/timeout_rate": jnp.maximum(
+                                eval_stats.terminations
+                                - eval_stats.positive_terminations,
+                                0,
+                            )
+                            / (config.num_envs_per_device * config.num_devices),
                             "eval/avg_positive_episode_length": avg_positive_episode_length
                         }
                     )
@@ -1286,7 +1336,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             "model": train_info["runner_state"][1].params,
             "loss_info": train_info["loss_info"],
             "agent_types": agent_types_str,
-            "network_type": "unified_with_agent_type_conditioning",
+            "network_type": (
+                "unified_with_agent_type_conditioning_"
+                f"{config.map_encoder}"
+            ),
             "training_duration": elapsed_time,
             "final_reward": train_info.get("final_reward", None)
         }
@@ -1360,6 +1413,33 @@ if __name__ == "__main__":
     parser.add_argument(
         "--eval_episodes", type=int, default=100,
         help="Number of eval episodes"
+    )
+    parser.add_argument(
+        "--num_rollouts_eval", type=int, default=550,
+        help="Maximum eval rollout horizon in env steps"
+    )
+    parser.add_argument(
+        "--map_encoder",
+        type=str,
+        choices=("atari", "resnet_delayed"),
+        default="atari",
+        help="Global map encoder architecture"
+    )
+    parser.add_argument(
+        "--map_feature_dim",
+        type=int,
+        default=32,
+        help="Output feature width for the global map encoder"
+    )
+    parser.add_argument(
+        "--use_map_derived_channels",
+        action="store_true",
+        help="Add derived global-map error/progress channels before map encoding"
+    )
+    parser.add_argument(
+        "--separate_actor_critic_trunks",
+        action="store_true",
+        help="Use separate actor and critic trunks after the shared feature encoder"
     )
     parser.add_argument(
         "--agent_types", type=str, default=None,   # 0=excavator, 1=truck, 2=skidsteer
@@ -1613,6 +1693,11 @@ if __name__ == "__main__":
         log_eval_interval=args.log_eval_interval,
         checkpoint_interval=args.checkpoint_interval,
         eval_episodes=args.eval_episodes,
+        num_rollouts_eval=args.num_rollouts_eval,
+        map_encoder=args.map_encoder,
+        map_feature_dim=args.map_feature_dim,
+        use_map_derived_channels=args.use_map_derived_channels,
+        separate_actor_critic_trunks=args.separate_actor_critic_trunks,
         resume_from=args.resume_from,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,

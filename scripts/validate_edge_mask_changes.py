@@ -294,10 +294,30 @@ def test_model_policy() -> None:
             "edge_features_dim": 10,
         }
     )
+    raw_action_map = jnp.zeros((batch_size, map_size, map_size), dtype=jnp.float32)
+    raw_action_map = raw_action_map.at[0, 0, 0].set(3.0)
+    raw_action_map = raw_action_map.at[1, 0, 1].set(-4.0)
+    obs_dict["action_map"] = raw_action_map
     model_obs = obs_to_model_input(obs_dict, prev_actions, train_cfg)
     _assert(len(model_obs) == 24, f"expected 24 model obs entries, got {len(model_obs)}")
     _assert(model_obs[22].shape == (batch_size, 8), "action_mask was not at model obs index 22")
     _assert(model_obs[23].shape == (batch_size, 10), "edge_features was not at model obs index 23")
+    _assert(
+        np.asarray(model_obs[14][0, 0, 0]) == 1.0,
+        "model input action_map was not clipped",
+    )
+    _assert(
+        np.asarray(model_obs[14][1, 0, 1]) == -1.0,
+        "model input action_map was not clipped",
+    )
+    _assert(
+        np.asarray(obs_dict["action_map"][0, 0, 0]) == 3.0,
+        "obs_to_model_input mutated positive source action_map values",
+    )
+    _assert(
+        np.asarray(obs_dict["action_map"][1, 0, 1]) == -4.0,
+        "obs_to_model_input mutated negative source action_map values",
+    )
 
     model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=5,
