@@ -8,7 +8,7 @@ import ast
 import os
 import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, NamedTuple
 
 import numpy as np
 
@@ -29,22 +29,99 @@ def _assert(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+REWARD_COMPONENT_KEYS = {
+    "move",
+    "collision_move",
+    "collision_turn",
+    "move_while_loaded",
+    "move_with_turned_wheels",
+    "wheel_turn",
+    "base_turn",
+    "cabin_turn",
+    "dig_success",
+    "dig_wrong",
+    "dig_on_dump_penalty",
+    "dig_edge_bonus",
+    "dump_success",
+    "dump_wrong",
+    "dump_progress",
+    "dump_bonus",
+    "terminal",
+    "existence",
+    "trench",
+    "trench_proximity",
+    "trench_alignment",
+    "skid_move",
+    "skid_dump_wrong",
+    "truck_load_success",
+    "truck_empty_proximity",
+    "truck_loaded_proximity",
+}
+METRIC_COMPONENT_KEYS = {
+    "do_attempt",
+    "dig_success_event",
+    "dump_success_event",
+    "failed_do",
+    "collision",
+    "noop",
+    "loaded",
+    "terrain_changed",
+    "loaded_at_timeout",
+    "completion",
+    "remaining_dig_volume",
+    "remaining_dump_volume",
+    "edge_completion",
+    "core_completion",
+}
+
+
 def _assert_reward_components(info: dict, prefix: str) -> None:
     _assert("reward_components" in info, f"{prefix} info has no reward_components")
     components = info["reward_components"]
-    expected_keys = {
+    expected_keys = REWARD_COMPONENT_KEYS | METRIC_COMPONENT_KEYS | {
         "agent_rewards",
-        "terminal",
-        "trench",
-        "existence",
         "agent_active",
         "num_agents",
     }
     _assert(set(components) == expected_keys, f"{prefix} reward component keys differ")
     _assert(np.asarray(components["agent_rewards"]).shape == (4,), f"{prefix} agent_rewards shape differs")
     _assert(np.asarray(components["agent_active"]).shape == (4,), f"{prefix} agent_active shape differs")
-    for key in ("terminal", "trench", "existence", "num_agents"):
+    for key in REWARD_COMPONENT_KEYS | METRIC_COMPONENT_KEYS | {"num_agents"}:
         _assert(np.asarray(components[key]).shape == (), f"{prefix} {key} shape differs")
+
+
+def _model_obs_dict(batch_size: int = 2, map_size: int = 32, angles_cabin: int = 12):
+    import jax.numpy as jnp
+
+    return {
+        "agent_states": jnp.zeros((batch_size, 4, 8), dtype=jnp.float32),
+        "agent_active": jnp.array([[1, 0, 0, 0]] * batch_size, dtype=jnp.int8),
+        "num_agents": jnp.ones((batch_size,), dtype=jnp.int32),
+        "local_map_action_neg": jnp.zeros((batch_size, angles_cabin), dtype=jnp.float32),
+        "local_map_action_pos": jnp.zeros((batch_size, angles_cabin), dtype=jnp.float32),
+        "local_map_target_neg": jnp.zeros((batch_size, angles_cabin), dtype=jnp.float32),
+        "local_map_target_pos": jnp.zeros((batch_size, angles_cabin), dtype=jnp.float32),
+        "local_map_dumpability": jnp.zeros((batch_size, angles_cabin), dtype=jnp.float32),
+        "local_map_obstacles": jnp.zeros((batch_size, angles_cabin), dtype=jnp.float32),
+        "local_map_border_workspace": jnp.zeros((batch_size, angles_cabin), dtype=jnp.float32),
+        "local_map_edge_alignment_error": jnp.zeros((batch_size, angles_cabin), dtype=jnp.float32),
+        "local_map_border_diggable": jnp.zeros((batch_size, angles_cabin), dtype=jnp.float32),
+        "traversability_mask": jnp.zeros((batch_size, map_size, map_size), dtype=jnp.float32),
+        "reachability_mask": jnp.zeros((batch_size, map_size, map_size), dtype=jnp.float32),
+        "action_map": jnp.zeros((batch_size, map_size, map_size), dtype=jnp.float32),
+        "target_map": jnp.zeros((batch_size, map_size, map_size), dtype=jnp.float32),
+        "agent_width": jnp.full((batch_size,), 3, dtype=jnp.int32),
+        "agent_height": jnp.full((batch_size,), 3, dtype=jnp.int32),
+        "padding_mask": jnp.zeros((batch_size, map_size, map_size), dtype=jnp.float32),
+        "dumpability_mask": jnp.ones((batch_size, map_size, map_size), dtype=jnp.float32),
+        "interaction_mask": jnp.zeros((batch_size, map_size, map_size), dtype=jnp.float32),
+        "action_mask": jnp.array(
+            [[True, False, False, False, False, False, False, True]] * batch_size,
+            dtype=jnp.bool_,
+        ),
+        "edge_features": jnp.zeros((batch_size, 10), dtype=jnp.float32),
+        "episode_progress": jnp.zeros((batch_size,), dtype=jnp.float32),
+    }
 
 
 def test_ppo_mask() -> None:
@@ -184,8 +261,8 @@ def test_training_accounting() -> None:
 
     train_mixed_source = (repo_root / "train_mixed.py").read_text()
     _assert(
-        "config.edge_features_dim = infer_edge_features_dim_from_model_params(" in train_mixed_source,
-        "train_mixed.py resume path must infer checkpoint edge feature width before model init",
+        "restore_checkpoint_model_config(" in train_mixed_source,
+        "train_mixed.py resume path must restore saved model-shape fields before model init",
     )
     _assert(
         "checkpoint_use_action_mask = infer_use_action_mask_from_train_config(" in train_mixed_source,
@@ -251,6 +328,7 @@ def test_model_policy() -> None:
             dtype=jnp.bool_,
         ),
         "edge_features": jnp.zeros((batch_size, 10), dtype=jnp.float32),
+        "episode_progress": jnp.zeros((batch_size,), dtype=jnp.float32),
     }
 
     class TrainCfg(dict):
@@ -267,10 +345,11 @@ def test_model_policy() -> None:
     legacy_obs_dict.pop("action_mask")
     legacy_obs_dict.pop("edge_features")
     legacy_model_obs = obs_to_model_input(legacy_obs_dict, prev_actions, legacy_cfg)
-    _assert(len(legacy_model_obs) == 24, f"expected 24 model obs entries, got {len(legacy_model_obs)}")
+    _assert(len(legacy_model_obs) == 25, f"expected 25 model obs entries, got {len(legacy_model_obs)}")
     _assert(legacy_model_obs[22].shape == (batch_size, 8), "legacy action_mask fallback shape differs")
     _assert(np.all(np.asarray(legacy_model_obs[22])), "legacy no-mask path must use an all-true mask")
     _assert(legacy_model_obs[23].shape == (batch_size, 0), "legacy no-mask path must not add edge features")
+    _assert(legacy_model_obs[24].shape == (batch_size, 0), "legacy no-mask path must not add progress")
 
     legacy_model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=5,
@@ -299,9 +378,10 @@ def test_model_policy() -> None:
     raw_action_map = raw_action_map.at[1, 0, 1].set(-4.0)
     obs_dict["action_map"] = raw_action_map
     model_obs = obs_to_model_input(obs_dict, prev_actions, train_cfg)
-    _assert(len(model_obs) == 24, f"expected 24 model obs entries, got {len(model_obs)}")
+    _assert(len(model_obs) == 25, f"expected 25 model obs entries, got {len(model_obs)}")
     _assert(model_obs[22].shape == (batch_size, 8), "action_mask was not at model obs index 22")
     _assert(model_obs[23].shape == (batch_size, 10), "edge_features was not at model obs index 23")
+    _assert(model_obs[24].shape == (batch_size, 0), "episode_progress should be disabled by default")
     _assert(
         np.asarray(model_obs[14][0, 0, 0]) == 1.0,
         "model input action_map was not clipped",
@@ -345,6 +425,444 @@ def test_model_policy() -> None:
     )
 
     print("PASS model-policy: no-mask legacy input and explicit masked edge-feature input both work")
+
+
+def test_reward_logging_accounting() -> None:
+    import jax.numpy as jnp
+
+    from train import (
+        Transition,
+        eval_log_metrics,
+        train_log_metrics,
+        train_rollout_metrics,
+    )
+    from eval_ppo import RolloutStats
+
+    steps, batch = 2, 2
+    reward_components = {
+        key: jnp.zeros((steps, batch), dtype=jnp.float32)
+        for key in REWARD_COMPONENT_KEYS | METRIC_COMPONENT_KEYS
+    }
+    reward_components["terminal"] = jnp.array([[1.0, 3.0], [5.0, 7.0]])
+    reward_components["do_attempt"] = jnp.array([[0.0, 1.0], [1.0, 0.0]])
+    reward_components["completion"] = jnp.array([[0.1, 0.3], [0.5, 0.7]])
+    reward_components["agent_rewards"] = jnp.zeros((steps, batch, 4), dtype=jnp.float32)
+    reward_components["agent_rewards"] = reward_components["agent_rewards"].at[..., 0].set(
+        jnp.array([[2.0, 4.0], [6.0, 8.0]])
+    )
+    reward_components["agent_active"] = jnp.array(
+        [[[1, 1, 0, 0], [1, 1, 0, 0]], [[1, 1, 0, 0], [1, 1, 0, 0]]],
+        dtype=jnp.int32,
+    )
+    reward_components["num_agents"] = jnp.full((steps, batch), 2, dtype=jnp.int32)
+
+    action_mask = jnp.ones((steps, batch, 8), dtype=jnp.bool_)
+    action_mask = action_mask.at[0, 1, 2].set(False)
+    transitions = Transition(
+        done=jnp.array([[False, False], [True, False]]),
+        task_done=jnp.array([[False, False], [True, False]]),
+        timeout_done=jnp.array([[False, False], [False, False]]),
+        bootstrap_value=jnp.zeros((steps, batch), dtype=jnp.float32),
+        bootstrap_mask=jnp.ones((steps, batch), dtype=jnp.float32),
+        gae_mask=jnp.ones((steps, batch), dtype=jnp.float32),
+        action=jnp.array([[0, 2], [7, 6]], dtype=jnp.int32),
+        value=jnp.zeros((steps, batch), dtype=jnp.float32),
+        reward=jnp.ones((steps, batch), dtype=jnp.float32),
+        log_prob=jnp.zeros((steps, batch), dtype=jnp.float32),
+        obs={
+            "action_mask": action_mask,
+            "episode_progress": jnp.array([[0.0, 0.25], [0.5, 0.75]]),
+        },
+        prev_actions=jnp.zeros((steps, batch, 5), dtype=jnp.int32),
+        prev_reward=jnp.zeros((steps, batch), dtype=jnp.float32),
+    )
+    metrics = train_rollout_metrics(transitions, reward_components)
+    _assert(np.isclose(np.asarray(metrics["reward/terminal"]), 4.0), "terminal reward must be rollout mean")
+    _assert(np.isclose(np.asarray(metrics["behavior/do_attempt_rate"]), 0.5), "do attempt rate differs")
+    _assert(np.isclose(np.asarray(metrics["progress/completion"]), 0.4), "completion mean differs")
+    _assert(
+        np.isclose(np.asarray(metrics["behavior/invalid_action_rate"]), 0.25),
+        "invalid raw action rate must use chosen actions and masks",
+    )
+    train_metrics = train_log_metrics({
+        "total_loss": jnp.asarray(1.0),
+        "value_loss": jnp.asarray(2.0),
+        "actor_loss": jnp.asarray(3.0),
+        "entropy": jnp.asarray(4.0),
+        "explained_variance": jnp.asarray(0.5),
+        **metrics,
+    })
+    _assert(np.isclose(np.asarray(train_metrics["loss/total"]), 1.0), "total loss was not namespaced")
+    _assert("total_loss" not in train_metrics, "bare total_loss leaked into public logs")
+    _assert("train/done_rate" not in train_metrics, "legacy done_rate leaked into public logs")
+
+    class Config(NamedTuple):
+        num_envs_per_device: int = 2
+        num_devices: int = 1
+
+    eval_metrics = eval_log_metrics(
+        RolloutStats(
+            max_reward=jnp.asarray(5.0),
+            reward=jnp.asarray(8.0),
+            length=jnp.asarray(2),
+            successes=jnp.asarray(1),
+            success_steps=jnp.asarray(2),
+            return_sum=jnp.asarray(6.0),
+            return_sq_sum=jnp.asarray(20.0),
+            return_min=jnp.asarray(2.0),
+            return_max=jnp.asarray(4.0),
+            return_count=jnp.asarray(2),
+            success_return_sum=jnp.asarray(4.0),
+            success_return_count=jnp.asarray(1),
+            failure_return_sum=jnp.asarray(2.0),
+            failure_return_count=jnp.asarray(1),
+            action_counts=jnp.array([1, 0, 0, 0, 0, 0, 1, 2]),
+        ),
+        Config(),
+    )
+    _assert(
+        np.isclose(np.asarray(eval_metrics["eval/success_rate"]), 0.5),
+        "eval success rate differs",
+    )
+    _assert(
+        np.isclose(np.asarray(eval_metrics["eval/return_mean"]), 3.0),
+        "eval return mean differs",
+    )
+    _assert(
+        np.isclose(np.asarray(eval_metrics["eval/action_wait"]), 0.5),
+        "eval wait action rate differs",
+    )
+    legacy_names = {
+        "eval/positive_terminations",
+        "eval/episode_return_mean",
+        "eval/rewards/terminal",
+        "eval/success/rewards/terminal",
+    }
+    _assert(not legacy_names & eval_metrics.keys(), "legacy eval names leaked into public logs")
+    print("PASS reward-logging-accounting: public W&B metrics are compact and non-legacy")
+
+
+def test_model_edge_no_mask() -> None:
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    from terra.actions import TrackedAction
+    from utils.models import SimplifiedCoupledCategoricalNet
+    from utils.utils_ppo import obs_to_model_input, policy
+
+    class TrainCfg(dict):
+        clip_action_maps = True
+
+    batch_size = 2
+    obs_dict = _model_obs_dict(batch_size=batch_size)
+    prev_actions = jnp.zeros((batch_size, 5), dtype=jnp.int32)
+    cfg = TrainCfg(
+        {
+            "num_prev_actions": 5,
+            "clip_action_maps": True,
+            "loaded_max": 100,
+            "use_action_mask": False,
+            "edge_features_dim": 10,
+        }
+    )
+    model_obs = obs_to_model_input(obs_dict, prev_actions, cfg)
+    _assert(model_obs[23].shape == (batch_size, 10), "edge_features should pass without action mask")
+    _assert(model_obs[24].shape == (batch_size, 0), "episode progress should stay disabled")
+
+    model = SimplifiedCoupledCategoricalNet(
+        num_prev_actions=5,
+        num_embeddings_agent=32,
+        map_min_max=(-1, 1),
+        local_map_min_max=(-16, 16),
+        loaded_max=100,
+        action_type=TrackedAction,
+    )
+    params = model.init(jax.random.PRNGKey(0), model_obs)
+    _, pi = policy(model.apply, params, model_obs, use_action_mask=False)
+    logits = np.asarray(pi.logits_parameter())
+    _assert(np.all(logits > -1e8), "unmasked policy logits were masked")
+    print("PASS model-edge-no-mask: edge_features_dim is independent from action masking")
+
+
+def test_model_critic_affordance_shapes() -> None:
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    from terra.actions import TrackedAction
+    from utils.models import SimplifiedCoupledCategoricalNet
+    from utils.utils_ppo import obs_to_model_input
+
+    class TrainCfg(dict):
+        clip_action_maps = True
+
+    batch_size = 2
+    prev_actions = jnp.zeros((batch_size, 5), dtype=jnp.int32)
+    cfg = TrainCfg(
+        {
+            "num_prev_actions": 5,
+            "clip_action_maps": True,
+            "loaded_max": 100,
+            "use_action_mask": False,
+            "edge_features_dim": 10,
+            "use_critic_affordances": True,
+            "include_episode_progress": True,
+            "critic_affordance_dim": 11,
+        }
+    )
+    obs_a = _model_obs_dict(batch_size=batch_size)
+    obs_b = _model_obs_dict(batch_size=batch_size)
+    obs_b["edge_features"] = jnp.ones((batch_size, 10), dtype=jnp.float32)
+    obs_b["episode_progress"] = jnp.full((batch_size,), 0.75, dtype=jnp.float32)
+    model_obs_a = obs_to_model_input(obs_a, prev_actions, cfg)
+    model_obs_b = obs_to_model_input(obs_b, prev_actions, cfg)
+    _assert(model_obs_a[24].shape == (batch_size, 1), "episode_progress width should be 1")
+
+    model = SimplifiedCoupledCategoricalNet(
+        num_prev_actions=5,
+        num_embeddings_agent=32,
+        map_min_max=(-1, 1),
+        local_map_min_max=(-16, 16),
+        loaded_max=100,
+        action_type=TrackedAction,
+        separate_actor_critic_trunks=True,
+        use_critic_affordances=True,
+        critic_affordance_dim=11,
+    )
+    params = model.init(jax.random.PRNGKey(0), model_obs_a)
+    _, logits_a = model.apply(params, model_obs_a)
+    _, logits_b = model.apply(params, model_obs_b)
+    critic_kernel = params["params"]["critic_trunk"]["layers_0"]["kernel"]
+    actor_kernel = params["params"]["actor_trunk"]["layers_0"]["kernel"]
+    _assert(critic_kernel.shape[0] == 128 + 11, "critic trunk did not receive affordance width")
+    _assert(actor_kernel.shape[0] == 128, "actor trunk should not receive affordances")
+    _assert(np.allclose(np.asarray(logits_a), np.asarray(logits_b)), "actor logits changed with critic-only affordances")
+    print("PASS model-critic-affordance-shapes: affordances are critic-only")
+
+
+def test_checkpoint_config_restore() -> None:
+    import jax.numpy as jnp
+
+    from utils.models import restore_checkpoint_model_config
+
+    class Config:
+        pass
+
+    saved = Config()
+    saved.edge_features_dim = 10
+    saved.use_critic_affordances = True
+    saved.include_episode_progress = True
+    saved.critic_affordance_dim = 11
+
+    restored = Config()
+    restore_checkpoint_model_config(
+        restored,
+        {"params": {"critic_trunk": {}}},
+        source_config=saved,
+    )
+    _assert(restored.edge_features_dim == 10, "saved edge feature width was not preserved")
+    _assert(restored.use_critic_affordances, "saved critic-affordance flag was not preserved")
+    _assert(restored.include_episode_progress, "saved episode-progress flag was not preserved")
+    _assert(restored.critic_affordance_dim == 11, "saved critic-affordance width was not preserved")
+
+    legacy_restored = Config()
+    legacy_model = {
+        "params": {
+            "mlp_v": {
+                "layers_0": {
+                    "kernel": jnp.zeros((554, 1), dtype=jnp.float32),
+                },
+            },
+        },
+    }
+    restore_checkpoint_model_config(
+        legacy_restored,
+        legacy_model,
+        source_config=Config(),
+    )
+    _assert(legacy_restored.edge_features_dim == 10, "legacy edge feature width was not inferred")
+    _assert(not legacy_restored.use_critic_affordances, "legacy checkpoint should not enable critic affordances")
+    _assert(not legacy_restored.include_episode_progress, "legacy checkpoint should not enable progress")
+    _assert(legacy_restored.critic_affordance_dim == 0, "legacy checkpoint should have no critic affordance width")
+
+    active_resume_config = Config()
+    active_resume_config.edge_features_dim = 0
+    restore_checkpoint_model_config(
+        active_resume_config,
+        legacy_model,
+        source_config={},
+    )
+    _assert(active_resume_config.edge_features_dim == 10, "no-train_config resume should infer legacy edge width")
+    print("PASS checkpoint-config-restore: saved R1/R2 widths survive reload")
+
+
+def test_timeout_bootstrap_value_uses_final_observation() -> None:
+    import jax.numpy as jnp
+    import numpy as np
+
+    from train import timeout_bootstrap_value
+
+    class Config:
+        clip_action_maps = False
+        edge_features_dim = 10
+        include_episode_progress = True
+        use_action_mask = False
+
+    class FakeTrainState:
+        params = {}
+
+        def apply_fn(self, params, model_obs):
+            value = model_obs[23][:, :1] + 10.0 * model_obs[24]
+            return value, jnp.zeros((value.shape[0], 8), dtype=jnp.float32)
+
+    obs = _model_obs_dict(batch_size=2)
+    obs["edge_features"] = jnp.array(
+        [[2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+         [4.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]],
+        dtype=jnp.float32,
+    )
+    obs["episode_progress"] = jnp.array([0.3, 0.7], dtype=jnp.float32)
+    prev_actions = jnp.zeros((2, 1), dtype=jnp.int32)
+    current_value = jnp.array([99.0, 99.0], dtype=jnp.float32)
+
+    info = {
+        "final_observation": obs,
+        "timeout_done": jnp.array([True, False], dtype=jnp.bool_),
+    }
+    value = timeout_bootstrap_value(
+        FakeTrainState(),
+        info,
+        prev_actions,
+        current_value,
+        Config(),
+    )
+    _assert(np.allclose(np.asarray(value), np.array([5.0, 0.0])), "bootstrap did not use final observation only for timeout rows")
+
+    no_timeout_info = {
+        "final_observation": obs,
+        "timeout_done": jnp.array([False, False], dtype=jnp.bool_),
+    }
+    value = timeout_bootstrap_value(
+        FakeTrainState(),
+        no_timeout_info,
+        prev_actions,
+        current_value,
+        Config(),
+    )
+    _assert(np.allclose(np.asarray(value), np.zeros(2)), "non-timeout bootstrap should be zero")
+    print("PASS timeout-bootstrap-value: value bootstrap reads final_observation only on timeout")
+
+
+def test_initial_episode_progress_randomization() -> None:
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    from train import randomize_initial_episode_progress
+
+    class FakeState(NamedTuple):
+        env_steps: jax.Array
+
+    class FakeEnvCfg(NamedTuple):
+        max_steps_in_episode: jax.Array
+
+    class FakeTimeStep(NamedTuple):
+        state: FakeState
+        observation: dict
+        reward: jax.Array
+        done: jax.Array
+        info: dict
+        env_cfg: FakeEnvCfg
+
+    batch_size = 16
+    timestep = FakeTimeStep(
+        state=FakeState(env_steps=jnp.zeros((batch_size,), dtype=jnp.int32)),
+        observation={"episode_progress": jnp.zeros((batch_size,), dtype=jnp.float32)},
+        reward=jnp.zeros((batch_size,), dtype=jnp.float32),
+        done=jnp.zeros((batch_size,), dtype=jnp.bool_),
+        info={
+            "episode_progress": jnp.zeros((batch_size,), dtype=jnp.float32),
+            "final_observation": {
+                "episode_progress": jnp.zeros((batch_size,), dtype=jnp.float32),
+            },
+        },
+        env_cfg=FakeEnvCfg(max_steps_in_episode=jnp.full((batch_size,), 550, dtype=jnp.int32)),
+    )
+    randomized = randomize_initial_episode_progress(timestep, jax.random.PRNGKey(0))
+    ages = np.asarray(randomized.state.env_steps)
+    progress = np.asarray(randomized.observation["episode_progress"])
+    _assert(ages.shape == (batch_size,), "randomized env_steps shape changed")
+    _assert(np.all(ages >= 0) and np.all(ages < 550), "randomized env_steps outside horizon")
+    _assert(np.unique(ages).size > 1, "initial env_steps were not staggered")
+    _assert(np.allclose(progress, ages / 550.0), "episode_progress does not match randomized age")
+    _assert(
+        np.allclose(np.asarray(randomized.info["episode_progress"]), progress),
+        "info episode_progress was not updated",
+    )
+    _assert(
+        np.allclose(np.asarray(randomized.info["final_observation"]["episode_progress"]), progress),
+        "final_observation episode_progress was not updated",
+    )
+    print("PASS initial-episode-progress-randomization: startup env ages are staggered")
+
+
+def test_gae_timeout_bootstrap() -> None:
+    import jax.numpy as jnp
+    import numpy as np
+
+    from train import Transition, calculate_gae
+
+    transitions = Transition(
+        done=jnp.array([True, True], dtype=jnp.bool_),
+        task_done=jnp.array([False, True], dtype=jnp.bool_),
+        timeout_done=jnp.array([True, False], dtype=jnp.bool_),
+        bootstrap_value=jnp.array([5.0, 9.0], dtype=jnp.float32),
+        bootstrap_mask=jnp.array([1.0, 0.0], dtype=jnp.float32),
+        gae_mask=jnp.array([0.0, 0.0], dtype=jnp.float32),
+        action=jnp.zeros((2,), dtype=jnp.int32),
+        value=jnp.zeros((2,), dtype=jnp.float32),
+        reward=jnp.array([1.0, 1.0], dtype=jnp.float32),
+        log_prob=jnp.zeros((2,), dtype=jnp.float32),
+        obs={},
+        prev_actions=jnp.zeros((2, 1), dtype=jnp.int32),
+        prev_reward=jnp.zeros((2,), dtype=jnp.float32),
+    )
+    advantages, targets = calculate_gae(
+        transitions,
+        last_val=jnp.array(100.0, dtype=jnp.float32),
+        gamma=1.0,
+        gae_lambda=1.0,
+    )
+    _assert(np.allclose(np.asarray(targets), np.array([6.0, 1.0])), "timeout/task GAE targets are wrong")
+    _assert(np.allclose(np.asarray(advantages), np.asarray(targets)), "zero-value advantages should equal targets")
+
+    transitions = Transition(
+        done=jnp.array([False, True, False], dtype=jnp.bool_),
+        task_done=jnp.array([False, False, False], dtype=jnp.bool_),
+        timeout_done=jnp.array([False, True, False], dtype=jnp.bool_),
+        bootstrap_value=jnp.array([0.0, 5.0, 0.0], dtype=jnp.float32),
+        bootstrap_mask=jnp.ones((3,), dtype=jnp.float32),
+        gae_mask=jnp.array([1.0, 0.0, 1.0], dtype=jnp.float32),
+        action=jnp.zeros((3,), dtype=jnp.int32),
+        value=jnp.zeros((3,), dtype=jnp.float32),
+        reward=jnp.array([1.0, 1.0, 100.0], dtype=jnp.float32),
+        log_prob=jnp.zeros((3,), dtype=jnp.float32),
+        obs={},
+        prev_actions=jnp.zeros((3, 1), dtype=jnp.int32),
+        prev_reward=jnp.zeros((3,), dtype=jnp.float32),
+    )
+    _, targets = calculate_gae(
+        transitions,
+        last_val=jnp.array(0.0, dtype=jnp.float32),
+        gamma=1.0,
+        gae_lambda=1.0,
+    )
+    _assert(
+        np.allclose(np.asarray(targets), np.array([7.0, 6.0, 100.0])),
+        "timeout GAE should not leak reset-episode advantages backward",
+    )
+    print("PASS gae-timeout-bootstrap: timeout bootstraps value without reset-episode leakage")
 
 
 def _batched_env_config(env_cfg, num_envs: int):
@@ -551,6 +1069,7 @@ def test_synthetic_batch_step_fast_reset_parity(
                         **item.info,
                         "action_mask": obs_reset["action_mask"],
                         "edge_features": obs_reset["edge_features"],
+                        "episode_progress": obs_reset["episode_progress"],
                         "target_tiles": state_reset.world.interaction_mask.map.reshape(-1),
                     }
                     return item._replace(
@@ -748,6 +1267,7 @@ def test_synthetic_step_fast_reset_parity(
         **fast_done.info,
         "action_mask": obs_reset["action_mask"],
         "edge_features": obs_reset["edge_features"],
+        "episode_progress": obs_reset["episode_progress"],
         "target_tiles": state_reset.world.interaction_mask.map.reshape(-1),
     }
     fast_done = fast_done._replace(
@@ -802,6 +1322,7 @@ def _make_state(agent_states, current_agent: int, num_agents: int, map_size: int
         max_steps_in_episode=16,
     )
     target_map = jnp.zeros((map_size, map_size), dtype=jnp.int8)
+    target_map = target_map.at[map_size // 2, map_size // 2].set(jnp.int8(-1))
     padding_mask = jnp.zeros((map_size, map_size), dtype=jnp.int8)
     action_map = jnp.zeros((map_size, map_size), dtype=jnp.int8)
     dumpability = jnp.ones((map_size, map_size), dtype=jnp.bool_)
@@ -994,6 +1515,7 @@ def test_synthetic_env_action_mask(
         action_types=action_types,
     )
     target_map = jnp.zeros((map_size, map_size), dtype=jnp.int8)
+    target_map = target_map.at[map_size // 2, map_size // 2].set(jnp.int8(-1))
     padding_mask = jnp.zeros((map_size, map_size), dtype=jnp.int8)
     action_map = jnp.zeros((map_size, map_size), dtype=jnp.int8)
     dumpability = jnp.ones((map_size, map_size), dtype=jnp.bool_)
@@ -1085,6 +1607,101 @@ def test_synthetic_env_action_mask(
     )
 
 
+def test_env_episode_progress_and_final_observation(
+    agent_types: tuple[int, ...],
+    action_types: tuple[int, ...],
+    seed: int,
+    disable_jit: bool,
+    map_size: int = 32,
+) -> None:
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    jax.config.update("jax_disable_jit", disable_jit)
+
+    from terra.config import AgentConfig, BatchConfig, EnvConfig
+    from terra.env import TerraEnv
+
+    agent_cfg = AgentConfig(width=3, height=3, move_tiles=3)
+    env_cfg = EnvConfig()._replace(
+        agent=agent_cfg,
+        maps=EnvConfig().maps._replace(edge_length_px=map_size),
+        tile_size=1.0,
+        max_steps_in_episode=2,
+        agent_types=agent_types,
+        action_types=action_types,
+    )
+    target_map = jnp.zeros((map_size, map_size), dtype=jnp.int8)
+    target_map = target_map.at[map_size // 2, map_size // 2].set(jnp.int8(-1))
+    target_map = target_map.at[map_size // 2, map_size // 2 + 2].set(jnp.int8(1))
+    padding_mask = jnp.zeros((map_size, map_size), dtype=jnp.int8)
+    action_map = jnp.zeros((map_size, map_size), dtype=jnp.int8)
+    action_map = action_map.at[map_size // 2, map_size // 2 + 2].set(jnp.int8(2))
+    dumpability = jnp.ones((map_size, map_size), dtype=jnp.bool_)
+    trench_axes = jnp.zeros((3, 3), dtype=jnp.float32)
+    foundation_border_axes = jnp.zeros((64, 3), dtype=jnp.float32)
+    distance_map = jnp.zeros((map_size, map_size), dtype=jnp.float32)
+
+    env = TerraEnv.new(maps_size_px=map_size, rendering=False)
+    timestep = env.reset(
+        jax.random.PRNGKey(seed),
+        target_map,
+        padding_mask,
+        trench_axes,
+        jnp.int32(0),
+        foundation_border_axes,
+        jnp.int32(0),
+        dumpability,
+        action_map,
+        distance_map,
+        env_cfg,
+    )
+    action = BatchConfig().action_type.do_nothing()
+    _assert(np.asarray(timestep.observation["episode_progress"]).shape == (), "reset progress shape differs")
+    _assert(float(np.asarray(timestep.observation["episode_progress"])) == 0.0, "reset progress should be zero")
+
+    one_step = env.step_no_reset(timestep.state, action, timestep.env_cfg)
+    one_progress = float(np.asarray(one_step.observation["episode_progress"]))
+    _assert(0.0 < one_progress < 1.0, f"one-step progress should be between 0 and 1, got {one_progress}")
+
+    boundary_state = timestep.state._replace(env_steps=timestep.env_cfg.max_steps_in_episode - 1)
+    boundary_timestep = env.step(
+        boundary_state,
+        action,
+        target_map,
+        padding_mask,
+        trench_axes,
+        jnp.int32(0),
+        foundation_border_axes,
+        jnp.int32(0),
+        dumpability,
+        action_map,
+        distance_map,
+        env_cfg,
+    )
+    _assert(bool(np.asarray(boundary_timestep.done)), "boundary step should terminate")
+    _assert(bool(np.asarray(boundary_timestep.info["timeout_done"])), "boundary step should be a timeout")
+    _assert(not bool(np.asarray(boundary_timestep.info["task_done"])), "boundary step should not complete the task")
+    timeout_completion = float(
+        np.asarray(boundary_timestep.info["reward_components"]["completion"])
+    )
+    _assert(
+        timeout_completion > 0.5,
+        f"boundary fixture must exercise high-completion timeout reward, got {timeout_completion}",
+    )
+    _assert(
+        float(np.asarray(boundary_timestep.info["reward_components"]["terminal"])) == 0.0,
+        "timeout-only boundary should not receive terminal success reward",
+    )
+    final_progress = float(np.asarray(boundary_timestep.info["final_observation"]["episode_progress"]))
+    reset_progress = float(np.asarray(boundary_timestep.observation["episode_progress"]))
+    _assert(final_progress == 1.0, f"final pre-reset progress should be 1.0, got {final_progress}")
+    _assert(reset_progress == 0.0, f"returned reset progress should be 0.0, got {reset_progress}")
+
+    print("PASS env-episode-progress: progress and final pre-reset observation are available")
+
+
 def _run_cases(cases: Iterable[str], args: argparse.Namespace) -> None:
     for case in cases:
         if case == "ppo-mask":
@@ -1093,6 +1710,20 @@ def _run_cases(cases: Iterable[str], args: argparse.Namespace) -> None:
             test_training_accounting()
         elif case == "model-policy":
             test_model_policy()
+        elif case == "reward-logging-accounting":
+            test_reward_logging_accounting()
+        elif case == "model-edge-no-mask":
+            test_model_edge_no_mask()
+        elif case == "model-critic-affordance-shapes":
+            test_model_critic_affordance_shapes()
+        elif case == "checkpoint-config-restore":
+            test_checkpoint_config_restore()
+        elif case == "timeout-bootstrap-value":
+            test_timeout_bootstrap_value_uses_final_observation()
+        elif case == "initial-episode-progress-randomization":
+            test_initial_episode_progress_randomization()
+        elif case == "gae-timeout-bootstrap":
+            test_gae_timeout_bootstrap()
         elif case == "state-action-mask":
             test_state_action_mask(disable_jit=args.disable_jit)
         elif case == "state-step-dispatch":
@@ -1133,6 +1764,14 @@ def _run_cases(cases: Iterable[str], args: argparse.Namespace) -> None:
                 disable_jit=args.disable_jit,
                 map_size=args.synthetic_map_size,
             )
+        elif case == "env-episode-progress":
+            test_env_episode_progress_and_final_observation(
+                agent_types=args.agent_types,
+                action_types=args.action_types,
+                seed=args.seed,
+                disable_jit=args.disable_jit,
+                map_size=args.synthetic_map_size,
+            )
         else:
             raise ValueError(f"unknown case: {case}")
 
@@ -1145,12 +1784,20 @@ def main() -> None:
             "ppo-mask",
             "training-accounting",
             "model-policy",
+            "reward-logging-accounting",
+            "model-edge-no-mask",
+            "model-critic-affordance-shapes",
+            "checkpoint-config-restore",
+            "timeout-bootstrap-value",
+            "initial-episode-progress-randomization",
+            "gae-timeout-bootstrap",
             "state-action-mask",
             "state-step-dispatch",
             "synthetic-env-action-mask",
             "env-action-mask",
             "synthetic-batch-step-fast-reset",
             "synthetic-step-fast-reset",
+            "env-episode-progress",
             "all",
         ),
         default="all",
@@ -1181,12 +1828,20 @@ def main() -> None:
             "ppo-mask",
             "training-accounting",
             "model-policy",
+            "reward-logging-accounting",
+            "model-edge-no-mask",
+            "model-critic-affordance-shapes",
+            "checkpoint-config-restore",
+            "timeout-bootstrap-value",
+            "initial-episode-progress-randomization",
+            "gae-timeout-bootstrap",
             "state-action-mask",
             "state-step-dispatch",
             "synthetic-env-action-mask",
             "env-action-mask",
             "synthetic-batch-step-fast-reset",
             "synthetic-step-fast-reset",
+            "env-episode-progress",
         )
     else:
         cases = (args.case,)

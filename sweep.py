@@ -83,7 +83,7 @@ if __name__ == "__main__":
             "program": "train.py",
             "method": "bayes",
             "metric": {
-                "name": "eval/positive_terminations",
+                "name": "eval/success_rate",
                 "goal": "maximize",
             },
             "parameters": {

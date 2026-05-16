@@ -96,8 +96,8 @@ import jax.tree_util as jtu
 import numpy as np
 from utils.models import (
     get_model_ready,
-    infer_edge_features_dim_from_model_params,
     infer_use_action_mask_from_train_config,
+    restore_checkpoint_model_config,
 )
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig, BatchConfig, Rewards, CurriculumGlobalConfig, RewardsType
@@ -126,29 +126,20 @@ import tempfile
 from pathlib import Path
 
 # Import the base training infrastructure
-from train import get_curriculum_levels, calculate_gae, ppo_update_networks, Transition
+from train import (
+    Transition,
+    calculate_gae,
+    eval_log_metrics,
+    get_curriculum_levels,
+    log_effective_env_config,
+    ppo_update_networks,
+    randomize_initial_episode_progress,
+    train_log_metrics,
+    train_rollout_metrics,
+    timeout_bootstrap_value,
+)
 
 jax.config.update("jax_threefry_partitionable", True)
-
-
-def safe_jax_to_python(value):
-    """Safely convert JAX arrays to Python scalars"""
-    if hasattr(value, 'item'):
-        try:
-            return value.item()
-        except (ValueError, TypeError):
-            # If it's an array with multiple elements, take the first one
-            if hasattr(value, 'shape') and value.shape:
-                return value.ravel()[0].item()
-            else:
-                return float(value)
-    elif hasattr(value, '__array__'):
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return str(value)
-    else:
-        return value
 
 
 def _sorted_map_indices(images_dir: Path) -> list[int]:
@@ -349,6 +340,9 @@ class MixedAgentTrainConfig:
     use_action_mask: bool = False
     action_mask_cli_override: bool | None = None
     edge_features_dim: int = 0
+    use_critic_affordances: bool = False
+    critic_affordance_dim: int = 0
+    include_episode_progress: bool = False
     map_encoder: str = "atari"
     map_feature_dim: int = 32
     use_map_derived_channels: bool = False
@@ -423,8 +417,13 @@ class MixedAgentTrainConfig:
         self.env_steps_per_update = self.num_steps * self.num_envs
         self.num_updates = self.total_timesteps // self.env_steps_per_update
         self.actual_total_timesteps = self.num_updates * self.env_steps_per_update
-        if self.use_action_mask and self.edge_features_dim == 0:
+        if self.use_critic_affordances and self.edge_features_dim == 0:
             self.edge_features_dim = 10
+        self.critic_affordance_dim = (
+            self.edge_features_dim + int(self.include_episode_progress)
+            if self.use_critic_affordances
+            else 0
+        )
         if self.map_encoder == "atari":
             self.map_feature_dim = 32
         elif self.map_encoder == "resnet_delayed" and self.map_feature_dim == 32:
@@ -441,7 +440,9 @@ class MixedAgentTrainConfig:
             f"map_encoder={self.map_encoder}, "
             f"map_feature_dim={self.map_feature_dim}, "
             f"derived_channels={self.use_map_derived_channels}, "
-            f"separate_trunks={self.separate_actor_critic_trunks}"
+            f"separate_trunks={self.separate_actor_critic_trunks}, "
+            f"critic_affordances={self.use_critic_affordances}, "
+            f"critic_affordance_dim={self.critic_affordance_dim}"
         )
         print(f"Using overridden agent types: {self.agent_types_override}")
 
@@ -785,12 +786,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 raise KeyError("checkpoint has no 'model' parameters")
             if "train_config" in checkpoint:
                 checkpoint_config = checkpoint["train_config"]
-                if hasattr(checkpoint_config, "edge_features_dim"):
-                    config.edge_features_dim = int(checkpoint_config.edge_features_dim)
-                else:
-                    config.edge_features_dim = infer_edge_features_dim_from_model_params(
-                        checkpoint["model"]
-                    )
+                restore_checkpoint_model_config(
+                    config,
+                    checkpoint["model"],
+                    source_config=checkpoint_config,
+                )
                 config.map_encoder = str(
                     getattr(checkpoint_config, "map_encoder", config.map_encoder)
                 )
@@ -818,8 +818,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 if config.action_mask_cli_override is None:
                     config.use_action_mask = checkpoint_use_action_mask
             else:
-                config.edge_features_dim = infer_edge_features_dim_from_model_params(
-                    checkpoint["model"]
+                restore_checkpoint_model_config(
+                    config,
+                    checkpoint["model"],
+                    source_config={},
                 )
             print(f"Loaded checkpoint from {config.resume_from}")
         except Exception as e:
@@ -831,6 +833,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     rng, env, env_params, train_state = make_mixed_agent_states(
         config, env_params_override=env_params_override
     )
+    log_effective_env_config(run, env_params)
 
     # If checkpoint has model params, overwrite initialized params
     if checkpoint is not None and "model" in checkpoint:
@@ -840,32 +843,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         except Exception as e:
             raise RuntimeError("Failed to set model parameters from checkpoint") from e
 
-    # Removed agent-type curriculum monitoring
-    
-    def log_environment_metrics(timestep, update_num):
-        """Log environment metrics for all mixed agent training"""
-        try:
-            # Basic episode metrics
-            episode_done = timestep.done
-            completion_rate = safe_jax_to_python(jnp.mean(episode_done))
-            
-            # Log the metrics - ensure step is always positive and increasing
-            if update_num > 0:  # Only log if we have a valid step number
-                wandb.log({
-                    "progress/episode_completion_rate": completion_rate,
-                }, step=update_num)
-                
-        except Exception as e:
-            # Log the error but don't crash the training
-            print(f"⚠️  Warning: Failed to log environment metrics at step {update_num}: {e}")
-            # Optionally log a minimal set of metrics without step to avoid the warning
-            try:
-                wandb.log({
-                    "progress/episode_completion_rate": 0.0,
-                })
-            except:
-                pass  # If even this fails, just continue training
-    
     def make_mixed_agent_train(env, env_params, config):
         def train(rng: jax.Array, train_state: TrainState):
             # INIT ENV
@@ -891,6 +868,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 distance_maps,
             ) = env.prepare_reset(env_params, reset_rng)
             reset_fn_p = jax.pmap(env.reset_prepared, axis_name="devices")
+            randomize_episode_age_p = jax.pmap(
+                randomize_initial_episode_progress,
+                axis_name="devices",
+            )
             timestep = reset_fn_p(
                 env_params_reset,
                 reset_rng,
@@ -904,27 +885,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 action_maps,
                 distance_maps,
             )
+            rng, _rng_episode_age = jax.random.split(rng)
+            episode_age_rng = jax.random.split(
+                _rng_episode_age, config.num_devices
+            )
+            timestep = randomize_episode_age_p(
+                timestep,
+                episode_age_rng,
+            )
             # Removed one-time debug sanity prints
-            
-            # Initialize reward_components in timestep.info to maintain consistent pytree structure
-            # This prevents JAX scan errors when reward_components is added later
-            if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
-                # Add empty reward_components to match the structure produced in env.step/state._get_reward
-                # Shapes follow timestep.reward's batch shape; agent vectors add a MAX_AGENTS axis (4)
-                batch_shape = timestep.reward.shape
-                MAX_AGENTS = 4
-                dummy_components = {
-                    "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
-                    "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
-                    "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
-                    "terminal": jnp.zeros_like(timestep.reward),
-                    "trench": jnp.zeros_like(timestep.reward),
-                    "existence": jnp.zeros_like(timestep.reward),
-                }
-                # Create new timestep with reward_components added to info
-                timestep = timestep._replace(
-                    info={**timestep.info, "reward_components": dummy_components}
-                )
             prev_actions = jnp.zeros(
                 (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
             )
@@ -947,10 +916,28 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
                     action_env = wrap_action(action, env.batch_cfg.action_type)
                     timestep = env.step(prev_timestep, action_env, _rng_env)
+                    next_prev_actions = jnp.concatenate(
+                        [action[..., None], prev_actions[..., :-1]],
+                        axis=-1,
+                    )
+                    task_done = timestep.info["task_done"]
+                    timeout_done = timestep.info["timeout_done"]
+                    bootstrap_value = timeout_bootstrap_value(
+                        train_state,
+                        timestep.info,
+                        next_prev_actions,
+                        value,
+                        config,
+                    )
 
                     # Removed SWAP debug prints
                     transition = Transition(
                         done=timestep.done,
+                        task_done=task_done,
+                        timeout_done=timeout_done,
+                        bootstrap_value=bootstrap_value,
+                        bootstrap_mask=(1.0 - task_done.astype(jnp.float32)),
+                        gae_mask=(1.0 - timestep.done.astype(jnp.float32)),
                         action=action,
                         value=value,
                         reward=timestep.reward,
@@ -961,16 +948,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     )
 
                     # UPDATE PREVIOUS ACTIONS
-                    prev_actions = jnp.concatenate(
-                        [action[..., None], prev_actions[..., :-1]],
-                        axis=-1,
-                    )
+                    prev_actions = next_prev_actions
 
                     runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
-                    return runner_state, transition
+                    return runner_state, (transition, timestep.info["reward_components"])
 
                 # transitions: [seq_len, batch_size, ...]
-                runner_state, transitions = jax.lax.scan(
+                runner_state, (transitions, reward_components) = jax.lax.scan(
                     _env_step, runner_state, jnp.arange(config.num_steps), config.num_steps
                 )
 
@@ -1042,9 +1026,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 vtrue_flat = vtrue.reshape(-1)
                 var_y = jnp.var(vtrue_flat)
                 explained_var = 1 - jnp.var(vtrue_flat - vpred_flat) / (var_y + 1e-8)
-                # Attach to loss_info for logging
                 loss_info = dict(loss_info)
                 loss_info["explained_variance"] = explained_var
+                loss_info.update(train_rollout_metrics(transitions, reward_components))
+                loss_info = jtu.tree_map(
+                    lambda x: jax.lax.pmean(x, axis_name="devices"),
+                    loss_info,
+                )
 
                 rng, train_state = update_state[:2]
                 # EVALUATE AGENT
@@ -1125,68 +1113,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "curriculum_levels": curriculum_levels,
                         "lr": config.lr,
                         "sched/entropy_coef": float(ent_coef_current),
-                        **loss_info_single,
+                        **train_log_metrics(loss_info_single),
                     }
-                    
-                    # Removed fixed agent1/agent2 type metrics to support dynamic agent counts
-                    
-                    # Add environment metrics (without separate wandb.log call)
-                    try:
-                        completion_rate = safe_jax_to_python(jnp.mean(timestep.done))
-                        log_dict["progress/episode_completion_rate"] = completion_rate
-                    except Exception:
-                        pass
-
-                    # Add reward breakdown logging (without separate wandb.log call)
-                    try:
-                        reward_components = None
-                        if hasattr(timestep, "reward_components"):
-                            reward_components = timestep.reward_components
-                        elif hasattr(timestep, "info") and isinstance(timestep.info, dict):
-                            rc = timestep.info.get("reward_components", None)
-                            reward_components = rc
-
-                        if reward_components is not None:
-                            # Support per-agent rewards vector and masks
-                            breakdown_means = {}
-                            agent_rewards = reward_components.get("agent_rewards", None)
-                            agent_active = reward_components.get("agent_active", None)
-                            num_agents = reward_components.get("num_agents", None)
-                            # Scalar components
-                            for k in ["terminal", "trench", "existence"]:
-                                if k in reward_components:
-                                    breakdown_means[k] = safe_jax_to_python(reward_components[k])
-                            # Vector per-agent rewards
-                            if agent_rewards is not None:
-                                try:
-                                    ar = agent_rewards
-                                    # Log each available agent index separately
-                                    for idx in range(ar.shape[-1]):
-                                        key = f"agent_{idx}"
-                                        breakdown_means[f"{key}"] = safe_jax_to_python(jnp.mean(ar[..., idx]))
-                                except Exception:
-                                    pass
-                            # Add to main log dict
-                            for k, v in breakdown_means.items():
-                                log_dict[f"rewards/{k}"] = v
-                            # Also log masks if present
-                            if agent_active is not None:
-                                try:
-                                    log_dict["agents/active_count"] = safe_jax_to_python(jnp.sum(agent_active))
-                                except Exception:
-                                    pass
-                            if num_agents is not None:
-                                try:
-                                    log_dict["agents/num_agents"] = safe_jax_to_python(num_agents)
-                                except Exception:
-                                    pass
-                            
-                            
-                            
-                                
-                            # Skip bar chart for now to avoid step conflicts
-                    except Exception:
-                        pass
                     
                     # Single consolidated wandb.log call
                     wandb.log(log_dict, step=i)
@@ -1199,6 +1127,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "loss_info": loss_info_single,
                     }
                     helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
+                    if i in {0, 100, 500, 1000, 2000, 5000, 10000}:
+                        helpers.save_pkl_object(
+                            checkpoint,
+                            f"checkpoints/{config.name}_update_{i:06d}.pkl",
+                        )
 
                 if need_eval:
                     # Eval runs as pmap across all devices. Feed replicated train_state
@@ -1221,61 +1154,23 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     # extrema, and keep length from device 0 (identical across devices).
                     eval_stats = eval_stats_per_device._replace(
                         max_reward=eval_stats_per_device.max_reward.max(),
-                        min_reward=eval_stats_per_device.min_reward.min(),
                         reward=eval_stats_per_device.reward.sum(),
                         length=eval_stats_per_device.length[0],
-                        episodes=eval_stats_per_device.episodes.sum(),
-                        positive_terminations=eval_stats_per_device.positive_terminations.sum(),
-                        terminations=eval_stats_per_device.terminations.sum(),
-                        positive_terminations_steps=eval_stats_per_device.positive_terminations_steps.sum(),
-                        action_0=eval_stats_per_device.action_0.sum(),
-                        action_1=eval_stats_per_device.action_1.sum(),
-                        action_2=eval_stats_per_device.action_2.sum(),
-                        action_3=eval_stats_per_device.action_3.sum(),
-                        action_4=eval_stats_per_device.action_4.sum(),
-                        action_5=eval_stats_per_device.action_5.sum(),
-                        action_6=eval_stats_per_device.action_6.sum(),
-                        action_7=eval_stats_per_device.action_7.sum(),
+                        successes=eval_stats_per_device.successes.sum(),
+                        success_steps=eval_stats_per_device.success_steps.sum(),
+                        return_sum=eval_stats_per_device.return_sum.sum(),
+                        return_sq_sum=eval_stats_per_device.return_sq_sum.sum(),
+                        return_min=eval_stats_per_device.return_min.min(),
+                        return_max=eval_stats_per_device.return_max.max(),
+                        return_count=eval_stats_per_device.return_count.sum(),
+                        success_return_sum=eval_stats_per_device.success_return_sum.sum(),
+                        success_return_count=eval_stats_per_device.success_return_count.sum(),
+                        failure_return_sum=eval_stats_per_device.failure_return_sum.sum(),
+                        failure_return_count=eval_stats_per_device.failure_return_count.sum(),
+                        action_counts=eval_stats_per_device.action_counts.sum(axis=0),
                     )
 
-                    # Total envs that contributed to the sums across all devices.
-                    n = config.num_envs_per_device * config.num_devices * eval_stats.length
-                    avg_positive_episode_length = jnp.where(
-                        eval_stats.positive_terminations > 0,
-                        eval_stats.positive_terminations_steps / eval_stats.positive_terminations,
-                        jnp.zeros_like(eval_stats.positive_terminations_steps)
-                    )
-                    loss_info_single.update(
-                        {
-                            "eval/rewards": eval_stats.reward / n,
-                            "eval/max_reward": eval_stats.max_reward,
-                            "eval/min_reward": eval_stats.min_reward,
-                            "eval/lengths": eval_stats.length,
-                            "eval/FORWARD %": eval_stats.action_0 / n,
-                            "eval/BACKWARD %": eval_stats.action_1 / n,
-                            "eval/CLOCK %": eval_stats.action_2 / n,
-                            "eval/ANTICLOCK %": eval_stats.action_3 / n,
-                            "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
-                            "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
-                            "eval/DO": eval_stats.action_6 / n,
-                            "eval/DO_NOTHING %": eval_stats.action_7 / n,
-                            "eval/positive_terminations": eval_stats.positive_terminations
-                            / (config.num_envs_per_device * config.num_devices),
-                            "eval/total_terminations": eval_stats.terminations
-                            / (config.num_envs_per_device * config.num_devices),
-                            "eval/success_rate": eval_stats.positive_terminations
-                            / (config.num_envs_per_device * config.num_devices),
-                            "eval/timeout_rate": jnp.maximum(
-                                eval_stats.terminations
-                                - eval_stats.positive_terminations,
-                                0,
-                            )
-                            / (config.num_envs_per_device * config.num_devices),
-                            "eval/avg_positive_episode_length": avg_positive_episode_length
-                        }
-                    )
-
-                    wandb.log(loss_info_single)
+                    wandb.log(eval_log_metrics(eval_stats, config), step=i)
 
                 # Clear JAX caches only after a completed interval. Clearing at i == 0
                 # forces the second update to retrace/recompile immediately.
@@ -1440,6 +1335,22 @@ if __name__ == "__main__":
         "--separate_actor_critic_trunks",
         action="store_true",
         help="Use separate actor and critic trunks after the shared feature encoder"
+    )
+    parser.add_argument(
+        "--use_critic_affordances",
+        action="store_true",
+        help="Feed edge/progress affordances to the critic path only"
+    )
+    parser.add_argument(
+        "--include_episode_progress",
+        action="store_true",
+        help="Append env_steps / max_steps_in_episode to the critic affordance vector"
+    )
+    parser.add_argument(
+        "--edge_features_dim",
+        type=int,
+        default=0,
+        help="Number of env-computed edge_features to expose to the model"
     )
     parser.add_argument(
         "--agent_types", type=str, default=None,   # 0=excavator, 1=truck, 2=skidsteer
@@ -1698,6 +1609,9 @@ if __name__ == "__main__":
         map_feature_dim=args.map_feature_dim,
         use_map_derived_channels=args.use_map_derived_channels,
         separate_actor_critic_trunks=args.separate_actor_critic_trunks,
+        use_critic_affordances=args.use_critic_affordances,
+        include_episode_progress=args.include_episode_progress,
+        edge_features_dim=args.edge_features_dim,
         resume_from=args.resume_from,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,

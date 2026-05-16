@@ -12,22 +12,21 @@ from utils.utils_ppo import select_action_ppo, wrap_action
 # N=1 single task, N>1 for meta-RL
 class RolloutStats(NamedTuple):
     max_reward: jax.Array = jnp.asarray(-100)
-    min_reward: jax.Array = jnp.asarray(100)
     reward: jax.Array = jnp.asarray(0.0)
     length: jax.Array = jnp.asarray(0)
-    episodes: jax.Array = jnp.asarray(0)
-    positive_terminations: jax.Array = jnp.asarray(0)  # Count of positive terminations
-    terminations: jax.Array = jnp.asarray(0)  # Count of terminations
-    positive_terminations_steps: jax.Array = jnp.asarray(0)
-
-    action_0: jax.Array = jnp.asarray(0)
-    action_1: jax.Array = jnp.asarray(0)
-    action_2: jax.Array = jnp.asarray(0)
-    action_3: jax.Array = jnp.asarray(0)
-    action_4: jax.Array = jnp.asarray(0)
-    action_5: jax.Array = jnp.asarray(0)
-    action_6: jax.Array = jnp.asarray(0)
-    action_7: jax.Array = jnp.asarray(0)
+    successes: jax.Array = jnp.asarray(0)
+    success_steps: jax.Array = jnp.asarray(0)
+    return_sum: jax.Array = jnp.asarray(0.0)
+    return_sq_sum: jax.Array = jnp.asarray(0.0)
+    return_min: jax.Array = jnp.asarray(jnp.inf)
+    return_max: jax.Array = jnp.asarray(-jnp.inf)
+    return_count: jax.Array = jnp.asarray(0)
+    current_return: jax.Array = jnp.asarray(0.0)
+    success_return_sum: jax.Array = jnp.asarray(0.0)
+    success_return_count: jax.Array = jnp.asarray(0)
+    failure_return_sum: jax.Array = jnp.asarray(0.0)
+    failure_return_count: jax.Array = jnp.asarray(0)
+    action_counts: jax.Array = jnp.zeros((8,), dtype=jnp.int32)
 
 
 def _rollout_impl(
@@ -39,11 +38,6 @@ def _rollout_impl(
 ) -> RolloutStats:
     num_envs = config.num_envs_per_device
     num_rollouts = config.num_rollouts_eval
-
-    def _cond_fn(carry):
-        _, stats, _ = carry
-        # Check if the number of steps has been reached
-        return jnp.less(stats.length, num_rollouts + 1)
 
     def _body_fn(carry):
         rng, stats, timestep, prev_actions = carry
@@ -60,29 +54,49 @@ def _rollout_impl(
         prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
         prev_actions = prev_actions.at[..., 0].set(action)
 
-        terminations_update = timestep.done.sum()
-        positive_termination_update = timestep.info["task_done"].sum()
-        positive_termination_steps_update = (stats.length + 1) * positive_termination_update
+        successes_update = timestep.info["task_done"].sum()
+        success_steps_update = (stats.length + 1) * successes_update
+        next_episode_return = stats.current_return + timestep.reward
+        finished_return = jnp.where(timestep.done, next_episode_return, 0.0)
+        return_count = timestep.done.sum()
+        success_done = jnp.logical_and(timestep.done, timestep.info["task_done"])
+        failure_done = jnp.logical_and(
+            timestep.done,
+            jnp.logical_not(timestep.info["task_done"]),
+        )
+        success_return = jnp.where(success_done, next_episode_return, 0.0)
+        failure_return = jnp.where(failure_done, next_episode_return, 0.0)
+        return_min = jnp.min(
+            jnp.where(timestep.done, next_episode_return, jnp.inf)
+        )
+        return_max = jnp.max(
+            jnp.where(timestep.done, next_episode_return, -jnp.inf)
+        )
 
         stats = RolloutStats(
             max_reward=jnp.maximum(stats.max_reward, timestep.reward.max()),
-            min_reward=jnp.minimum(stats.min_reward, timestep.reward.min()),
-            reward=stats.reward + timestep.reward.sum(),  # Ensure correct aggregation
+            reward=stats.reward + timestep.reward.sum(),
             length=stats.length + 1,
-            episodes=stats.episodes + timestep.done.any(),
-            positive_terminations=stats.positive_terminations
-            + positive_termination_update,
-            terminations=stats.terminations + terminations_update,
-            positive_terminations_steps=stats.positive_terminations_steps
-            + positive_termination_steps_update,
-            action_0=stats.action_0 + (action == 0).sum(),
-            action_1=stats.action_1 + (action == 1).sum(),
-            action_2=stats.action_2 + (action == 2).sum(),
-            action_3=stats.action_3 + (action == 3).sum(),
-            action_4=stats.action_4 + (action == 4).sum(),
-            action_5=stats.action_5 + (action == 5).sum(),
-            action_6=stats.action_6 + (action == 6).sum(),
-            action_7=stats.action_7 + (action == 7).sum(),
+            successes=stats.successes + successes_update,
+            success_steps=stats.success_steps + success_steps_update,
+            return_sum=stats.return_sum + finished_return.sum(),
+            return_sq_sum=stats.return_sq_sum + jnp.square(finished_return).sum(),
+            return_min=jnp.minimum(stats.return_min, return_min),
+            return_max=jnp.maximum(stats.return_max, return_max),
+            return_count=stats.return_count + return_count,
+            current_return=jnp.where(
+                timestep.done,
+                0.0,
+                next_episode_return,
+            ),
+            success_return_sum=stats.success_return_sum + success_return.sum(),
+            success_return_count=stats.success_return_count + success_done.sum(),
+            failure_return_sum=stats.failure_return_sum + failure_return.sum(),
+            failure_return_count=stats.failure_return_count + failure_done.sum(),
+            action_counts=stats.action_counts + jnp.bincount(
+                action.reshape(-1),
+                length=8,
+            ),
         )
         carry = (rng, stats, timestep, prev_actions)
         return carry
@@ -90,29 +104,12 @@ def _rollout_impl(
     rng, _rng_reset = jax.random.split(rng)
     _rng_reset = jax.random.split(_rng_reset, num_envs)
     timestep = env.reset(env_params, _rng_reset)
-    
-    # Initialize reward_components in timestep.info to maintain consistent pytree structure
-    # Align with new multi-agent keys to avoid fori_loop pytree mismatch
-    if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
-        try:
-            batch_shape = timestep.reward.shape
-            MAX_AGENTS = 4
-            dummy_components = {
-                "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
-                "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
-                "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
-                "terminal": jnp.zeros_like(timestep.reward),
-                "trench": jnp.zeros_like(timestep.reward),
-                "existence": jnp.zeros_like(timestep.reward),
-            }
-            timestep = timestep._replace(
-                info={**timestep.info, "reward_components": dummy_components}
-            )
-        except Exception:
-            pass
-    
+
     prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
-    init_carry = (rng, RolloutStats(), timestep, prev_actions)
+    init_stats = RolloutStats(
+        current_return=jnp.zeros_like(timestep.reward),
+    )
+    init_carry = (rng, init_stats, timestep, prev_actions)
 
     # final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
     final_carry = jax.lax.fori_loop(

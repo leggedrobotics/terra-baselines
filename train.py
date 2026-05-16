@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
+import numpy as np
 from utils.models import get_model_ready
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
@@ -51,6 +52,9 @@ class TrainConfig:
     max_grad_norm: float = 0.5
     use_action_mask: bool = False
     edge_features_dim: int = 0
+    use_critic_affordances: bool = False
+    critic_affordance_dim: int = 0
+    include_episode_progress: bool = False
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 1  # Number of updates between logging train stats
@@ -80,8 +84,13 @@ class TrainConfig:
         self.env_steps_per_update = self.num_steps * self.num_envs
         self.num_updates = self.total_timesteps // self.env_steps_per_update
         self.actual_total_timesteps = self.num_updates * self.env_steps_per_update
-        if self.use_action_mask and self.edge_features_dim == 0:
+        if self.use_critic_affordances and self.edge_features_dim == 0:
             self.edge_features_dim = 10
+        self.critic_affordance_dim = (
+            self.edge_features_dim + int(self.include_episode_progress)
+            if self.use_critic_affordances
+            else 0
+        )
         print(
             "Num devices: "
             f"{self.num_devices}, Num updates: {self.num_updates}, "
@@ -123,6 +132,11 @@ def make_states(config: TrainConfig, env_params: EnvConfig = EnvConfig()):
 
 class Transition(struct.PyTreeNode):
     done: jax.Array
+    task_done: jax.Array
+    timeout_done: jax.Array
+    bootstrap_value: jax.Array
+    bootstrap_mask: jax.Array
+    gae_mask: jax.Array
     action: jax.Array
     value: jax.Array
     reward: jax.Array
@@ -142,12 +156,17 @@ def calculate_gae(
     # single iteration for the loop
     def _get_advantages(gae_and_next_value, transition):
         gae, next_value = gae_and_next_value
+        next_value = jnp.where(
+            transition.timeout_done,
+            transition.bootstrap_value,
+            next_value,
+        )
         delta = (
             transition.reward
-            + gamma * next_value * (1 - transition.done)
+            + gamma * next_value * transition.bootstrap_mask
             - transition.value
         )
-        gae = delta + gamma * gae_lambda * (1 - transition.done) * gae
+        gae = delta + gamma * gae_lambda * transition.gae_mask * gae
         return (gae, transition.value), gae
 
     _, advantages = jax.lax.scan(
@@ -158,6 +177,186 @@ def calculate_gae(
     )
     # advantages and values (Q)
     return advantages, advantages + transitions.value
+
+
+def value_from_observation(train_state, observation, prev_actions, config):
+    model_obs = obs_to_model_input(observation, prev_actions, config)
+    value, _ = train_state.apply_fn(train_state.params, model_obs)
+    return value[:, 0]
+
+
+def timeout_bootstrap_value(train_state, info, next_prev_actions, value, config):
+    def _bootstrap(_):
+        final_value = value_from_observation(
+            train_state,
+            info["final_observation"],
+            next_prev_actions,
+            config,
+        )
+        return jnp.where(info["timeout_done"], final_value, 0.0)
+
+    return jax.lax.cond(
+        jnp.any(info["timeout_done"]),
+        _bootstrap,
+        lambda _: jnp.zeros_like(value),
+        operand=0,
+    )
+
+
+def randomize_initial_episode_progress(timestep, rng):
+    max_steps = jnp.maximum(
+        jnp.asarray(timestep.env_cfg.max_steps_in_episode, dtype=jnp.float32),
+        1.0,
+    )
+    episode_age = jnp.floor(
+        jax.random.uniform(rng, timestep.done.shape) * max_steps
+    ).astype(jnp.asarray(timestep.state.env_steps).dtype)
+    episode_progress = jnp.clip(
+        episode_age.astype(jnp.float32) / max_steps,
+        0.0,
+        1.0,
+    )
+    state = timestep.state._replace(env_steps=episode_age)
+    observation = {
+        **timestep.observation,
+        "episode_progress": episode_progress,
+    }
+    info = {
+        **timestep.info,
+        "episode_progress": episode_progress,
+        "final_observation": {
+            **timestep.info["final_observation"],
+            "episode_progress": episode_progress,
+        },
+    }
+    return timestep._replace(state=state, observation=observation, info=info)
+
+
+def _finite_mean(value):
+    value = value.astype(jnp.float32)
+    finite = jnp.isfinite(value)
+    return jnp.sum(jnp.where(finite, value, 0.0)) / jnp.maximum(
+        jnp.sum(finite.astype(jnp.float32)),
+        1.0,
+    )
+
+
+def train_rollout_metrics(transitions, reward_components):
+    metrics = {
+        "train/reward": jnp.mean(transitions.reward),
+        "train/success_rate": jnp.mean(transitions.task_done.astype(jnp.float32)),
+        "train/timeout_rate": jnp.mean(transitions.timeout_done.astype(jnp.float32)),
+    }
+
+    episode_progress = transitions.obs["episode_progress"].astype(jnp.float32)
+    metrics["train/episode_progress"] = jnp.mean(episode_progress)
+
+    if "action_mask" in transitions.obs:
+        chosen_valid = jnp.take_along_axis(
+            transitions.obs["action_mask"],
+            transitions.action[..., None],
+            axis=-1,
+        )[..., 0]
+        metrics["behavior/invalid_action_rate"] = jnp.mean(
+            (~chosen_valid).astype(jnp.float32)
+        )
+
+    component_metrics = {
+        "completion": "progress/completion",
+        "core_completion": "progress/core_completion",
+        "edge_completion": "progress/edge_completion",
+        "do_attempt": "behavior/do_attempt_rate",
+        "dig_success_event": "behavior/dig_success_rate",
+        "dump_success_event": "behavior/dump_success_rate",
+        "collision": "behavior/collision_rate",
+        "noop": "behavior/noop_rate",
+        "terrain_changed": "behavior/terrain_changed_rate",
+        "loaded_at_timeout": "behavior/loaded_at_timeout_rate",
+        "terminal": "reward/terminal",
+        "dig_success": "reward/dig_success",
+        "dig_wrong": "reward/dig_wrong",
+        "dump_success": "reward/dump_success",
+        "dump_wrong": "reward/dump_wrong",
+        "existence": "reward/existence",
+    }
+    for component, name in component_metrics.items():
+        metrics[name] = _finite_mean(reward_components[component])
+    return metrics
+
+
+def optimizer_log_metrics(loss_info):
+    metrics = {
+        "loss/total": loss_info["total_loss"],
+        "loss/value": loss_info["value_loss"],
+        "loss/policy": loss_info["actor_loss"],
+        "loss/entropy": loss_info["entropy"],
+    }
+    if "explained_variance" in loss_info:
+        metrics["loss/explained_variance"] = loss_info["explained_variance"]
+    return metrics
+
+
+def train_log_metrics(loss_info):
+    metrics = optimizer_log_metrics(loss_info)
+    for key, value in loss_info.items():
+        if key.startswith(("train/", "progress/", "behavior/", "reward/")):
+            metrics[key] = value
+    return metrics
+
+
+def eval_log_metrics(stats, config):
+    envs = config.num_envs_per_device * config.num_devices
+    steps = envs * stats.length
+    return_count = jnp.maximum(stats.return_count, 1)
+    return_mean = stats.return_sum / return_count
+    return_var = stats.return_sq_sum / return_count - jnp.square(return_mean)
+    success_count = jnp.maximum(stats.success_return_count, 1)
+    failure_count = jnp.maximum(stats.failure_return_count, 1)
+
+    return {
+        "eval/success_rate": stats.successes / envs,
+        "eval/timeout_rate": jnp.maximum(stats.return_count - stats.successes, 0) / envs,
+        "eval/return_mean": return_mean,
+        "eval/return_std": jnp.sqrt(jnp.maximum(return_var, 0.0)),
+        "eval/return_min": jnp.where(stats.return_count > 0, stats.return_min, 0.0),
+        "eval/return_max": jnp.where(stats.return_count > 0, stats.return_max, 0.0),
+        "eval/success_return_mean": stats.success_return_sum / success_count,
+        "eval/failure_return_mean": stats.failure_return_sum / failure_count,
+        "eval/reward_per_step": stats.reward / steps,
+        "eval/max_step_reward": stats.max_reward,
+        "eval/success_length": jnp.where(
+            stats.successes > 0,
+            stats.success_steps / stats.successes,
+            0.0,
+        ),
+        "eval/action_do": stats.action_counts[6] / steps,
+        "eval/action_wait": stats.action_counts[7] / steps,
+    }
+
+def _config_value(value):
+    array = np.asarray(value)
+    if array.shape == ():
+        return array.item()
+    if array.size <= 16:
+        return array.reshape(-1).tolist()
+    return {
+        "shape": list(array.shape),
+        "first": array.reshape(-1)[0].item(),
+    }
+
+
+def _flatten_namedtuple(prefix, value, out):
+    if hasattr(value, "_asdict"):
+        for key, child in value._asdict().items():
+            _flatten_namedtuple(f"{prefix}/{key}", child, out)
+        return
+    out[prefix] = _config_value(value)
+
+
+def log_effective_env_config(run, env_params):
+    flat = {}
+    _flatten_namedtuple("env", env_params, flat)
+    run.config.update(flat, allow_val_change=True)
 
 
 def ppo_update_networks(
@@ -354,6 +553,10 @@ def make_train(
             distance_maps,
         ) = env.prepare_reset(env_params, reset_rng)
         reset_fn_p = jax.pmap(env.reset_prepared, axis_name="devices")
+        randomize_episode_age_p = jax.pmap(
+            randomize_initial_episode_progress,
+            axis_name="devices",
+        )
         timestep = reset_fn_p(
             env_params_reset,
             reset_rng,
@@ -367,6 +570,9 @@ def make_train(
             action_maps,
             distance_maps,
         )
+        rng, _rng_episode_age = jax.random.split(rng)
+        episode_age_rng = jax.random.split(_rng_episode_age, config.num_devices)
+        timestep = randomize_episode_age_p(timestep, episode_age_rng)
         prev_actions = jnp.zeros(
             (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
         )
@@ -430,9 +636,27 @@ def make_train(
                 _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
                 action_env = wrap_action(action, env.batch_cfg.action_type)
                 timestep = env.step(prev_timestep, action_env, _rng_env)
+                next_prev_actions = jnp.concatenate(
+                    [action[..., None], prev_actions[..., :-1]],
+                    axis=-1,
+                )
+                task_done = timestep.info["task_done"]
+                timeout_done = timestep.info["timeout_done"]
+                bootstrap_value = timeout_bootstrap_value(
+                    train_state,
+                    timestep.info,
+                    next_prev_actions,
+                    value,
+                    config,
+                )
                 transition = Transition(
                     # done=timestep.last(),
                     done=timestep.done,
+                    task_done=task_done,
+                    timeout_done=timeout_done,
+                    bootstrap_value=bootstrap_value,
+                    bootstrap_mask=(1.0 - task_done.astype(jnp.float32)),
+                    gae_mask=(1.0 - timestep.done.astype(jnp.float32)),
                     action=action,
                     value=value,
                     reward=timestep.reward,
@@ -443,16 +667,13 @@ def make_train(
                 )
 
                 # UPDATE PREVIOUS ACTIONS
-                prev_actions = jnp.concatenate(
-                    [action[..., None], prev_actions[..., :-1]],
-                    axis=-1,
-                )
+                prev_actions = next_prev_actions
 
                 runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
-                return runner_state, transition
+                return runner_state, (transition, timestep.info["reward_components"])
 
             # transitions: [seq_len, batch_size, ...]
-            runner_state, transitions = jax.lax.scan(
+            runner_state, (transitions, reward_components) = jax.lax.scan(
                 _env_step, runner_state, None, config.num_steps
             )
 
@@ -547,6 +768,12 @@ def make_train(
 
             # averaging over minibatches then over epochs
             loss_info = jtu.tree_map(lambda x: x.mean(-1).mean(-1), loss_info)
+            loss_info = dict(loss_info)
+            loss_info.update(train_rollout_metrics(transitions, reward_components))
+            loss_info = jtu.tree_map(
+                lambda x: jax.lax.pmean(x, axis_name="devices"),
+                loss_info,
+            )
 
             rng, train_state = update_state[:2]
             # EVALUATE AGENT
@@ -613,7 +840,7 @@ def make_train(
                         "performance/actual_env_steps": (i + 1) * config.env_steps_per_update,
                         "curriculum_levels": curriculum_levels,
                         "lr": config.lr,
-                        **loss_info_single,
+                        **train_log_metrics(loss_info_single),
                     }
                 )
 
@@ -641,50 +868,22 @@ def make_train(
                 )
                 eval_stats = eval_stats_per_device._replace(
                     max_reward=eval_stats_per_device.max_reward.max(),
-                    min_reward=eval_stats_per_device.min_reward.min(),
                     reward=eval_stats_per_device.reward.sum(),
                     length=eval_stats_per_device.length[0],
-                    episodes=eval_stats_per_device.episodes.sum(),
-                    positive_terminations=eval_stats_per_device.positive_terminations.sum(),
-                    terminations=eval_stats_per_device.terminations.sum(),
-                    positive_terminations_steps=eval_stats_per_device.positive_terminations_steps.sum(),
-                    action_0=eval_stats_per_device.action_0.sum(),
-                    action_1=eval_stats_per_device.action_1.sum(),
-                    action_2=eval_stats_per_device.action_2.sum(),
-                    action_3=eval_stats_per_device.action_3.sum(),
-                    action_4=eval_stats_per_device.action_4.sum(),
-                    action_5=eval_stats_per_device.action_5.sum(),
-                    action_6=eval_stats_per_device.action_6.sum(),
-                    action_7=eval_stats_per_device.action_7.sum(),
+                    successes=eval_stats_per_device.successes.sum(),
+                    success_steps=eval_stats_per_device.success_steps.sum(),
+                    return_sum=eval_stats_per_device.return_sum.sum(),
+                    return_sq_sum=eval_stats_per_device.return_sq_sum.sum(),
+                    return_min=eval_stats_per_device.return_min.min(),
+                    return_max=eval_stats_per_device.return_max.max(),
+                    return_count=eval_stats_per_device.return_count.sum(),
+                    success_return_sum=eval_stats_per_device.success_return_sum.sum(),
+                    success_return_count=eval_stats_per_device.success_return_count.sum(),
+                    failure_return_sum=eval_stats_per_device.failure_return_sum.sum(),
+                    failure_return_count=eval_stats_per_device.failure_return_count.sum(),
+                    action_counts=eval_stats_per_device.action_counts.sum(axis=0),
                 )
-                n = config.num_envs_per_device * config.num_devices * eval_stats.length
-                avg_positive_episode_length = jnp.where(
-                    eval_stats.positive_terminations > 0,
-                    eval_stats.positive_terminations_steps / eval_stats.positive_terminations,
-                    jnp.zeros_like(eval_stats.positive_terminations_steps)
-                )
-                loss_info_single.update(
-                    {
-                        "eval/rewards": eval_stats.reward / n,
-                        "eval/max_reward": eval_stats.max_reward,
-                        "eval/min_reward": eval_stats.min_reward,
-                        "eval/lengths": eval_stats.length,
-                        "eval/FORWARD %": eval_stats.action_0 / n,
-                        "eval/BACKWARD %": eval_stats.action_1 / n,
-                        "eval/CLOCK %": eval_stats.action_2 / n,
-                        "eval/ANTICLOCK %": eval_stats.action_3 / n,
-                        "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
-                        "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
-                        "eval/DO": eval_stats.action_6 / n,
-                        "eval/positive_terminations": eval_stats.positive_terminations
-                        / (config.num_envs_per_device * config.num_devices),
-                        "eval/total_terminations": eval_stats.terminations
-                        / (config.num_envs_per_device * config.num_devices),
-                        "eval/avg_positive_episode_length": avg_positive_episode_length
-                    }
-                )
-
-                wandb.log(loss_info_single)
+                wandb.log(eval_log_metrics(eval_stats, config))
 
             # Clear JAX caches only after a completed interval. Clearing at i == 0
             # forces the second update to retrace/recompile immediately.
@@ -727,6 +926,7 @@ def train(config: TrainConfig):
         run.log_artifact(code_artifact)
 
     rng, env, env_params, train_state = make_states(config)
+    log_effective_env_config(run, env_params)
 
     train_fn = make_train(env, env_params, config)
 
