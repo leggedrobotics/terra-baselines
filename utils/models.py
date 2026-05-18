@@ -56,6 +56,47 @@ def restore_checkpoint_model_config(config, model_params, source_config=None):
     return config
 
 
+def _model_size_kwargs(model_size: str) -> dict:
+    if model_size not in ("base", "medium", "large"):
+        raise ValueError(
+            f"Unsupported model_size='{model_size}'. Expected 'base', 'medium', or 'large'."
+        )
+
+    if model_size == "medium":
+        return {
+            "cnn_channels": (24, 48, 48),
+            "cnn_dense_layers": (192, 48),
+            "resnet_channels": (24, 48, 64),
+            "resnet_blocks_per_stage": 2,
+            "resnet_pool_dense_dim": 192,
+            "hidden_dim_pi": (160, 48),
+            "hidden_dim_v": (160, 48, 1),
+            "intermediate_mlp_layers": (320, 160),
+            "intermediate_mlp_dim": 160,
+            "local_map_hidden_dim_layers_mlp": (320, 64),
+            "actor_trunk_layers": (320, 160),
+            "critic_trunk_layers": (320, 160),
+        }
+
+    if model_size == "large":
+        return {
+            "cnn_channels": (32, 64, 64),
+            "cnn_dense_layers": (256, 64),
+            "resnet_channels": (32, 64, 96, 128),
+            "resnet_blocks_per_stage": 3,
+            "resnet_pool_dense_dim": 256,
+            "hidden_dim_pi": (192, 64),
+            "hidden_dim_v": (192, 64, 1),
+            "intermediate_mlp_layers": (512, 256),
+            "intermediate_mlp_dim": 256,
+            "local_map_hidden_dim_layers_mlp": (512, 128),
+            "actor_trunk_layers": (512, 256),
+            "critic_trunk_layers": (512, 256),
+        }
+
+    return {}
+
+
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     """Instantiate a model according to obs shape of environment."""
     init_batch_size = 1
@@ -76,33 +117,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         else (-1, 1)
     )
     print(f"map normalization min max = {map_min_max}")
-    model_size = getattr(config, "model_size", "base")
-    if model_size not in ("base", "medium", "large"):
-        raise ValueError(
-            f"Unsupported model_size='{model_size}'. Expected 'base', 'medium', or 'large'."
-        )
-
-    model_kwargs = {}
-    if model_size == "medium":
-        model_kwargs = {
-            "cnn_channels": (24, 48, 48),
-            "cnn_dense_layers": (192, 48),
-            "hidden_dim_pi": (160, 48),
-            "hidden_dim_v": (160, 48, 1),
-            "intermediate_mlp_layers": (320, 160),
-            "intermediate_mlp_dim": 160,
-            "local_map_hidden_dim_layers_mlp": (320, 64),
-        }
-    if model_size == "large":
-        model_kwargs = {
-            "cnn_channels": (32, 64, 64),
-            "cnn_dense_layers": (256, 64),
-            "hidden_dim_pi": (192, 64),
-            "hidden_dim_v": (192, 64, 1),
-            "intermediate_mlp_layers": (384, 192),
-            "intermediate_mlp_dim": 192,
-            "local_map_hidden_dim_layers_mlp": (384, 96),
-        }
+    model_size = _config_get(config, "model_size", "base")
+    model_kwargs = _model_size_kwargs(model_size)
 
     edge_features_dim = int(_config_get(config, "edge_features_dim", 0))
     include_episode_progress = bool(_config_get(config, "include_episode_progress", False))
@@ -462,6 +478,7 @@ class DelayedDownsampleResNet(nn.Module):
     feature_dim: int = 128
     channels: Sequence[int] = (16, 32, 32)
     blocks_per_stage: int = 2
+    pool_dense_dim: int = 128
 
     @nn.compact
     def __call__(self, x):
@@ -483,7 +500,7 @@ class DelayedDownsampleResNet(nn.Module):
         avg_pool = jnp.mean(x, axis=(1, 2))
         max_pool = jnp.max(x, axis=(1, 2))
         x = jnp.concatenate((avg_pool, max_pool), axis=-1)
-        x = nn.Dense(features=128)(x)
+        x = nn.Dense(features=self.pool_dense_dim)(x)
         x = nn.relu(x)
         x = nn.Dense(features=self.feature_dim)(x)
         return x
@@ -529,6 +546,9 @@ class MapsNet(nn.Module):
     map_min_max: Sequence[int]
     cnn_channels: Sequence[int] = (16, 32, 32)
     cnn_dense_layers: Sequence[int] = (128, 32)
+    resnet_channels: Sequence[int] = (16, 32, 32)
+    resnet_blocks_per_stage: int = 2
+    resnet_pool_dense_dim: int = 128
     encoder_type: str = "atari"
     feature_dim: int = 32
     use_derived_channels: bool = False
@@ -540,7 +560,12 @@ class MapsNet(nn.Module):
                 dense_layers=self.cnn_dense_layers,
             )
         elif self.encoder_type == "resnet_delayed":
-            self.cnn = DelayedDownsampleResNet(feature_dim=self.feature_dim)
+            self.cnn = DelayedDownsampleResNet(
+                feature_dim=self.feature_dim,
+                channels=self.resnet_channels,
+                blocks_per_stage=self.resnet_blocks_per_stage,
+                pool_dense_dim=self.resnet_pool_dense_dim,
+            )
         else:
             raise ValueError(f"Unknown map encoder: {self.encoder_type}")
 
@@ -648,6 +673,9 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     intermediate_mlp_layers: Sequence[int] = (256, 128)
     cnn_channels: Sequence[int] = (16, 32, 32)
     cnn_dense_layers: Sequence[int] = (128, 32)
+    resnet_channels: Sequence[int] = (16, 32, 32)
+    resnet_blocks_per_stage: int = 2
+    resnet_pool_dense_dim: int = 128
     local_map_hidden_dim_layers_mlp: Sequence[int] = (256, 32)
     map_encoder: str = "atari"
     map_feature_dim: int = 32
@@ -689,6 +717,9 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             map_min_max=self.map_min_max,
             cnn_channels=self.cnn_channels,
             cnn_dense_layers=self.cnn_dense_layers,
+            resnet_channels=self.resnet_channels,
+            resnet_blocks_per_stage=self.resnet_blocks_per_stage,
+            resnet_pool_dense_dim=self.resnet_pool_dense_dim,
             encoder_type=self.map_encoder,
             feature_dim=self.map_feature_dim,
             use_derived_channels=self.use_map_derived_channels,

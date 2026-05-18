@@ -1,5 +1,33 @@
 # Running Experiments
 
+## 2026-05-18 Larger ResNet Distillation Jobs
+
+Pending launch from paired `codex/mask-speedup-wip` worktrees:
+
+- Script: `scripts/euler/terra_train_larger_resnet_4gpu.sbatch`
+- Teacher checkpoint:
+  `terra-solo-resmap64-r1r2-terminalfix-mb32-unmasked-4gpu-50B-20260516-euler-4gpu-2026-05-16-12-18-34.pkl`
+- Shared semantics: unmasked PPO actor, ResMap derived channels, separate
+  actor/critic trunks, critic-only edge/progress affordances, timeout bootstrap
+  and initial timeout-phase staggering from the current branch.
+- Local gates on `2026-05-18`:
+  - CPU imitation+PPO smoke passed before and after the Oracle fixes; the
+    post-fix run saved `_POST_DISTILL.pkl` and `_FINAL.pkl`.
+  - Medium RTX 4090 smoke passed with `1024` envs/GPU,
+    `num_minibatches=64`.
+  - Large RTX 4090 smoke passed with `1024` envs/GPU,
+    `num_minibatches=128`, and `XLA_FLAGS=--xla_gpu_autotune_level=0`.
+  - Full CPU validation sweep passed after the Oracle fixes.
+- Planned submissions:
+  - `RUN_KIND=medium_distill`: `model_size=medium`, `map_feature_dim=192`,
+    `num_minibatches=64`, `imitation_updates=200`.
+  - `RUN_KIND=medium_scratch`: same medium architecture, no teacher; control
+    for the warm-start hypothesis.
+  - `RUN_KIND=large_distill`: `model_size=large`, `map_feature_dim=256`,
+    `num_minibatches=128`, `imitation_updates=100`, autotune disabled.
+  - `RUN_KIND=large_scratch`: same large architecture and autotune mitigation,
+    no teacher; control for the large warm-start hypothesis.
+
 ## 2026-05-15 ResMap64 Four-GPU Architecture Run
 
 Active Slurm jobs:

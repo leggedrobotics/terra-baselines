@@ -1,5 +1,65 @@
 # Experiment Log
 
+## 2026-05-18 Larger ResNet Distillation Setup
+
+Goal: launch larger delayed-ResNet policies and test whether teacher imitation
+from the trained ResMap64 policy stabilizes larger PPO.
+
+Changes:
+
+- Added explicit delayed-ResNet capacity scaling to `model_size=medium` and
+  `model_size=large`; the previous presets widened heads/trunks but left the
+  delayed ResNet itself fixed.
+- Added optional teacher-policy imitation warm start to `train_mixed.py`.
+  The teacher rolls out actions, the student matches teacher logits with KL and
+  teacher values with an auxiliary MSE, then the Adam optimizer is reset before
+  PPO starts.
+- Oracle review required tightening the experiment before launch:
+  - PPO now restores the pre-imitation RNG/env/previous-action state so
+    distill-vs-scratch tests parameter warm start only.
+  - The final imitation metrics are logged with the first PPO row, and
+    `_POST_DISTILL.pkl` is saved.
+  - Teacher/student `num_prev_actions` and parameter-shape compatibility are
+    checked before distillation.
+  - Unknown CLI args now fail, and PPO minibatch divisibility is validated.
+  - Slurm smoke now covers tiny eval and checkpoint paths before online runs.
+- Added `scripts/euler/terra_train_larger_resnet_4gpu.sbatch`, parameterized by
+  `RUN_KIND=medium_distill`, `medium_scratch`, `large_distill`, or
+  `large_scratch`.
+- Added `docs/LARGER_RESNET_DISTILLATION_PLAN.md` with the experiment matrix,
+  local memory findings, and decision criteria.
+
+Local validation:
+
+- `python -m py_compile train_mixed.py utils/models.py utils/utils_ppo.py`
+  passed.
+- `bash -n scripts/euler/terra_train_larger_resnet_4gpu.sbatch` passed.
+- `git diff --check` passed.
+- Tiny CPU imitation+PPO smoke passed before and after the Oracle fixes; the
+  post-fix run saved both `_POST_DISTILL.pkl` and `_FINAL.pkl`.
+- RTX 4090 medium smoke:
+  - `model_size=medium`, `map_feature_dim=192`, `1024` envs/GPU,
+    `num_steps=32`.
+  - Failed with `num_minibatches=32` due to ResNet activation OOM.
+  - Passed with `num_minibatches=64`; one imitation update and one PPO update
+    completed.
+- RTX 4090 large smoke:
+  - `model_size=large`, `map_feature_dim=256`, `1024` envs/GPU,
+    `num_steps=32`, `num_minibatches=128`.
+  - Failed without autotune mitigation with `CUDNN_STATUS_INTERNAL_ERROR`.
+  - Passed with `XLA_FLAGS=--xla_gpu_autotune_level=0`; one imitation update
+    and one PPO update completed.
+
+Planned Euler jobs:
+
+- `medium_distill`: medium ResNet, `64` minibatches, `200` imitation updates.
+- `medium_scratch`: same medium ResNet and minibatches, no teacher; this is the
+  warm-start control.
+- `large_distill`: large ResNet, `128` minibatches, `100` imitation updates,
+  cuDNN autotune disabled.
+- `large_scratch`: same large ResNet/autotune setup, no teacher; this is the
+  large-model warm-start control.
+
 ## 2026-05-18 Default-Unmasked PPO Cleanup
 
 Goal: make the ResMap path the default unmasked-actor path and remove

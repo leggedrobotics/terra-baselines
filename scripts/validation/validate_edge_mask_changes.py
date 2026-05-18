@@ -232,6 +232,7 @@ def test_training_accounting() -> None:
         name="resume-prev-actions-test",
         num_devices=1,
         num_envs_per_device=1,
+        num_minibatches=1,
         agent_types_override=(0,),
     )
     _assert(
