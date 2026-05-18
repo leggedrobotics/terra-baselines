@@ -31,9 +31,15 @@ worktrees:
     autotune disabled.
   - `66969665`, `RUN_KIND=large_scratch`: same large architecture and autotune
     mitigation, no teacher; control for the large warm-start hypothesis.
-- Queue status at submission check: all four are `PENDING (Priority)` in
-  `gpuhe.4h`, one node, one GPU requested. `squeue --start` reports `N/A`
-  start time because priority is still the limiting factor.
+- Status on `2026-05-18 15:47 CEST`: all four are `RUNNING` in `gpuhe.4h`
+  on one RTX 3090 each.
+  - `66969658` `terra1g-medium-distill`: `eu-g4-015`.
+  - `66969660` `terra1g-medium-scratch`: `eu-g4-030`.
+  - `66969663` `terra1g-large-distill`: `eu-g4-027`.
+  - `66969665` `terra1g-large-scratch`: `eu-g4-025`.
+- Runtime gates: all four passed the hard GPU guard and
+  `check_jax_runtime.py --min-devices 1`. The W&B-disabled full-shape smoke is
+  still compiling/running; no online W&B run has started yet.
 - `sbatch --test-only` resolved all four run kinds to a one-GPU RTX 3090 node
   (`eu-g4-002`) in `gpuhe.4h`.
 - The initial four-GPU `gpuhe.120h` matrix was cancelled when the experiment

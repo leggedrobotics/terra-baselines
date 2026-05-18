@@ -103,6 +103,19 @@ Update 2026-05-18 15:32 CEST:
 - Initial state: all four `PENDING (Priority)` with no start estimate from
   `squeue --start`.
 
+Update 2026-05-18 15:47 CEST:
+
+- All four one-GPU `gpuhe.4h` calibration jobs started:
+  - `66969658` on `eu-g4-015`, `1 x RTX 3090`.
+  - `66969660` on `eu-g4-030`, `1 x RTX 3090`.
+  - `66969663` on `eu-g4-027`, `1 x RTX 3090`.
+  - `66969665` on `eu-g4-025`, `1 x RTX 3090`.
+- The hard GPU guard and `check_jax_runtime.py --min-devices 1` passed for
+  all four jobs.
+- Current state: the W&B-disabled full-shape smoke is compiling/running. The
+  distill variants have started their one-update teacher imitation warm-start
+  smoke; no online W&B run has started yet.
+
 ## 2026-05-18 Default-Unmasked PPO Cleanup
 
 Goal: make the ResMap path the default unmasked-actor path and remove
