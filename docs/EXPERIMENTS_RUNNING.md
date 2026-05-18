@@ -44,7 +44,8 @@ Current single-GPU supervised warmup calibration from paired
   - `66982006`: `eu-g4-026`, `1 x RTX 3090`.
 - Runtime gates: both passed the hard GPU guard and
   `check_jax_runtime.py --min-devices 1`; the W&B-disabled supervised-only
-  smoke is running.
+  smoke completed and saved `_POST_DISTILL.pkl` checkpoints without entering
+  PPO. Both jobs then started the online `200`-update supervised-only warmup.
 - The initial four-GPU `gpuhe.120h` matrix was cancelled when the experiment
   was narrowed to one-GPU calibration:
   - `66965292` started on `eu-g4-027` with `4 x RTX 3090` and was cancelled

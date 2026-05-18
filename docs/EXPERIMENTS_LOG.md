@@ -149,7 +149,15 @@ Update 2026-05-18 16:20 CEST:
   - `66981998` `terra1g-sup-medium`, started on `eu-g4-022`.
   - `66982006` `terra1g-sup-large`, started on `eu-g4-026`.
 - Both corrected jobs allocated exactly one RTX 3090 and passed the JAX CUDA
-  runtime preflight. The W&B-disabled supervised-only smoke is running.
+  runtime preflight.
+- The W&B-disabled supervised-only smoke completed for both jobs:
+  - Medium smoke imitation loss `2.1539`, KL `1.7638`, value loss `1.5603`,
+    entropy `1.9358`.
+  - Large smoke imitation loss `2.0759`, KL `1.6854`, value loss `1.5621`,
+    entropy `1.8411`.
+  - Both saved `_POST_DISTILL.pkl` and printed
+    `Supervised imitation-only run complete; skipping PPO.`
+- Both jobs then started the online `200`-update supervised-only warmup phase.
 
 ## 2026-05-18 Default-Unmasked PPO Cleanup
 
