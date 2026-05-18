@@ -43,11 +43,13 @@ students warm-started from the trained ResMap64 teacher.
 - Superseded jobs cancelled before this launch:
   - `66536725` `terra-mask-4gpu-full`, cancelled after `3-22:58:56`.
   - `66756388` `terra-resmap64-mb32`, cancelled after `2-11:38:11`.
-- Submission status on `2026-05-19 00:24 CEST`:
-  - `67032208` `terra-meddeep-4gpu`, `RUN_KIND=medium_deep`, pending in
-    `gpuhe.120h` with reason `Priority`.
-  - `67032210` `terra-lgdeep-4gpu`, `RUN_KIND=large_deep`, pending in
-    `gpuhe.120h` with reason `Priority`.
+- Submission status on `2026-05-19 00:21 CEST`:
+  - `67032208` `terra-meddeep-4gpu`, `RUN_KIND=medium_deep`, submitted at
+    `2026-05-19T00:19:53`, pending in `gpuhe.120h` with reason `Priority`,
+    `StartTime=Unknown`.
+  - `67032210` `terra-lgdeep-4gpu`, `RUN_KIND=large_deep`, submitted at
+    `2026-05-19T00:20:00`, pending in `gpuhe.120h` with reason `Priority`,
+    `StartTime=Unknown`.
 
 ## 2026-05-18 Larger ResNet Distillation Jobs
 

@@ -68,9 +68,11 @@ Validation:
   - `bash -n scripts/euler/terra_train_deep_resnet_4gpu_120h.sbatch`
   - `RUN_KIND=medium_deep sbatch --test-only ...` passed.
   - `RUN_KIND=large_deep sbatch --test-only ...` passed.
-- Submitted on `2026-05-19 00:24 CEST`:
-  - `67032208` `terra-meddeep-4gpu`, pending in `gpuhe.120h`.
-  - `67032210` `terra-lgdeep-4gpu`, pending in `gpuhe.120h`.
+- Submitted on `2026-05-19`:
+  - `67032208` `terra-meddeep-4gpu`, submitted at `00:19:53 CEST`,
+    pending in `gpuhe.120h` with reason `Priority`.
+  - `67032210` `terra-lgdeep-4gpu`, submitted at `00:20:00 CEST`,
+    pending in `gpuhe.120h` with reason `Priority`.
 
 ## 2026-05-18 Larger ResNet Distillation Setup
 
