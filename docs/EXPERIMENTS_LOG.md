@@ -158,6 +158,9 @@ Update 2026-05-18 16:20 CEST:
   - Both saved `_POST_DISTILL.pkl` and printed
     `Supervised imitation-only run complete; skipping PPO.`
 - Both jobs then started the online `200`-update supervised-only warmup phase.
+- First checkpoint slices verified:
+  - Medium wrote update `10`, `20`, `30`, and `40` post-distill slices.
+  - Large wrote update `10` post-distill slice.
 
 ## 2026-05-18 Default-Unmasked PPO Cleanup
 
