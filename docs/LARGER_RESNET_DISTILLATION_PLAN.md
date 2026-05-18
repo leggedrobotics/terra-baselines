@@ -91,11 +91,14 @@ Architecture presets:
 
 ## Euler Experiment Matrix
 
-Script:
+Current single-GPU calibration script:
 
-- `scripts/euler/terra_train_larger_resnet_4gpu.sbatch`
+- `scripts/euler/terra_train_larger_resnet_1gpu_4h.sbatch`
+- Queue: `gpuhe.4h`, one RTX 3090 per job, `1024` envs/GPU.
+- Purpose: verify imitation warm-start behavior and early PPO health before
+  spending four GPUs per variant.
 
-Runs to launch:
+Calibration runs:
 
 - `RUN_KIND=medium_distill`
   - `model_size=medium`, `map_feature_dim=192`, `num_minibatches=64`.
@@ -107,20 +110,25 @@ Runs to launch:
   - Control for the warm-start hypothesis.
 - `RUN_KIND=large_distill`
   - `model_size=large`, `map_feature_dim=256`, `num_minibatches=128`.
-  - `imitation_updates=100`.
+  - `imitation_updates=200`.
   - Uses `--xla_gpu_autotune_level=0` because the local 4090 smoke otherwise
     hit a cuDNN internal error.
 - `RUN_KIND=large_scratch`
   - Same large architecture and autotune mitigation, no teacher.
   - Control for whether the large model specifically benefits from imitation.
 
-Every Slurm job runs:
+Every single-GPU calibration job runs:
 
-- hard GPU guard for exactly four RTX 3090/4090 GPUs;
-- `check_jax_runtime.py --min-devices 4`;
+- hard GPU guard for exactly one RTX 3090/4090 GPU;
+- `check_jax_runtime.py --min-devices 1`;
 - one W&B-disabled full-shape smoke before the online W&B run;
-- online PPO with `50B` global env steps, eval/checkpoint every `100`
-  updates.
+- online PPO with `1B` global env steps, eval/checkpoint every `50` updates.
+
+Four-GPU follow-up:
+
+- Keep `scripts/euler/terra_train_larger_resnet_4gpu.sbatch` as the later
+  full-scale launcher once the single-GPU calibration identifies a healthy
+  model and warm-start length.
 
 ## Decision Criteria
 

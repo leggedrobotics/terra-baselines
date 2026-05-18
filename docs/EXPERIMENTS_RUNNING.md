@@ -2,9 +2,12 @@
 
 ## 2026-05-18 Larger ResNet Distillation Jobs
 
-Submitted from paired `codex/mask-speedup-wip` worktrees:
+Current single-GPU calibration jobs from paired `codex/mask-speedup-wip`
+worktrees:
 
-- Script: `scripts/euler/terra_train_larger_resnet_4gpu.sbatch`
+- Script: `scripts/euler/terra_train_larger_resnet_1gpu_4h.sbatch`
+- Queue: `gpuhe.4h`, one RTX 3090 per job, `1024` envs/GPU,
+  `num_steps=32`.
 - Teacher checkpoint:
   `terra-solo-resmap64-r1r2-terminalfix-mb32-unmasked-4gpu-50B-20260516-euler-4gpu-2026-05-16-12-18-34.pkl`
 - Shared semantics: unmasked PPO actor, ResMap derived channels, separate
@@ -18,20 +21,27 @@ Submitted from paired `codex/mask-speedup-wip` worktrees:
   - Large RTX 4090 smoke passed with `1024` envs/GPU,
     `num_minibatches=128`, and `XLA_FLAGS=--xla_gpu_autotune_level=0`.
   - Full CPU validation sweep passed after the Oracle fixes.
-- Slurm submissions on `2026-05-18 15:17 CEST`:
-  - `66965292`, `RUN_KIND=medium_distill`: `model_size=medium`,
+- Slurm submissions on `2026-05-18 15:32 CEST`:
+  - `66969658`, `RUN_KIND=medium_distill`: `model_size=medium`,
     `map_feature_dim=192`, `num_minibatches=64`, `imitation_updates=200`.
-  - `66965294`, `RUN_KIND=medium_scratch`: same medium architecture, no
+  - `66969660`, `RUN_KIND=medium_scratch`: same medium architecture, no
     teacher; control for the warm-start hypothesis.
-  - `66965296`, `RUN_KIND=large_distill`: `model_size=large`,
-    `map_feature_dim=256`, `num_minibatches=128`, `imitation_updates=100`,
+  - `66969663`, `RUN_KIND=large_distill`: `model_size=large`,
+    `map_feature_dim=256`, `num_minibatches=128`, `imitation_updates=200`,
     autotune disabled.
-  - `66965300`, `RUN_KIND=large_scratch`: same large architecture and autotune
+  - `66969665`, `RUN_KIND=large_scratch`: same large architecture and autotune
     mitigation, no teacher; control for the large warm-start hypothesis.
 - Queue status at submission check: all four are `PENDING (Priority)` in
-  `gpuhe.120h`, `5-00:00:00`, one node, `4` GPUs requested.
-- `sbatch --test-only` resolved all four run kinds to a four-GPU node
-  (`eu-g6-005`) with an estimated start around `2026-05-20 21:43 CEST`.
+  `gpuhe.4h`, one node, one GPU requested. `squeue --start` reports `N/A`
+  start time because priority is still the limiting factor.
+- `sbatch --test-only` resolved all four run kinds to a one-GPU RTX 3090 node
+  (`eu-g4-002`) in `gpuhe.4h`.
+- The initial four-GPU `gpuhe.120h` matrix was cancelled when the experiment
+  was narrowed to one-GPU calibration:
+  - `66965292` started on `eu-g4-027` with `4 x RTX 3090` and was cancelled
+    after `00:06:23`, while compiling the first imitation smoke; no online
+    W&B run was produced.
+  - `66965294`, `66965296`, and `66965300` were cancelled while pending.
 
 ## 2026-05-15 ResMap64 Four-GPU Architecture Run
 

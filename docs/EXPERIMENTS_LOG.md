@@ -77,6 +77,32 @@ Launch:
 - Initial Slurm state: all four `PENDING (Priority)` in `gpuhe.120h` with
   `4` GPUs requested.
 
+Update 2026-05-18 15:32 CEST:
+
+- Cancelled the four-GPU matrix because the next useful step is a cheaper
+  single-GPU calibration before spending four GPUs on each larger model.
+  - `66965292` had started on `eu-g4-027` with `4 x RTX 3090` and was
+    cancelled after `00:06:23`, during the first imitation smoke compile; no
+    online W&B run was produced.
+  - `66965294`, `66965296`, and `66965300` were cancelled while pending.
+- Added `scripts/euler/terra_train_larger_resnet_1gpu_4h.sbatch`.
+  - `RUN_KIND` is required so a plain `sbatch` cannot silently pick a variant.
+  - The script requests one RTX 3090 in `gpuhe.4h`, hard-fails unless exactly
+    one allowed GPU is allocated, runs `check_jax_runtime.py --min-devices 1`,
+    and runs a W&B-disabled one-update smoke before online W&B.
+  - Online calibration defaults to `1B` env steps with eval/checkpoint every
+    `50` PPO updates; the four-hour queue will bound wall time if the run does
+    not finish.
+- Remote `bash -n` passed, and `sbatch --test-only` resolved all four run
+  kinds to a one-GPU RTX 3090 node in `gpuhe.4h`.
+- Submitted one-GPU `gpuhe.4h` calibration jobs:
+  - `66969658` `terra1g-medium-distill`, `imitation_updates=200`.
+  - `66969660` `terra1g-medium-scratch`.
+  - `66969663` `terra1g-large-distill`, `imitation_updates=200`.
+  - `66969665` `terra1g-large-scratch`.
+- Initial state: all four `PENDING (Priority)` with no start estimate from
+  `squeue --start`.
+
 ## 2026-05-18 Default-Unmasked PPO Cleanup
 
 Goal: make the ResMap path the default unmasked-actor path and remove
