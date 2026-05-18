@@ -116,6 +116,41 @@ Update 2026-05-18 15:47 CEST:
   distill variants have started their one-update teacher imitation warm-start
   smoke; no online W&B run has started yet.
 
+Update 2026-05-18 16:20 CEST:
+
+- Clarified the purpose of the one-GPU 4h jobs: they should decide how long
+  the supervised teacher-imitation warmup should run before PPO, not test PPO
+  learning yet.
+- Cancelled scratch PPO controls `66969660` and `66969665` because they do not
+  answer the supervised-warmup-length question.
+- `66969658` and `66969663` did enter their `200`-update imitation blocks, but
+  the old launcher only saves the final `_POST_DISTILL.pkl`; it does not save
+  checkpoints at intermediate warmup lengths.
+- Added `--imitation_only` and `--imitation_checkpoint_interval` to
+  `train_mixed.py`.
+  - `--imitation_only` saves `_POST_DISTILL.pkl` and exits before PPO.
+  - Periodic slice checkpoints are written as
+    `_POST_DISTILL_update_XXXX.pkl` and include explicit
+    `imitation_update`, `imitation_requested_updates`, and `imitation_only`
+    metadata.
+- Added `scripts/euler/terra_train_larger_resnet_supervised_1gpu_4h.sbatch`
+  for the corrected experiment: medium and large supervised-only warmup,
+  one RTX 3090 in `gpuhe.4h`, one-update W&B-disabled smoke, then online
+  supervised imitation with checkpoint slices every `10` updates by default.
+- Remote validation passed:
+  - `py_compile train_mixed.py`
+  - `bash -n scripts/euler/terra_train_larger_resnet_supervised_1gpu_4h.sbatch`
+  - `sbatch --test-only` for `RUN_KIND=medium` and `RUN_KIND=large`, resolving
+    to one-GPU RTX 3090 nodes in `gpuhe.4h`.
+- Cancelled the superseded distill jobs:
+  - `66969658` medium distill after `00:51:43`.
+  - `66969663` large distill after `00:51:43`.
+- Submitted corrected supervised-only jobs:
+  - `66981998` `terra1g-sup-medium`, started on `eu-g4-022`.
+  - `66982006` `terra1g-sup-large`, started on `eu-g4-026`.
+- Both corrected jobs allocated exactly one RTX 3090 and passed the JAX CUDA
+  runtime preflight. The W&B-disabled supervised-only smoke is running.
+
 ## 2026-05-18 Default-Unmasked PPO Cleanup
 
 Goal: make the ResMap path the default unmasked-actor path and remove

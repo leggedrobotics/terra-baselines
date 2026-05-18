@@ -89,46 +89,39 @@ Architecture presets:
   - Imitation loss: `1.8941`; one PPO update completed in `63.94s`,
     `513.88` steps/s.
 
-## Euler Experiment Matrix
+## Euler Supervised-Warmup Matrix
 
-Current single-GPU calibration script:
+Current single-GPU supervised-warmup script:
 
-- `scripts/euler/terra_train_larger_resnet_1gpu_4h.sbatch`
+- `scripts/euler/terra_train_larger_resnet_supervised_1gpu_4h.sbatch`
 - Queue: `gpuhe.4h`, one RTX 3090 per job, `1024` envs/GPU.
-- Purpose: verify imitation warm-start behavior and early PPO health before
-  spending four GPUs per variant.
+- Purpose: decide how many teacher-imitation updates to run before PPO.
+- Output: `_POST_DISTILL_update_XXXX.pkl` slices every `10` imitation updates
+  by default, plus a final `_POST_DISTILL.pkl`.
 
 Calibration runs:
 
-- `RUN_KIND=medium_distill`
+- `RUN_KIND=medium`
   - `model_size=medium`, `map_feature_dim=192`, `num_minibatches=64`.
   - `imitation_updates=200`.
-  - Tests whether a moderately larger ResNet benefits from the teacher warm
-    start.
-- `RUN_KIND=medium_scratch`
-  - Same medium architecture and minibatches, no teacher.
-  - Control for the warm-start hypothesis.
-- `RUN_KIND=large_distill`
+- `RUN_KIND=large`
   - `model_size=large`, `map_feature_dim=256`, `num_minibatches=128`.
   - `imitation_updates=200`.
   - Uses `--xla_gpu_autotune_level=0` because the local 4090 smoke otherwise
     hit a cuDNN internal error.
-- `RUN_KIND=large_scratch`
-  - Same large architecture and autotune mitigation, no teacher.
-  - Control for whether the large model specifically benefits from imitation.
 
 Every single-GPU calibration job runs:
 
-- hard GPU guard for exactly one RTX 3090/4090 GPU;
+- hard GPU guard for exactly one RTX 3090 GPU;
 - `check_jax_runtime.py --min-devices 1`;
-- one W&B-disabled full-shape smoke before the online W&B run;
-- online PPO with `1B` global env steps, eval/checkpoint every `50` updates.
+- one W&B-disabled full-shape supervised-only smoke;
+- online supervised imitation only, with no PPO after the warmup.
 
 Four-GPU follow-up:
 
 - Keep `scripts/euler/terra_train_larger_resnet_4gpu.sbatch` as the later
-  full-scale launcher once the single-GPU calibration identifies a healthy
-  model and warm-start length.
+  full-scale PPO launcher once the single-GPU checkpoint ladder identifies a
+  healthy architecture and warm-start length.
 
 ## Decision Criteria
 

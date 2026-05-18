@@ -2,12 +2,15 @@
 
 ## 2026-05-18 Larger ResNet Distillation Jobs
 
-Current single-GPU calibration jobs from paired `codex/mask-speedup-wip`
-worktrees:
+Current single-GPU supervised warmup calibration from paired
+`codex/mask-speedup-wip` worktrees:
 
-- Script: `scripts/euler/terra_train_larger_resnet_1gpu_4h.sbatch`
+- Script: `scripts/euler/terra_train_larger_resnet_supervised_1gpu_4h.sbatch`
 - Queue: `gpuhe.4h`, one RTX 3090 per job, `1024` envs/GPU,
   `num_steps=32`.
+- Goal: save larger-student checkpoints during teacher imitation so the next
+  step can benchmark warmup lengths such as `10`, `20`, `50`, `100`, and `200`
+  updates before launching PPO.
 - Teacher checkpoint:
   `terra-solo-resmap64-r1r2-terminalfix-mb32-unmasked-4gpu-50B-20260516-euler-4gpu-2026-05-16-12-18-34.pkl`
 - Shared semantics: unmasked PPO actor, ResMap derived channels, separate
@@ -21,27 +24,27 @@ worktrees:
   - Large RTX 4090 smoke passed with `1024` envs/GPU,
     `num_minibatches=128`, and `XLA_FLAGS=--xla_gpu_autotune_level=0`.
   - Full CPU validation sweep passed after the Oracle fixes.
-- Slurm submissions on `2026-05-18 15:32 CEST`:
-  - `66969658`, `RUN_KIND=medium_distill`: `model_size=medium`,
-    `map_feature_dim=192`, `num_minibatches=64`, `imitation_updates=200`.
-  - `66969660`, `RUN_KIND=medium_scratch`: same medium architecture, no
-    teacher; control for the warm-start hypothesis.
-  - `66969663`, `RUN_KIND=large_distill`: `model_size=large`,
-    `map_feature_dim=256`, `num_minibatches=128`, `imitation_updates=200`,
-    autotune disabled.
-  - `66969665`, `RUN_KIND=large_scratch`: same large architecture and autotune
-    mitigation, no teacher; control for the large warm-start hypothesis.
-- Status on `2026-05-18 15:47 CEST`: all four are `RUNNING` in `gpuhe.4h`
-  on one RTX 3090 each.
-  - `66969658` `terra1g-medium-distill`: `eu-g4-015`.
-  - `66969660` `terra1g-medium-scratch`: `eu-g4-030`.
-  - `66969663` `terra1g-large-distill`: `eu-g4-027`.
-  - `66969665` `terra1g-large-scratch`: `eu-g4-025`.
-- Runtime gates: all four passed the hard GPU guard and
-  `check_jax_runtime.py --min-devices 1`. The W&B-disabled full-shape smoke is
-  still compiling/running; no online W&B run has started yet.
-- `sbatch --test-only` resolved all four run kinds to a one-GPU RTX 3090 node
-  (`eu-g4-002`) in `gpuhe.4h`.
+- The first one-GPU calibration matrix used
+  `scripts/euler/terra_train_larger_resnet_1gpu_4h.sbatch`; it was superseded
+  because it moved into PPO after the supervised warmup instead of producing a
+  checkpoint ladder for warmup-length selection.
+  - `66969660` and `66969665` scratch PPO controls were cancelled after their
+    W&B-disabled smoke because they do not answer the supervised-warmup-length
+    question.
+  - `66969658` and `66969663` distill jobs entered the `200`-update imitation
+    block, but only save the final `_POST_DISTILL.pkl`; replace them with the
+    supervised-only checkpoint-ladder launcher.
+- Corrected Slurm submissions on `2026-05-18 16:27 CEST`:
+  - `66981998`, `terra1g-sup-medium`, `RUN_KIND=medium`,
+    `imitation_updates=200`, checkpoint interval `10`.
+  - `66982006`, `terra1g-sup-large`, `RUN_KIND=large`,
+    `imitation_updates=200`, checkpoint interval `10`.
+- Status on `2026-05-18 16:28 CEST`: both corrected jobs are `RUNNING`.
+  - `66981998`: `eu-g4-022`, `1 x RTX 3090`.
+  - `66982006`: `eu-g4-026`, `1 x RTX 3090`.
+- Runtime gates: both passed the hard GPU guard and
+  `check_jax_runtime.py --min-devices 1`; the W&B-disabled supervised-only
+  smoke is running.
 - The initial four-GPU `gpuhe.120h` matrix was cancelled when the experiment
   was narrowed to one-GPU calibration:
   - `66965292` started on `eu-g4-027` with `4 x RTX 3090` and was cancelled

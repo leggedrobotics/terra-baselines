@@ -388,6 +388,8 @@ class MixedAgentTrainConfig:
     imitation_lr: float = 1e-4
     imitation_temperature: float = 1.0
     imitation_value_coef: float = 0.25
+    imitation_only: bool = False
+    imitation_checkpoint_interval: int = 0
     imitation_env_steps: int = 0
     
     # Named configuration preset (loads from configs/training_configs.py)
@@ -1357,6 +1359,48 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             f"value={float(distill_info_single['imitation_value_loss']):.4f}, "
                             f"entropy={float(distill_info_single['imitation_entropy']):.4f}"
                         )
+                        if config.imitation_only:
+                            wandb.log(
+                                {
+                                    "imitation/loss": float(distill_info_single["imitation_loss"]),
+                                    "imitation/policy_kl": float(
+                                        distill_info_single["imitation_policy_kl"]
+                                    ),
+                                    "imitation/value_loss": float(
+                                        distill_info_single["imitation_value_loss"]
+                                    ),
+                                    "imitation/entropy": float(
+                                        distill_info_single["imitation_entropy"]
+                                    ),
+                                    "imitation/updates": warm_i + 1,
+                                    "imitation/env_steps": (
+                                        (warm_i + 1)
+                                        * config.imitation_num_steps
+                                        * config.num_envs
+                                    ),
+                                },
+                                step=warm_i + 1,
+                            )
+                    if (
+                        config.imitation_checkpoint_interval > 0
+                        and (warm_i + 1) % config.imitation_checkpoint_interval == 0
+                    ):
+                        distill_info_single = unreplicate(distill_info)
+                        train_state_single = unreplicate(train_state)
+                        ppo_timestep = ppo_start[1]
+                        checkpoint = {
+                            "train_config": config,
+                            "env_config": unreplicate(ppo_timestep).env_cfg,
+                            "model": train_state_single.params,
+                            "loss_info": distill_info_single,
+                            "imitation_update": warm_i + 1,
+                            "imitation_requested_updates": config.imitation_updates,
+                            "imitation_only": config.imitation_only,
+                        }
+                        helpers.save_pkl_object(
+                            checkpoint,
+                            f"checkpoints/{config.name}_POST_DISTILL_update_{warm_i + 1:04d}.pkl",
+                        )
                 distill_info_single = unreplicate(distill_info)
                 distill_summary = {
                     "imitation/loss": float(distill_info_single["imitation_loss"]),
@@ -1382,6 +1426,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "env_config": unreplicate(ppo_timestep).env_cfg,
                     "model": train_state_single.params,
                     "loss_info": distill_info_single,
+                    "imitation_update": config.imitation_updates,
+                    "imitation_requested_updates": config.imitation_updates,
+                    "imitation_only": config.imitation_only,
                 }
                 helpers.save_pkl_object(
                     post_distill_checkpoint,
@@ -1392,6 +1439,19 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     f"checkpoints/{config.name}_POST_DISTILL.pkl",
                     flush=True,
                 )
+                if config.imitation_only:
+                    print("Supervised imitation-only run complete; skipping PPO.", flush=True)
+                    return {
+                        "runner_state": (
+                            unreplicate(rng),
+                            train_state_single,
+                            unreplicate(ppo_timestep),
+                            unreplicate(ppo_start[2]),
+                            unreplicate(ppo_start[3]),
+                        ),
+                        "loss_info": distill_info_single,
+                        "imitation_only": True,
+                    }
                 train_state = reset_train_state_optimizer(
                     train_state_single,
                     config,
@@ -1576,6 +1636,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         train_info = jax.block_until_ready(train_with_monitoring(rng, train_state))
         elapsed_time = time.time() - t
         print(f"✅ Mixed agent training completed in {elapsed_time:.2f}s")
+        if train_info.get("imitation_only", False):
+            print("💾 Supervised-only checkpoints saved; no PPO final checkpoint written.")
+            return
         
         # Save final checkpoint with special naming - enhanced metadata
         try:
@@ -1844,6 +1907,17 @@ if __name__ == "__main__":
         default=0.25,
         help="Weight for matching the teacher value prediction during imitation.",
     )
+    parser.add_argument(
+        "--imitation_only",
+        action="store_true",
+        help="Run teacher imitation, save post-distill checkpoints, and exit before PPO.",
+    )
+    parser.add_argument(
+        "--imitation_checkpoint_interval",
+        type=int,
+        default=0,
+        help="Save an extra post-distill checkpoint every N imitation updates.",
+    )
     env_group = parser.add_mutually_exclusive_group()
     env_group.add_argument(
         "--load_env_from_checkpoint",
@@ -1962,10 +2036,14 @@ if __name__ == "__main__":
         raise ValueError("Set both --replay_map_count and --target_map_repeat to use mixed target-map replay.")
     if args.imitation_updates > 0 and args.teacher_checkpoint is None:
         raise ValueError("--imitation_updates requires --teacher_checkpoint.")
+    if args.imitation_only and args.imitation_updates <= 0:
+        raise ValueError("--imitation_only requires --imitation_updates > 0.")
     if args.imitation_num_minibatches <= 0:
         raise ValueError("--imitation_num_minibatches must be positive.")
     if args.imitation_num_steps <= 0:
         raise ValueError("--imitation_num_steps must be positive.")
+    if args.imitation_checkpoint_interval < 0:
+        raise ValueError("--imitation_checkpoint_interval must be non-negative.")
     
     # CLI reward multiplier overrides take precedence
     if args.dump_bonus_mult is not None:
@@ -2027,6 +2105,8 @@ if __name__ == "__main__":
         imitation_lr=args.imitation_lr,
         imitation_temperature=args.imitation_temperature,
         imitation_value_coef=args.imitation_value_coef,
+        imitation_only=args.imitation_only,
+        imitation_checkpoint_interval=args.imitation_checkpoint_interval,
         agent_types_override=agent_types_override,
         action_types_override=action_types_override,
         debug=args.debug,
