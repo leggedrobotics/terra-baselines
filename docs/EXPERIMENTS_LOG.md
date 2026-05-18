@@ -60,6 +60,23 @@ Planned Euler jobs:
 - `large_scratch`: same large ResNet/autotune setup, no teacher; this is the
   large-model warm-start control.
 
+Launch:
+
+- Synced paired WIP worktrees and the teacher checkpoint to
+  `/cluster/home/lterenzi/codex_terra_edge_validation`.
+- Remote Euler preflight passed:
+  - `py_compile train_mixed.py utils/models.py utils/utils_ppo.py`
+  - `bash -n scripts/euler/terra_train_larger_resnet_4gpu.sbatch`
+  - teacher checkpoint exists under `$WORK/checkpoints`
+- `sbatch --test-only` resolved all four run kinds to a four-GPU node.
+- Submitted:
+  - `66965292` `terra-medium-distill`
+  - `66965294` `terra-medium-scratch`
+  - `66965296` `terra-large-distill`
+  - `66965300` `terra-large-scratch`
+- Initial Slurm state: all four `PENDING (Priority)` in `gpuhe.120h` with
+  `4` GPUs requested.
+
 ## 2026-05-18 Default-Unmasked PPO Cleanup
 
 Goal: make the ResMap path the default unmasked-actor path and remove

@@ -2,7 +2,7 @@
 
 ## 2026-05-18 Larger ResNet Distillation Jobs
 
-Pending launch from paired `codex/mask-speedup-wip` worktrees:
+Submitted from paired `codex/mask-speedup-wip` worktrees:
 
 - Script: `scripts/euler/terra_train_larger_resnet_4gpu.sbatch`
 - Teacher checkpoint:
@@ -18,15 +18,20 @@ Pending launch from paired `codex/mask-speedup-wip` worktrees:
   - Large RTX 4090 smoke passed with `1024` envs/GPU,
     `num_minibatches=128`, and `XLA_FLAGS=--xla_gpu_autotune_level=0`.
   - Full CPU validation sweep passed after the Oracle fixes.
-- Planned submissions:
-  - `RUN_KIND=medium_distill`: `model_size=medium`, `map_feature_dim=192`,
-    `num_minibatches=64`, `imitation_updates=200`.
-  - `RUN_KIND=medium_scratch`: same medium architecture, no teacher; control
-    for the warm-start hypothesis.
-  - `RUN_KIND=large_distill`: `model_size=large`, `map_feature_dim=256`,
-    `num_minibatches=128`, `imitation_updates=100`, autotune disabled.
-  - `RUN_KIND=large_scratch`: same large architecture and autotune mitigation,
-    no teacher; control for the large warm-start hypothesis.
+- Slurm submissions on `2026-05-18 15:17 CEST`:
+  - `66965292`, `RUN_KIND=medium_distill`: `model_size=medium`,
+    `map_feature_dim=192`, `num_minibatches=64`, `imitation_updates=200`.
+  - `66965294`, `RUN_KIND=medium_scratch`: same medium architecture, no
+    teacher; control for the warm-start hypothesis.
+  - `66965296`, `RUN_KIND=large_distill`: `model_size=large`,
+    `map_feature_dim=256`, `num_minibatches=128`, `imitation_updates=100`,
+    autotune disabled.
+  - `66965300`, `RUN_KIND=large_scratch`: same large architecture and autotune
+    mitigation, no teacher; control for the large warm-start hypothesis.
+- Queue status at submission check: all four are `PENDING (Priority)` in
+  `gpuhe.120h`, `5-00:00:00`, one node, `4` GPUs requested.
+- `sbatch --test-only` resolved all four run kinds to a four-GPU node
+  (`eu-g6-005`) with an estimated start around `2026-05-20 21:43 CEST`.
 
 ## 2026-05-15 ResMap64 Four-GPU Architecture Run
 
