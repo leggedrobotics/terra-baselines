@@ -1,7 +1,6 @@
 import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
-from utils.action_masking import apply_action_mask
 
 
 def clip_action_map_in_obs(obs):
@@ -16,15 +15,15 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
     # Feature engineering
     if train_cfg.clip_action_maps:
         obs = clip_action_map_in_obs(obs)
-    use_action_mask = (
-        train_cfg.get("use_action_mask", False)
-        if isinstance(train_cfg, dict)
-        else getattr(train_cfg, "use_action_mask", False)
-    )
     edge_features_dim = (
-        train_cfg.get("edge_features_dim", 10 if use_action_mask else 0)
+        train_cfg.get("edge_features_dim", 0)
         if isinstance(train_cfg, dict)
-        else getattr(train_cfg, "edge_features_dim", 10 if use_action_mask else 0)
+        else getattr(train_cfg, "edge_features_dim", 0)
+    )
+    include_episode_progress = (
+        train_cfg.get("include_episode_progress", False)
+        if isinstance(train_cfg, dict)
+        else getattr(train_cfg, "include_episode_progress", False)
     )
     batch_size = obs["agent_states"].shape[0]
     if edge_features_dim:
@@ -34,13 +33,12 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
     else:
         edge_features = jnp.zeros((batch_size, 0), dtype=jnp.float32)
 
-    if use_action_mask:
-        action_mask = obs["action_mask"]
+    if include_episode_progress:
+        episode_progress = obs["episode_progress"].reshape((batch_size, -1))[:, :1]
     else:
-        action_mask = obs.get(
-            "action_mask",
-            jnp.ones((batch_size, 8), dtype=jnp.bool_),
-        )
+        episode_progress = jnp.zeros((batch_size, 0), dtype=jnp.float32)
+
+    action_mask = obs["action_mask"]
 
     # Create input list with indexed comments for easy reference
     # Updated to match the new observation structure from env.py
@@ -70,19 +68,13 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         prev_actions,                    # [21] - Previous actions history
         action_mask,                     # [22] - Coarse primitive action availability
         edge_features,                   # [23] - Edge affordance/progress features
+        episode_progress,                # [24] - Episode progress scalar
     ]
     return obs
 
 
-def policy(
-    apply_fn,
-    params,
-    obs,
-    use_action_mask=False,
-):
+def policy(apply_fn, params, obs):
     value, logits_pi = apply_fn(params, obs)
-    if use_action_mask:
-        logits_pi = apply_action_mask(logits_pi, obs[22])
     pi = tfp.distributions.Categorical(logits=logits_pi)
     return value, pi
 
@@ -101,7 +93,6 @@ def select_action_ppo(
         train_state.apply_fn,
         train_state.params,
         obs,
-        use_action_mask=getattr(config, "use_action_mask", False),
     )
     action = pi.sample(seed=rng)
     log_prob = pi.log_prob(action)

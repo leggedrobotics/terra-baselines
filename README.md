@@ -96,7 +96,7 @@ action, max-step, and reward settings.
 | Entropy schedule | `ent_schedule_start=0.15`, `ent_schedule_end=0.005`, `ent_schedule_steps=9500` |
 | Logging/eval/checkpoints | `--log_train_interval 1`, `--log_eval_interval 100`, `--checkpoint_interval 100`, `--eval_episodes 100` |
 | Reward multipliers | `dump_bonus_mult=0.5`, `excavator_relocate_dumped_mult=1.5`, `excavator_relocate_dug_dirt_mult=1.5` |
-| Action mask | Disabled by default; opt in only with `--enable_action_mask` for the coarse action-availability mask while full-shape masked PPO is still experimental |
+| Action mask | Disabled in PPO training/eval; `action_mask` remains an observation/debug signal for diagnostics |
 
 ### Available Presets
 

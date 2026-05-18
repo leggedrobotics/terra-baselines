@@ -4,7 +4,7 @@
 #SBATCH --gpus=gpu:nvidia_geforce_rtx_3090:4
 #SBATCH --partition=gpuhe.120h
 #SBATCH --nodelist=eu-g4-[001-032],eu-g6-[001-080]
-#SBATCH --time=120:00:00
+#SBATCH --time=5-00:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --job-name=terra-resmap64-mb32
 #SBATCH --output=/cluster/home/lterenzi/codex_terra_edge_validation/logs/%j_resmap64_phase_4gpu.out
@@ -63,12 +63,14 @@ COMMON_ARGS=(
   --map_feature_dim 128
   --use_map_derived_channels
   --separate_actor_critic_trunks
-  --disable_action_mask
+  --use_critic_affordances
+  --include_episode_progress
+  --edge_features_dim 10
 )
 
 WANDB_MODE=disabled "$VENV/bin/python" train_mixed.py \
   "${COMMON_ARGS[@]}" \
-  --name "terra-solo-resmap64-phase-mb32-unmasked-smoke" \
+  --name "terra-solo-resmap64-r1r2-mb32-unmasked-smoke" \
   --machine euler-smoke-fullshape \
   --num_envs_per_device 1024 \
   --update_epochs 2 \
@@ -82,7 +84,7 @@ WANDB_MODE=disabled "$VENV/bin/python" train_mixed.py \
 
 WANDB_MODE=online "$VENV/bin/python" train_mixed.py \
   "${COMMON_ARGS[@]}" \
-  --name "terra-solo-resmap64-phase-mb32-unmasked-4gpu-50B-20260515" \
+  --name "terra-solo-resmap64-r1r2-terminalfix-mb32-unmasked-4gpu-50B-20260516" \
   --machine euler-4gpu \
   --num_envs_per_device 1024 \
   --update_epochs 2 \

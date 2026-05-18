@@ -22,7 +22,7 @@ from train import TrainConfig  # noqa: F401 - needed for unpickling old checkpoi
 from train_mixed import MixedAgentTrainConfig
 from utils.action_masking import apply_action_mask
 from utils.helpers import load_pkl_object
-from utils.models import infer_edge_features_dim_from_model_params, load_neural_network
+from utils.models import load_neural_network, restore_checkpoint_model_config
 from utils.utils_ppo import obs_to_model_input, wrap_action
 
 sys.modules["__main__"].MixedAgentTrainConfig = MixedAgentTrainConfig
@@ -286,8 +286,7 @@ def main() -> None:
 
     log = load_pkl_object(str(args.checkpoint))
     config = log["train_config"]
-    config.edge_features_dim = infer_edge_features_dim_from_model_params(log["model"])
-    config.use_action_mask = False
+    restore_checkpoint_model_config(config, log["model"])
     config.num_test_rollouts = args.num_envs
     config.num_devices = 1
     config.benchmark_stochastic = args.stochastic

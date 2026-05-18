@@ -11,13 +11,8 @@ from typing import Any
 # Add the parent directory to the path so we can import utils
 sys.path.append(str(Path(__file__).parent.parent))
 
-from utils.models import (
-    infer_edge_features_dim_from_model_params,
-    infer_use_action_mask_from_train_config,
-    load_neural_network,
-)
+from utils.models import load_neural_network, restore_checkpoint_model_config
 from utils.helpers import load_pkl_object
-from utils.action_masking import apply_action_mask
 from terra.env import TerraEnvBatch
 from terra.actions import TrackedAction, WheeledAction, TrackedActionType, WheeledActionType
 import jax.numpy as jnp
@@ -237,8 +232,6 @@ def extract_plan(
         # so we can treat the batch as size 1 and proceed as in single-agent.
         obs_model = obs_to_model_input(timestep.observation, prev_actions, rl_config)
         v, logits_pi = model.apply(model_params, obs_model)
-        if getattr(rl_config, "use_action_mask", False):
-            logits_pi = apply_action_mask(logits_pi, obs_model[22])
         pi = tfp.distributions.Categorical(logits=logits_pi)
         action = pi.sample(seed=rng_act)
 
@@ -436,8 +429,7 @@ def main():
 
     log = load_pkl_object(args.policy_path)
     config = jax.tree_map(_canon_lists, log["train_config"])
-    config.edge_features_dim = infer_edge_features_dim_from_model_params(log["model"])
-    config.use_action_mask = infer_use_action_mask_from_train_config(config, default=False)
+    restore_checkpoint_model_config(config, log["model"])
     config.num_test_rollouts = 1  # Only one environment
     config.num_devices = 1
 

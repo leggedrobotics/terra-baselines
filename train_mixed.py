@@ -96,7 +96,6 @@ import jax.tree_util as jtu
 import numpy as np
 from utils.models import (
     get_model_ready,
-    infer_use_action_mask_from_train_config,
     restore_checkpoint_model_config,
 )
 from terra.env import TerraEnvBatch
@@ -337,8 +336,6 @@ class MixedAgentTrainConfig:
     ent_coef: float = 0.06  
     vf_coef: float = 2.0 
     max_grad_norm: float = 0.5
-    use_action_mask: bool = False
-    action_mask_cli_override: bool | None = None
     edge_features_dim: int = 0
     use_critic_affordances: bool = False
     critic_affordance_dim: int = 0
@@ -811,12 +808,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         config.separate_actor_critic_trunks,
                     )
                 )
-                checkpoint_use_action_mask = infer_use_action_mask_from_train_config(
-                    checkpoint_config,
-                    default=False,
-                )
-                if config.action_mask_cli_override is None:
-                    config.use_action_mask = checkpoint_use_action_mask
             else:
                 restore_checkpoint_model_config(
                     config,
@@ -1158,6 +1149,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         length=eval_stats_per_device.length[0],
                         successes=eval_stats_per_device.successes.sum(),
                         success_steps=eval_stats_per_device.success_steps.sum(),
+                        first_successes=eval_stats_per_device.first_successes.sum(),
+                        first_failures=eval_stats_per_device.first_failures.sum(),
+                        completed_once=eval_stats_per_device.completed_once.reshape(-1),
                         return_sum=eval_stats_per_device.return_sum.sum(),
                         return_sq_sum=eval_stats_per_device.return_sq_sum.sum(),
                         return_min=eval_stats_per_device.return_min.min(),
@@ -1364,24 +1358,6 @@ if __name__ == "__main__":
         "--debug", action="store_true",
         help="Enable one-time sanity assertions/prints for agent ordering and masks"
     )
-    action_mask_group = parser.add_mutually_exclusive_group()
-    action_mask_group.add_argument(
-        "--enable_action_mask",
-        action="store_true",
-        help=(
-            "Force the coarse PPO action-availability mask when resuming, even "
-            "if the checkpoint was saved without it."
-        ),
-    )
-    action_mask_group.add_argument(
-        "--disable_action_mask",
-        action="store_true",
-        help=(
-            "Disable the coarse PPO action-availability mask and use the "
-            "legacy no-edge-feature policy input unless the checkpoint model "
-            "requires edge features."
-        ),
-    )
     
     # Named configuration preset
     parser.add_argument(
@@ -1568,11 +1544,6 @@ if __name__ == "__main__":
         excavator_relocate_dug_dirt_mult = args.excavator_relocate_dug_dirt_mult
     if args.transport_relocate_mult is not None:
         transport_relocate_mult = args.transport_relocate_mult
-    action_mask_cli_override = None
-    if args.enable_action_mask:
-        action_mask_cli_override = True
-    elif args.disable_action_mask:
-        action_mask_cli_override = False
     
     # Use default agent types if nothing was set
     if agent_types_override is None:
@@ -1617,8 +1588,6 @@ if __name__ == "__main__":
         agent_types_override=agent_types_override,
         action_types_override=action_types_override,
         debug=args.debug,
-        use_action_mask=False if action_mask_cli_override is None else action_mask_cli_override,
-        action_mask_cli_override=action_mask_cli_override,
         config_name=args.config,
         dump_bonus_mult=dump_bonus_mult,
         excavator_relocate_dumped_mult=excavator_relocate_dumped_mult,

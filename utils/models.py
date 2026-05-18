@@ -14,40 +14,46 @@ def _config_get(config, key, default=None):
     return getattr(config, key, default)
 
 
-def infer_edge_features_dim_from_model_params(model_params):
-    """Infer old-vs-new edge feature width from a checkpoint's final MLP input."""
-    params = model_params.get("params", model_params)
-    kernel = params["mlp_v"]["layers_0"]["kernel"]
-    final_input_dim = int(kernel.shape[0])
-
-    # Historical successful solo checkpoints before edge features used 544.
-    # Current edge-feature models use 544 + 10.
-    if final_input_dim <= 544:
-        return 0
-    edge_features_dim = final_input_dim - 544
-    assert edge_features_dim == 10, (
-        f"Unexpected edge feature width inferred from checkpoint: {edge_features_dim}"
-    )
-    return edge_features_dim
-
-
-def infer_use_action_mask_from_train_config(config, default=False):
-    """Return saved action-mask setting without inheriting newer class defaults.
-
-    Old checkpoints were pickled before `use_action_mask` existed. Unpickling
-    them with today's dataclass makes `getattr(config, "use_action_mask")`
-    fall through to the new class default, which changes replay behavior.
-    """
+def _config_set(config, key, value):
     if isinstance(config, dict):
-        return bool(config.get("use_action_mask", default))
+        config[key] = value
+    else:
+        setattr(config, key, value)
 
-    if hasattr(config, "_fields") and "use_action_mask" in config._fields:
-        return bool(getattr(config, "use_action_mask"))
 
-    if hasattr(config, "__dict__") and "use_action_mask" in vars(config):
-        return bool(vars(config)["use_action_mask"])
+def _config_has_saved_field(config, key):
+    if isinstance(config, dict):
+        return key in config
+    if hasattr(config, "_fields"):
+        return key in config._fields
+    if hasattr(config, "__dict__"):
+        return key in vars(config)
+    return False
 
-    return bool(default)
+
+def _config_get_required(config, key):
+    if not _config_has_saved_field(config, key):
+        raise KeyError(f"checkpoint train_config missing required model field '{key}'")
+    return _config_get(config, key)
+
+
+def restore_checkpoint_model_config(config, model_params, source_config=None):
+    """Restore model-shape fields from checkpoint config."""
+    source = config if source_config is None else source_config
+    edge_features_dim = int(_config_get_required(source, "edge_features_dim"))
+    use_critic_affordances = bool(
+        _config_get_required(source, "use_critic_affordances")
+    )
+    include_episode_progress = bool(
+        _config_get_required(source, "include_episode_progress")
+    )
+    critic_affordance_dim = int(_config_get_required(source, "critic_affordance_dim"))
+
+    _config_set(config, "edge_features_dim", edge_features_dim)
+    _config_set(config, "use_critic_affordances", use_critic_affordances)
+    _config_set(config, "include_episode_progress", include_episode_progress)
+    _config_set(config, "critic_affordance_dim", critic_affordance_dim)
+    return config
 
 
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
@@ -98,10 +104,10 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             "local_map_hidden_dim_layers_mlp": (384, 96),
         }
 
-    use_action_mask = bool(_config_get(config, "use_action_mask", False))
-    edge_features_dim = int(
-        _config_get(config, "edge_features_dim", 10 if use_action_mask else 0)
-    )
+    edge_features_dim = int(_config_get(config, "edge_features_dim", 0))
+    include_episode_progress = bool(_config_get(config, "include_episode_progress", False))
+    use_critic_affordances = bool(_config_get(config, "use_critic_affordances", False))
+    critic_affordance_dim = int(_config_get(config, "critic_affordance_dim", 0))
     model_kwargs.update(
         map_encoder=str(_config_get(config, "map_encoder", "atari")),
         map_feature_dim=int(_config_get(config, "map_feature_dim", 32)),
@@ -111,6 +117,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         separate_actor_critic_trunks=bool(
             _config_get(config, "separate_actor_critic_trunks", False)
         ),
+        use_critic_affordances=use_critic_affordances,
+        critic_affordance_dim=critic_affordance_dim,
     )
     model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=config["num_prev_actions"],
@@ -168,6 +176,11 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         ),
         # [23] edge_features
         jnp.zeros((init_batch_size, edge_features_dim), dtype=jnp.float32),
+        # [24] episode_progress
+        jnp.zeros(
+            (init_batch_size, 1 if include_episode_progress else 0),
+            dtype=jnp.float32,
+        ),
     ]
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
@@ -604,12 +617,9 @@ class PreviousActionsNet(nn.Module):
         self.activation = nn.relu
 
     def __call__(self, obs: dict[str, Array]):
-        # Use the full single-stream history of previous actions
-        # Support both layouts:
-        # - new layout (len=22): prev_actions at [21]
-        # - legacy layout (len=21): prev_actions at [20]
-        action_idx = 21 if len(obs) >= 22 else 20
-        x_actions = obs[action_idx].astype(jnp.int32)
+        if len(obs) != 25:
+            raise ValueError(f"Expected 25 observation tensors, got {len(obs)}")
+        x_actions = obs[21].astype(jnp.int32)
         x_actions = self.embedding(x_actions)
 
         x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
@@ -643,6 +653,8 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     map_feature_dim: int = 32
     use_map_derived_channels: bool = False
     separate_actor_critic_trunks: bool = False
+    use_critic_affordances: bool = False
+    critic_affordance_dim: int = 0
     actor_trunk_layers: Sequence[int] = (256, 128)
     critic_trunk_layers: Sequence[int] = (256, 128)
 
@@ -737,30 +749,17 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         local_maps_1 = [obs[3], obs[4], obs[5], obs[6], obs[7], obs[8], obs[9], obs[10], obs[11]]
         x_local_active = self.local_map_net(local_maps_1)
         
-        # Process global maps. Support both observation layouts:
-        # - New layout (len=22): includes reachability at [13]
-        # - Legacy layout (len=21): no reachability channel
-        has_reachability = len(obs) >= 22
-        if has_reachability:
-            map_obs = [
-                obs[12],  # traversability_mask
-                obs[13],  # reachability_mask
-                obs[14],  # action_map
-                obs[15],  # target_map
-                obs[18],  # padding_mask
-                obs[19],  # dumpability_mask
-                obs[20],  # interaction_mask
-            ]
-        else:
-            map_obs = [
-                obs[12],  # traversability_mask
-                jnp.zeros_like(obs[12]),  # reachability_mask (absent in legacy layout)
-                obs[13],  # action_map
-                obs[14],  # target_map
-                obs[17],  # padding_mask
-                obs[18],  # dumpability_mask
-                obs[19],  # interaction_mask
-            ]
+        if len(obs) != 25:
+            raise ValueError(f"Expected 25 observation tensors, got {len(obs)}")
+        map_obs = [
+            obs[12],  # traversability_mask
+            obs[13],  # reachability_mask
+            obs[14],  # action_map
+            obs[15],  # target_map
+            obs[18],  # padding_mask
+            obs[19],  # dumpability_mask
+            obs[20],  # interaction_mask
+        ]
         x_maps = self.maps_net(map_obs)
         x_actions = self.actions_net(obs)
         
@@ -785,20 +784,20 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 f"x_maps={x_maps.shape}"
             )
         
-        edge_features_idx = 23 if len(obs) >= 24 else None
-        if edge_features_idx is None:
-            edge_features = jnp.zeros((x_agents_concat.shape[0], 0), dtype=jnp.float32)
-        else:
-            edge_features = obs[edge_features_idx].reshape(
-                obs[edge_features_idx].shape[0],
-                -1,
+        edge_features = obs[23].reshape(obs[23].shape[0], -1)
+        episode_progress = obs[24].reshape(obs[24].shape[0], -1)
+        critic_affordances = jnp.concatenate((edge_features, episode_progress), axis=-1)
+        if self.use_critic_affordances and critic_affordances.shape[-1] != self.critic_affordance_dim:
+            raise ValueError(
+                "critic_affordance_dim does not match observation affordance width: "
+                f"{self.critic_affordance_dim} vs {critic_affordances.shape[-1]}"
             )
 
         # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
         # Local maps are also included.
         # Build a single combined feature vector (all agent states + actions + active local maps)
         combined_features = jnp.concatenate(
-            (x_agents_concat, x_actions, x_local_active_flat, edge_features),
+            (x_agents_concat, x_actions, x_local_active_flat),
             axis=-1,
         )
         combined_features = self.activation(combined_features)
@@ -811,12 +810,22 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         if self.separate_actor_critic_trunks:
             x = self.activation(self.intermediate_mlp(x))
-            critic_features = self.activation(self.critic_trunk(x))
+            critic_input = (
+                jnp.concatenate((x, critic_affordances), axis=-1)
+                if self.use_critic_affordances
+                else x
+            )
+            critic_features = self.activation(self.critic_trunk(critic_input))
             actor_features = self.activation(self.actor_trunk(x))
             v = self.mlp_v(critic_features)
             xpi = self.mlp_pi(actor_features)
         else:
-            v = self.mlp_v(x)
+            critic_input = (
+                jnp.concatenate((x, critic_affordances), axis=-1)
+                if self.use_critic_affordances
+                else x
+            )
+            v = self.mlp_v(critic_input)
             xpi = self.mlp_pi(x)
 
         return v, xpi

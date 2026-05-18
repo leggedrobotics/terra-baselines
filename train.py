@@ -50,7 +50,6 @@ class TrainConfig:
     ent_coef: float = 0.015
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
-    use_action_mask: bool = False
     edge_features_dim: int = 0
     use_critic_affordances: bool = False
     critic_affordance_dim: int = 0
@@ -312,10 +311,20 @@ def eval_log_metrics(stats, config):
     return_var = stats.return_sq_sum / return_count - jnp.square(return_mean)
     success_count = jnp.maximum(stats.success_return_count, 1)
     failure_count = jnp.maximum(stats.failure_return_count, 1)
+    first_successes = getattr(stats, "first_successes", stats.successes)
+    first_failures = getattr(
+        stats,
+        "first_failures",
+        jnp.maximum(stats.return_count - stats.successes, 0),
+    )
+    episode_success_rate = stats.successes / return_count
 
     return {
-        "eval/success_rate": stats.successes / envs,
-        "eval/timeout_rate": jnp.maximum(stats.return_count - stats.successes, 0) / envs,
+        "eval/success_rate": first_successes / envs,
+        "eval/timeout_rate": first_failures / envs,
+        "eval/episode_success_rate": episode_success_rate,
+        "eval/successes_per_env": stats.successes / envs,
+        "eval/terminations_per_env": stats.return_count / envs,
         "eval/return_mean": return_mean,
         "eval/return_std": jnp.sqrt(jnp.maximum(return_var, 0.0)),
         "eval/return_min": jnp.where(stats.return_count > 0, stats.return_min, 0.0),
@@ -393,7 +402,6 @@ def ppo_update_networks(
             train_state.apply_fn,
             params,
             obs,
-            use_action_mask=getattr(config, "use_action_mask", False),
         )
         value = value[:, 0]
         # action = dist.sample(seed=rng_model)
@@ -872,6 +880,9 @@ def make_train(
                     length=eval_stats_per_device.length[0],
                     successes=eval_stats_per_device.successes.sum(),
                     success_steps=eval_stats_per_device.success_steps.sum(),
+                    first_successes=eval_stats_per_device.first_successes.sum(),
+                    first_failures=eval_stats_per_device.first_failures.sum(),
+                    completed_once=eval_stats_per_device.completed_once.reshape(-1),
                     return_sum=eval_stats_per_device.return_sum.sum(),
                     return_sq_sum=eval_stats_per_device.return_sq_sum.sum(),
                     return_min=eval_stats_per_device.return_min.min(),

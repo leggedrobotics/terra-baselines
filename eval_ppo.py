@@ -16,6 +16,9 @@ class RolloutStats(NamedTuple):
     length: jax.Array = jnp.asarray(0)
     successes: jax.Array = jnp.asarray(0)
     success_steps: jax.Array = jnp.asarray(0)
+    first_successes: jax.Array = jnp.asarray(0)
+    first_failures: jax.Array = jnp.asarray(0)
+    completed_once: jax.Array = jnp.asarray(False)
     return_sum: jax.Array = jnp.asarray(0.0)
     return_sq_sum: jax.Array = jnp.asarray(0.0)
     return_min: jax.Array = jnp.asarray(jnp.inf)
@@ -64,6 +67,9 @@ def _rollout_impl(
             timestep.done,
             jnp.logical_not(timestep.info["task_done"]),
         )
+        first_done = timestep.done & jnp.logical_not(stats.completed_once)
+        first_success_done = first_done & timestep.info["task_done"]
+        first_failure_done = first_done & jnp.logical_not(timestep.info["task_done"])
         success_return = jnp.where(success_done, next_episode_return, 0.0)
         failure_return = jnp.where(failure_done, next_episode_return, 0.0)
         return_min = jnp.min(
@@ -79,6 +85,9 @@ def _rollout_impl(
             length=stats.length + 1,
             successes=stats.successes + successes_update,
             success_steps=stats.success_steps + success_steps_update,
+            first_successes=stats.first_successes + first_success_done.sum(),
+            first_failures=stats.first_failures + first_failure_done.sum(),
+            completed_once=stats.completed_once | timestep.done,
             return_sum=stats.return_sum + finished_return.sum(),
             return_sq_sum=stats.return_sq_sum + jnp.square(finished_return).sum(),
             return_min=jnp.minimum(stats.return_min, return_min),
@@ -108,6 +117,7 @@ def _rollout_impl(
     prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
     init_stats = RolloutStats(
         current_return=jnp.zeros_like(timestep.reward),
+        completed_once=jnp.zeros((num_envs,), dtype=jnp.bool_),
     )
     init_carry = (rng, init_stats, timestep, prev_actions)
 

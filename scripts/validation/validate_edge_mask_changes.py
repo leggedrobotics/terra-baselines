@@ -265,12 +265,17 @@ def test_training_accounting() -> None:
         "train_mixed.py resume path must restore saved model-shape fields before model init",
     )
     _assert(
-        "checkpoint_use_action_mask = infer_use_action_mask_from_train_config(" in train_mixed_source,
-        "train_mixed.py resume path must restore checkpoint action-mask setting before model init",
+        "infer_use_action_mask_from_train_config" not in train_mixed_source,
+        "train_mixed.py must not inherit action masking from checkpoint config",
     )
     _assert(
-        "if config.action_mask_cli_override is None:" in train_mixed_source,
-        "train_mixed.py resume path must let explicit CLI action-mask overrides win",
+        "action_mask_cli_override" not in train_mixed_source,
+        "train_mixed.py should not carry action-mask override compatibility state",
+    )
+    _assert(
+        "--enable_action_mask" not in train_mixed_source
+        and "--disable_action_mask" not in train_mixed_source,
+        "train_mixed.py PPO actor should be unmasked by construction",
     )
     for script_name in ("visualize_mixed.py", "inference/inference_single_map.py"):
         source = (repo_root / script_name).read_text()
@@ -341,15 +346,11 @@ def test_model_policy() -> None:
             "loaded_max": 100,
         }
     )
-    legacy_obs_dict = dict(obs_dict)
-    legacy_obs_dict.pop("action_mask")
-    legacy_obs_dict.pop("edge_features")
-    legacy_model_obs = obs_to_model_input(legacy_obs_dict, prev_actions, legacy_cfg)
+    legacy_model_obs = obs_to_model_input(obs_dict, prev_actions, legacy_cfg)
     _assert(len(legacy_model_obs) == 25, f"expected 25 model obs entries, got {len(legacy_model_obs)}")
-    _assert(legacy_model_obs[22].shape == (batch_size, 8), "legacy action_mask fallback shape differs")
-    _assert(np.all(np.asarray(legacy_model_obs[22])), "legacy no-mask path must use an all-true mask")
-    _assert(legacy_model_obs[23].shape == (batch_size, 0), "legacy no-mask path must not add edge features")
-    _assert(legacy_model_obs[24].shape == (batch_size, 0), "legacy no-mask path must not add progress")
+    _assert(legacy_model_obs[22].shape == (batch_size, 8), "action_mask layout shape differs")
+    _assert(legacy_model_obs[23].shape == (batch_size, 0), "no-edge path must not add edge features")
+    _assert(legacy_model_obs[24].shape == (batch_size, 0), "no-edge path must not add progress")
 
     legacy_model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=5,
@@ -369,7 +370,6 @@ def test_model_policy() -> None:
             "num_prev_actions": 5,
             "clip_action_maps": True,
             "loaded_max": 100,
-            "use_action_mask": True,
             "edge_features_dim": 10,
         }
     )
@@ -408,23 +408,14 @@ def test_model_policy() -> None:
         action_type=TrackedAction,
     )
     params = model.init(jax.random.PRNGKey(0), model_obs)
-    value, pi = policy(model.apply, params, model_obs, use_action_mask=True)
+    value, pi = policy(model.apply, params, model_obs)
     logits = np.asarray(pi.logits_parameter())
-    _, unmasked_pi = policy(model.apply, params, model_obs, use_action_mask=False)
-    unmasked_logits = np.asarray(unmasked_pi.logits_parameter())
 
     _assert(np.asarray(value).shape == (batch_size, 1), f"unexpected value shape {np.asarray(value).shape}")
     _assert(logits.shape == (batch_size, 8), f"unexpected policy logits shape {logits.shape}")
-    _assert(logits[0, 1] < -1e8, "policy did not mask invalid action 1")
-    _assert(logits[0, 7] < -1e8, "policy leaked unavailable DO_NOTHING")
-    _assert(logits[1, 7] > -1e8, "policy masked available DO_NOTHING")
-    _assert(np.all(logits[1, :7] < -1e8), "policy leaked unavailable actions")
-    _assert(
-        np.all(unmasked_logits > -1e8),
-        "policy use_action_mask=False still masked logits",
-    )
+    _assert(np.all(logits > -1e8), "PPO policy unexpectedly masked actor logits")
 
-    print("PASS model-policy: no-mask legacy input and explicit masked edge-feature input both work")
+    print("PASS model-policy: fixed-layout model input and unmasked PPO policy work")
 
 
 def test_reward_logging_accounting() -> None:
@@ -505,15 +496,18 @@ def test_reward_logging_accounting() -> None:
             max_reward=jnp.asarray(5.0),
             reward=jnp.asarray(8.0),
             length=jnp.asarray(2),
-            successes=jnp.asarray(1),
-            success_steps=jnp.asarray(2),
-            return_sum=jnp.asarray(6.0),
-            return_sq_sum=jnp.asarray(20.0),
+            successes=jnp.asarray(3),
+            success_steps=jnp.asarray(6),
+            first_successes=jnp.asarray(1),
+            first_failures=jnp.asarray(1),
+            completed_once=jnp.array([True, True]),
+            return_sum=jnp.asarray(12.0),
+            return_sq_sum=jnp.asarray(40.0),
             return_min=jnp.asarray(2.0),
             return_max=jnp.asarray(4.0),
-            return_count=jnp.asarray(2),
+            return_count=jnp.asarray(4),
             success_return_sum=jnp.asarray(4.0),
-            success_return_count=jnp.asarray(1),
+            success_return_count=jnp.asarray(3),
             failure_return_sum=jnp.asarray(2.0),
             failure_return_count=jnp.asarray(1),
             action_counts=jnp.array([1, 0, 0, 0, 0, 0, 1, 2]),
@@ -522,7 +516,23 @@ def test_reward_logging_accounting() -> None:
     )
     _assert(
         np.isclose(np.asarray(eval_metrics["eval/success_rate"]), 0.5),
-        "eval success rate differs",
+        "eval first-episode success rate differs",
+    )
+    _assert(
+        np.isclose(np.asarray(eval_metrics["eval/timeout_rate"]), 0.5),
+        "eval first-episode timeout rate differs",
+    )
+    _assert(
+        np.isclose(np.asarray(eval_metrics["eval/episode_success_rate"]), 0.75),
+        "eval episode success rate differs",
+    )
+    _assert(
+        np.isclose(np.asarray(eval_metrics["eval/successes_per_env"]), 1.5),
+        "eval successes-per-env diagnostic differs",
+    )
+    _assert(
+        np.isclose(np.asarray(eval_metrics["eval/terminations_per_env"]), 2.0),
+        "eval terminations-per-env diagnostic differs",
     )
     _assert(
         np.isclose(np.asarray(eval_metrics["eval/return_mean"]), 3.0),
@@ -562,7 +572,6 @@ def test_model_edge_no_mask() -> None:
             "num_prev_actions": 5,
             "clip_action_maps": True,
             "loaded_max": 100,
-            "use_action_mask": False,
             "edge_features_dim": 10,
         }
     )
@@ -579,7 +588,7 @@ def test_model_edge_no_mask() -> None:
         action_type=TrackedAction,
     )
     params = model.init(jax.random.PRNGKey(0), model_obs)
-    _, pi = policy(model.apply, params, model_obs, use_action_mask=False)
+    _, pi = policy(model.apply, params, model_obs)
     logits = np.asarray(pi.logits_parameter())
     _assert(np.all(logits > -1e8), "unmasked policy logits were masked")
     print("PASS model-edge-no-mask: edge_features_dim is independent from action masking")
@@ -604,7 +613,6 @@ def test_model_critic_affordance_shapes() -> None:
             "num_prev_actions": 5,
             "clip_action_maps": True,
             "loaded_max": 100,
-            "use_action_mask": False,
             "edge_features_dim": 10,
             "use_critic_affordances": True,
             "include_episode_progress": True,
@@ -642,8 +650,6 @@ def test_model_critic_affordance_shapes() -> None:
 
 
 def test_checkpoint_config_restore() -> None:
-    import jax.numpy as jnp
-
     from utils.models import restore_checkpoint_model_config
 
     class Config:
@@ -666,35 +672,18 @@ def test_checkpoint_config_restore() -> None:
     _assert(restored.include_episode_progress, "saved episode-progress flag was not preserved")
     _assert(restored.critic_affordance_dim == 11, "saved critic-affordance width was not preserved")
 
-    legacy_restored = Config()
-    legacy_model = {
-        "params": {
-            "mlp_v": {
-                "layers_0": {
-                    "kernel": jnp.zeros((554, 1), dtype=jnp.float32),
-                },
-            },
-        },
-    }
-    restore_checkpoint_model_config(
-        legacy_restored,
-        legacy_model,
-        source_config=Config(),
-    )
-    _assert(legacy_restored.edge_features_dim == 10, "legacy edge feature width was not inferred")
-    _assert(not legacy_restored.use_critic_affordances, "legacy checkpoint should not enable critic affordances")
-    _assert(not legacy_restored.include_episode_progress, "legacy checkpoint should not enable progress")
-    _assert(legacy_restored.critic_affordance_dim == 0, "legacy checkpoint should have no critic affordance width")
+    try:
+        restore_checkpoint_model_config(
+            Config(),
+            {"params": {}},
+            source_config=Config(),
+        )
+    except KeyError as exc:
+        _assert("edge_features_dim" in str(exc), "missing config field error should name the field")
+    else:
+        raise AssertionError("legacy checkpoint config should fail instead of inferring model shape")
 
-    active_resume_config = Config()
-    active_resume_config.edge_features_dim = 0
-    restore_checkpoint_model_config(
-        active_resume_config,
-        legacy_model,
-        source_config={},
-    )
-    _assert(active_resume_config.edge_features_dim == 10, "no-train_config resume should infer legacy edge width")
-    print("PASS checkpoint-config-restore: saved R1/R2 widths survive reload")
+    print("PASS checkpoint-config-restore: saved model-shape fields are required")
 
 
 def test_timeout_bootstrap_value_uses_final_observation() -> None:
@@ -707,7 +696,6 @@ def test_timeout_bootstrap_value_uses_final_observation() -> None:
         clip_action_maps = False
         edge_features_dim = 10
         include_episode_progress = True
-        use_action_mask = False
 
     class FakeTrainState:
         params = {}
