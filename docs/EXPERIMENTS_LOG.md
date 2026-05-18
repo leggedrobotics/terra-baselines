@@ -1,5 +1,77 @@
 # Experiment Log
 
+## 2026-05-19 Deep ResNet Four-GPU Warm-Start Launch
+
+Goal: send two full Terra PPO jobs to Euler `gpuhe.120h`, each on four
+RTX 3090/4090 GPUs, to test whether deeper delayed-ResNet students benefit
+from imitation warmup from the trained ResMap64 teacher.
+
+Changes:
+
+- Added `model_size=medium_deep` and `model_size=large_deep` in
+  `utils/models.py`.
+- Added CLI/default map-feature handling for the new presets in
+  `train_mixed.py`.
+- Added `scripts/euler/terra_train_deep_resnet_4gpu_120h.sbatch` for one
+  `RUN_KIND` per submission: `medium_deep` or `large_deep`.
+- The launcher uses `gpuhe.120h`, one node, four GPUs, restricted to
+  `eu-g4-[001-032]`/`eu-g6-[001-080]`, and hard-fails unless the allocation is
+  exactly four RTX 3090/4090 GPUs.
+- Both runs use the trained ResMap64 teacher checkpoint, `100` imitation
+  updates, then full PPO training for `50B` timesteps with W&B online logging.
+
+Measured local model sizes:
+
+- Base teacher: `537,689` parameters.
+- Existing medium: `951,081` parameters.
+- Existing large: `3,157,145` parameters.
+- New medium-deep: `2,135,385` parameters.
+- New large-deep: `9,958,521` parameters.
+
+Validation:
+
+- `python3 -m py_compile utils/models.py train_mixed.py`
+- `bash -n scripts/euler/terra_train_deep_resnet_4gpu_120h.sbatch`
+- Full CPU validation passed:
+  `validate_edge_mask_changes.py --case all --jax-platforms cpu --dataset-path /home/lorenzo/moleworks/terra_data/train --dataset-size 1`
+- Local RTX 4090 preflight passed:
+  `check_jax_runtime.py --min-devices 1`
+- Local RTX 4090 medium-deep smoke passed:
+  - `64` envs, `8` steps, one imitation update, one PPO update.
+  - Student size `2,135,385` parameters.
+  - Imitation update: loss `2.7074`, KL `1.8922`, value `3.2605`,
+    entropy `2.0794`.
+  - PPO update completed in `83.56s`, `6.15` steps/s.
+- Local RTX 4090 large-deep smoke:
+  - First attempt without explicit XLA autotune level initialized the
+    `9,958,521`-parameter model and loaded the teacher but failed in cuDNN
+    during imitation with `CUDNN_STATUS_INTERNAL_ERROR`.
+  - Retried with `XLA_FLAGS=--xla_gpu_autotune_level=0`, matching the Euler
+    launcher; the smoke passed one imitation update and one PPO update.
+  - Imitation update: loss `2.6927`, KL `1.8804`, value `3.2492`,
+    entropy `2.0787`.
+  - PPO update completed in `47.86s`, `10.75` steps/s.
+- Two-agent review:
+  - Model/config reviewer found no blocker for the intended dataclass
+    checkpoint path and confirmed CLI/model construction. It noted a
+    dict-style checkpoint restore weakness that is outside the current launch
+    path and was not expanded for this run.
+  - Launcher reviewer found no blocker and recommended making `--nodes=1`
+    explicit; applied before submission.
+- Superseded Euler jobs cancelled:
+  - `66536725` `terra-mask-4gpu-full`, `CANCELLED by 542598` after
+    `3-22:58:56`.
+  - `66756388` `terra-resmap64-mb32`, `CANCELLED by 542598` after
+    `2-11:38:11`.
+- Remote Euler checks after sync:
+  - `python3 -m py_compile utils/models.py train_mixed.py scripts/validation/validate_edge_mask_changes.py`
+  - `bash -n scripts/euler/terra_train_deep_resnet_4gpu_120h.sbatch`
+  - `RUN_KIND=medium_deep sbatch --test-only ...` passed.
+  - `RUN_KIND=large_deep sbatch --test-only ...` passed.
+- Submitted on `2026-05-19 00:24 CEST`:
+  - `67032208` `terra-meddeep-4gpu`, pending in `gpuhe.120h`.
+  - `67032210` `terra-lgdeep-4gpu`, pending in `gpuhe.120h`.
+
 ## 2026-05-18 Larger ResNet Distillation Setup
 
 Goal: launch larger delayed-ResNet policies and test whether teacher imitation

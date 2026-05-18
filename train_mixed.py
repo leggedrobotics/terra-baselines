@@ -452,7 +452,11 @@ class MixedAgentTrainConfig:
         if self.map_encoder == "atari":
             self.map_feature_dim = 32
         elif self.map_encoder == "resnet_delayed" and self.map_feature_dim == 32:
-            if self.model_size == "large":
+            if self.model_size == "large_deep":
+                self.map_feature_dim = 512
+            elif self.model_size == "medium_deep":
+                self.map_feature_dim = 224
+            elif self.model_size == "large":
                 self.map_feature_dim = 256
             elif self.model_size == "medium":
                 self.map_feature_dim = 192
@@ -1719,8 +1723,14 @@ if __name__ == "__main__":
         help="Total environment timesteps across all devices"
     )
     parser.add_argument(
-        "--model_size", type=str, default="base", choices=["base", "medium", "large"],
-        help="Model capacity preset. 'medium' and 'large' progressively widen CNN and policy/value heads."
+        "--model_size",
+        type=str,
+        default="base",
+        choices=["base", "medium", "large", "medium_deep", "large_deep"],
+        help=(
+            "Model capacity preset. 'medium_deep' and 'large_deep' add deeper "
+            "delayed-ResNet spatial encoders for larger warm-start experiments."
+        ),
     )
     parser.add_argument(
         "--num_steps", type=int, default=32,

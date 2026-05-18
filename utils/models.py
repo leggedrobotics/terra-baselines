@@ -57,9 +57,10 @@ def restore_checkpoint_model_config(config, model_params, source_config=None):
 
 
 def _model_size_kwargs(model_size: str) -> dict:
-    if model_size not in ("base", "medium", "large"):
+    if model_size not in ("base", "medium", "large", "medium_deep", "large_deep"):
         raise ValueError(
-            f"Unsupported model_size='{model_size}'. Expected 'base', 'medium', or 'large'."
+            f"Unsupported model_size='{model_size}'. Expected 'base', 'medium', "
+            "'large', 'medium_deep', or 'large_deep'."
         )
 
     if model_size == "medium":
@@ -92,6 +93,38 @@ def _model_size_kwargs(model_size: str) -> dict:
             "local_map_hidden_dim_layers_mlp": (512, 128),
             "actor_trunk_layers": (512, 256),
             "critic_trunk_layers": (512, 256),
+        }
+
+    if model_size == "medium_deep":
+        return {
+            "cnn_channels": (24, 48, 48),
+            "cnn_dense_layers": (192, 48),
+            "resnet_channels": (24, 48, 80, 112),
+            "resnet_blocks_per_stage": 3,
+            "resnet_pool_dense_dim": 224,
+            "hidden_dim_pi": (192, 64),
+            "hidden_dim_v": (192, 64, 1),
+            "intermediate_mlp_layers": (384, 192),
+            "intermediate_mlp_dim": 192,
+            "local_map_hidden_dim_layers_mlp": (384, 96),
+            "actor_trunk_layers": (384, 192),
+            "critic_trunk_layers": (384, 192),
+        }
+
+    if model_size == "large_deep":
+        return {
+            "cnn_channels": (48, 96, 96),
+            "cnn_dense_layers": (512, 128),
+            "resnet_channels": (40, 80, 144, 208),
+            "resnet_blocks_per_stage": 5,
+            "resnet_pool_dense_dim": 512,
+            "hidden_dim_pi": (384, 128),
+            "hidden_dim_v": (384, 128, 1),
+            "intermediate_mlp_layers": (768, 384),
+            "intermediate_mlp_dim": 384,
+            "local_map_hidden_dim_layers_mlp": (768, 192),
+            "actor_trunk_layers": (768, 384),
+            "critic_trunk_layers": (768, 384),
         }
 
     return {}

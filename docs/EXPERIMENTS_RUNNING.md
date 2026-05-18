@@ -1,5 +1,54 @@
 # Running Experiments
 
+## 2026-05-19 Deep ResNet Four-GPU Warm-Start PPO
+
+Goal: launch two full 120h-queue Terra PPO runs to test deeper delayed-ResNet
+students warm-started from the trained ResMap64 teacher.
+
+- Script: `scripts/euler/terra_train_deep_resnet_4gpu_120h.sbatch`
+- Queue shape: `gpuhe.120h`, `5-00:00:00`, one node, `4` GPUs, restricted to
+  `eu-g4-[001-032]` and `eu-g6-[001-080]`.
+- Runtime guard: hard-fails unless exactly four `NVIDIA GeForce RTX 3090` or
+  `NVIDIA GeForce RTX 4090` GPUs are allocated before JAX/W&B training.
+- Teacher checkpoint:
+  `terra-solo-resmap64-r1r2-terminalfix-mb32-unmasked-4gpu-50B-20260516-euler-4gpu-2026-05-16-12-18-34.pkl`.
+- Shared PPO recipe: unmasked actor, delayed ResNet global-map encoder,
+  derived terrain channels, separate actor/critic trunks, critic-only
+  edge/progress affordances, timeout bootstrap and initial timeout-phase
+  staggering from the current branch.
+- Medium-deep run:
+  - `RUN_KIND=medium_deep`
+  - `model_size=medium_deep`, `map_feature_dim=224`
+  - measured local size: `2,135,385` parameters
+  - `num_minibatches=64`, `imitation_updates=100`
+- Large-deep run:
+  - `RUN_KIND=large_deep`
+  - `model_size=large_deep`, `map_feature_dim=512`
+  - measured local size: `9,958,521` parameters
+  - `num_minibatches=128`, `imitation_updates=100`
+  - exports `XLA_FLAGS=--xla_gpu_autotune_level=0`
+- Local validation on `2026-05-19 00:17 CEST`:
+  - `python3 -m py_compile utils/models.py train_mixed.py`
+  - `bash -n scripts/euler/terra_train_deep_resnet_4gpu_120h.sbatch`
+  - full CPU validation:
+    `validate_edge_mask_changes.py --case all --jax-platforms cpu --dataset-path /home/lorenzo/moleworks/terra_data/train --dataset-size 1`
+  - local RTX 4090 runtime preflight passed with one GPU.
+  - Medium-deep local smoke passed: one imitation update plus one PPO update,
+    `64` envs, `8` steps, `2,135,385` parameters.
+  - Large-deep local smoke passed with `--xla_gpu_autotune_level=0`: one
+    imitation update plus one PPO update, `64` envs, `8` steps,
+    `9,958,521` parameters. A prior non-autotune large smoke initialized and
+    loaded the teacher but failed in cuDNN during imitation, so the Euler
+    launcher keeps autotune level `0` for this variant.
+- Superseded jobs cancelled before this launch:
+  - `66536725` `terra-mask-4gpu-full`, cancelled after `3-22:58:56`.
+  - `66756388` `terra-resmap64-mb32`, cancelled after `2-11:38:11`.
+- Submission status on `2026-05-19 00:24 CEST`:
+  - `67032208` `terra-meddeep-4gpu`, `RUN_KIND=medium_deep`, pending in
+    `gpuhe.120h` with reason `Priority`.
+  - `67032210` `terra-lgdeep-4gpu`, `RUN_KIND=large_deep`, pending in
+    `gpuhe.120h` with reason `Priority`.
+
 ## 2026-05-18 Larger ResNet Distillation Jobs
 
 Current single-GPU supervised warmup calibration from paired
