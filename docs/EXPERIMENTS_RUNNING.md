@@ -50,6 +50,18 @@ students warm-started from the trained ResMap64 teacher.
   - `67032210` `terra-lgdeep-4gpu`, `RUN_KIND=large_deep`, submitted at
     `2026-05-19T00:20:00`, pending in `gpuhe.120h` with reason `Priority`,
     `StartTime=Unknown`.
+- Queue diagnosis on `2026-05-19 00:48 CEST`:
+  - Both jobs are still pending with empty `AllocTRES` and no Slurm output
+    files, so runtime verification has not started.
+  - Detailed Slurm request remains the intended one-node/four-GPU shape:
+    `NumNodes=1-1`, `ReqTRES=cpu=16,mem=128G,node=1,gres/gpu=4`,
+    `TresPerJob=gres/gpu:4`.
+  - Candidate nodes are resource-limited:
+    `eu-g4-014` has `7/8` GPUs allocated and `eu-g4-015` has `6/8` GPUs
+    allocated.
+  - Fresh `sbatch --test-only` with the current launcher estimates
+    `2026-05-20T19:07` on `eu-g6-054`, so cancelling/relaunching is not a
+    clear improvement.
 
 ## 2026-05-18 Larger ResNet Distillation Jobs
 

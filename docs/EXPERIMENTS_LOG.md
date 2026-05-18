@@ -73,6 +73,14 @@ Validation:
     pending in `gpuhe.120h` with reason `Priority`.
   - `67032210` `terra-lgdeep-4gpu`, submitted at `00:20:00 CEST`,
     pending in `gpuhe.120h` with reason `Priority`.
+- Queue diagnosis on `2026-05-19 00:48 CEST`:
+  - Both jobs remain pending with empty `AllocTRES`; no runtime logs exist.
+  - Candidate scheduler nodes are short on free GPUs:
+    `eu-g4-014` has `7/8` GPUs allocated and `eu-g4-015` has `6/8` GPUs
+    allocated.
+  - Fresh `sbatch --test-only` with the current launcher estimates a start on
+    `2026-05-20T19:07` on `eu-g6-054`, so there is no clear queue benefit to
+    cancelling and relaunching.
 
 ## 2026-05-18 Larger ResNet Distillation Setup
 
