@@ -182,7 +182,18 @@ def ppo_update_networks(
         print(f"ppo_update_networks {transitions_actions_reshaped.shape=}")
 
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
-        obs = obs_to_model_input(transitions_obs_reshaped, transitions_actions_reshaped, config)
+        transitions_prev_macro = getattr(transitions, "prev_macro", None)
+        if transitions_prev_macro is not None:
+            transitions_prev_macro = jax.tree_map(
+                lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
+                transitions_prev_macro,
+            )
+        obs = obs_to_model_input(
+            transitions_obs_reshaped,
+            transitions_actions_reshaped,
+            config,
+            transitions_prev_macro,
+        )
         value, dist = policy(
             train_state.apply_fn,
             params,

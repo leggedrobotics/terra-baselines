@@ -14,7 +14,7 @@ from utils.models import load_neural_network
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
-from utils.utils_ppo import action_type_from_policy_action, obs_to_model_input, policy, wrap_action
+from utils.utils_ppo import action_type_from_policy_action, obs_to_model_input, policy, update_prev_macro, wrap_action
 from terra.state import State
 import matplotlib.animation as animation
 from train import TrainConfig  # needed for unpickling checkpoints
@@ -35,6 +35,7 @@ def rollout_episode(
         (rl_config.num_test_rollouts, rl_config.num_prev_actions),
         dtype=jnp.int32
     )
+    prev_macro = jnp.zeros((rl_config.num_test_rollouts, 4), dtype=jnp.float32)
 
     t_counter = 0
     reward_seq = []
@@ -48,18 +49,27 @@ def rollout_episode(
     while True:
         rng, rng_act, rng_step = jax.random.split(rng, 3)
         if model is not None:
-            obs = obs_to_model_input(timestep.observation, prev_actions, rl_config)
+            obs = obs_to_model_input(timestep.observation, prev_actions, rl_config, prev_macro)
             v, pi = policy(model.apply, model_params, obs)
             action = pi.sample(seed=rng_act)
             action_type_sample = action_type_from_policy_action(action)
             prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
             prev_actions = prev_actions.at[:, 0].set(action_type_sample)
+            prev_macro = update_prev_macro(
+                prev_macro,
+                action,
+                timestep.env_cfg.max_steps_in_episode,
+                env.batch_cfg.maps_dims.maps_edge_length,
+            )
         else:
             raise RuntimeError("Model is None!")
         rng_step = jax.random.split(rng_step, rl_config.num_test_rollouts)
         timestep = env.step(
             timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
         )
+        reset_history = timestep.done[:, None]
+        prev_actions = jnp.where(reset_history, jnp.zeros_like(prev_actions), prev_actions)
+        prev_macro = jnp.where(reset_history, jnp.zeros_like(prev_macro), prev_macro)
         
         t_counter += 1
         

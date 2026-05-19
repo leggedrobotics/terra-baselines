@@ -7,6 +7,7 @@ MOVE_TO_POSE_ACTION = 8
 SET_CABIN_ANGLE_ACTION = 9
 SET_BASE_ANGLE_ACTION = 10
 ACTION_PACK_SIZE = 4
+PREV_MACRO_FEATURES = 4
 DISABLED_MACRO_POLICY_ACTIONS = jnp.array([0, 1, 2, 3, 4, 5], dtype=jnp.int32)
 
 
@@ -93,10 +94,15 @@ def clip_action_map_in_obs(obs):
     return obs
 
 
-def obs_to_model_input(obs, prev_actions, train_cfg):
+def obs_to_model_input(obs, prev_actions, train_cfg, prev_macro=None):
     # Feature engineering
     if train_cfg.clip_action_maps:
         obs = clip_action_map_in_obs(obs)
+    if prev_macro is None:
+        prev_macro = jnp.zeros(
+            (*prev_actions.shape[:-1], PREV_MACRO_FEATURES),
+            dtype=jnp.float32,
+        )
 
     # Create input list with indexed comments for easy reference
     # Updated to match the new observation structure from env.py
@@ -124,6 +130,7 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs["dumpability_mask"],         # [19] - Dumpability mask
         obs["interaction_mask"],         # [20] - Interaction map
         prev_actions,                    # [21] - Previous actions history
+        prev_macro.astype(jnp.float32),  # [22] - Last MOVE_TO_POSE target memory
     ]
     return obs
 
@@ -169,9 +176,10 @@ def select_action_ppo(
     prev_actions: jnp.ndarray,
     rng: jax.random.PRNGKey,
     config,
+    prev_macro=None,
 ):
     # Prepare policy input from Terra State
-    obs = obs_to_model_input(obs, prev_actions, config)
+    obs = obs_to_model_input(obs, prev_actions, config, prev_macro)
 
     value, pi = policy(
         train_state.apply_fn,
@@ -206,3 +214,27 @@ def action_type_from_policy_action(action):
     if action.ndim > 0 and action.shape[-1] in (3, ACTION_PACK_SIZE):
         return action[..., 0]
     return action
+
+
+def update_prev_macro(prev_macro, action, max_steps_in_episode, map_size: int):
+    action = MacroMovePolicyDistribution._ensure_action_pack(action)
+    action_type = action[..., 0]
+    is_move_to_pose = action_type == MOVE_TO_POSE_ACTION
+    move_xy = action[..., 1]
+    row = move_xy // map_size
+    col = move_xy % map_size
+    denom = jnp.maximum(jnp.float32(map_size - 1), jnp.float32(1.0))
+    row_norm = 2.0 * row.astype(jnp.float32) / denom - 1.0
+    col_norm = 2.0 * col.astype(jnp.float32) / denom - 1.0
+    max_steps = jnp.asarray(max_steps_in_episode, dtype=jnp.float32)
+    step_inc = 1.0 / jnp.maximum(max_steps, 1.0)
+    steps_since = jnp.minimum(prev_macro[..., 3] + step_inc, 1.0)
+    return jnp.stack(
+        [
+            jnp.where(is_move_to_pose, row_norm, prev_macro[..., 0]),
+            jnp.where(is_move_to_pose, col_norm, prev_macro[..., 1]),
+            jnp.where(is_move_to_pose, jnp.float32(1.0), prev_macro[..., 2]),
+            jnp.where(is_move_to_pose, jnp.float32(0.0), steps_since),
+        ],
+        axis=-1,
+    )

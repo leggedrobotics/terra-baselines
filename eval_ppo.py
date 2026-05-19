@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 from flax.training.train_state import TrainState
 from typing import NamedTuple
-from utils.utils_ppo import action_type_from_policy_action, select_action_ppo, wrap_action
+from utils.utils_ppo import action_type_from_policy_action, select_action_ppo, update_prev_macro, wrap_action
 
 
 # for evaluation (evaluate for N consecutive episodes, sum rewards)
@@ -49,12 +49,12 @@ def _rollout_impl(
         return jnp.less(stats.length, num_rollouts + 1)
 
     def _body_fn(carry):
-        rng, stats, timestep, prev_actions = carry
+        rng, stats, timestep, prev_actions, prev_macro = carry
 
         rng, _rng_step, _rng_model = jax.random.split(rng, 3)
 
         action, _, _, _ = select_action_ppo(
-            train_state, timestep.observation, prev_actions, _rng_model, config
+            train_state, timestep.observation, prev_actions, _rng_model, config, prev_macro
         )
         _rng_step = jax.random.split(_rng_step, num_envs)
         action_env = wrap_action(action, env.batch_cfg.action_type)
@@ -62,6 +62,15 @@ def _rollout_impl(
 
         prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
         prev_actions = prev_actions.at[..., 0].set(action_type_from_policy_action(action))
+        prev_macro = update_prev_macro(
+            prev_macro,
+            action,
+            timestep.env_cfg.max_steps_in_episode,
+            env.batch_cfg.maps_dims.maps_edge_length,
+        )
+        reset_history = timestep.done[..., None]
+        prev_actions = jnp.where(reset_history, jnp.zeros_like(prev_actions), prev_actions)
+        prev_macro = jnp.where(reset_history, jnp.zeros_like(prev_macro), prev_macro)
 
         terminations_update = timestep.done.sum()
         positive_termination_update = timestep.info["task_done"].sum()
@@ -91,7 +100,7 @@ def _rollout_impl(
             action_9=stats.action_9 + (action_type == 9).sum(),
             action_10=stats.action_10 + (action_type == 10).sum(),
         )
-        carry = (rng, stats, timestep, prev_actions)
+        carry = (rng, stats, timestep, prev_actions, prev_macro)
         return carry
 
     rng, _rng_reset = jax.random.split(rng)
@@ -127,7 +136,8 @@ def _rollout_impl(
             pass
     
     prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
-    init_carry = (rng, RolloutStats(), timestep, prev_actions)
+    prev_macro = jnp.zeros((num_envs, 4), dtype=jnp.float32)
+    init_carry = (rng, RolloutStats(), timestep, prev_actions, prev_macro)
 
     # final_carry = jax.lax.while_loop(_cond_fn, _body_fn, init_val=init_carry)
     final_carry = jax.lax.fori_loop(

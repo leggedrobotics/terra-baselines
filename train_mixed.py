@@ -111,7 +111,7 @@ from functools import partial
 from flax.jax_utils import replicate, unreplicate
 from flax import struct
 import utils.helpers as helpers
-from utils.utils_ppo import action_type_from_policy_action, select_action_ppo, wrap_action, obs_to_model_input, policy
+from utils.utils_ppo import action_type_from_policy_action, select_action_ppo, update_prev_macro, wrap_action, obs_to_model_input, policy
 import json
 import os
 import shutil
@@ -142,6 +142,7 @@ class Transition(struct.PyTreeNode):
     obs: jax.Array
     # for rnn policy
     prev_actions: jax.Array
+    prev_macro: jax.Array
     prev_reward: jax.Array
 
 
@@ -207,6 +208,7 @@ def _print_macro_policy_debug(config, env, network_params):
         for path, shape in matches:
             print(f"      {path}: {shape}", flush=True)
     print("🔎 End macro movement policy debug\n", flush=True)
+
 
 def safe_jax_to_python(value):
     """Safely convert JAX arrays to Python scalars"""
@@ -874,6 +876,44 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     return rng, env, env_params, train_state
 
 
+def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
+    def _tag_value(value) -> str:
+        return str(value).replace(" ", "_").replace("/", "-")
+
+    env_defaults = EnvConfig()
+    agent_type_names = {0: "excavator", 1: "truck", 2: "skidsteer"}
+    action_type_names = {0: "tracked", 1: "wheeled"}
+    agent_types = tuple(config.agent_types_override or env_defaults.agent_types)
+    action_types = tuple(config.action_types_override or ((0,) * len(agent_types)))
+
+    tags = [
+        f"config:{_tag_value(config.config_name or 'manual')}",
+        f"actions:{'-'.join(action_type_names.get(int(t), str(t)) for t in action_types)}",
+        "edge-align:on" if env_defaults.enforce_foundation_border_alignment else "edge-align:off",
+    ]
+
+    slurm_job_id = os.getenv("SLURM_JOB_ID") or os.getenv("SLURM_JOBID")
+    if slurm_job_id:
+        tags.append(f"job:{_tag_value(slurm_job_id)}")
+
+    slurm_gpu_count = os.getenv("SLURM_GPUS_ON_NODE") or os.getenv("SLURM_GPUS")
+    if slurm_gpu_count:
+        tags.append(f"gpus:{_tag_value(slurm_gpu_count)}")
+    else:
+        tags.append(f"gpus:{_tag_value(config.num_devices)}")
+
+    if config.curriculum_levels_override:
+        for level in config.curriculum_levels_override:
+            tags.append(f"map:{_tag_value(level['maps_path'])}")
+    else:
+        tags.append("map:default")
+
+    if config.single_map_path is not None:
+        tags.append(f"single-map:{_tag_value(Path(config.single_map_path).stem)}")
+
+    return list(dict.fromkeys(tags))
+
+
 def train_mixed_agents(config: MixedAgentTrainConfig):
     """Main training function for mixed agents - with full feature parity to original train.py"""
     
@@ -883,7 +923,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         name=config.name,
         config=asdict(config),
         save_code=True,
-        tags=["mixed-agents", "tracked-excavator", "skid-steer", "unified-network"]
+        tags=_wandb_tags_for_config(config),
     )
     
     # Log source files - same as original train.py
@@ -1024,6 +1064,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             prev_actions = jnp.zeros(
                 (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
             )
+            prev_macro = jnp.zeros(
+                (config.num_devices, config.num_envs_per_device, 4), dtype=jnp.float32
+            )
             prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
 
             # TRAIN LOOP
@@ -1031,12 +1074,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             def _update_step(runner_state, ent_coef_current, update_idx):
                 # COLLECT TRAJECTORIES
                 def _env_step(runner_state, step_idx):
-                    rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
+                    rng, train_state, prev_timestep, prev_actions, prev_macro, prev_reward = runner_state
 
                     # SELECT ACTION
                     rng, _rng_model, _rng_env = jax.random.split(rng, 3)
                     action, log_prob, value, _ = select_action_ppo(
-                        train_state, prev_timestep.observation, prev_actions, _rng_model, config
+                        train_state,
+                        prev_timestep.observation,
+                        prev_actions,
+                        _rng_model,
+                        config,
+                        prev_macro,
                     )
 
                     # STEP ENV
@@ -1069,14 +1117,24 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         log_prob=log_prob,
                         obs=prev_timestep.observation,
                         prev_actions=prev_actions,
+                        prev_macro=prev_macro,
                         prev_reward=prev_reward,
                     )
 
                     # UPDATE PREVIOUS ACTIONS
                     prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
                     prev_actions = prev_actions.at[..., 0].set(action_type_from_policy_action(action))
+                    prev_macro = update_prev_macro(
+                        prev_macro,
+                        action,
+                        prev_timestep.env_cfg.max_steps_in_episode,
+                        env.batch_cfg.maps_dims.maps_edge_length,
+                    )
+                    reset_history = timestep.done[..., None]
+                    prev_actions = jnp.where(reset_history, jnp.zeros_like(prev_actions), prev_actions)
+                    prev_macro = jnp.where(reset_history, jnp.zeros_like(prev_macro), prev_macro)
 
-                    runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
+                    runner_state = (rng, train_state, timestep, prev_actions, prev_macro, timestep.reward)
                     return runner_state, transition
 
                 # transitions: [seq_len, batch_size, ...]
@@ -1119,10 +1177,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 transitions = transitions.replace(reward=augmented_reward)
 
                 # CALCULATE ADVANTAGE
-                rng, train_state, timestep, prev_actions, prev_reward = runner_state
+                rng, train_state, timestep, prev_actions, prev_macro, prev_reward = runner_state
                 rng, _rng = jax.random.split(rng)
                 _, _, last_val, _ = select_action_ppo(
-                    train_state, timestep.observation, prev_actions, _rng, config
+                    train_state, timestep.observation, prev_actions, _rng, config, prev_macro
                 )
                 advantages, targets = calculate_gae(
                     transitions, last_val, config.gamma, config.gae_lambda
@@ -1249,14 +1307,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 # EVALUATE AGENT
                 rng, _rng = jax.random.split(rng)
 
-                runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
+                runner_state = (rng, train_state, timestep, prev_actions, prev_macro, prev_reward)
                 return runner_state, loss_info
 
             # Setup runner state for multiple devices
             rng, rng_rollout = jax.random.split(rng)
             rng = jax.random.split(rng, num=config.num_devices)
             train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
-            runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
+            runner_state = (rng, train_state, timestep, prev_actions, prev_macro, prev_reward)
             
             # Entropy scheduler: cosine decay using config variables
             ent_start = float(config.ent_schedule_start)

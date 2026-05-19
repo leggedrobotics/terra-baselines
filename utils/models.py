@@ -107,6 +107,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((init_batch_size, map_width, map_height)),
         # [21] prev_actions
         jnp.zeros((init_batch_size, config["num_prev_actions"]), dtype=jnp.int32),
+        # [22] prev_macro: row_norm, col_norm, valid, steps_since_norm
+        jnp.zeros((init_batch_size, 4), dtype=jnp.float32),
     ]
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
@@ -604,6 +606,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             ]
         x_maps = self.maps_net(map_obs)
         x_actions = self.actions_net(obs)
+        x_prev_macro = obs[22] if len(obs) >= 23 else jnp.zeros((B, 4), dtype=jnp.float32)
         
         # Force feature branches to [B, F] before concatenation.
         def to_2d(x: Array, name: str) -> Array:
@@ -615,13 +618,15 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
         x_local_active_flat = to_2d(x_local_active, "x_local_active")
         x_actions = to_2d(x_actions, "x_actions")
+        x_prev_macro = to_2d(x_prev_macro, "x_prev_macro")
         x_maps = to_2d(x_maps, "x_maps")
 
-        if not (x_agents_concat.ndim == x_actions.ndim == x_local_active_flat.ndim == x_maps.ndim == 2):
+        if not (x_agents_concat.ndim == x_actions.ndim == x_prev_macro.ndim == x_local_active_flat.ndim == x_maps.ndim == 2):
             raise ValueError(
                 f"Feature rank mismatch before concat: "
                 f"x_agents_concat={x_agents_concat.shape}, "
                 f"x_actions={x_actions.shape}, "
+                f"x_prev_macro={x_prev_macro.shape}, "
                 f"x_local_active={x_local_active_flat.shape}, "
                 f"x_maps={x_maps.shape}"
             )
@@ -630,7 +635,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         # Local maps are also included.
         # Build a single combined feature vector (all agent states + actions + active local maps)
         combined_features = jnp.concatenate(
-            (x_agents_concat, x_actions, x_local_active_flat),
+            (x_agents_concat, x_actions, x_prev_macro, x_local_active_flat),
             axis=-1,
         )
         combined_features = self.activation(combined_features)
