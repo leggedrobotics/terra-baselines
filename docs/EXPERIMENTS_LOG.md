@@ -81,6 +81,29 @@ Validation:
   - Fresh `sbatch --test-only` with the current launcher estimates a start on
     `2026-05-20T19:07` on `eu-g6-054`, so there is no clear queue benefit to
     cancelling and relaunching.
+- Runtime verification on `2026-05-19 02:53 CEST`:
+  - `67032208` `terra-meddeep-4gpu` is running on `eu-g6-018` with
+    `4 x NVIDIA GeForce RTX 4090`.
+  - `67032210` `terra-lgdeep-4gpu` is running on `eu-g6-050` with
+    `4 x NVIDIA GeForce RTX 4090`.
+  - Both jobs passed the hard GPU guard, JAX CUDA library-path check, four-GPU
+    device check, jitted cuDNN convolution backward, and NCCL `pmap`
+    all-reduce.
+  - Both W&B-disabled full-shape smokes completed before online W&B training:
+    medium-deep smoke PPO `1432.79` steps/s; large-deep smoke PPO `853.43`
+    steps/s.
+  - Medium-deep W&B run `krhvbxq4`:
+    `https://wandb.ai/aless-weber-eth/mixed-agents/runs/krhvbxq4`.
+    It finished imitation `100/100` with loss `0.3796`, KL `0.3591`,
+    value `0.0822`, entropy `0.6546`, saved `_POST_DISTILL.pkl`, and has
+    entered PPO past update `220/381469`.
+  - Large-deep W&B run `agujcxoc`:
+    `https://wandb.ai/aless-weber-eth/mixed-agents/runs/agujcxoc`.
+    It finished imitation `100/100` with loss `0.2584`, KL `0.2412`,
+    value `0.0687`, entropy `0.5292`, saved `_POST_DISTILL.pkl`, and has
+    entered PPO past update `9/381469`.
+  - The W&B `amdgpu not found` message is a system-monitoring probe artifact;
+    the CUDA/cuDNN/NCCL gates and training path executed successfully.
 
 ## 2026-05-18 Larger ResNet Distillation Setup
 

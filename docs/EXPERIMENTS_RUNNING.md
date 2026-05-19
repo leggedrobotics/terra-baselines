@@ -62,6 +62,26 @@ students warm-started from the trained ResMap64 teacher.
   - Fresh `sbatch --test-only` with the current launcher estimates
     `2026-05-20T19:07` on `eu-g6-054`, so cancelling/relaunching is not a
     clear improvement.
+- Runtime verification on `2026-05-19 02:53 CEST`:
+  - `67032208` `terra-meddeep-4gpu` is `RUNNING` on `eu-g6-018` with
+    `4 x NVIDIA GeForce RTX 4090`; W&B run `krhvbxq4`:
+    `https://wandb.ai/aless-weber-eth/mixed-agents/runs/krhvbxq4`.
+  - `67032210` `terra-lgdeep-4gpu` is `RUNNING` on `eu-g6-050` with
+    `4 x NVIDIA GeForce RTX 4090`; W&B run `agujcxoc`:
+    `https://wandb.ai/aless-weber-eth/mixed-agents/runs/agujcxoc`.
+  - Both logs show the hard GPU guard, `check_jax_runtime.py --min-devices 4`,
+    jitted cuDNN convolution backward, and NCCL `pmap` all-reduce passed.
+  - Both W&B-disabled full-shape smokes completed one imitation update and one
+    PPO update before the online runs started. Smoke PPO throughput was
+    `1432.79` steps/s for medium-deep and `853.43` steps/s for large-deep.
+  - Online medium-deep completed imitation warmup `100/100` with
+    loss `0.3796`, KL `0.3591`, value `0.0822`, entropy `0.6546`, saved
+    `_POST_DISTILL.pkl`, and advanced past PPO update `220/381469`.
+  - Online large-deep completed imitation warmup `100/100` with loss `0.2584`,
+    KL `0.2412`, value `0.0687`, entropy `0.5292`, saved
+    `_POST_DISTILL.pkl`, and advanced past PPO update `9/381469`.
+  - The W&B `amdgpu not found` message appears in both logs during system
+    monitoring startup; it did not prevent JAX CUDA execution or training.
 
 ## 2026-05-18 Larger ResNet Distillation Jobs
 
