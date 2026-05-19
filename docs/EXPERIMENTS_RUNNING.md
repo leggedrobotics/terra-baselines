@@ -16,6 +16,11 @@ students warm-started from the trained ResMap64 teacher.
   derived terrain channels, separate actor/critic trunks, critic-only
   edge/progress affordances, timeout bootstrap and initial timeout-phase
   staggering from the current branch.
+- Current action-mask conclusion, updated `2026-05-19`: keep the PPO actor
+  unmasked. The coarse mask has been tried in full masked training and in
+  forced-mask replay diagnostics. It removes invalid selections, but the latest
+  local probes show lower `DO`, higher `DO_NOTHING`, and no completion recovery,
+  so it is hurting this policy family as a default training/eval constraint.
 - Medium-deep run:
   - `RUN_KIND=medium_deep`
   - `model_size=medium_deep`, `map_feature_dim=224`

@@ -105,6 +105,48 @@ Validation:
   - The W&B `amdgpu not found` message is a system-monitoring probe artifact;
     the CUDA/cuDNN/NCCL gates and training path executed successfully.
 
+## 2026-05-19 Action-Masking Diagnosis
+
+Conclusion: the current coarse actor action mask should stay out of the PPO
+training/eval path. We tried it both as a full masked-training lineage and as
+forced-mask replay on unmasked checkpoints. The full masked run looked better
+than the clean run in some W&B success curves, but the later local probes show
+that the mask is not a reliable default rescue for the current ResMap/R1/R2 and
+deep-ResNet policy family.
+
+Evidence:
+
+- The old masked checkpoint only behaved well when evaluated with its mask:
+  `4/16` local successes masked versus `0/16` with raw logits. That proves the
+  checkpoint depended on the mask, not that the mask is a safe default for new
+  policies.
+- On `04e8dada` update `500`, forced masking removed invalid selections but
+  lowered `DO` from `5.56%` to `2.11%` on seed `0` and from `4.55%` to `1.60%`
+  on seed `1`. `DO_NOTHING` rose from `5.13%` to `23.5%` and from `17.5%` to
+  `30.4%`. Success stayed `0/32` in every mode/seed.
+- On update `1000`, forced masking again removed invalid selections but lowered
+  `DO` from about `7.4%` to about `4.9%` and raised `DO_NOTHING` to about
+  `20-21%`, with no local completion recovery.
+- On the rolling step-1258 checkpoint, forced masking lowered `DO` to
+  `2.2-2.3%` and raised `DO_NOTHING` to `38.9-43.3%`; unmasked stochastic
+  rollouts still had no completions, but they reached better final maps with
+  `DO=8.0-8.1%`, `DO_NOTHING=15.2-15.7%`, and final dump coverage `0.995`.
+
+Interpretation:
+
+- The current mask is too coarse to treat as "physical impossibility." It
+  changes the policy distribution and tends to move probability into waiting or
+  turning instead of productive terrain-changing actions.
+- Anything actor-visible or actor-constraining must be computable on the real
+  robot with the same semantics. A simulator-side mask for actions that are
+  merely bad, no-op-like, or inconvenient is a policy prior, not a deployable
+  hard-validity rule.
+- Keep `apply_action_mask` and the observation mask for diagnostics and future
+  exact-mask ablations, but keep medium/large PPO defaults unmasked.
+- The next learning fixes should focus on temporal credit assignment,
+  critic/value stability, PPO optimization batch shape, productive `DO`, and
+  the imitation-to-PPO handoff rather than re-enabling the coarse mask.
+
 ## 2026-05-18 Larger ResNet Distillation Setup
 
 Goal: launch larger delayed-ResNet policies and test whether teacher imitation
