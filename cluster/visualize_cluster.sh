@@ -33,6 +33,6 @@ export DATASET_SIZE=25
 # Change to the directory containing visualize.py
 cd /cluster/project/rsl/alesweber/TerraProject_macro_movement/terra-baselines
 
-python visualize_mixed.py --config solo_excavator --run_name /cluster/project/rsl/alesweber/TerraProject_macro_movement/terra-baselines/checkpoints/macro-movement-solo-excavator-rectangles-local-2026-05-15-17-59-29.pkl
+python visualize_mixed.py --config solo_excavator_rectangles --run_name /cluster/project/rsl/alesweber/TerraProject_macro_movement/terra-baselines/checkpoints/macro-movement-solo-excavator-local-2026-05-18-17-23-23.pkl
 
 #JAX_PLATFORMS=cpu 

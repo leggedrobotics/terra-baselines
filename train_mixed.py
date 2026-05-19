@@ -126,11 +126,18 @@ jax.config.update("jax_threefry_partitionable", True)
 
 class Transition(struct.PyTreeNode):
     done: jax.Array
+    task_done: jax.Array
     action: jax.Array
     value: jax.Array
     reward: jax.Array
     meters_moved: jax.Array
     macro_move_count: jax.Array
+    dig_completion_edge: jax.Array
+    dig_completion_inner: jax.Array
+    dig_completion_total: jax.Array
+    dig_completion_min_edge_inner: jax.Array
+    remaining_edge_dig_tiles: jax.Array
+    remaining_inner_dig_tiles: jax.Array
     log_prob: jax.Array
     obs: jax.Array
     # for rnn policy
@@ -292,12 +299,6 @@ def digging_progress_metrics(timestep):
             jnp.mean(jnp.minimum(edge_completion, inner_completion))
         ),
         "progress/dig_completion_total": safe_jax_to_python(jnp.mean(total_completion)),
-        "progress/remaining_edge_dig_tiles": safe_jax_to_python(
-            jnp.mean(jnp.sum(jnp.logical_and(edge_mask, action_map >= 0), axis=(-2, -1)))
-        ),
-        "progress/remaining_inner_dig_tiles": safe_jax_to_python(
-            jnp.mean(jnp.sum(jnp.logical_and(inner_mask, action_map >= 0), axis=(-2, -1)))
-        ),
     }
 
 
@@ -1009,6 +1010,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "existence": jnp.zeros_like(timestep.reward),
                     "move_meters": jnp.zeros_like(timestep.reward),
                     "macro_move_count": jnp.zeros_like(timestep.reward),
+                    "dig_completion_edge": jnp.zeros_like(timestep.reward),
+                    "dig_completion_inner": jnp.zeros_like(timestep.reward),
+                    "dig_completion_total": jnp.zeros_like(timestep.reward),
+                    "dig_completion_min_edge_inner": jnp.zeros_like(timestep.reward),
+                    "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
+                    "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
                 }
                 # Create new timestep with reward_components added to info
                 timestep = timestep._replace(
@@ -1041,11 +1048,24 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     # Removed SWAP debug prints
                     transition = Transition(
                         done=timestep.done,
+                        task_done=timestep.info["task_done"],
                         action=action,
                         value=value,
                         reward=timestep.reward,
                         meters_moved=reward_components["move_meters"],
                         macro_move_count=reward_components["macro_move_count"],
+                        dig_completion_edge=reward_components["dig_completion_edge"],
+                        dig_completion_inner=reward_components["dig_completion_inner"],
+                        dig_completion_total=reward_components["dig_completion_total"],
+                        dig_completion_min_edge_inner=reward_components[
+                            "dig_completion_min_edge_inner"
+                        ],
+                        remaining_edge_dig_tiles=reward_components[
+                            "remaining_edge_dig_tiles"
+                        ],
+                        remaining_inner_dig_tiles=reward_components[
+                            "remaining_inner_dig_tiles"
+                        ],
                         log_prob=log_prob,
                         obs=prev_timestep.observation,
                         prev_actions=prev_actions,
@@ -1182,6 +1202,48 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 loss_info["train/macro_moves_per_env_step"] = (
                     macro_move_count_sum / jnp.maximum(env_step_count, 1)
                 )
+                done_mask = transitions.done.astype(jnp.float32)
+                success_mask = jnp.logical_and(
+                    transitions.done,
+                    transitions.task_done,
+                ).astype(jnp.float32)
+                timeout_mask = jnp.logical_and(
+                    transitions.done,
+                    jnp.logical_not(transitions.task_done),
+                ).astype(jnp.float32)
+
+                def _masked_mean(values, mask):
+                    count = jnp.sum(mask)
+                    return jnp.where(
+                        count > 0,
+                        jnp.sum(values * mask) / count,
+                        jnp.nan,
+                    )
+
+                loss_info["terminal/episode_count"] = jnp.sum(done_mask)
+                loss_info["terminal/success_count"] = jnp.sum(success_mask)
+                loss_info["terminal/timeout_count"] = jnp.sum(timeout_mask)
+                terminal_fields = {
+                    "dig_completion_edge": transitions.dig_completion_edge,
+                    "dig_completion_inner": transitions.dig_completion_inner,
+                    "dig_completion_total": transitions.dig_completion_total,
+                    "dig_completion_min_edge_inner": transitions.dig_completion_min_edge_inner,
+                    "remaining_edge_dig_tiles": transitions.remaining_edge_dig_tiles,
+                    "remaining_inner_dig_tiles": transitions.remaining_inner_dig_tiles,
+                }
+                for metric_name, metric_values in terminal_fields.items():
+                    loss_info[f"terminal/{metric_name}"] = _masked_mean(
+                        metric_values,
+                        done_mask,
+                    )
+                    loss_info[f"timeout/{metric_name}"] = _masked_mean(
+                        metric_values,
+                        timeout_mask,
+                    )
+                    loss_info[f"success/{metric_name}"] = _masked_mean(
+                        metric_values,
+                        success_mask,
+                    )
 
                 rng, train_state = update_state[:2]
                 # EVALUATE AGENT
