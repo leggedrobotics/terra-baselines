@@ -50,13 +50,21 @@ First implementation batch:
 - Lower entropy handoff.
 - Deterministic eval.
 - `--load_env_from_checkpoint` default fix.
+- One compute-constrained YOLO architecture run with a bottlenecked spatial
+  encoder and critic-heavy trunk.
 
 Explicitly postpone until after that batch:
 
 - teacher-KL regularization during PPO;
 - flattened env-time minibatches;
-- `large_deep_thin`, critic-heavy presets, or earlier actor/critic branching;
+- full architecture ablation ladders such as `large_deep_thin` versus many
+  critic-heavy widths, and full actor/critic encoder separation;
 - reward changes.
+
+Because compute is limited, the first launch does not need to exhaustively
+ablate `medium_deep`, `large_deep`, `large_deep_thin`, and critic-heavy
+variants. The practical plan is to keep the PPO cleanup needed for a meaningful
+run, then spend the next expensive slot on the best single architecture bet.
 
 ## P0: Truthful Config, Resume Semantics, And Diagnostics
 
@@ -440,10 +448,72 @@ Acceptance:
 
 ## P4: Architecture Follow-Ups
 
-Do not make the immediate next experiment "even larger." First make the current
-2M and 10M runs comparable.
+Do not make the immediate next experiment "even larger." The compute-constrained
+path is to add one bottlenecked/critic-heavy architecture now, then leave the
+remaining variants as later follow-ups if the YOLO run is inconclusive.
 
-### 14. Add `large_deep_thin`
+### 14. Add `bottleneck_critic` as the first architecture bet
+
+Target:
+
+- `utils/models.py`
+- `train_mixed.py` model-size choices.
+- `scripts/euler/terra_train_deep_resnet_4gpu_120h.sbatch` or a dedicated
+  launcher.
+
+Hypothesis:
+
+- Terra needs more spatial reasoning and value-function capacity, not just a
+  wider final feature vector.
+- A bottlenecked encoder increases effective receptive field by doing many
+  residual blocks at lower spatial resolution.
+- A critic-heavy trunk gives the value function more capacity without making
+  the deployable actor larger or adding actor-visible affordances.
+
+Shape:
+
+```text
+model_size = bottleneck_critic
+map_encoder = resnet_bottleneck
+map_feature_dim = 384
+
+encoder:
+  high-res stem: 2-3 residual blocks
+  downsample to mid resolution
+  bottleneck residual stack: 6-10 blocks
+  optional second downsample if map is still large
+  global avg/max pool
+  dense to 384
+
+actor:
+  trunk = (384, 192)
+  pi head = (192, 64)
+
+critic:
+  trunk = (768, 384, 192)
+  value head = (512, 256, 1)
+  receives critic affordances + episode_progress
+```
+
+Keep for this first architecture run:
+
+- shared spatial encoder;
+- separate actor/critic trunks after the shared representation;
+- critic-only edge/progress affordances;
+- unmasked actor;
+- no full actor/critic encoder duplication.
+
+Why not full actor/critic encoder separation yet:
+
+- Lux-style PPO agents generally use separate policy/value outputs and often
+  separate heads, but public evidence does not require fully duplicated visual
+  encoders as the first move.
+- Fully separate encoders double the expensive conv path and add a large memory
+  and optimization confound.
+- Shared bottleneck encoder plus critic-heavy trunk tests the main hypothesis
+  with less risk.
+
+### 15. Add `large_deep_thin`
 
 Target:
 
@@ -471,7 +541,7 @@ hidden_dim_v = (256, 128, 1)
 local_map_hidden_dim_layers_mlp = (512, 128)
 ```
 
-### 15. Add a critic-heavy preset
+### 16. Add a critic-heavy preset
 
 Target:
 
@@ -489,7 +559,7 @@ Preferred direction:
 - optionally branch before the shared intermediate MLP in a later ablation;
 - keep actor deployment inputs unchanged.
 
-### 16. Optional MLP LayerNorm for large models
+### 17. Optional MLP LayerNorm for large models
 
 Target:
 
@@ -573,6 +643,28 @@ IMITATION_UPDATES=500
 
 If the large `NUM_MINIBATCHES=64` smoke OOMs, rerun with
 `NUM_MINIBATCHES=128` and keep `NUM_STEPS=64`.
+
+### YOLO Architecture Run
+
+Use the same PPO cleanup settings, but swap the architecture:
+
+```bash
+RUN_KIND=bottleneck_critic
+NUM_ENVS_PER_DEVICE=512
+NUM_STEPS=64
+NUM_MINIBATCHES=64
+UPDATE_EPOCHS=2
+LR=0.0001
+CLIP_EPS=0.10
+GAE_LAMBDA=0.97
+ENT_START=0.01
+ENT_END=0.001
+ENT_STEPS=3000
+IMITATION_UPDATES=500
+```
+
+If the bottleneck architecture OOMs, first increase `NUM_MINIBATCHES` to `128`
+before shrinking the model.
 
 ## Decision Rules
 
