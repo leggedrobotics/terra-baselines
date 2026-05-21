@@ -29,7 +29,7 @@ from terra.env import TerraEnvBatch
 from train import TrainConfig  # needed for unpickling checkpoints
 from train_mixed import MixedAgentTrainConfig
 from utils.helpers import load_pkl_object
-from utils.models import load_neural_network
+from utils.models import load_neural_network, restore_checkpoint_model_config
 from utils.utils_ppo import obs_to_model_input, wrap_action
 
 sys.modules["__main__"].MixedAgentTrainConfig = MixedAgentTrainConfig
@@ -48,14 +48,7 @@ def _take0(v):
 
 
 def _unbatch_namedtuple(nt):
-    updates = {}
-    for f in getattr(nt, "_fields", ()):
-        v = getattr(nt, f)
-        if hasattr(v, "_fields"):
-            updates[f] = _unbatch_namedtuple(v)
-        else:
-            updates[f] = _take0(v)
-    return nt._replace(**updates)
+    return jax.tree_util.tree_map(_take0, nt)
 
 
 def _replicate_value(x, n_envs):
@@ -186,6 +179,7 @@ if __name__ == "__main__":
 
     log = load_pkl_object(args.policy)
     config = log["train_config"]
+    restore_checkpoint_model_config(config, log["model"])
     config.num_test_rollouts = 1
     config.num_devices = 1
     config.num_embeddings_agent_min = 60

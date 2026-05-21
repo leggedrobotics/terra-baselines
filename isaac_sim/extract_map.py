@@ -11,7 +11,7 @@ from typing import Any
 # Add the parent directory to the path so we can import utils
 sys.path.append(str(Path(__file__).parent.parent))
 
-from utils.models import load_neural_network
+from utils.models import load_neural_network, restore_checkpoint_model_config
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 from terra.actions import TrackedAction, WheeledAction, TrackedActionType, WheeledActionType
@@ -429,6 +429,7 @@ def main():
 
     log = load_pkl_object(args.policy_path)
     config = jax.tree_map(_canon_lists, log["train_config"])
+    restore_checkpoint_model_config(config, log["model"])
     config.num_test_rollouts = 1  # Only one environment
     config.num_devices = 1
 

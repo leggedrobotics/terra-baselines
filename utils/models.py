@@ -8,6 +8,128 @@ from terra.env import TerraEnvBatch
 from functools import partial
 
 
+def _config_get(config, key, default=None):
+    if isinstance(config, dict):
+        return config.get(key, default)
+    return getattr(config, key, default)
+
+
+def _config_set(config, key, value):
+    if isinstance(config, dict):
+        config[key] = value
+    else:
+        setattr(config, key, value)
+
+
+def _config_has_saved_field(config, key):
+    if isinstance(config, dict):
+        return key in config
+    if hasattr(config, "_fields"):
+        return key in config._fields
+    if hasattr(config, "__dict__"):
+        return key in vars(config)
+    return False
+
+
+def _config_get_required(config, key):
+    if not _config_has_saved_field(config, key):
+        raise KeyError(f"checkpoint train_config missing required model field '{key}'")
+    return _config_get(config, key)
+
+
+def restore_checkpoint_model_config(config, model_params, source_config=None):
+    """Restore model-shape fields from checkpoint config."""
+    source = config if source_config is None else source_config
+    edge_features_dim = int(_config_get_required(source, "edge_features_dim"))
+    use_critic_affordances = bool(
+        _config_get_required(source, "use_critic_affordances")
+    )
+    include_episode_progress = bool(
+        _config_get_required(source, "include_episode_progress")
+    )
+    critic_affordance_dim = int(_config_get_required(source, "critic_affordance_dim"))
+
+    _config_set(config, "edge_features_dim", edge_features_dim)
+    _config_set(config, "use_critic_affordances", use_critic_affordances)
+    _config_set(config, "include_episode_progress", include_episode_progress)
+    _config_set(config, "critic_affordance_dim", critic_affordance_dim)
+    return config
+
+
+def _model_size_kwargs(model_size: str) -> dict:
+    if model_size not in ("base", "medium", "large", "medium_deep", "large_deep"):
+        raise ValueError(
+            f"Unsupported model_size='{model_size}'. Expected 'base', 'medium', "
+            "'large', 'medium_deep', or 'large_deep'."
+        )
+
+    if model_size == "medium":
+        return {
+            "cnn_channels": (24, 48, 48),
+            "cnn_dense_layers": (192, 48),
+            "resnet_channels": (24, 48, 64),
+            "resnet_blocks_per_stage": 2,
+            "resnet_pool_dense_dim": 192,
+            "hidden_dim_pi": (160, 48),
+            "hidden_dim_v": (160, 48, 1),
+            "intermediate_mlp_layers": (320, 160),
+            "intermediate_mlp_dim": 160,
+            "local_map_hidden_dim_layers_mlp": (320, 64),
+            "actor_trunk_layers": (320, 160),
+            "critic_trunk_layers": (320, 160),
+        }
+
+    if model_size == "large":
+        return {
+            "cnn_channels": (32, 64, 64),
+            "cnn_dense_layers": (256, 64),
+            "resnet_channels": (32, 64, 96, 128),
+            "resnet_blocks_per_stage": 3,
+            "resnet_pool_dense_dim": 256,
+            "hidden_dim_pi": (192, 64),
+            "hidden_dim_v": (192, 64, 1),
+            "intermediate_mlp_layers": (512, 256),
+            "intermediate_mlp_dim": 256,
+            "local_map_hidden_dim_layers_mlp": (512, 128),
+            "actor_trunk_layers": (512, 256),
+            "critic_trunk_layers": (512, 256),
+        }
+
+    if model_size == "medium_deep":
+        return {
+            "cnn_channels": (24, 48, 48),
+            "cnn_dense_layers": (192, 48),
+            "resnet_channels": (24, 48, 80, 112),
+            "resnet_blocks_per_stage": 3,
+            "resnet_pool_dense_dim": 224,
+            "hidden_dim_pi": (192, 64),
+            "hidden_dim_v": (192, 64, 1),
+            "intermediate_mlp_layers": (384, 192),
+            "intermediate_mlp_dim": 192,
+            "local_map_hidden_dim_layers_mlp": (384, 96),
+            "actor_trunk_layers": (384, 192),
+            "critic_trunk_layers": (384, 192),
+        }
+
+    if model_size == "large_deep":
+        return {
+            "cnn_channels": (48, 96, 96),
+            "cnn_dense_layers": (512, 128),
+            "resnet_channels": (40, 80, 144, 208),
+            "resnet_blocks_per_stage": 5,
+            "resnet_pool_dense_dim": 512,
+            "hidden_dim_pi": (384, 128),
+            "hidden_dim_v": (384, 128, 1),
+            "intermediate_mlp_layers": (768, 384),
+            "intermediate_mlp_dim": 384,
+            "local_map_hidden_dim_layers_mlp": (768, 192),
+            "actor_trunk_layers": (768, 384),
+            "critic_trunk_layers": (768, 384),
+        }
+
+    return {}
+
+
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     """Instantiate a model according to obs shape of environment."""
     init_batch_size = 1
@@ -28,34 +150,25 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         else (-1, 1)
     )
     print(f"map normalization min max = {map_min_max}")
-    model_size = getattr(config, "model_size", "base")
-    if model_size not in ("base", "medium", "large"):
-        raise ValueError(
-            f"Unsupported model_size='{model_size}'. Expected 'base', 'medium', or 'large'."
-        )
+    model_size = _config_get(config, "model_size", "base")
+    model_kwargs = _model_size_kwargs(model_size)
 
-    model_kwargs = {}
-    if model_size == "medium":
-        model_kwargs = {
-            "cnn_channels": (24, 48, 48),
-            "cnn_dense_layers": (192, 48),
-            "hidden_dim_pi": (160, 48),
-            "hidden_dim_v": (160, 48, 1),
-            "intermediate_mlp_layers": (320, 160),
-            "intermediate_mlp_dim": 160,
-            "local_map_hidden_dim_layers_mlp": (320, 64),
-        }
-    if model_size == "large":
-        model_kwargs = {
-            "cnn_channels": (32, 64, 64),
-            "cnn_dense_layers": (256, 64),
-            "hidden_dim_pi": (192, 64),
-            "hidden_dim_v": (192, 64, 1),
-            "intermediate_mlp_layers": (384, 192),
-            "intermediate_mlp_dim": 192,
-            "local_map_hidden_dim_layers_mlp": (384, 96),
-        }
-
+    edge_features_dim = int(_config_get(config, "edge_features_dim", 0))
+    include_episode_progress = bool(_config_get(config, "include_episode_progress", False))
+    use_critic_affordances = bool(_config_get(config, "use_critic_affordances", False))
+    critic_affordance_dim = int(_config_get(config, "critic_affordance_dim", 0))
+    model_kwargs.update(
+        map_encoder=str(_config_get(config, "map_encoder", "atari")),
+        map_feature_dim=int(_config_get(config, "map_feature_dim", 32)),
+        use_map_derived_channels=bool(
+            _config_get(config, "use_map_derived_channels", False)
+        ),
+        separate_actor_critic_trunks=bool(
+            _config_get(config, "separate_actor_critic_trunks", False)
+        ),
+        use_critic_affordances=use_critic_affordances,
+        critic_affordance_dim=critic_affordance_dim,
+    )
     model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=config["num_prev_actions"],
         num_embeddings_agent=num_embeddings_agent,
@@ -105,6 +218,18 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         jnp.zeros((init_batch_size, map_width, map_height)),
         # [21] prev_actions
         jnp.zeros((init_batch_size, config["num_prev_actions"]), dtype=jnp.int32),
+        # [22] action_mask
+        jnp.ones(
+            (init_batch_size, env.batch_cfg.action_type.get_num_actions()),
+            dtype=jnp.bool_,
+        ),
+        # [23] edge_features
+        jnp.zeros((init_batch_size, edge_features_dim), dtype=jnp.float32),
+        # [24] episode_progress
+        jnp.zeros(
+            (init_batch_size, 1 if include_episode_progress else 0),
+            dtype=jnp.float32,
+        ),
     ]
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
@@ -340,6 +465,80 @@ class AtariCNN(nn.Module):
         return x
 
 
+class ResidualMapBlock(nn.Module):
+    """Small residual conv block for map features without batch statistics."""
+
+    features: int
+    strides: tuple[int, int] = (1, 1)
+
+    @nn.compact
+    def __call__(self, x):
+        residual = x
+        y = nn.Conv(
+            features=self.features,
+            kernel_size=(3, 3),
+            strides=self.strides,
+            padding="SAME",
+            use_bias=False,
+        )(x)
+        y = nn.LayerNorm()(y)
+        y = nn.relu(y)
+        y = nn.Conv(
+            features=self.features,
+            kernel_size=(3, 3),
+            strides=(1, 1),
+            padding="SAME",
+            use_bias=False,
+        )(y)
+        y = nn.LayerNorm()(y)
+
+        if residual.shape[-1] != self.features or self.strides != (1, 1):
+            residual = nn.Conv(
+                features=self.features,
+                kernel_size=(1, 1),
+                strides=self.strides,
+                padding="SAME",
+                use_bias=False,
+            )(residual)
+            residual = nn.LayerNorm()(residual)
+
+        return nn.relu(y + residual)
+
+
+class DelayedDownsampleResNet(nn.Module):
+    """Preserve map detail before downsampling, then pool globally."""
+
+    feature_dim: int = 128
+    channels: Sequence[int] = (16, 32, 32)
+    blocks_per_stage: int = 2
+    pool_dense_dim: int = 128
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Conv(
+            features=self.channels[0],
+            kernel_size=(3, 3),
+            strides=(1, 1),
+            padding="SAME",
+            use_bias=False,
+        )(x)
+        x = nn.LayerNorm()(x)
+        x = nn.relu(x)
+
+        for stage_idx, features in enumerate(self.channels):
+            for block_idx in range(self.blocks_per_stage):
+                strides = (2, 2) if stage_idx > 0 and block_idx == 0 else (1, 1)
+                x = ResidualMapBlock(features=features, strides=strides)(x)
+
+        avg_pool = jnp.mean(x, axis=(1, 2))
+        max_pool = jnp.max(x, axis=(1, 2))
+        x = jnp.concatenate((avg_pool, max_pool), axis=-1)
+        x = nn.Dense(features=self.pool_dense_dim)(x)
+        x = nn.relu(x)
+        x = nn.Dense(features=self.feature_dim)(x)
+        return x
+
+
 @jax.jit
 def min_pool(x):
     pool_fn = partial(
@@ -380,9 +579,28 @@ class MapsNet(nn.Module):
     map_min_max: Sequence[int]
     cnn_channels: Sequence[int] = (16, 32, 32)
     cnn_dense_layers: Sequence[int] = (128, 32)
+    resnet_channels: Sequence[int] = (16, 32, 32)
+    resnet_blocks_per_stage: int = 2
+    resnet_pool_dense_dim: int = 128
+    encoder_type: str = "atari"
+    feature_dim: int = 32
+    use_derived_channels: bool = False
 
     def setup(self) -> None:
-        self.cnn = AtariCNN(conv_channels=self.cnn_channels, dense_layers=self.cnn_dense_layers)
+        if self.encoder_type == "atari":
+            self.cnn = AtariCNN(
+                conv_channels=self.cnn_channels,
+                dense_layers=self.cnn_dense_layers,
+            )
+        elif self.encoder_type == "resnet_delayed":
+            self.cnn = DelayedDownsampleResNet(
+                feature_dim=self.feature_dim,
+                channels=self.resnet_channels,
+                blocks_per_stage=self.resnet_blocks_per_stage,
+                pool_dense_dim=self.resnet_pool_dense_dim,
+            )
+        else:
+            raise ValueError(f"Unknown map encoder: {self.encoder_type}")
 
     def __call__(self, obs: dict[str, Array]):
         """
@@ -406,18 +624,30 @@ class MapsNet(nn.Module):
         dumpability_mask = obs[5]
         interaction_mask = obs[6]
 
-        x = jnp.concatenate(
-            (
-                traversability_map[..., None],
-                reachability_map[..., None],
-                action_map[..., None],
-                target_map[..., None],
-                padding_mask[..., None],
-                dumpability_mask[..., None],
-                interaction_mask[..., None],
-            ),
-            axis=-1,
+        channels = (
+            traversability_map[..., None],
+            reachability_map[..., None],
+            action_map[..., None],
+            target_map[..., None],
+            padding_mask[..., None],
+            dumpability_mask[..., None],
+            interaction_mask[..., None],
         )
+        if self.use_derived_channels:
+            remaining_dig = jnp.where(
+                target_map < 0,
+                jnp.clip(action_map - target_map, a_min=0.0, a_max=1.0),
+                0.0,
+            )
+            signed_error = jnp.clip(target_map - action_map, a_min=-1.0, a_max=1.0)
+            neutral_dirt = jnp.where(target_map <= 0, jnp.clip(action_map, a_min=0.0), 0.0)
+            channels += (
+                remaining_dig[..., None],
+                signed_error[..., None],
+                neutral_dirt[..., None],
+            )
+
+        x = jnp.concatenate(channels, axis=-1)
         x = self.cnn(x)
         return x
 
@@ -445,12 +675,9 @@ class PreviousActionsNet(nn.Module):
         self.activation = nn.relu
 
     def __call__(self, obs: dict[str, Array]):
-        # Use the full single-stream history of previous actions
-        # Support both layouts:
-        # - new layout (len=22): prev_actions at [21]
-        # - legacy layout (len=21): prev_actions at [20]
-        action_idx = 21 if len(obs) >= 22 else 20
-        x_actions = obs[action_idx].astype(jnp.int32)
+        if len(obs) != 25:
+            raise ValueError(f"Expected 25 observation tensors, got {len(obs)}")
+        x_actions = obs[21].astype(jnp.int32)
         x_actions = self.embedding(x_actions)
 
         x_flattened = x_actions.reshape(*x_actions.shape[:-2], -1)
@@ -479,7 +706,18 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     intermediate_mlp_layers: Sequence[int] = (256, 128)
     cnn_channels: Sequence[int] = (16, 32, 32)
     cnn_dense_layers: Sequence[int] = (128, 32)
+    resnet_channels: Sequence[int] = (16, 32, 32)
+    resnet_blocks_per_stage: int = 2
+    resnet_pool_dense_dim: int = 128
     local_map_hidden_dim_layers_mlp: Sequence[int] = (256, 32)
+    map_encoder: str = "atari"
+    map_feature_dim: int = 32
+    use_map_derived_channels: bool = False
+    separate_actor_critic_trunks: bool = False
+    use_critic_affordances: bool = False
+    critic_affordance_dim: int = 0
+    actor_trunk_layers: Sequence[int] = (256, 128)
+    critic_trunk_layers: Sequence[int] = (256, 128)
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
@@ -509,9 +747,15 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         )
 
         self.maps_net = MapsNet(
-            self.map_min_max,
+            map_min_max=self.map_min_max,
             cnn_channels=self.cnn_channels,
             cnn_dense_layers=self.cnn_dense_layers,
+            resnet_channels=self.resnet_channels,
+            resnet_blocks_per_stage=self.resnet_blocks_per_stage,
+            resnet_pool_dense_dim=self.resnet_pool_dense_dim,
+            encoder_type=self.map_encoder,
+            feature_dim=self.map_feature_dim,
+            use_derived_channels=self.use_map_derived_channels,
         )
 
         self.actions_net = PreviousActionsNet(
@@ -525,6 +769,15 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=1.0,
         )
+        if self.separate_actor_critic_trunks:
+            self.actor_trunk = MLP(
+                hidden_dim_layers=self.actor_trunk_layers,
+                use_layer_norm=self.mlp_use_layernorm,
+            )
+            self.critic_trunk = MLP(
+                hidden_dim_layers=self.critic_trunk_layers,
+                use_layer_norm=self.mlp_use_layernorm,
+            )
 
         self.activation = nn.relu
 
@@ -560,30 +813,17 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         local_maps_1 = [obs[3], obs[4], obs[5], obs[6], obs[7], obs[8], obs[9], obs[10], obs[11]]
         x_local_active = self.local_map_net(local_maps_1)
         
-        # Process global maps. Support both observation layouts:
-        # - New layout (len=22): includes reachability at [13]
-        # - Legacy layout (len=21): no reachability channel
-        has_reachability = len(obs) >= 22
-        if has_reachability:
-            map_obs = [
-                obs[12],  # traversability_mask
-                obs[13],  # reachability_mask
-                obs[14],  # action_map
-                obs[15],  # target_map
-                obs[18],  # padding_mask
-                obs[19],  # dumpability_mask
-                obs[20],  # interaction_mask
-            ]
-        else:
-            map_obs = [
-                obs[12],  # traversability_mask
-                jnp.zeros_like(obs[12]),  # reachability_mask (absent in legacy layout)
-                obs[13],  # action_map
-                obs[14],  # target_map
-                obs[17],  # padding_mask
-                obs[18],  # dumpability_mask
-                obs[19],  # interaction_mask
-            ]
+        if len(obs) != 25:
+            raise ValueError(f"Expected 25 observation tensors, got {len(obs)}")
+        map_obs = [
+            obs[12],  # traversability_mask
+            obs[13],  # reachability_mask
+            obs[14],  # action_map
+            obs[15],  # target_map
+            obs[18],  # padding_mask
+            obs[19],  # dumpability_mask
+            obs[20],  # interaction_mask
+        ]
         x_maps = self.maps_net(map_obs)
         x_actions = self.actions_net(obs)
         
@@ -608,6 +848,15 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 f"x_maps={x_maps.shape}"
             )
         
+        edge_features = obs[23].reshape(obs[23].shape[0], -1)
+        episode_progress = obs[24].reshape(obs[24].shape[0], -1)
+        critic_affordances = jnp.concatenate((edge_features, episode_progress), axis=-1)
+        if self.use_critic_affordances and critic_affordances.shape[-1] != self.critic_affordance_dim:
+            raise ValueError(
+                "critic_affordance_dim does not match observation affordance width: "
+                f"{self.critic_affordance_dim} vs {critic_affordances.shape[-1]}"
+            )
+
         # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
         # Local maps are also included.
         # Build a single combined feature vector (all agent states + actions + active local maps)
@@ -623,8 +872,25 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         # Apply final activation
         x = self.activation(x)
 
-        v = self.mlp_v(x)
-        xpi = self.mlp_pi(x)
+        if self.separate_actor_critic_trunks:
+            x = self.activation(self.intermediate_mlp(x))
+            critic_input = (
+                jnp.concatenate((x, critic_affordances), axis=-1)
+                if self.use_critic_affordances
+                else x
+            )
+            critic_features = self.activation(self.critic_trunk(critic_input))
+            actor_features = self.activation(self.actor_trunk(x))
+            v = self.mlp_v(critic_features)
+            xpi = self.mlp_pi(actor_features)
+        else:
+            critic_input = (
+                jnp.concatenate((x, critic_affordances), axis=-1)
+                if self.use_critic_affordances
+                else x
+            )
+            v = self.mlp_v(critic_input)
+            xpi = self.mlp_pi(x)
 
         return v, xpi
 

@@ -7,7 +7,7 @@ import numpy as np
 import jax
 import math
 from tqdm import tqdm
-from utils.models import load_neural_network
+from utils.models import load_neural_network, restore_checkpoint_model_config
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 from terra.actions import (
@@ -614,6 +614,7 @@ if __name__ == "__main__":
 
     log = load_pkl_object(f"{args.run_name}")
     config = log["train_config"]
+    restore_checkpoint_model_config(config, log["model"])
     config.num_test_rollouts = n_envs
     config.num_devices = 1
 

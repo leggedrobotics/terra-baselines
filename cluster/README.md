@@ -118,4 +118,4 @@ If your training jobs are long-running, consider implementing checkpointing in y
 
 ```bash
 export CHECKPOINT_DIR=/cluster/home/lterenzi/terra_jax/checkpoints
-``` 
+```

@@ -1,7 +1,8 @@
 import numpy as np
 import jax
 import math
-from utils.models import load_neural_network
+import sys
+from utils.models import load_neural_network, restore_checkpoint_model_config
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 from terra.actions import (
@@ -12,9 +13,9 @@ from terra.actions import (
 )
 import jax.numpy as jnp
 from utils.utils_ppo import obs_to_model_input, wrap_action
-from train_mixed_agents import MixedAgentTrainConfig
+from train_mixed import MixedAgentTrainConfig
 
-#sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
+sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
 
 # from utils.curriculum import Curriculum
 from tensorflow_probability.substrates import jax as tfp
@@ -260,6 +261,7 @@ if __name__ == "__main__":
 
     log = load_pkl_object(f"{args.run_name}")
     config = log["train_config"]
+    restore_checkpoint_model_config(config, log["model"])
     # from utils.helpers import load_config
     # config = load_config("agents/Terra/ppo.yaml", 22333, 33222, 5e-04, True, "")["train_config"]
 

@@ -5,14 +5,40 @@ from tensorflow_probability.substrates import jax as tfp
 
 def clip_action_map_in_obs(obs):
     """Clip action maps to [-1, 1] on the intuition that a binary map is enough for the agent to take decisions."""
-    obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
-    return obs
+    return {
+        **obs,
+        "action_map": jnp.clip(obs["action_map"], a_min=-1, a_max=1),
+    }
 
 
 def obs_to_model_input(obs, prev_actions, train_cfg):
     # Feature engineering
     if train_cfg.clip_action_maps:
         obs = clip_action_map_in_obs(obs)
+    edge_features_dim = (
+        train_cfg.get("edge_features_dim", 0)
+        if isinstance(train_cfg, dict)
+        else getattr(train_cfg, "edge_features_dim", 0)
+    )
+    include_episode_progress = (
+        train_cfg.get("include_episode_progress", False)
+        if isinstance(train_cfg, dict)
+        else getattr(train_cfg, "include_episode_progress", False)
+    )
+    batch_size = obs["agent_states"].shape[0]
+    if edge_features_dim:
+        edge_features = obs["edge_features"].reshape((batch_size, -1))[
+            :, :edge_features_dim
+        ]
+    else:
+        edge_features = jnp.zeros((batch_size, 0), dtype=jnp.float32)
+
+    if include_episode_progress:
+        episode_progress = obs["episode_progress"].reshape((batch_size, -1))[:, :1]
+    else:
+        episode_progress = jnp.zeros((batch_size, 0), dtype=jnp.float32)
+
+    action_mask = obs["action_mask"]
 
     # Create input list with indexed comments for easy reference
     # Updated to match the new observation structure from env.py
@@ -40,15 +66,14 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs["dumpability_mask"],         # [19] - Dumpability mask
         obs["interaction_mask"],         # [20] - Interaction map
         prev_actions,                    # [21] - Previous actions history
+        action_mask,                     # [22] - Coarse primitive action availability
+        edge_features,                   # [23] - Edge affordance/progress features
+        episode_progress,                # [24] - Episode progress scalar
     ]
     return obs
 
 
-def policy(
-    apply_fn,
-    params,
-    obs,
-):
+def policy(apply_fn, params, obs):
     value, logits_pi = apply_fn(params, obs)
     pi = tfp.distributions.Categorical(logits=logits_pi)
     return value, pi
@@ -64,7 +89,11 @@ def select_action_ppo(
     # Prepare policy input from Terra State
     obs = obs_to_model_input(obs, prev_actions, config)
 
-    value, pi = policy(train_state.apply_fn, train_state.params, obs)
+    value, pi = policy(
+        train_state.apply_fn,
+        train_state.params,
+        obs,
+    )
     action = pi.sample(seed=rng)
     log_prob = pi.log_prob(action)
     return action, log_prob, value[:, 0], pi

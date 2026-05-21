@@ -94,7 +94,10 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
-from utils.models import get_model_ready
+from utils.models import (
+    get_model_ready,
+    restore_checkpoint_model_config,
+)
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig, BatchConfig, Rewards, CurriculumGlobalConfig, RewardsType
 from flax.training.train_state import TrainState
@@ -109,7 +112,12 @@ from functools import partial
 from flax.jax_utils import replicate, unreplicate
 from flax import struct
 import utils.helpers as helpers
-from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, policy
+from utils.utils_ppo import (
+    select_action_ppo,
+    wrap_action,
+    obs_to_model_input,
+    policy,
+)
 import json
 import os
 import shutil
@@ -117,28 +125,20 @@ import tempfile
 from pathlib import Path
 
 # Import the base training infrastructure
-from train import get_curriculum_levels, calculate_gae, ppo_update_networks, Transition
+from train import (
+    Transition,
+    calculate_gae,
+    eval_log_metrics,
+    get_curriculum_levels,
+    log_effective_env_config,
+    ppo_update_networks,
+    randomize_initial_episode_progress,
+    train_log_metrics,
+    train_rollout_metrics,
+    timeout_bootstrap_value,
+)
 
 jax.config.update("jax_threefry_partitionable", True)
-
-def safe_jax_to_python(value):
-    """Safely convert JAX arrays to Python scalars"""
-    if hasattr(value, 'item'):
-        try:
-            return value.item()
-        except (ValueError, TypeError):
-            # If it's an array with multiple elements, take the first one
-            if hasattr(value, 'shape') and value.shape:
-                return value.ravel()[0].item()
-            else:
-                return float(value)
-    elif hasattr(value, '__array__'):
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return str(value)
-    else:
-        return value
 
 
 def _sorted_map_indices(images_dir: Path) -> list[int]:
@@ -324,6 +324,11 @@ class MixedAgentTrainConfig:
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
+    tags: tuple[str, ...] = (
+        "mixed-agents",
+        "tracked-excavator",
+        "unified-network",
+    )
     num_envs_per_device: int = 2048
     num_steps: int = 32  
     update_epochs: int = 2 
@@ -336,6 +341,14 @@ class MixedAgentTrainConfig:
     ent_coef: float = 0.06  
     vf_coef: float = 2.0 
     max_grad_norm: float = 0.5
+    edge_features_dim: int = 0
+    use_critic_affordances: bool = False
+    critic_affordance_dim: int = 0
+    include_episode_progress: bool = False
+    map_encoder: str = "atari"
+    map_feature_dim: int = 32
+    use_map_derived_channels: bool = False
+    separate_actor_critic_trunks: bool = False
     eval_episodes: int = 100
     seed: int = 42
     log_train_interval: int = 1  # Number of updates between logging train stats
@@ -348,7 +361,7 @@ class MixedAgentTrainConfig:
     local_map_normalization_bounds = [-16, 16]
     maps_net_normalization_bounds = [-10, 10]  # Required field for network initialization
     loaded_max = 100
-    num_rollouts_eval = 200  # max length of an episode in Terra for eval
+    num_rollouts_eval: int = 550  # max length of an episode in Terra for eval
     cache_clear_interval = 1000  # Less frequent cache clearing for speed
     # Entropy scheduler (cosine decay)
     ent_schedule_start: float = 0.15
@@ -366,6 +379,18 @@ class MixedAgentTrainConfig:
     # Checkpoint loading
     resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
     load_env_from_checkpoint: bool = True  # If true, use env_config from checkpoint
+
+    # Optional teacher-policy imitation warm start before PPO.
+    teacher_checkpoint: str | None = None
+    imitation_updates: int = 0
+    imitation_num_steps: int = 32
+    imitation_num_minibatches: int = 16
+    imitation_lr: float = 1e-4
+    imitation_temperature: float = 1.0
+    imitation_value_coef: float = 0.25
+    imitation_only: bool = False
+    imitation_checkpoint_interval: int = 0
+    imitation_env_steps: int = 0
     
     # Named configuration preset (loads from configs/training_configs.py)
     config_name: str | None = None  # e.g., "excavator_truck", "solo_excavator"
@@ -403,12 +428,56 @@ class MixedAgentTrainConfig:
         assert (
             self.num_envs % self.num_devices == 0
         ), "Number of environments must be divisible by the number of devices."
-        self.num_updates = (
-            self.total_timesteps // (self.num_steps * self.num_envs)
-        ) // self.num_devices
+        self.env_steps_per_update = self.num_steps * self.num_envs
+        self.num_updates = self.total_timesteps // self.env_steps_per_update
+        self.actual_total_timesteps = self.num_updates * self.env_steps_per_update
+        self.imitation_env_steps = (
+            self.imitation_updates * self.imitation_num_steps * self.num_envs
+        )
+        if self.num_envs_per_device % self.num_minibatches != 0:
+            raise ValueError(
+                "num_envs_per_device must be divisible by num_minibatches"
+            )
+        if self.imitation_updates > 0 and self.num_envs_per_device % self.imitation_num_minibatches != 0:
+            raise ValueError(
+                "num_envs_per_device must be divisible by imitation_num_minibatches"
+            )
+        if self.use_critic_affordances and self.edge_features_dim == 0:
+            self.edge_features_dim = 10
+        self.critic_affordance_dim = (
+            self.edge_features_dim + int(self.include_episode_progress)
+            if self.use_critic_affordances
+            else 0
+        )
+        if self.map_encoder == "atari":
+            self.map_feature_dim = 32
+        elif self.map_encoder == "resnet_delayed" and self.map_feature_dim == 32:
+            if self.model_size == "large_deep":
+                self.map_feature_dim = 512
+            elif self.model_size == "medium_deep":
+                self.map_feature_dim = 224
+            elif self.model_size == "large":
+                self.map_feature_dim = 256
+            elif self.model_size == "medium":
+                self.map_feature_dim = 192
+            else:
+                self.map_feature_dim = 128
 
         print(f"Devices: {jax.devices()}")
-        print(f"Mixed Agent Training - Devices: {self.num_devices}, Updates: {self.num_updates}")
+        print(
+            "Mixed Agent Training - "
+            f"Devices: {self.num_devices}, Updates: {self.num_updates}, "
+            f"Env steps/update: {self.env_steps_per_update}"
+        )
+        print(
+            "Model architecture - "
+            f"map_encoder={self.map_encoder}, "
+            f"map_feature_dim={self.map_feature_dim}, "
+            f"derived_channels={self.use_map_derived_channels}, "
+            f"separate_trunks={self.separate_actor_critic_trunks}, "
+            f"critic_affordances={self.use_critic_affordances}, "
+            f"critic_affordance_dim={self.critic_affordance_dim}"
+        )
         print(f"Using overridden agent types: {self.agent_types_override}")
 
     # make object subscriptable - required for compatibility with existing code
@@ -640,17 +709,12 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     # Infer num_prev_actions as 5 per agent without triggering a reset/pmap
     try:
         MAX_AGENTS = 4
-        # Priority 1: explicit override
-        if config.agent_types_override is not None:
-            na = len(tuple(config.agent_types_override))
-        # Priority 2: env params we just batched include agent_types with trailing num_agents dim
-        elif hasattr(env_params, 'agent_types') and hasattr(env_params.agent_types, 'shape'):
-            na = int(env_params.agent_types.shape[-1])
-        # Priority 3: batch config on env, if present as a tuple/list
-        elif hasattr(env.batch_cfg, 'agent_types') and isinstance(env.batch_cfg.agent_types, (tuple, list)):
-            na = len(env.batch_cfg.agent_types)
-        else:
-            na = MAX_AGENTS
+        na = _num_agents_for_prev_actions(
+            config=config,
+            env_params=env_params,
+            env=env,
+            env_params_override=env_params_override,
+        )
         na = max(1, min(MAX_AGENTS, int(na)))
         config.num_prev_actions = int(5 * na)
         print(f"Setting num_prev_actions to {config.num_prev_actions} (5 per agent × {na} agents)", flush=True)
@@ -673,11 +737,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     except Exception as e:
         print(f"🛠️ Debug: Failed to read number of actions: {e}", flush=True)
     
-    # Optimizer with mixed agent considerations
-    tx = optax.chain(
-        optax.clip_by_global_norm(config.max_grad_norm),
-        optax.adam(learning_rate=config.lr, eps=1e-5),
-    )
+    tx = make_optimizer(config, config.lr)
     
     train_state = TrainState.create(
         apply_fn=network.apply, params=network_params, tx=tx
@@ -689,6 +749,106 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     return rng, env, env_params, train_state
 
 
+def make_optimizer(config: MixedAgentTrainConfig, lr: float):
+    return optax.chain(
+        optax.clip_by_global_norm(config.max_grad_norm),
+        optax.adam(learning_rate=lr, eps=1e-5),
+    )
+
+
+def _first_checkpoint_env_config(env_config: EnvConfig) -> EnvConfig:
+    """Recover one scalar EnvConfig from a checkpoint-saved env batch."""
+    return jtu.tree_map(
+        lambda x: x.reshape(-1)[0] if hasattr(x, "shape") and x.shape else x,
+        env_config,
+    )
+
+
+class DistillBatch(struct.PyTreeNode):
+    obs: jax.Array
+    prev_actions: jax.Array
+    teacher_logits: jax.Array
+    teacher_value: jax.Array
+
+
+def _load_teacher_checkpoint(
+    path: str,
+    env: TerraEnvBatch,
+    student_config: MixedAgentTrainConfig,
+):
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Teacher checkpoint does not exist: {path}")
+
+    checkpoint = helpers.load_pkl_object(path)
+    if "model" not in checkpoint:
+        raise KeyError("teacher checkpoint has no 'model' parameters")
+    if "train_config" not in checkpoint:
+        raise KeyError("teacher checkpoint has no 'train_config'")
+
+    teacher_config = checkpoint["train_config"]
+    restore_checkpoint_model_config(
+        teacher_config,
+        checkpoint["model"],
+        source_config=teacher_config,
+    )
+    teacher_num_prev_actions = int(getattr(teacher_config, "num_prev_actions", -1))
+    if teacher_num_prev_actions != int(student_config.num_prev_actions):
+        raise ValueError(
+            "Teacher checkpoint num_prev_actions mismatch: "
+            f"teacher={teacher_num_prev_actions}, student={student_config.num_prev_actions}"
+        )
+
+    teacher_model, init_params = get_model_ready(
+        jax.random.PRNGKey(0),
+        teacher_config,
+        env,
+    )
+    try:
+        jtu.tree_map(
+            lambda expected, actual: _assert_same_shape(expected, actual),
+            init_params,
+            checkpoint["model"],
+        )
+    except Exception as exc:
+        raise ValueError(
+            "Teacher checkpoint parameters do not match the reconstructed teacher model"
+        ) from exc
+    return teacher_model, checkpoint["model"], teacher_config
+
+
+def _assert_same_shape(expected, actual):
+    if expected.shape != actual.shape:
+        raise ValueError(f"expected {expected.shape}, got {actual.shape}")
+    return None
+
+
+def reset_train_state_optimizer(
+    train_state: TrainState,
+    config: MixedAgentTrainConfig,
+    lr: float,
+) -> TrainState:
+    return TrainState.create(
+        apply_fn=train_state.apply_fn,
+        params=train_state.params,
+        tx=make_optimizer(config, lr),
+    )
+
+
+def _num_agents_for_prev_actions(config, env_params, env, env_params_override) -> int:
+    if env_params_override is not None and hasattr(env_params_override, "agent_types"):
+        return len(tuple(env_params_override.agent_types))
+    if config.agent_types_override is not None:
+        return len(tuple(config.agent_types_override))
+    if hasattr(env_params, "agent_types"):
+        if isinstance(env_params.agent_types, (tuple, list)):
+            return len(env_params.agent_types)
+        if hasattr(env_params.agent_types, "shape"):
+            return int(env_params.agent_types.shape[-1])
+    if hasattr(env.batch_cfg, "agent_types") and isinstance(env.batch_cfg.agent_types, (tuple, list)):
+        return len(env.batch_cfg.agent_types)
+    return 4
+
+
 def train_mixed_agents(config: MixedAgentTrainConfig):
     """Main training function for mixed agents - with full feature parity to original train.py"""
     
@@ -698,7 +858,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         name=config.name,
         config=asdict(config),
         save_code=True,
-        tags=["mixed-agents", "tracked-excavator", "skid-steer", "unified-network"]
+        tags=list(config.tags),
     )
     
     # Log source files - same as original train.py
@@ -720,19 +880,64 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     # Optionally load checkpoint before creating states
     checkpoint = None
     env_params_override = None
-    if config.resume_from is not None and os.path.exists(config.resume_from):
+    if config.resume_from is not None:
+        if not os.path.exists(config.resume_from):
+            raise FileNotFoundError(f"Checkpoint does not exist: {config.resume_from}")
         try:
             checkpoint = helpers.load_pkl_object(config.resume_from)
             if config.load_env_from_checkpoint and "env_config" in checkpoint:
-                env_params_override = checkpoint["env_config"]
+                env_params_override = _first_checkpoint_env_config(
+                    checkpoint["env_config"]
+                )
+            if "model" not in checkpoint:
+                raise KeyError("checkpoint has no 'model' parameters")
+            if "train_config" in checkpoint:
+                checkpoint_config = checkpoint["train_config"]
+                restore_checkpoint_model_config(
+                    config,
+                    checkpoint["model"],
+                    source_config=checkpoint_config,
+                )
+                config.map_encoder = str(
+                    getattr(checkpoint_config, "map_encoder", config.map_encoder)
+                )
+                config.map_feature_dim = int(
+                    getattr(checkpoint_config, "map_feature_dim", config.map_feature_dim)
+                )
+                config.use_map_derived_channels = bool(
+                    getattr(
+                        checkpoint_config,
+                        "use_map_derived_channels",
+                        config.use_map_derived_channels,
+                    )
+                )
+                config.separate_actor_critic_trunks = bool(
+                    getattr(
+                        checkpoint_config,
+                        "separate_actor_critic_trunks",
+                        config.separate_actor_critic_trunks,
+                    )
+                )
+                config.model_size = str(
+                    getattr(checkpoint_config, "model_size", config.model_size)
+                )
+            else:
+                restore_checkpoint_model_config(
+                    config,
+                    checkpoint["model"],
+                    source_config={},
+                )
             print(f"Loaded checkpoint from {config.resume_from}")
         except Exception as e:
-            print(f"Failed to load checkpoint from {config.resume_from}: {e}")
+            raise RuntimeError(f"Failed to load checkpoint from {config.resume_from}") from e
+
+    run.config.update(asdict(config), allow_val_change=True)
 
     # Initialize training components (optionally with env override)
     rng, env, env_params, train_state = make_mixed_agent_states(
         config, env_params_override=env_params_override
     )
+    log_effective_env_config(run, env_params)
 
     # If checkpoint has model params, overwrite initialized params
     if checkpoint is not None and "model" in checkpoint:
@@ -740,34 +945,16 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             train_state = train_state.replace(params=checkpoint["model"])
             print("Replaced model parameters from checkpoint.")
         except Exception as e:
-            print(f"Failed to set model parameters from checkpoint: {e}")
+            raise RuntimeError("Failed to set model parameters from checkpoint") from e
 
-    # Removed agent-type curriculum monitoring
-    
-    def log_environment_metrics(timestep, update_num):
-        """Log environment metrics for all mixed agent training"""
-        try:
-            # Basic episode metrics
-            episode_done = timestep.done
-            completion_rate = safe_jax_to_python(jnp.mean(episode_done))
-            
-            # Log the metrics - ensure step is always positive and increasing
-            if update_num > 0:  # Only log if we have a valid step number
-                wandb.log({
-                    "progress/episode_completion_rate": completion_rate,
-                }, step=update_num)
-                
-        except Exception as e:
-            # Log the error but don't crash the training
-            print(f"⚠️  Warning: Failed to log environment metrics at step {update_num}: {e}")
-            # Optionally log a minimal set of metrics without step to avoid the warning
-            try:
-                wandb.log({
-                    "progress/episode_completion_rate": 0.0,
-                })
-            except:
-                pass  # If even this fails, just continue training
-    
+    teacher_bundle = None
+    if config.teacher_checkpoint is not None and config.imitation_updates > 0:
+        teacher_bundle = _load_teacher_checkpoint(config.teacher_checkpoint, env, config)
+        print(
+            "Loaded teacher policy for imitation warm start: "
+            f"{config.teacher_checkpoint}"
+        )
+
     def make_mixed_agent_train(env, env_params, config):
         def train(rng: jax.Array, train_state: TrainState):
             # INIT ENV
@@ -793,6 +980,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 distance_maps,
             ) = env.prepare_reset(env_params, reset_rng)
             reset_fn_p = jax.pmap(env.reset_prepared, axis_name="devices")
+            randomize_episode_age_p = jax.pmap(
+                randomize_initial_episode_progress,
+                axis_name="devices",
+            )
             timestep = reset_fn_p(
                 env_params_reset,
                 reset_rng,
@@ -806,35 +997,175 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 action_maps,
                 distance_maps,
             )
+            rng, _rng_episode_age = jax.random.split(rng)
+            episode_age_rng = jax.random.split(
+                _rng_episode_age, config.num_devices
+            )
+            timestep = randomize_episode_age_p(
+                timestep,
+                episode_age_rng,
+            )
             # Removed one-time debug sanity prints
-            
-            # Initialize reward_components in timestep.info to maintain consistent pytree structure
-            # This prevents JAX scan errors when reward_components is added later
-            if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
-                # Add empty reward_components to match the structure produced in env.step/state._get_reward
-                # Shapes follow timestep.reward's batch shape; agent vectors add a MAX_AGENTS axis (4)
-                batch_shape = timestep.reward.shape
-                MAX_AGENTS = 4
-                dummy_components = {
-                    "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
-                    "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
-                    "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
-                    "terminal": jnp.zeros_like(timestep.reward),
-                    "trench": jnp.zeros_like(timestep.reward),
-                    "existence": jnp.zeros_like(timestep.reward),
-                }
-                # Create new timestep with reward_components added to info
-                timestep = timestep._replace(
-                    info={**timestep.info, "reward_components": dummy_components}
-                )
             prev_actions = jnp.zeros(
                 (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
             )
             prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
 
+            teacher_model = None
+            teacher_params = None
+            teacher_config = None
+            if teacher_bundle is not None:
+                teacher_model, teacher_params, teacher_config = teacher_bundle
+                teacher_params = replicate(
+                    teacher_params,
+                    jax.local_devices()[: config.num_devices],
+                )
+
+            imitation_temperature = max(float(config.imitation_temperature), 1e-6)
+            imitation_value_coef = float(config.imitation_value_coef)
+
+            @partial(jax.pmap, axis_name="devices", donate_argnums=(0,))
+            def _distill_update_step(train_state, rng, timestep, prev_actions, prev_reward, teacher_params):
+                def _teacher_env_step(carry, _):
+                    rng, prev_timestep, prev_actions, prev_reward = carry
+                    rng, _rng_model, _rng_env = jax.random.split(rng, 3)
+
+                    teacher_obs = obs_to_model_input(
+                        prev_timestep.observation,
+                        prev_actions,
+                        teacher_config,
+                    )
+                    teacher_value, teacher_logits = teacher_model.apply(
+                        teacher_params,
+                        teacher_obs,
+                    )
+                    action = jax.random.categorical(_rng_model, teacher_logits)
+
+                    _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
+                    action_env = wrap_action(action, env.batch_cfg.action_type)
+                    next_timestep = env.step(prev_timestep, action_env, _rng_env)
+                    next_prev_actions = jnp.concatenate(
+                        [action[..., None], prev_actions[..., :-1]],
+                        axis=-1,
+                    )
+
+                    batch = DistillBatch(
+                        obs=prev_timestep.observation,
+                        prev_actions=prev_actions,
+                        teacher_logits=teacher_logits,
+                        teacher_value=teacher_value[:, 0],
+                    )
+                    carry = (rng, next_timestep, next_prev_actions, next_timestep.reward)
+                    return carry, batch
+
+                (rng, timestep, prev_actions, prev_reward), distill_batch = jax.lax.scan(
+                    _teacher_env_step,
+                    (rng, timestep, prev_actions, prev_reward),
+                    None,
+                    config.imitation_num_steps,
+                )
+
+                def _update_minbatch(train_state, batch):
+                    def _loss_fn(params):
+                        obs_flat = jax.tree_map(
+                            lambda x: jnp.reshape(
+                                x,
+                                (x.shape[0] * x.shape[1], *x.shape[2:]),
+                            ),
+                            batch.obs,
+                        )
+                        prev_actions_flat = jnp.reshape(
+                            batch.prev_actions,
+                            (
+                                batch.prev_actions.shape[0] * batch.prev_actions.shape[1],
+                                *batch.prev_actions.shape[2:],
+                            ),
+                        )
+                        teacher_logits_flat = jnp.reshape(
+                            batch.teacher_logits,
+                            (
+                                batch.teacher_logits.shape[0] * batch.teacher_logits.shape[1],
+                                batch.teacher_logits.shape[-1],
+                            ),
+                        )
+                        teacher_value_flat = jnp.reshape(batch.teacher_value, (-1,))
+
+                        student_obs = obs_to_model_input(
+                            obs_flat,
+                            prev_actions_flat,
+                            config,
+                        )
+                        student_value, student_logits = train_state.apply_fn(
+                            params,
+                            student_obs,
+                        )
+                        student_value = student_value[:, 0]
+
+                        teacher_log_probs = jax.nn.log_softmax(
+                            teacher_logits_flat / imitation_temperature,
+                            axis=-1,
+                        )
+                        teacher_probs = jnp.exp(teacher_log_probs)
+                        student_log_probs = jax.nn.log_softmax(
+                            student_logits / imitation_temperature,
+                            axis=-1,
+                        )
+                        policy_kl = jnp.sum(
+                            teacher_probs * (teacher_log_probs - student_log_probs),
+                            axis=-1,
+                        ).mean() * (imitation_temperature ** 2)
+                        value_loss = 0.5 * jnp.square(
+                            student_value - teacher_value_flat
+                        ).mean()
+                        student_probs = jax.nn.softmax(student_logits, axis=-1)
+                        student_entropy = -jnp.sum(
+                            student_probs * jax.nn.log_softmax(student_logits, axis=-1),
+                            axis=-1,
+                        ).mean()
+                        total_loss = policy_kl + imitation_value_coef * value_loss
+                        return total_loss, (policy_kl, value_loss, student_entropy)
+
+                    (loss, (policy_kl, value_loss, entropy)), grads = jax.value_and_grad(
+                        _loss_fn,
+                        has_aux=True,
+                    )(train_state.params)
+                    loss, policy_kl, value_loss, entropy, grads = jax.lax.pmean(
+                        (loss, policy_kl, value_loss, entropy, grads),
+                        axis_name="devices",
+                    )
+                    train_state = train_state.apply_gradients(grads=grads)
+                    return train_state, {
+                        "imitation_loss": loss,
+                        "imitation_policy_kl": policy_kl,
+                        "imitation_value_loss": value_loss,
+                        "imitation_entropy": entropy,
+                    }
+
+                rng, _rng = jax.random.split(rng)
+                permutation = jax.random.permutation(_rng, config.num_envs_per_device)
+                batch = jtu.tree_map(lambda x: x.swapaxes(0, 1), distill_batch)
+                shuffled_batch = jtu.tree_map(
+                    lambda x: jnp.take(x, permutation, axis=0),
+                    batch,
+                )
+                minibatches = jtu.tree_map(
+                    lambda x: jnp.reshape(
+                        x,
+                        (config.imitation_num_minibatches, -1) + x.shape[1:],
+                    ),
+                    shuffled_batch,
+                )
+                train_state, distill_info = jax.lax.scan(
+                    _update_minbatch,
+                    train_state,
+                    minibatches,
+                )
+                distill_info = jtu.tree_map(lambda x: x.mean(-1), distill_info)
+                return train_state, rng, timestep, prev_actions, prev_reward, distill_info
+
             # TRAIN LOOP
-            @partial(jax.pmap, axis_name="devices")
-            def _update_step(runner_state, ent_coef_current, update_idx):
+            @partial(jax.pmap, axis_name="devices", donate_argnums=(0,))
+            def _update_step(runner_state, ent_coef_current):
                 # COLLECT TRAJECTORIES
                 def _env_step(runner_state, step_idx):
                     rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
@@ -849,10 +1180,28 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
                     action_env = wrap_action(action, env.batch_cfg.action_type)
                     timestep = env.step(prev_timestep, action_env, _rng_env)
+                    next_prev_actions = jnp.concatenate(
+                        [action[..., None], prev_actions[..., :-1]],
+                        axis=-1,
+                    )
+                    task_done = timestep.info["task_done"]
+                    timeout_done = timestep.info["timeout_done"]
+                    bootstrap_value = timeout_bootstrap_value(
+                        train_state,
+                        timestep.info,
+                        next_prev_actions,
+                        value,
+                        config,
+                    )
 
                     # Removed SWAP debug prints
                     transition = Transition(
                         done=timestep.done,
+                        task_done=task_done,
+                        timeout_done=timeout_done,
+                        bootstrap_value=bootstrap_value,
+                        bootstrap_mask=(1.0 - task_done.astype(jnp.float32)),
+                        gae_mask=(1.0 - timestep.done.astype(jnp.float32)),
                         action=action,
                         value=value,
                         reward=timestep.reward,
@@ -863,50 +1212,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     )
 
                     # UPDATE PREVIOUS ACTIONS
-                    prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
-                    prev_actions = prev_actions.at[..., 0].set(action)
+                    prev_actions = next_prev_actions
 
                     runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
-                    return runner_state, transition
+                    return runner_state, (transition, timestep.info["reward_components"])
 
                 # transitions: [seq_len, batch_size, ...]
-                runner_state, transitions = jax.lax.scan(
+                runner_state, (transitions, reward_components) = jax.lax.scan(
                     _env_step, runner_state, jnp.arange(config.num_steps), config.num_steps
                 )
-
-                # Distribute terminal reward to the last num_agents alternating steps
-                # This attributes the shared terminal to all agents that acted in the final round
-                done_seq = transitions.done            # [seq, batch]
-                reward_seq = transitions.reward        # [seq, batch]
-                # Terminal bonus only on terminal steps
-                terminal_bonus = jnp.where(done_seq, reward_seq, 0.0)  # [seq, batch]
-
-                # Get num_agents per env (assumed constant across sequence); shape [batch]
-                # transitions.obs stores prev_timestep.observation
-                num_agents_per_env = transitions.obs["num_agents"][0]  # [batch]
-                # Clip to supported window 1..MAX_AGENTS
-                MAX_AGENTS = 4
-                num_agents_per_env = jnp.clip(num_agents_per_env.astype(jnp.int32), 1, MAX_AGENTS)
-
-                # Build windowed backfill: sum of shifts 0..K-1, where K=num_agents_per_env
-                # shifted[k] = terminal_bonus shifted backward by k (zeros for first k rows)
-                def shift_back(arr, k):
-                    zeros = jnp.zeros_like(arr[:k])
-                    return jnp.concatenate([zeros, arr[:-k]], axis=0) if k > 0 else arr
-
-                shifted_stack = []
-                # Start at k=1 to avoid including the unshifted terminal bonus (no double-count)
-                for k in range(1, MAX_AGENTS):
-                    shifted_k = shift_back(terminal_bonus, k)  # [seq, batch]
-                    # Mask this shift per env if k < num_agents
-                    use_k = (num_agents_per_env > k).astype(jnp.float32)  # [batch]
-                    shifted_k = shifted_k * use_k  # broadcast over seq
-                    shifted_stack.append(shifted_k)
-                window_sum = jnp.stack(shifted_stack, axis=0).sum(axis=0)  # [seq, batch]
-
-                # With k starting at 1, we don't include the terminal step itself in the sum
-                augmented_reward = reward_seq + window_sum
-                transitions = transitions.replace(reward=augmented_reward)
 
                 # CALCULATE ADVANTAGE
                 rng, train_state, timestep, prev_actions, prev_reward = runner_state
@@ -970,16 +1284,19 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
                 # Explained variance between value predictions and returns
                 # Use transitions and targets from current update_state (first device in pmap)
-                _, _, transitions_ev, _, targets_ev = update_state
-                vpred = transitions_ev.value
-                vtrue = targets_ev
+                vpred = transitions.value
+                vtrue = targets
                 vpred_flat = vpred.reshape(-1)
                 vtrue_flat = vtrue.reshape(-1)
                 var_y = jnp.var(vtrue_flat)
                 explained_var = 1 - jnp.var(vtrue_flat - vpred_flat) / (var_y + 1e-8)
-                # Attach to loss_info for logging
                 loss_info = dict(loss_info)
                 loss_info["explained_variance"] = explained_var
+                loss_info.update(train_rollout_metrics(transitions, reward_components))
+                loss_info = jtu.tree_map(
+                    lambda x: jax.lax.pmean(x, axis_name="devices"),
+                    loss_info,
+                )
 
                 rng, train_state = update_state[:2]
                 # EVALUATE AGENT
@@ -991,7 +1308,164 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             # Setup runner state for multiple devices
             rng, rng_rollout = jax.random.split(rng)
             rng = jax.random.split(rng, num=config.num_devices)
+            if teacher_bundle is not None:
+                train_state = reset_train_state_optimizer(
+                    train_state,
+                    config,
+                    config.imitation_lr,
+                )
             train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
+            distill_summary = None
+            if teacher_bundle is not None:
+                print(
+                    "Starting teacher imitation warm start: "
+                    f"{config.imitation_updates} updates, "
+                    f"{config.imitation_num_steps} steps/update",
+                    flush=True,
+                )
+                ppo_start = (rng, timestep, prev_actions, prev_reward)
+                distill_rng = jax.vmap(
+                    lambda key: jax.random.fold_in(key, 1729)
+                )(rng)
+                distill_timestep = timestep
+                distill_prev_actions = prev_actions
+                distill_prev_reward = prev_reward
+                for warm_i in tqdm(
+                    range(config.imitation_updates),
+                    desc="Imitation warm start",
+                ):
+                    (
+                        train_state,
+                        distill_rng,
+                        distill_timestep,
+                        distill_prev_actions,
+                        distill_prev_reward,
+                        distill_info,
+                    ) = (
+                        jax.block_until_ready(
+                            _distill_update_step(
+                                train_state,
+                                distill_rng,
+                                distill_timestep,
+                                distill_prev_actions,
+                                distill_prev_reward,
+                                teacher_params,
+                            )
+                        )
+                    )
+                    if warm_i == 0 or (warm_i + 1) % 10 == 0 or warm_i == config.imitation_updates - 1:
+                        distill_info_single = unreplicate(distill_info)
+                        tqdm.write(
+                            "Imitation "
+                            f"{warm_i + 1}/{config.imitation_updates}: "
+                            f"loss={float(distill_info_single['imitation_loss']):.4f}, "
+                            f"kl={float(distill_info_single['imitation_policy_kl']):.4f}, "
+                            f"value={float(distill_info_single['imitation_value_loss']):.4f}, "
+                            f"entropy={float(distill_info_single['imitation_entropy']):.4f}"
+                        )
+                        if config.imitation_only:
+                            wandb.log(
+                                {
+                                    "imitation/loss": float(distill_info_single["imitation_loss"]),
+                                    "imitation/policy_kl": float(
+                                        distill_info_single["imitation_policy_kl"]
+                                    ),
+                                    "imitation/value_loss": float(
+                                        distill_info_single["imitation_value_loss"]
+                                    ),
+                                    "imitation/entropy": float(
+                                        distill_info_single["imitation_entropy"]
+                                    ),
+                                    "imitation/updates": warm_i + 1,
+                                    "imitation/env_steps": (
+                                        (warm_i + 1)
+                                        * config.imitation_num_steps
+                                        * config.num_envs
+                                    ),
+                                },
+                                step=warm_i + 1,
+                            )
+                    if (
+                        config.imitation_checkpoint_interval > 0
+                        and (warm_i + 1) % config.imitation_checkpoint_interval == 0
+                    ):
+                        distill_info_single = unreplicate(distill_info)
+                        train_state_single = unreplicate(train_state)
+                        ppo_timestep = ppo_start[1]
+                        checkpoint = {
+                            "train_config": config,
+                            "env_config": unreplicate(ppo_timestep).env_cfg,
+                            "model": train_state_single.params,
+                            "loss_info": distill_info_single,
+                            "imitation_update": warm_i + 1,
+                            "imitation_requested_updates": config.imitation_updates,
+                            "imitation_only": config.imitation_only,
+                        }
+                        helpers.save_pkl_object(
+                            checkpoint,
+                            f"checkpoints/{config.name}_POST_DISTILL_update_{warm_i + 1:04d}.pkl",
+                        )
+                distill_info_single = unreplicate(distill_info)
+                distill_summary = {
+                    "imitation/loss": float(distill_info_single["imitation_loss"]),
+                    "imitation/policy_kl": float(
+                        distill_info_single["imitation_policy_kl"]
+                    ),
+                    "imitation/value_loss": float(
+                        distill_info_single["imitation_value_loss"]
+                    ),
+                    "imitation/entropy": float(
+                        distill_info_single["imitation_entropy"]
+                    ),
+                    "imitation/updates": config.imitation_updates,
+                    "imitation/env_steps": config.imitation_env_steps,
+                    "performance/env_steps_including_imitation": (
+                        config.imitation_env_steps
+                    ),
+                }
+                train_state_single = unreplicate(train_state)
+                ppo_timestep = ppo_start[1]
+                post_distill_checkpoint = {
+                    "train_config": config,
+                    "env_config": unreplicate(ppo_timestep).env_cfg,
+                    "model": train_state_single.params,
+                    "loss_info": distill_info_single,
+                    "imitation_update": config.imitation_updates,
+                    "imitation_requested_updates": config.imitation_updates,
+                    "imitation_only": config.imitation_only,
+                }
+                helpers.save_pkl_object(
+                    post_distill_checkpoint,
+                    f"checkpoints/{config.name}_POST_DISTILL.pkl",
+                )
+                print(
+                    "Saved post-distillation checkpoint to "
+                    f"checkpoints/{config.name}_POST_DISTILL.pkl",
+                    flush=True,
+                )
+                if config.imitation_only:
+                    print("Supervised imitation-only run complete; skipping PPO.", flush=True)
+                    return {
+                        "runner_state": (
+                            unreplicate(rng),
+                            train_state_single,
+                            unreplicate(ppo_timestep),
+                            unreplicate(ppo_start[2]),
+                            unreplicate(ppo_start[3]),
+                        ),
+                        "loss_info": distill_info_single,
+                        "imitation_only": True,
+                    }
+                train_state = reset_train_state_optimizer(
+                    train_state_single,
+                    config,
+                    config.lr,
+                )
+                train_state = replicate(
+                    train_state,
+                    jax.local_devices()[: config.num_devices],
+                )
+                rng, timestep, prev_actions, prev_reward = ppo_start
             runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
             
             # Entropy scheduler: cosine decay using config variables
@@ -1009,28 +1483,42 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 ent_broadcast = jnp.array([ent_coef_current] * config.num_devices)
                 start_time = time.time()
                 runner_state, loss_info = jax.block_until_ready(
-                    _update_step(runner_state, ent_broadcast, jnp.array([i] * config.num_devices))
+                    _update_step(runner_state, ent_broadcast)
                 )
                 end_time = time.time()
 
                 iteration_duration = end_time - start_time
                 iterations_per_second = 1 / iteration_duration
-                steps_per_second = (
-                    iterations_per_second
-                    * config.num_steps
-                    * config.num_envs
-                    * config.num_devices
-                )
+                steps_per_second = iterations_per_second * config.env_steps_per_update
+                steps_per_second_per_gpu = steps_per_second / config.num_devices
 
                 tqdm.write(f"Steps/s: {steps_per_second:.2f}")
 
-                # Use data from the first device for stats and eval
-                loss_info_single = unreplicate(loss_info)
-                runner_state_single = unreplicate(runner_state)
-                _, train_state, timestep, prev_actions = runner_state_single[:4]
-                env_params_single = timestep.env_cfg
+                need_train_log = (
+                    config.log_train_interval > 0
+                    and i % config.log_train_interval == 0
+                )
+                need_checkpoint = (
+                    config.checkpoint_interval > 0
+                    and i % config.checkpoint_interval == 0
+                )
+                need_eval = (
+                    config.log_eval_interval > 0
+                    and i % config.log_eval_interval == 0
+                )
+                need_final_state = i == config.num_updates - 1
+                need_host_state = (
+                    need_train_log or need_checkpoint or need_eval or need_final_state
+                )
 
-                if i % config.log_train_interval == 0:
+                if need_host_state:
+                    # Use data from the first device for stats, checkpointing, and final return.
+                    loss_info_single = unreplicate(loss_info)
+                    runner_state_single = unreplicate(runner_state)
+                    _, train_state_single, timestep, prev_actions = runner_state_single[:4]
+                    env_params_single = timestep.env_cfg
+
+                if need_train_log:
                     # Consolidated logging to prevent step ordering issues
                     curriculum_levels = get_curriculum_levels(
                         env_params_single, env.batch_cfg.curriculum_global.levels
@@ -1039,77 +1527,26 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     # Start with base metrics
                     log_dict = {
                         "performance/steps_per_second": steps_per_second,
+                        "performance/steps_per_second_per_gpu": steps_per_second_per_gpu,
                         "performance/iterations_per_second": iterations_per_second,
+                        "performance/env_steps_per_update": config.env_steps_per_update,
+                        "performance/actual_env_steps": (i + 1) * config.env_steps_per_update,
+                        "performance/actual_env_steps_including_imitation": (
+                            config.imitation_env_steps
+                            + (i + 1) * config.env_steps_per_update
+                        ),
                         "curriculum_levels": curriculum_levels,
                         "lr": config.lr,
                         "sched/entropy_coef": float(ent_coef_current),
-                        **loss_info_single,
+                        **train_log_metrics(loss_info_single),
                     }
-                    
-                    # Removed fixed agent1/agent2 type metrics to support dynamic agent counts
-                    
-                    # Add environment metrics (without separate wandb.log call)
-                    try:
-                        completion_rate = safe_jax_to_python(jnp.mean(timestep.done))
-                        log_dict["progress/episode_completion_rate"] = completion_rate
-                    except Exception:
-                        pass
-
-                    # Add reward breakdown logging (without separate wandb.log call)
-                    try:
-                        reward_components = None
-                        if hasattr(timestep, "reward_components"):
-                            reward_components = timestep.reward_components
-                        elif hasattr(timestep, "info") and isinstance(timestep.info, dict):
-                            rc = timestep.info.get("reward_components", None)
-                            reward_components = rc
-
-                        if reward_components is not None:
-                            # Support per-agent rewards vector and masks
-                            breakdown_means = {}
-                            agent_rewards = reward_components.get("agent_rewards", None)
-                            agent_active = reward_components.get("agent_active", None)
-                            num_agents = reward_components.get("num_agents", None)
-                            # Scalar components
-                            for k in ["terminal", "trench", "existence"]:
-                                if k in reward_components:
-                                    breakdown_means[k] = safe_jax_to_python(reward_components[k])
-                            # Vector per-agent rewards
-                            if agent_rewards is not None:
-                                try:
-                                    ar = agent_rewards
-                                    # Log each available agent index separately
-                                    for idx in range(ar.shape[-1]):
-                                        key = f"agent_{idx}"
-                                        breakdown_means[f"{key}"] = safe_jax_to_python(jnp.mean(ar[..., idx]))
-                                except Exception:
-                                    pass
-                            # Add to main log dict
-                            for k, v in breakdown_means.items():
-                                log_dict[f"rewards/{k}"] = v
-                            # Also log masks if present
-                            if agent_active is not None:
-                                try:
-                                    log_dict["agents/active_count"] = safe_jax_to_python(jnp.sum(agent_active))
-                                except Exception:
-                                    pass
-                            if num_agents is not None:
-                                try:
-                                    log_dict["agents/num_agents"] = safe_jax_to_python(num_agents)
-                                except Exception:
-                                    pass
-                            
-                            
-                            
-                                
-                            # Skip bar chart for now to avoid step conflicts
-                    except Exception:
-                        pass
+                    if i == 0 and distill_summary is not None:
+                        log_dict.update(distill_summary)
                     
                     # Single consolidated wandb.log call
                     wandb.log(log_dict, step=i)
 
-                if i % config.checkpoint_interval == 0:
+                if need_checkpoint:
                     checkpoint = {
                         "train_config": config,
                         "env_config": env_params_single,
@@ -1117,8 +1554,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "loss_info": loss_info_single,
                     }
                     helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
+                    if i in {0, 100, 500, 1000, 2000, 5000, 10000}:
+                        helpers.save_pkl_object(
+                            checkpoint,
+                            f"checkpoints/{config.name}_update_{i:06d}.pkl",
+                        )
 
-                if i % config.log_eval_interval == 0:
+                if need_eval:
                     # Eval runs as pmap across all devices. Feed replicated train_state
                     # and env_params (pulled from the unreduced runner_state) and a
                     # per-device rng. Results come back with a leading device axis; we
@@ -1139,56 +1581,30 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     # extrema, and keep length from device 0 (identical across devices).
                     eval_stats = eval_stats_per_device._replace(
                         max_reward=eval_stats_per_device.max_reward.max(),
-                        min_reward=eval_stats_per_device.min_reward.min(),
                         reward=eval_stats_per_device.reward.sum(),
                         length=eval_stats_per_device.length[0],
-                        episodes=eval_stats_per_device.episodes.sum(),
-                        positive_terminations=eval_stats_per_device.positive_terminations.sum(),
-                        terminations=eval_stats_per_device.terminations.sum(),
-                        positive_terminations_steps=eval_stats_per_device.positive_terminations_steps.sum(),
-                        action_0=eval_stats_per_device.action_0.sum(),
-                        action_1=eval_stats_per_device.action_1.sum(),
-                        action_2=eval_stats_per_device.action_2.sum(),
-                        action_3=eval_stats_per_device.action_3.sum(),
-                        action_4=eval_stats_per_device.action_4.sum(),
-                        action_5=eval_stats_per_device.action_5.sum(),
-                        action_6=eval_stats_per_device.action_6.sum(),
-                        action_7=eval_stats_per_device.action_7.sum(),
+                        successes=eval_stats_per_device.successes.sum(),
+                        success_steps=eval_stats_per_device.success_steps.sum(),
+                        first_successes=eval_stats_per_device.first_successes.sum(),
+                        first_failures=eval_stats_per_device.first_failures.sum(),
+                        completed_once=eval_stats_per_device.completed_once.reshape(-1),
+                        return_sum=eval_stats_per_device.return_sum.sum(),
+                        return_sq_sum=eval_stats_per_device.return_sq_sum.sum(),
+                        return_min=eval_stats_per_device.return_min.min(),
+                        return_max=eval_stats_per_device.return_max.max(),
+                        return_count=eval_stats_per_device.return_count.sum(),
+                        success_return_sum=eval_stats_per_device.success_return_sum.sum(),
+                        success_return_count=eval_stats_per_device.success_return_count.sum(),
+                        failure_return_sum=eval_stats_per_device.failure_return_sum.sum(),
+                        failure_return_count=eval_stats_per_device.failure_return_count.sum(),
+                        action_counts=eval_stats_per_device.action_counts.sum(axis=0),
                     )
 
-                    # Total envs that contributed to the sums across all devices.
-                    n = config.num_envs_per_device * config.num_devices * eval_stats.length
-                    avg_positive_episode_length = jnp.where(
-                        eval_stats.positive_terminations > 0,
-                        eval_stats.positive_terminations_steps / eval_stats.positive_terminations,
-                        jnp.zeros_like(eval_stats.positive_terminations_steps)
-                    )
-                    loss_info_single.update(
-                        {
-                            "eval/rewards": eval_stats.reward / n,
-                            "eval/max_reward": eval_stats.max_reward,
-                            "eval/min_reward": eval_stats.min_reward,
-                            "eval/lengths": eval_stats.length,
-                            "eval/FORWARD %": eval_stats.action_0 / n,
-                            "eval/BACKWARD %": eval_stats.action_1 / n,
-                            "eval/CLOCK %": eval_stats.action_2 / n,
-                            "eval/ANTICLOCK %": eval_stats.action_3 / n,
-                            "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
-                            "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
-                            "eval/DO": eval_stats.action_6 / n,
-                            "eval/DO_NOTHING %": eval_stats.action_7 / n,
-                            "eval/positive_terminations": eval_stats.positive_terminations
-                            / (config.num_envs_per_device * config.num_devices),
-                            "eval/total_terminations": eval_stats.terminations
-                            / (config.num_envs_per_device * config.num_devices),
-                            "eval/avg_positive_episode_length": avg_positive_episode_length
-                        }
-                    )
+                    wandb.log(eval_log_metrics(eval_stats, config), step=i)
 
-                    wandb.log(loss_info_single)
-
-                # Clear JAX caches and run garbage collection to stabilize memory use
-                if i % config.cache_clear_interval == 0:
+                # Clear JAX caches only after a completed interval. Clearing at i == 0
+                # forces the second update to retrace/recompile immediately.
+                if config.cache_clear_interval > 0 and (i + 1) % config.cache_clear_interval == 0:
                     jax.clear_caches()
                     import gc
                     gc.collect()
@@ -1224,6 +1640,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         train_info = jax.block_until_ready(train_with_monitoring(rng, train_state))
         elapsed_time = time.time() - t
         print(f"✅ Mixed agent training completed in {elapsed_time:.2f}s")
+        if train_info.get("imitation_only", False):
+            print("💾 Supervised-only checkpoints saved; no PPO final checkpoint written.")
+            return
         
         # Save final checkpoint with special naming - enhanced metadata
         try:
@@ -1245,7 +1664,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             "model": train_info["runner_state"][1].params,
             "loss_info": train_info["loss_info"],
             "agent_types": agent_types_str,
-            "network_type": "unified_with_agent_type_conditioning",
+            "network_type": (
+                "unified_with_agent_type_conditioning_"
+                f"{config.map_encoder}"
+            ),
             "training_duration": elapsed_time,
             "final_reward": train_info.get("final_reward", None)
         }
@@ -1281,6 +1703,18 @@ if __name__ == "__main__":
         help="Learning rate"
     )
     parser.add_argument(
+        "--project", type=str, default="mixed-agents",
+        help="Weights & Biases project"
+    )
+    parser.add_argument(
+        "--group", type=str, default="tracked-skidsteer",
+        help="Weights & Biases group"
+    )
+    parser.add_argument(
+        "--tags", type=str, default="mixed-agents,tracked-excavator,unified-network",
+        help="Comma-separated Weights & Biases tags"
+    )
+    parser.add_argument(
         "--num_envs_per_device", type=int, default=1024,
         help="Number of parallel envs per device"
     )
@@ -1289,8 +1723,85 @@ if __name__ == "__main__":
         help="Total environment timesteps across all devices"
     )
     parser.add_argument(
-        "--model_size", type=str, default="base", choices=["base", "medium", "large"],
-        help="Model capacity preset. 'medium' and 'large' progressively widen CNN and policy/value heads."
+        "--model_size",
+        type=str,
+        default="base",
+        choices=["base", "medium", "large", "medium_deep", "large_deep"],
+        help=(
+            "Model capacity preset. 'medium_deep' and 'large_deep' add deeper "
+            "delayed-ResNet spatial encoders for larger warm-start experiments."
+        ),
+    )
+    parser.add_argument(
+        "--num_steps", type=int, default=32,
+        help="Rollout length per PPO update"
+    )
+    parser.add_argument(
+        "--update_epochs", type=int, default=2,
+        help="Number of PPO epochs per collected rollout"
+    )
+    parser.add_argument(
+        "--num_minibatches", type=int, default=16,
+        help="Number of minibatches per PPO update"
+    )
+    parser.add_argument(
+        "--log_train_interval", type=int, default=1,
+        help="Training log interval in updates; set 0 to disable"
+    )
+    parser.add_argument(
+        "--log_eval_interval", type=int, default=100,
+        help="Evaluation interval in updates; set 0 to disable"
+    )
+    parser.add_argument(
+        "--checkpoint_interval", type=int, default=100,
+        help="Checkpoint interval in updates; set 0 to disable"
+    )
+    parser.add_argument(
+        "--eval_episodes", type=int, default=100,
+        help="Number of eval episodes"
+    )
+    parser.add_argument(
+        "--num_rollouts_eval", type=int, default=550,
+        help="Maximum eval rollout horizon in env steps"
+    )
+    parser.add_argument(
+        "--map_encoder",
+        type=str,
+        choices=("atari", "resnet_delayed"),
+        default="atari",
+        help="Global map encoder architecture"
+    )
+    parser.add_argument(
+        "--map_feature_dim",
+        type=int,
+        default=32,
+        help="Output feature width for the global map encoder"
+    )
+    parser.add_argument(
+        "--use_map_derived_channels",
+        action="store_true",
+        help="Add derived global-map error/progress channels before map encoding"
+    )
+    parser.add_argument(
+        "--separate_actor_critic_trunks",
+        action="store_true",
+        help="Use separate actor and critic trunks after the shared feature encoder"
+    )
+    parser.add_argument(
+        "--use_critic_affordances",
+        action="store_true",
+        help="Feed edge/progress affordances to the critic path only"
+    )
+    parser.add_argument(
+        "--include_episode_progress",
+        action="store_true",
+        help="Append env_steps / max_steps_in_episode to the critic affordance vector"
+    )
+    parser.add_argument(
+        "--edge_features_dim",
+        type=int,
+        default=0,
+        help="Number of env-computed edge_features to expose to the model"
     )
     parser.add_argument(
         "--agent_types", type=str, default=None,   # 0=excavator, 1=truck, 2=skidsteer
@@ -1364,6 +1875,59 @@ if __name__ == "__main__":
         "-r", "--resume_from", type=str, default=None,
         help="Path to a checkpoint .pkl to resume training from."
     )
+    parser.add_argument(
+        "--teacher_checkpoint",
+        type=str,
+        default=None,
+        help="Checkpoint whose policy/value outputs are imitated before PPO starts.",
+    )
+    parser.add_argument(
+        "--imitation_updates",
+        type=int,
+        default=0,
+        help="Number of teacher-imitation updates to run before PPO.",
+    )
+    parser.add_argument(
+        "--imitation_num_steps",
+        type=int,
+        default=32,
+        help="Teacher rollout length per imitation update.",
+    )
+    parser.add_argument(
+        "--imitation_num_minibatches",
+        type=int,
+        default=16,
+        help="Number of env-shuffled minibatches per imitation update.",
+    )
+    parser.add_argument(
+        "--imitation_lr",
+        type=float,
+        default=1e-4,
+        help="Learning rate for the imitation warm-start optimizer.",
+    )
+    parser.add_argument(
+        "--imitation_temperature",
+        type=float,
+        default=1.0,
+        help="KL temperature for teacher-policy distillation.",
+    )
+    parser.add_argument(
+        "--imitation_value_coef",
+        type=float,
+        default=0.25,
+        help="Weight for matching the teacher value prediction during imitation.",
+    )
+    parser.add_argument(
+        "--imitation_only",
+        action="store_true",
+        help="Run teacher imitation, save post-distill checkpoints, and exit before PPO.",
+    )
+    parser.add_argument(
+        "--imitation_checkpoint_interval",
+        type=int,
+        default=0,
+        help="Save an extra post-distill checkpoint every N imitation updates.",
+    )
     env_group = parser.add_mutually_exclusive_group()
     env_group.add_argument(
         "--load_env_from_checkpoint",
@@ -1378,7 +1942,7 @@ if __name__ == "__main__":
         help="Do not load env_config from checkpoint; use default/current EnvConfig()."
     )
     
-    args, _ = parser.parse_known_args()
+    args = parser.parse_args()
     
     # default to True unless explicitly disabled
     if args.load_env_from_checkpoint is None:
@@ -1480,6 +2044,16 @@ if __name__ == "__main__":
         raise ValueError("Mixed target-map replay requires --config so the dataset source is defined.")
     if (args.replay_map_count > 0) != (args.target_map_repeat > 0):
         raise ValueError("Set both --replay_map_count and --target_map_repeat to use mixed target-map replay.")
+    if args.imitation_updates > 0 and args.teacher_checkpoint is None:
+        raise ValueError("--imitation_updates requires --teacher_checkpoint.")
+    if args.imitation_only and args.imitation_updates <= 0:
+        raise ValueError("--imitation_only requires --imitation_updates > 0.")
+    if args.imitation_num_minibatches <= 0:
+        raise ValueError("--imitation_num_minibatches must be positive.")
+    if args.imitation_num_steps <= 0:
+        raise ValueError("--imitation_num_steps must be positive.")
+    if args.imitation_checkpoint_interval < 0:
+        raise ValueError("--imitation_checkpoint_interval must be non-negative.")
     
     # CLI reward multiplier overrides take precedence
     if args.dump_bonus_mult is not None:
@@ -1511,11 +2085,38 @@ if __name__ == "__main__":
     config = MixedAgentTrainConfig(
         name=name, 
         num_devices=args.num_devices,
+        project=args.project,
+        group=args.group,
+        tags=tuple(tag.strip() for tag in args.tags.split(",") if tag.strip()),
         lr=args.lr,
         num_envs_per_device=args.num_envs_per_device,
+        num_steps=args.num_steps,
+        update_epochs=args.update_epochs,
+        num_minibatches=args.num_minibatches,
         total_timesteps=args.total_timesteps,
+        log_train_interval=args.log_train_interval,
+        log_eval_interval=args.log_eval_interval,
+        checkpoint_interval=args.checkpoint_interval,
+        eval_episodes=args.eval_episodes,
+        num_rollouts_eval=args.num_rollouts_eval,
+        map_encoder=args.map_encoder,
+        map_feature_dim=args.map_feature_dim,
+        use_map_derived_channels=args.use_map_derived_channels,
+        separate_actor_critic_trunks=args.separate_actor_critic_trunks,
+        use_critic_affordances=args.use_critic_affordances,
+        include_episode_progress=args.include_episode_progress,
+        edge_features_dim=args.edge_features_dim,
         resume_from=args.resume_from,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
+        teacher_checkpoint=args.teacher_checkpoint,
+        imitation_updates=args.imitation_updates,
+        imitation_num_steps=args.imitation_num_steps,
+        imitation_num_minibatches=args.imitation_num_minibatches,
+        imitation_lr=args.imitation_lr,
+        imitation_temperature=args.imitation_temperature,
+        imitation_value_coef=args.imitation_value_coef,
+        imitation_only=args.imitation_only,
+        imitation_checkpoint_interval=args.imitation_checkpoint_interval,
         agent_types_override=agent_types_override,
         action_types_override=action_types_override,
         debug=args.debug,

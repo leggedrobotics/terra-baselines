@@ -22,7 +22,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from tensorflow_probability.substrates import jax as tfp
 
-from utils.models import load_neural_network
+from utils.models import load_neural_network, restore_checkpoint_model_config
 from utils.helpers import load_pkl_object
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from terra.env import TerraEnvBatch
@@ -699,6 +699,7 @@ if __name__ == "__main__":
     n_envs = args.n_envs
     log = load_pkl_object(f"{args.run_name}")
     config = log["train_config"]
+    restore_checkpoint_model_config(config, log["model"])
     config.num_test_rollouts = n_envs
     config.num_devices = 1
     # MCTS params (only used when --use-mcts)

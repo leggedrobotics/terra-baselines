@@ -75,11 +75,34 @@ python train_mixed.py --config excavator_skidsteer
 python train_mixed.py --config excavator_truck
 ```
 
+### Default `solo_excavator` PPO Settings
+
+For the current single-excavator policy training, use `train_mixed.py --config solo_excavator`.
+On Euler, set `DATASET_PATH` and `DATASET_SIZE=600`; the config preset supplies the map, agent,
+action, max-step, and reward settings.
+
+| Setting | Default value |
+|---------|---------------|
+| Command | `python train_mixed.py --config solo_excavator` |
+| Agent/action types | `agent_types=[0]`, `action_types=[0]` (tracked excavator) |
+| Map / episode length | `foundations_real_ring`, `max_steps=550` |
+| Dataset env | `DATASET_PATH=<terra train dataset>`, `DATASET_SIZE=600` |
+| Devices | CLI default `--num_devices 0` uses all visible devices; use `--num_devices 4` to match 4-GPU Euler runs |
+| Envs | `--num_envs_per_device 1024`; 4 devices gives 4096 envs total |
+| PPO rollout/update | `--num_steps 32`, `--update_epochs 2`, `--num_minibatches 16` |
+| Training horizon | `--total_timesteps 50000000000` |
+| Optimizer | `--lr 3e-4`, `--max_grad_norm 0.5` |
+| PPO coefficients | `--clip_eps 0.2`, `--gamma 0.9984`, `--gae_lambda 0.95`, `--ent_coef 0.06`, `--vf_coef 2.0` |
+| Entropy schedule | `ent_schedule_start=0.15`, `ent_schedule_end=0.005`, `ent_schedule_steps=9500` |
+| Logging/eval/checkpoints | `--log_train_interval 1`, `--log_eval_interval 100`, `--checkpoint_interval 100`, `--eval_episodes 100` |
+| Reward multipliers | `dump_bonus_mult=0.5`, `excavator_relocate_dumped_mult=1.5`, `excavator_relocate_dug_dirt_mult=1.5` |
+| Action mask | Disabled in PPO training/eval; `action_mask` remains an observation/debug signal for diagnostics |
+
 ### Available Presets
 
 | Config Name | Agents | Maps | Description |
 |-------------|--------|------|-------------|
-| `solo_excavator` | Excavator | `foundations` | Single excavator, no dumpzones |
+| `solo_excavator` | Excavator | `foundations_real_ring` | Single tracked excavator |
 | `solo_excavator_more_dumpbonus` | Excavator | `foundations` | Single excavator, higher dump bonus |
 | `solo_excavator_dumpzone` | Excavator | `foundations_dumpzones_v3` | Single excavator with dumpzones |
 | `solo_skidsteer` | Skidsteer | `relocations_harder` | Single skidsteer relocation |
