@@ -1246,7 +1246,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     }
                     helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
 
-                if i % config.log_eval_interval == 0:
+                if i > 0 and i % config.log_eval_interval == 0:
                     # Eval runs as pmap across all devices. Feed replicated train_state
                     # and env_params (pulled from the unreduced runner_state) and a
                     # per-device rng. Results come back with a leading device axis; we

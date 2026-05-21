@@ -8,6 +8,15 @@ from typing import NamedTuple
 from utils.utils_ppo import select_action_ppo, wrap_action
 
 
+def _strip_reward_components(timestep):
+    """Keep eval timestep pytrees small and independent of training-only logs."""
+    if isinstance(timestep.info, dict) and "reward_components" in timestep.info:
+        return timestep._replace(
+            info={k: v for k, v in timestep.info.items() if k != "reward_components"}
+        )
+    return timestep
+
+
 # for evaluation (evaluate for N consecutive episodes, sum rewards)
 # N=1 single task, N>1 for meta-RL
 class RolloutStats(NamedTuple):
@@ -56,6 +65,7 @@ def _rollout_impl(
         _rng_step = jax.random.split(_rng_step, num_envs)
         action_env = wrap_action(action, env.batch_cfg.action_type)
         timestep = env.step(timestep, action_env, _rng_step)
+        timestep = _strip_reward_components(timestep)
 
         prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
         prev_actions = prev_actions.at[..., 0].set(action)
@@ -90,32 +100,7 @@ def _rollout_impl(
     rng, _rng_reset = jax.random.split(rng)
     _rng_reset = jax.random.split(_rng_reset, num_envs)
     timestep = env.reset(env_params, _rng_reset)
-    
-    # Initialize reward_components in timestep.info to maintain consistent pytree structure
-    # Align with new multi-agent keys to avoid fori_loop pytree mismatch
-    if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
-        try:
-            batch_shape = timestep.reward.shape
-            MAX_AGENTS = 4
-            dummy_components = {
-                "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
-                "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
-                "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
-                "terminal": jnp.zeros_like(timestep.reward),
-                "trench": jnp.zeros_like(timestep.reward),
-                "existence": jnp.zeros_like(timestep.reward),
-                "dig_completion_edge": jnp.zeros_like(timestep.reward),
-                "dig_completion_inner": jnp.zeros_like(timestep.reward),
-                "dig_completion_total": jnp.zeros_like(timestep.reward),
-                "dig_completion_min_edge_inner": jnp.zeros_like(timestep.reward),
-                "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
-                "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
-            }
-            timestep = timestep._replace(
-                info={**timestep.info, "reward_components": dummy_components}
-            )
-        except Exception:
-            pass
+    timestep = _strip_reward_components(timestep)
     
     prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
     init_carry = (rng, RolloutStats(), timestep, prev_actions)
