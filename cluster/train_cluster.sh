@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -n 1
-#SBATCH --cpus-per-task=4
-#SBATCH --gpus=gpu:4
+#SBATCH --cpus-per-task=2
+#SBATCH --gpus=gpu:rtx_4090:2
 #SBATCH --time=24:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
@@ -32,7 +32,7 @@ export DATASET_SIZE=600
 # Change to the directory containing train.py or use the full path
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
 
-python train_mixed.py --config solo_excavator --model_size medium \
+python train_mixed.py --config solo_excavator_rectangles --model_size medium \
     # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-05-12-11-18-01.pkl
     # --num_envs_per_device 128 \
     # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-21-13-36-45.pkl \

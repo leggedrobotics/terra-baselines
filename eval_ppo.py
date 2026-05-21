@@ -104,6 +104,12 @@ def _rollout_impl(
                 "terminal": jnp.zeros_like(timestep.reward),
                 "trench": jnp.zeros_like(timestep.reward),
                 "existence": jnp.zeros_like(timestep.reward),
+                "dig_completion_edge": jnp.zeros_like(timestep.reward),
+                "dig_completion_inner": jnp.zeros_like(timestep.reward),
+                "dig_completion_total": jnp.zeros_like(timestep.reward),
+                "dig_completion_min_edge_inner": jnp.zeros_like(timestep.reward),
+                "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
+                "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
             }
             timestep = timestep._replace(
                 info={**timestep.info, "reward_components": dummy_components}

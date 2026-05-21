@@ -103,14 +103,6 @@ def make_mcts_step_fn(model, env, config):
         next_timestep = env.step(timestep, terra_actions, rng_envs)
         next_obs = next_timestep.observation
 
-        # Strip reward_components from info so the embedding pytree structure
-        # stays consistent with the root (env.reset returns no reward_components,
-        # but env.step does).  Dict key filtering is safe at JAX trace time.
-        if isinstance(next_timestep.info, dict) and "reward_components" in next_timestep.info:
-            next_timestep = next_timestep._replace(
-                info={k: v for k, v in next_timestep.info.items() if k != "reward_components"}
-            )
-
         next_prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
         next_prev_actions = next_prev_actions.at[:, 0].set(actions)
 
@@ -136,19 +128,10 @@ def make_mcts_step_fn(model, env, config):
 
         ppo_action = jnp.argmax(dist.logits, axis=-1)
 
-        # Normalize root timestep's info to match what recurrent_fn returns
-        # (strip reward_components so the embedding pytree structure is stable
-        # across root and all expansions).
-        root_timestep = timestep
-        if isinstance(root_timestep.info, dict) and "reward_components" in root_timestep.info:
-            root_timestep = root_timestep._replace(
-                info={k: v for k, v in root_timestep.info.items() if k != "reward_components"}
-            )
-
         root = mctx.RootFnOutput(
             prior_logits=dist.logits,
             value=value[:, 0],
-            embedding=(root_timestep, prev_actions),
+            embedding=(timestep, prev_actions),
         )
 
         rng, rng_mcts = jrandom.split(rng)
@@ -208,28 +191,32 @@ def rollout_episode(
     rng_reset = jrandom.split(_rng, rl_config.num_test_rollouts)
     timestep = env.reset(env_cfgs, rng_reset)
 
-    # Keep pytree structure stable for PPO path (eval_mixed.py parity).
-    # MCTS path must NOT inject reward_components here: the root embedding is
-    # derived from env.reset (no reward_components), and recurrent_fn strips it
-    # from env.step results, so both sides of the tree stay consistent.
-    if not use_mcts:
-        try:
-            if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
-                batch_shape = timestep.reward.shape
-                MAX_AGENTS = 4
-                dummy_components = {
-                    "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
-                    "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
-                    "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
-                    "terminal": jnp.zeros_like(timestep.reward),
-                    "trench": jnp.zeros_like(timestep.reward),
-                    "existence": jnp.zeros_like(timestep.reward),
-                }
-                timestep = timestep._replace(
-                    info={**timestep.info, "reward_components": dummy_components}
-                )
-        except Exception:
-            pass
+    # Keep pytree structure stable for PPO and MCTS paths (eval_mixed.py parity).
+    # env.reset now emits reward_components, but this remains useful when
+    # running against older Terra envs.
+    try:
+        if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
+            batch_shape = timestep.reward.shape
+            MAX_AGENTS = 4
+            dummy_components = {
+                "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
+                "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
+                "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
+                "terminal": jnp.zeros_like(timestep.reward),
+                "trench": jnp.zeros_like(timestep.reward),
+                "existence": jnp.zeros_like(timestep.reward),
+                "dig_completion_edge": jnp.zeros_like(timestep.reward),
+                "dig_completion_inner": jnp.zeros_like(timestep.reward),
+                "dig_completion_total": jnp.zeros_like(timestep.reward),
+                "dig_completion_min_edge_inner": jnp.zeros_like(timestep.reward),
+                "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
+                "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
+            }
+            timestep = timestep._replace(
+                info={**timestep.info, "reward_components": dummy_components}
+            )
+    except Exception:
+        pass
 
     prev_actions = jnp.zeros(
         (rl_config.num_test_rollouts, rl_config.num_prev_actions),

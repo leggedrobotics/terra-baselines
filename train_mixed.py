@@ -117,9 +117,27 @@ import tempfile
 from pathlib import Path
 
 # Import the base training infrastructure
-from train import get_curriculum_levels, calculate_gae, ppo_update_networks, Transition
+from train import get_curriculum_levels, calculate_gae, ppo_update_networks
 
 jax.config.update("jax_threefry_partitionable", True)
+
+
+class Transition(struct.PyTreeNode):
+    done: jax.Array
+    task_done: jax.Array
+    action: jax.Array
+    value: jax.Array
+    reward: jax.Array
+    dig_completion_edge: jax.Array
+    dig_completion_inner: jax.Array
+    dig_completion_total: jax.Array
+    dig_completion_min_edge_inner: jax.Array
+    remaining_edge_dig_tiles: jax.Array
+    remaining_inner_dig_tiles: jax.Array
+    log_prob: jax.Array
+    obs: jax.Array
+    prev_actions: jax.Array
+    prev_reward: jax.Array
 
 def safe_jax_to_python(value):
     """Safely convert JAX arrays to Python scalars"""
@@ -139,6 +157,23 @@ def safe_jax_to_python(value):
             return str(value)
     else:
         return value
+
+
+def randomize_initial_env_steps(timestep, reset_rng):
+    """Stagger only the first training episode timeout across vectorized envs."""
+
+    def _one_env(ts, key):
+        max_steps = jnp.maximum(jnp.asarray(ts.env_cfg.max_steps_in_episode), 1)
+        env_steps = jax.random.randint(
+            key,
+            (),
+            minval=0,
+            maxval=max_steps,
+            dtype=jnp.asarray(ts.env_cfg.max_steps_in_episode).dtype,
+        )
+        return ts._replace(state=ts.state._replace(env_steps=env_steps))
+
+    return jax.vmap(jax.vmap(_one_env))(timestep, reset_rng)
 
 
 def _sorted_map_indices(images_dir: Path) -> list[int]:
@@ -689,6 +724,49 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     return rng, env, env_params, train_state
 
 
+def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
+    def _tag_value(value) -> str:
+        return str(value).replace(" ", "_").replace("/", "-")
+
+    env_defaults = EnvConfig()
+    agent_type_names = {0: "excavator", 1: "truck", 2: "skidsteer"}
+    action_type_names = {0: "tracked", 1: "wheeled"}
+    agent_types = tuple(config.agent_types_override or env_defaults.agent_types)
+    action_types = tuple(config.action_types_override or ((0,) * len(agent_types)))
+
+    tags = [
+        "mixed-agents",
+        "unified-network",
+        f"config:{_tag_value(config.config_name or 'manual')}",
+        f"agents:{'-'.join(agent_type_names.get(int(t), str(t)) for t in agent_types)}",
+        f"actions:{'-'.join(action_type_names.get(int(t), str(t)) for t in action_types)}",
+        "edge-align:on" if env_defaults.enforce_foundation_border_alignment else "edge-align:off",
+        "edge-terminal:weighted-70-30",
+        "edge-bonus:flat",
+    ]
+
+    slurm_job_id = os.getenv("SLURM_JOB_ID") or os.getenv("SLURM_JOBID")
+    if slurm_job_id:
+        tags.append(f"job:{_tag_value(slurm_job_id)}")
+
+    slurm_gpu_count = os.getenv("SLURM_GPUS_ON_NODE") or os.getenv("SLURM_GPUS")
+    if slurm_gpu_count:
+        tags.append(f"gpus:{_tag_value(slurm_gpu_count)}")
+    else:
+        tags.append(f"gpus:{_tag_value(config.num_devices)}")
+
+    if config.curriculum_levels_override:
+        for level in config.curriculum_levels_override:
+            tags.append(f"map:{_tag_value(level['maps_path'])}")
+    else:
+        tags.append("map:default")
+
+    if config.single_map_path is not None:
+        tags.append(f"single-map:{_tag_value(Path(config.single_map_path).stem)}")
+
+    return list(dict.fromkeys(tags))
+
+
 def train_mixed_agents(config: MixedAgentTrainConfig):
     """Main training function for mixed agents - with full feature parity to original train.py"""
     
@@ -698,7 +776,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         name=config.name,
         config=asdict(config),
         save_code=True,
-        tags=["mixed-agents", "tracked-excavator", "skid-steer", "unified-network"]
+        tags=_wandb_tags_for_config(config),
     )
     
     # Log source files - same as original train.py
@@ -806,6 +884,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 action_maps,
                 distance_maps,
             )
+            timestep = randomize_initial_env_steps(timestep, reset_rng)
             # Removed one-time debug sanity prints
             
             # Initialize reward_components in timestep.info to maintain consistent pytree structure
@@ -822,6 +901,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "terminal": jnp.zeros_like(timestep.reward),
                     "trench": jnp.zeros_like(timestep.reward),
                     "existence": jnp.zeros_like(timestep.reward),
+                    "dig_completion_edge": jnp.zeros_like(timestep.reward),
+                    "dig_completion_inner": jnp.zeros_like(timestep.reward),
+                    "dig_completion_total": jnp.zeros_like(timestep.reward),
+                    "dig_completion_min_edge_inner": jnp.zeros_like(timestep.reward),
+                    "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
+                    "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
                 }
                 # Create new timestep with reward_components added to info
                 timestep = timestep._replace(
@@ -849,13 +934,27 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
                     action_env = wrap_action(action, env.batch_cfg.action_type)
                     timestep = env.step(prev_timestep, action_env, _rng_env)
+                    reward_components = timestep.info["reward_components"]
 
                     # Removed SWAP debug prints
                     transition = Transition(
                         done=timestep.done,
+                        task_done=timestep.info["task_done"],
                         action=action,
                         value=value,
                         reward=timestep.reward,
+                        dig_completion_edge=reward_components["dig_completion_edge"],
+                        dig_completion_inner=reward_components["dig_completion_inner"],
+                        dig_completion_total=reward_components["dig_completion_total"],
+                        dig_completion_min_edge_inner=reward_components[
+                            "dig_completion_min_edge_inner"
+                        ],
+                        remaining_edge_dig_tiles=reward_components[
+                            "remaining_edge_dig_tiles"
+                        ],
+                        remaining_inner_dig_tiles=reward_components[
+                            "remaining_inner_dig_tiles"
+                        ],
                         log_prob=log_prob,
                         obs=prev_timestep.observation,
                         prev_actions=prev_actions,
@@ -980,6 +1079,35 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 # Attach to loss_info for logging
                 loss_info = dict(loss_info)
                 loss_info["explained_variance"] = explained_var
+                done_mask = transitions.done.astype(jnp.float32)
+                success_mask = jnp.logical_and(
+                    transitions.done,
+                    transitions.task_done,
+                ).astype(jnp.float32)
+
+                def _masked_mean(values, mask):
+                    count = jnp.sum(mask)
+                    return jnp.where(
+                        count > 0,
+                        jnp.sum(values * mask) / count,
+                        jnp.nan,
+                    )
+
+                loss_info["terminal/episode_count"] = jnp.sum(done_mask)
+                loss_info["terminal/success_count"] = jnp.sum(success_mask)
+                terminal_fields = {
+                    "dig_completion_edge": transitions.dig_completion_edge,
+                    "dig_completion_inner": transitions.dig_completion_inner,
+                    "dig_completion_total": transitions.dig_completion_total,
+                    "dig_completion_min_edge_inner": transitions.dig_completion_min_edge_inner,
+                    "remaining_edge_dig_tiles": transitions.remaining_edge_dig_tiles,
+                    "remaining_inner_dig_tiles": transitions.remaining_inner_dig_tiles,
+                }
+                for metric_name, metric_values in terminal_fields.items():
+                    loss_info[f"terminal/{metric_name}"] = _masked_mean(
+                        metric_values,
+                        done_mask,
+                    )
 
                 rng, train_state = update_state[:2]
                 # EVALUATE AGENT
