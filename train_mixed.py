@@ -132,6 +132,8 @@ class Transition(struct.PyTreeNode):
     dig_completion_inner: jax.Array
     dig_completion_total: jax.Array
     dig_completion_min_edge_inner: jax.Array
+    dump_completion_action_map: jax.Array
+    total_dig_dump_completion: jax.Array
     remaining_edge_dig_tiles: jax.Array
     remaining_inner_dig_tiles: jax.Array
     log_prob: jax.Array
@@ -741,7 +743,7 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         f"agents:{'-'.join(agent_type_names.get(int(t), str(t)) for t in agent_types)}",
         f"actions:{'-'.join(action_type_names.get(int(t), str(t)) for t in action_types)}",
         "edge-align:on" if env_defaults.enforce_foundation_border_alignment else "edge-align:off",
-        "edge-terminal:weighted-70-30",
+        "terminal:dump50-inner25-edge25",
         "edge-bonus:flat",
     ]
 
@@ -905,6 +907,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "dig_completion_inner": jnp.zeros_like(timestep.reward),
                     "dig_completion_total": jnp.zeros_like(timestep.reward),
                     "dig_completion_min_edge_inner": jnp.zeros_like(timestep.reward),
+                    "dump_completion_action_map": jnp.zeros_like(timestep.reward),
+                    "total_dig_dump_completion": jnp.zeros_like(timestep.reward),
                     "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
                     "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
                 }
@@ -948,6 +952,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         dig_completion_total=reward_components["dig_completion_total"],
                         dig_completion_min_edge_inner=reward_components[
                             "dig_completion_min_edge_inner"
+                        ],
+                        dump_completion_action_map=reward_components[
+                            "dump_completion_action_map"
+                        ],
+                        total_dig_dump_completion=reward_components[
+                            "total_dig_dump_completion"
                         ],
                         remaining_edge_dig_tiles=reward_components[
                             "remaining_edge_dig_tiles"
@@ -1100,6 +1110,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "dig_completion_inner": transitions.dig_completion_inner,
                     "dig_completion_total": transitions.dig_completion_total,
                     "dig_completion_min_edge_inner": transitions.dig_completion_min_edge_inner,
+                    "dump_completion_action_map": transitions.dump_completion_action_map,
+                    "total_dig_dump_completion": transitions.total_dig_dump_completion,
                     "remaining_edge_dig_tiles": transitions.remaining_edge_dig_tiles,
                     "remaining_inner_dig_tiles": transitions.remaining_inner_dig_tiles,
                 }

@@ -2,6 +2,7 @@
 
 This folder contains helper scripts to run a trained policy on a **single map folder** (e.g. a MoleWorks exported site) and produce:
 - a **plan** (`.pkl` + optional `.json`) extracted from **DO** actions (dig/dump waypoints)
+- a static **plan manual PNG** with numbered dig/dump workspaces on one map
 - a lightweight **plan GIF** (DO-waypoints only)
 - a full **rollout GIF** (every step, movement + DO actions)
 
@@ -95,6 +96,20 @@ If `--output_path /some/path/foo.pkl`:
 - plan json: `/some/path/foo.json` (with `--serialize`)
 - plan gif: `/some/path/foo.gif` (with `--render_plan_gif`)
 - rollout gif: `/some/path/foo_rollout.gif` (with `--render_rollout_gif`)
+
+## Static plan manual PNG
+
+Use `render_plan_manual.py` after extracting a plan. It draws the map once and overlays every retained DO waypoint's changed workspace, numbered in execution order. It does not render the agent body; small dots mark the base positions and the numbered badges mark the dig/dump workspace centers.
+
+```bash
+cd <path_to_terra_baselines>
+conda run -n terra python -u -s isaac_sim/render_plan_manual.py \
+  --plan <map_dir>/terra_plan.pkl \
+  --map_path <map_dir> \
+  --output <map_dir>/terra_plan_manual.png
+```
+
+Use `--label-mode step` if you prefer original environment step numbers instead of compact waypoint order.
 
 ### If the policy never “does” (0 DO actions)
 

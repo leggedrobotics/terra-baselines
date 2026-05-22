@@ -209,6 +209,8 @@ def rollout_episode(
                 "dig_completion_inner": jnp.zeros_like(timestep.reward),
                 "dig_completion_total": jnp.zeros_like(timestep.reward),
                 "dig_completion_min_edge_inner": jnp.zeros_like(timestep.reward),
+                "dump_completion_action_map": jnp.zeros_like(timestep.reward),
+                "total_dig_dump_completion": jnp.zeros_like(timestep.reward),
                 "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
                 "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
             }
