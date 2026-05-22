@@ -24,8 +24,8 @@ solo_excavator:
     excavator_relocate_dumped_mult: 1.5
     excavator_relocate_dug_dirt_mult: 1.5
   maps:
-    - path: foundations
-      max_steps: 400
+    - path: foundations_real_ring
+      max_steps: 450
 
 solo_excavator_rectangles:
   description: Single excavator agent with tracked movement on rectangle maps
@@ -38,6 +38,19 @@ solo_excavator_rectangles:
   maps:
     - path: foundations_rectangles_real_ring
       max_steps: 450
+
+solo_excavator_rectangles_dumpzone:
+  description: Single excavator agent with tracked movement on rectangle maps
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: foundations_rectangles_real_dumpzone
+      max_steps: 500
+
 
 solo_excavator_more_dumpbonus:
   description: Single excavator agent with tracked movement more dumpbonus
@@ -236,4 +249,3 @@ wheeled_solo_excavator:
   maps:
     - path: foundations
       max_steps: 500
-

@@ -120,6 +120,10 @@ def _rollout_impl(
 _PMAPPED_ROLLOUT_CACHE: dict = {}
 
 
+def rollout_single_device(rng, env, env_params, train_state, config):
+    return _rollout_impl(rng, env, env_params, train_state, config)
+
+
 def rollout(rng, env, env_params, train_state, config):
     key = (id(env), id(config))
     pmapped = _PMAPPED_ROLLOUT_CACHE.get(key)
