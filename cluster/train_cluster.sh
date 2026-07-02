@@ -32,8 +32,12 @@ export DATASET_SIZE=600
 # Change to the directory containing train.py or use the full path
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
 
-python train_mixed.py --config solo_excavator_rectangles_dumpzone --model_size medium
-    # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-05-12-11-18-01.pkl
+python train_mixed.py \
+    --config dual_excavator \
+    --model_size base \
+    --model_core mlp
+    #--resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-05-21-17-38-51-best_rectangles.pkl \
+    #--no-load-env-from-checkpoint
     # --num_envs_per_device 128 \
     # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-21-13-36-45.pkl \
     # --map_path /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference/maps/hongg_archi_3 \
@@ -46,4 +50,4 @@ python train_mixed.py --config solo_excavator_rectangles_dumpzone --model_size m
 
 #WANDB_MODE=offline 
 # solo_excavator solo_excavator_dumpzone  
-# model_size: small, medium, large
+# model_size: base, medium, large

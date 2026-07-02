@@ -5,6 +5,8 @@ import argparse
 import pickle
 import sys
 import re
+import math
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +16,14 @@ sys.path.append(str(Path(__file__).parent.parent))
 from utils.models import load_neural_network
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
+from terra.config import BatchConfig, CurriculumGlobalConfig, RewardsType
 from terra.actions import TrackedAction, WheeledAction, TrackedActionType, WheeledActionType
 import jax.numpy as jnp
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
 from train_mixed import MixedAgentTrainConfig
+from eval_mcts import fix_env_cfg_dtypes, make_mcts_step_fn
 sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
 
 
@@ -34,6 +38,168 @@ def _to_serializable(obj):
     if isinstance(obj, (list, tuple)):
         return [_to_serializable(v) for v in obj]
     return obj
+
+
+def _timestamped_output_path(output_path: Path) -> Path:
+    """Append a finish-time timestamp before the output suffix."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if output_path.suffix:
+        return output_path.with_name(f"{output_path.stem}_{timestamp}{output_path.suffix}")
+    return output_path.with_name(f"{output_path.name}_{timestamp}")
+
+
+def _mask_to_int_list(value: Any) -> list[list[int]]:
+    return np.asarray(value).astype(np.int8).tolist()
+
+
+def _wrap_to_pi(angle_rad: float) -> float:
+    return float((angle_rad + math.pi) % (2.0 * math.pi) - math.pi)
+
+
+def _angle_bucket_to_rad(value: Any, n_bins: int = 12) -> float:
+    bucket = float(_to_serializable(value))
+    return _wrap_to_pi(bucket * 2.0 * math.pi / float(n_bins))
+
+
+def _terra_bucket_to_plan_yaw_rad(value: Any, n_bins: int = 12) -> float:
+    # Terra bucket 0 points along +plan_y; schema-v2 yaw 0 is +plan_x.
+    return _wrap_to_pi(_angle_bucket_to_rad(value, n_bins) + math.pi / 2.0)
+
+
+def _wheel_bucket_to_rad(value: Any, wheel_step_deg: float = 20.0) -> float:
+    bucket = float(_to_serializable(value))
+    return _wrap_to_pi(math.radians(bucket * wheel_step_deg))
+
+
+def _is_load_transition(entry: dict[str, Any]) -> bool:
+    loaded_change = entry.get("loaded_state_change", {}) or {}
+    before = _as_py_bool(loaded_change.get("before", False))
+    after = _as_py_bool(loaded_change.get("after", False))
+    return (not before) and after
+
+
+def _is_unload_transition(entry: dict[str, Any]) -> bool:
+    loaded_change = entry.get("loaded_state_change", {}) or {}
+    before = _as_py_bool(loaded_change.get("before", False))
+    after = _as_py_bool(loaded_change.get("after", False))
+    return before and (not after)
+
+
+def _workspace_type_for_pair(dig_entry: dict[str, Any]) -> str:
+    if dig_entry.get("dig_type") == "lift_dug_dirt":
+        return "collect_dumped_soil"
+    return "excavate"
+
+
+def _load_plan_alignment(map_path: Path) -> dict[str, Any]:
+    """Read TerraMapMaker alignment metadata, with conservative defaults."""
+    alignment = {
+        "meters_per_tile": 0.1,
+        "origin_map_xy_m": [0.0, 0.0],
+        "yaw_map_from_plan_rad": 0.0,
+    }
+
+    map_json_path = map_path / "metadata" / "map.json"
+    try:
+        with map_json_path.open("r", encoding="utf-8") as f:
+            map_metadata = json.load(f)
+        if "meters_per_tile" in map_metadata:
+            alignment["meters_per_tile"] = float(map_metadata["meters_per_tile"])
+    except Exception:
+        pass
+
+    terra_metadata_path = map_path / "metadata" / "terra_metadata.yaml"
+    if not terra_metadata_path.exists():
+        return alignment
+
+    lines = terra_metadata_path.read_text(encoding="utf-8").splitlines()
+    source_resolution = None
+    source_size_rows_cols = []
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("meters_per_tile:"):
+            alignment["meters_per_tile"] = float(stripped.split(":", 1)[1].strip())
+        elif stripped.startswith("rotation_deg:"):
+            rotation_deg = float(stripped.split(":", 1)[1].strip())
+            alignment["yaw_map_from_plan_rad"] = math.radians(rotation_deg)
+        elif stripped.startswith("terra_origin_map_m:"):
+            values = []
+            for next_line in lines[idx + 1: idx + 3]:
+                item = next_line.strip()
+                if item.startswith("-"):
+                    values.append(float(item[1:].strip()))
+            if len(values) == 2:
+                alignment["origin_map_xy_m"] = values
+        elif stripped.startswith("resolution_m_per_cell:"):
+            source_resolution = float(stripped.split(":", 1)[1].strip())
+        elif stripped.startswith("size_rows_cols:"):
+            source_size_rows_cols = []
+            for next_line in lines[idx + 1: idx + 3]:
+                item = next_line.strip()
+                if item.startswith("-"):
+                    source_size_rows_cols.append(float(item[1:].strip()))
+
+    if source_resolution is not None:
+        alignment["meters_per_tile"] = source_resolution
+        if len(source_size_rows_cols) == 2:
+            rows, cols = source_size_rows_cols
+            alignment["origin_map_xy_m"] = [
+                -cols * source_resolution / 2.0,
+                -rows * source_resolution / 2.0,
+            ]
+
+    return alignment
+
+
+def _to_schema_v2_waypoint(entry: dict[str, Any], workspace_type: str) -> dict[str, Any]:
+    agent_state = entry.get("agent_state", {}) or {}
+    loaded_change = entry.get("loaded_state_change", {}) or {}
+    pos_base = agent_state.get("pos_base", [0.0, 0.0])
+
+    return {
+        "step": int(_to_serializable(entry.get("step", 0))),
+        "workspace_type": workspace_type,
+        "traversability_mask": _mask_to_int_list(entry.get("traversability_mask")),
+        "terrain_modification_mask": _mask_to_int_list(entry.get("terrain_modification_mask")),
+        "dug_mask": _mask_to_int_list(entry.get("dug_mask")),
+        "dump_mask": _mask_to_int_list(entry.get("dump_mask")),
+        "agent_type": int(_to_serializable(entry.get("agent_type", 0))),
+        "agent_index": int(_to_serializable(entry.get("agent_index", 0))),
+        "agent_state": {
+            "pos_base": [float(pos_base[0]), float(pos_base[1])],
+            "angle_base_rad": _terra_bucket_to_plan_yaw_rad(agent_state.get("angle_base", 0.0)),
+            "angle_cabin_rad": _terra_bucket_to_plan_yaw_rad(agent_state.get("angle_cabin", 0.0)),
+            "wheel_angle_rad": _wheel_bucket_to_rad(agent_state.get("wheel_angle", 0.0)),
+            "loaded": _as_py_bool(loaded_change.get("after", False)),
+        },
+    }
+
+
+def _schema_v2_waypoints(plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    waypoints = []
+    pending_dig = None
+
+    for entry in plan:
+        if _is_load_transition(entry):
+            pending_dig = entry
+            continue
+
+        if pending_dig is not None and _is_unload_transition(entry):
+            workspace_type = _workspace_type_for_pair(pending_dig)
+            waypoints.append(_to_schema_v2_waypoint(pending_dig, workspace_type))
+            waypoints.append(_to_schema_v2_waypoint(entry, workspace_type))
+            pending_dig = None
+
+    return waypoints
+
+
+def _plan_to_schema_v2(plan: list[dict[str, Any]], map_path: Path) -> dict[str, Any]:
+    return {
+        "schema_version": 2,
+        "source_map_frame_id": "map",
+        "alignment": _load_plan_alignment(map_path),
+        "waypoints": _schema_v2_waypoints(plan),
+    }
 
 
 def _load_single_map_arrays(map_path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -130,33 +296,111 @@ def _render_plan_gif(
     target, occupancy, dumpability = _load_single_map_arrays(map_path)
     h, w = target.shape
 
-    def render_frame(entry):
-        dug_mask = np.asarray(entry.get("dug_mask", np.zeros((h, w), dtype=bool))).astype(bool)
-        dump_mask = np.asarray(entry.get("dump_mask", np.zeros((h, w), dtype=bool))).astype(bool)
-        pos = entry.get("agent_state", {}).get("pos_base", None)
-        agent_xy = (float(pos[0]), float(pos[1])) if pos is not None else None
+    styles = {
+        "dig": ((38, 118, 255), (10, 65, 180)),
+        "lift": ((150, 72, 210), (88, 34, 145)),
+        "dump": ((245, 135, 28), (170, 75, 0)),
+        "terrain": ((80, 80, 80), (35, 35, 35)),
+    }
 
+    def as_bool_mask(value):
+        if value is None:
+            return np.zeros((h, w), dtype=bool)
+        arr = np.asarray(value).astype(bool)
+        if arr.shape != (h, w):
+            arr = np.reshape(arr, (h, w))
+        return arr
+
+    def waypoint_kind(entry):
+        lsc = entry.get("loaded_state_change", {}) or {}
+        before = _as_py_bool(lsc.get("before", False))
+        after = _as_py_bool(lsc.get("after", False))
+        if not before and after:
+            return "lift" if entry.get("dig_type") == "lift_dug_dirt" else "dig"
+        if before and not after:
+            return "dump"
+        return "terrain"
+
+    def workspace_mask(entry):
+        mask = as_bool_mask(entry.get("terrain_modification_mask"))
+        if mask.any():
+            return mask
+        kind = waypoint_kind(entry)
+        if kind in ("dig", "lift"):
+            return as_bool_mask(entry.get("dug_mask"))
+        if kind == "dump":
+            return as_bool_mask(entry.get("dump_mask"))
+        return mask
+
+    def base_rgb():
         rgb = np.full((h, w, 3), 245, dtype=np.uint8)
         rgb[occupancy] = (20, 20, 20)
         rgb[target < 0] = (255, 220, 220)
         rgb[target > 0] = (220, 255, 220)
         rgb[(~occupancy) & (~dumpability)] = (235, 235, 235)
-        rgb[dug_mask] = (70, 130, 255)
-        rgb[dump_mask] = (255, 170, 60)
+        return rgb
+
+    def render_frame(entry):
+        pos = entry.get("agent_state", {}).get("pos_base", None)
+        agent_row_col = (float(pos[0]), float(pos[1])) if pos is not None else None
+
+        rgb = base_rgb()
+        kind = waypoint_kind(entry)
+        fill, outline = styles[kind]
+        dug_mask = as_bool_mask(entry.get("dug_mask"))
+        dump_mask = as_bool_mask(entry.get("dump_mask"))
+        mask = workspace_mask(entry)
+        rgb[dug_mask] = styles["dig"][0]
+        rgb[dump_mask] = styles["dump"][0]
+
+        if mask.any():
+            highlight = np.asarray(fill, dtype=np.float32)
+            rgb[mask] = np.clip(
+                0.35 * rgb[mask].astype(np.float32) + 0.65 * highlight,
+                0,
+                255,
+            ).astype(np.uint8)
 
         img = Image.fromarray(rgb, mode="RGB").resize((w * scale, h * scale), Image.NEAREST)
-        if agent_xy is not None:
-            draw = ImageDraw.Draw(img)
-            x, y = agent_xy
-            cx = int(round(x * scale))
-            cy = int(round(y * scale))
-            r = max(2, scale // 2)
-            draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(0, 0, 0), width=2)
+        draw = ImageDraw.Draw(img)
+
+        rows, cols = np.nonzero(mask)
+        for row, col in zip(rows, cols):
+            x0 = int(col * scale)
+            y0 = int(row * scale)
+            draw.rectangle(
+                (x0, y0, x0 + scale - 1, y0 + scale - 1),
+                outline=outline,
+                width=max(1, scale // 4),
+            )
+
+        if agent_row_col is not None:
+            # Terra stores pos_base=[row, col]. Convert to image x/y pixels here.
+            row, col = agent_row_col
+            cx = int(round((col + 0.5) * scale))
+            cy = int(round((row + 0.5) * scale))
+            r = max(3, scale // 2)
+            draw.ellipse(
+                (cx - r, cy - r, cx + r, cy + r),
+                fill=outline,
+                outline=(255, 255, 255),
+                width=1,
+            )
+
+        step = entry.get("step")
+        if step is not None:
+            draw.text((4, 4), f"step {step}", fill=(0, 0, 0))
         return img
 
     frames = [render_frame(e) for e in plan] if plan else [render_frame({})]
+    durations = duration_ms
+    if len(plan) > 1:
+        steps = [int(entry.get("step", idx)) for idx, entry in enumerate(plan)]
+        gaps = [max(1, b - a) for a, b in zip(steps, steps[1:])]
+        gaps.append(1)
+        durations = [min(2000, max(duration_ms, duration_ms * gap)) for gap in gaps]
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    frames[0].save(out_path, save_all=True, append_images=frames[1:], duration=duration_ms, loop=0)
+    frames[0].save(out_path, save_all=True, append_images=frames[1:], duration=durations, loop=0)
 
 
 def extract_plan(
@@ -169,6 +413,7 @@ def extract_plan(
     seed,
     render_rollout_gif: bool = False,
     rollout_gif_every: int = 1,
+    use_mcts: bool = False,
 ):
     """Extract plan by capturing action_map and robot state on DO actions."""
     rng = jax.random.PRNGKey(seed)
@@ -212,145 +457,263 @@ def extract_plan(
             return WheeledAction, int(WheeledActionType.DO)
         raise ValueError(f"Unknown action_type={action_type_val}")
 
+    def _full_action_map(timestep):
+        return jnp.squeeze(timestep.state.world.action_map.map).copy()
+
+    def _single_env_state(timestep):
+        def _take_first_env(value):
+            if isinstance(value, (jax.Array, np.ndarray)) and value.ndim > 0:
+                return value[0]
+            return value
+
+        return jax.tree_map(_take_first_env, timestep.state)
+
+    def _state_for_agent(timestep, agent_index):
+        state = _single_env_state(timestep)
+        return state._replace(
+            agent=state.agent._replace(
+                current_agent=jnp.asarray(agent_index, dtype=jnp.int32)
+            )
+        )
+
+    def _full_workspace_mask(timestep, agent_index):
+        state = _state_for_agent(timestep, agent_index)
+        workspace_mask = state._build_dig_dump_cone().reshape(
+            state.world.action_map.map.shape
+        ).astype(jnp.bool_)
+        obstacle_mask = state.world.padding_mask.map == 1
+        return jnp.logical_and(workspace_mask, ~obstacle_mask)
+
+    def _lift_dumped_dirt_workspace_mask(timestep, agent_index):
+        state = _state_for_agent(timestep, agent_index)
+        workspace_mask = _full_workspace_mask(timestep, agent_index)
+        already_dug_foundation = jnp.logical_and(
+            state.world.target_map.map < 0,
+            state.world.action_map.map < 0,
+        )
+        return jnp.logical_and(workspace_mask, ~already_dug_foundation)
+
     # Plan storage
     plan = []
+
+    mcts_step = None
+    mcts_ppo_diff_count = 0
+    if use_mcts:
+        mcts_step = make_mcts_step_fn(model, env, rl_config)
+        print(
+            f"MCTS enabled: num_simulations={rl_config.num_simulations}, "
+            f"gamma={rl_config.gamma}"
+        )
+        print("Warming up MCTS JIT compilation...")
+        _, _, _, warm_action, _, _ = mcts_step(model_params, rng, timestep, prev_actions)
+        jax.block_until_ready(warm_action)
+
+        # Reset after warmup so the extracted plan starts from the requested seed.
+        rng = jax.random.PRNGKey(seed)
+        rng, _rng = jax.random.split(rng)
+        rng_reset = jax.random.split(_rng, 1)
+        timestep = env.reset(env_cfgs, rng_reset)
+        prev_actions = jnp.zeros(
+            (1, rl_config.num_prev_actions),
+            dtype=jnp.int32
+        )
+
+    def _append_do_plan_entry(
+        timestep_before,
+        timestep_after,
+        t_counter,
+        agent_index,
+        acting_agent_state_before,
+        loaded_before,
+        agent_type_before,
+        action_map_before,
+        traversability_mask,
+    ):
+        agent_type_str = agent_type_names.get(
+            agent_type_before, f"unknown({agent_type_before})"
+        )
+
+        # IMPORTANT: After env.step(), observation["agent_states"][0, 0] is the NEXT agent (rotated view).
+        # We need to access the acting agent's state by its fixed slot index from timestep.state.
+        action_map_after = _full_action_map(timestep_after)
+        acting_agent_state_after = timestep_after.state.agent.agent_states[agent_index]
+        loaded_after = bool(np.array(acting_agent_state_after.loaded).flatten()[0])
+
+        changed_tiles = action_map_before != action_map_after
+        dug_mask = (action_map_after < 0)
+        dump_mask = (action_map_after > 0)
+
+        # Determine dig_type for digging actions:
+        # "lift_dug_dirt" = picking up previously dumped dirt (action_map_before > 0 in changed tiles)
+        # "dig_new_soil" = digging fresh terrain from target
+        dig_type = None
+        action_type_label = ""
+        if not loaded_before and loaded_after:
+            dumped_dirt_in_changed_tiles = jnp.sum(action_map_before[changed_tiles] > 0)
+            moving_dumped_dirt = dumped_dirt_in_changed_tiles > 0
+            dig_type = "lift_dug_dirt" if bool(moving_dumped_dirt) else "dig_new_soil"
+            action_type_label = f" (digging: {dig_type})"
+        elif loaded_before and not loaded_after:
+            action_type_label = " (dumping)"
+        else:
+            action_type_label = f" (unchanged, loaded={bool(loaded_before)})"
+
+        if loaded_before and not loaded_after:
+            terrain_modification_mask = _full_workspace_mask(
+                timestep_before, agent_index
+            )
+        elif dig_type == "lift_dug_dirt":
+            terrain_modification_mask = _lift_dumped_dirt_workspace_mask(
+                timestep_before, agent_index
+            )
+        else:
+            # Keep normal foundation digging as the actually changed tiles.
+            terrain_modification_mask = changed_tiles.astype(jnp.bool_)
+
+        print(f"DO action at step {t_counter} by agent {agent_index} ({agent_type_str}){action_type_label}, {jnp.sum(changed_tiles)} tiles modified")
+
+        plan_entry = {
+            'step': t_counter,
+            'traversability_mask': traversability_mask,
+            'terrain_modification_mask': terrain_modification_mask,
+            'actual_terrain_modification_mask': changed_tiles.astype(jnp.bool_),
+            'dug_mask': dug_mask.copy(),
+            'dump_mask': dump_mask.copy(),
+            'agent_state': {
+                'pos_base': [float(np.array(acting_agent_state_before.pos_base).flatten()[0]),
+                             float(np.array(acting_agent_state_before.pos_base).flatten()[1])],
+                'angle_base': float(np.array(acting_agent_state_before.angle_base).flatten()[0]),
+                'angle_cabin': float(np.array(acting_agent_state_before.angle_cabin).flatten()[0]),
+                'wheel_angle': float(np.array(acting_agent_state_before.wheel_angle).flatten()[0]),
+            },
+            'loaded_state_change': {
+                'before': loaded_before,
+                'after': loaded_after,
+            },
+            # Additional fields (not in foundation-plan.json but kept for compatibility)
+            'agent_type': agent_type_before,
+            'agent_index': agent_index,
+        }
+        if dig_type is not None:
+            plan_entry['dig_type'] = dig_type
+        plan.append(plan_entry)
 
     t_counter = 0
 
     if render_rollout_gif:
         obs0 = dict(timestep.observation)
+        obs0["action_map"] = timestep.state.world.action_map.map
         if "interaction_mask" in obs0:
             obs0["interaction_mask"] = jnp.zeros_like(obs0["interaction_mask"])
         env.terra_env.render_obs_pygame(obs0, generate_gif=True)
 
     while True:
-        rng, rng_act, rng_step = jax.random.split(rng, 3)
-
-        # Get action from policy
-        # In the multi-agent setup, observations already have the currently acting
-        # agent in slot 0 of "agent_states". obs_to_model_input handles this,
-        # so we can treat the batch as size 1 and proceed as in single-agent.
-        obs_model = obs_to_model_input(timestep.observation, prev_actions, rl_config)
-        v, logits_pi = model.apply(model_params, obs_model)
-        pi = tfp.distributions.Categorical(logits=logits_pi)
-        action = pi.sample(seed=rng_act)
-
         # Determine current action class from state (tracked vs wheeled)
         action_cls, do_action = _get_current_action_class_and_do(timestep, t_counter)
+        num_agents = int(np.array(timestep.observation["num_agents"]).reshape(-1)[0])
+        agent_index = t_counter % max(num_agents, 1)
 
-        # Check if DO action and record state BEFORE executing the action
-        if action[0] == do_action:
-            # Compute agent index - agents act in round-robin order and can't skip
-            num_agents = int(np.array(timestep.observation["num_agents"]).reshape(-1)[0])
-            agent_index = t_counter % max(num_agents, 1)
-            
-            # Access the acting agent's state by its fixed slot index
+        if use_mcts:
+            timestep_before = timestep
             acting_agent_state_before = timestep.state.agent.agent_states[agent_index]
-            # Use np.array().item() to handle batch dimensions in state fields
             loaded_before = bool(np.array(acting_agent_state_before.loaded).flatten()[0])
             agent_type_before = int(np.array(acting_agent_state_before.agent_type).flatten()[0])
-            
-            # Agent type names for display
-            agent_type_names = {0: "excavator", 1: "truck", 2: "skidsteer"}
-            agent_type_str = agent_type_names.get(agent_type_before, f"unknown({agent_type_before})")
-            
-            action_map_before = jnp.squeeze(timestep.observation["action_map"]).copy()
+            action_map_before = _full_action_map(timestep)
             traversability_mask = jnp.squeeze(timestep.observation["traversability_mask"]).copy()
 
-            # Update previous actions
-            prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
-            prev_actions = prev_actions.at[:, 0].set(action)
-
-            # Take step in environment
-            rng_step = jax.random.split(rng_step, 1)
-            timestep = env.step(
-                timestep, wrap_action(action, action_cls), rng_step
+            rng, timestep, prev_actions, action, ppo_action, mcts_action = mcts_step(
+                model_params, rng, timestep, prev_actions
+            )
+            mcts_ppo_diff_count += int(
+                (np.asarray(ppo_action) != np.asarray(mcts_action)).sum()
             )
 
-            # Get state AFTER executing the action
-            # IMPORTANT: After env.step(), observation["agent_states"][0, 0] is the NEXT agent (rotated view).
-            # We need to access the acting agent's state by its fixed slot index from timestep.state.
-            action_map_after = jnp.squeeze(timestep.observation["action_map"]).copy()
-            # Access the acting agent's state directly from the state object by slot index
-            acting_agent_state_after = timestep.state.agent.agent_states[agent_index]
-            loaded_after = bool(np.array(acting_agent_state_after.loaded).flatten()[0])
-
-            changed_tiles = action_map_before != action_map_after
-            terrain_modification_mask = changed_tiles.astype(jnp.bool_)
-            dug_mask = (action_map_after < 0)
-            dump_mask = (action_map_after > 0)
-
-            # Determine dig_type for digging actions:
-            # "lift_dug_dirt" = picking up previously dumped dirt (action_map_before > 0 in changed tiles)
-            # "dig_new_soil" = digging fresh terrain from target
-            dig_type = None
-            action_type_label = ""
-            if not loaded_before and loaded_after:
-                # This is a digging action - check if we're lifting dumped dirt or digging new soil
-                # Similar logic to state.py: moving_dumped_dirt = selected_tiles_sum > 0
-                # where selected_tiles_sum = flattened_action_map @ dig_mask
-                dumped_dirt_in_changed_tiles = jnp.sum(action_map_before[changed_tiles] > 0)
-                moving_dumped_dirt = dumped_dirt_in_changed_tiles > 0
-                dig_type = "lift_dug_dirt" if bool(moving_dumped_dirt) else "dig_new_soil"
-                action_type_label = f" (digging: {dig_type})"
-            elif loaded_before and not loaded_after:
-                action_type_label = " (dumping)"
-            else:
-                # Case 3: loaded state did not change
-                action_type_label = f" (unchanged, loaded={bool(loaded_before)})"
-            
-            print(f"DO action at step {t_counter} by agent {agent_index} ({agent_type_str}){action_type_label}, {jnp.sum(changed_tiles)} tiles modified")
-
-            # Order keys to match foundation-plan.json format
-            # Convert numeric values to floats to match foundation-plan.json
-            plan_entry = {
-                'step': t_counter,
-                'traversability_mask': traversability_mask,
-                'terrain_modification_mask': terrain_modification_mask,
-                'dug_mask': dug_mask.copy(),
-                'dump_mask': dump_mask.copy(),
-                'agent_state': {
-                    'pos_base': [float(np.array(acting_agent_state_before.pos_base).flatten()[0]), 
-                                 float(np.array(acting_agent_state_before.pos_base).flatten()[1])],
-                    'angle_base': float(np.array(acting_agent_state_before.angle_base).flatten()[0]),
-                    'angle_cabin': float(np.array(acting_agent_state_before.angle_cabin).flatten()[0]),
-                    'wheel_angle': float(np.array(acting_agent_state_before.wheel_angle).flatten()[0]),
-                },
-                'loaded_state_change': {
-                    'before': loaded_before,
-                    'after': loaded_after,
-                },
-                # Additional fields (not in foundation-plan.json but kept for compatibility)
-                'agent_type': agent_type_before,
-                'agent_index': agent_index,
-            }
-            # Add dig_type only for digging actions (when we go from unloaded to loaded)
-            if dig_type is not None:
-                plan_entry['dig_type'] = dig_type
-            plan.append(plan_entry)
+            if int(np.asarray(action).reshape(-1)[0]) == do_action:
+                _append_do_plan_entry(
+                    timestep_before,
+                    timestep,
+                    t_counter,
+                    agent_index,
+                    acting_agent_state_before,
+                    loaded_before,
+                    agent_type_before,
+                    action_map_before,
+                    traversability_mask,
+                )
         else:
-            # Update previous actions
-            prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
-            prev_actions = prev_actions.at[:, 0].set(action)
+            rng, rng_act, rng_step = jax.random.split(rng, 3)
 
-            # Take step in environment
-            rng_step = jax.random.split(rng_step, 1)
-            timestep = env.step(
-                timestep, wrap_action(action, action_cls), rng_step
-            )
+            # Get action from policy
+            # In the multi-agent setup, observations already have the currently acting
+            # agent in slot 0 of "agent_states". obs_to_model_input handles this,
+            # so we can treat the batch as size 1 and proceed as in single-agent.
+            obs_model = obs_to_model_input(timestep.observation, prev_actions, rl_config)
+            v, logits_pi = model.apply(model_params, obs_model)
+            pi = tfp.distributions.Categorical(logits=logits_pi)
+            action = pi.sample(seed=rng_act)
+
+            # Check if DO action and record state BEFORE executing the action
+            if action[0] == do_action:
+                timestep_before = timestep
+                # Access the acting agent's state by its fixed slot index
+                acting_agent_state_before = timestep.state.agent.agent_states[agent_index]
+                # Use np.array().item() to handle batch dimensions in state fields
+                loaded_before = bool(np.array(acting_agent_state_before.loaded).flatten()[0])
+                agent_type_before = int(np.array(acting_agent_state_before.agent_type).flatten()[0])
+
+                action_map_before = _full_action_map(timestep)
+                traversability_mask = jnp.squeeze(timestep.observation["traversability_mask"]).copy()
+
+                # Update previous actions
+                prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+                prev_actions = prev_actions.at[:, 0].set(action)
+
+                # Take step in environment
+                rng_step = jax.random.split(rng_step, 1)
+                timestep = env.step(
+                    timestep, wrap_action(action, action_cls), rng_step
+                )
+
+                _append_do_plan_entry(
+                    timestep_before,
+                    timestep,
+                    t_counter,
+                    agent_index,
+                    acting_agent_state_before,
+                    loaded_before,
+                    agent_type_before,
+                    action_map_before,
+                    traversability_mask,
+                )
+            else:
+                # Update previous actions
+                prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+                prev_actions = prev_actions.at[:, 0].set(action)
+
+                # Take step in environment
+                rng_step = jax.random.split(rng_step, 1)
+                timestep = env.step(
+                    timestep, wrap_action(action, action_cls), rng_step
+                )
 
         t_counter += 1
 
         if render_rollout_gif and (t_counter % max(1, int(rollout_gif_every)) == 0):
             obs1 = dict(timestep.observation)
+            obs1["action_map"] = timestep.state.world.action_map.map
             if "interaction_mask" in obs1:
                 obs1["interaction_mask"] = jnp.zeros_like(obs1["interaction_mask"])
             env.terra_env.render_obs_pygame(obs1, generate_gif=True)
 
 
         # Check if done
-        if jnp.all(timestep.info["task_done"]).item() or t_counter == max_frames:
+        if bool(np.asarray(timestep.done)[0]) or t_counter == max_frames:
             break
+
+    if use_mcts:
+        total_decisions = max(t_counter, 1)
+        pct = 100.0 * mcts_ppo_diff_count / total_decisions
+        print(f"MCTS != PPO: {mcts_ppo_diff_count}/{total_decisions} ({pct:.1f}%)")
 
     return plan
 
@@ -386,14 +749,14 @@ def main():
         "-steps",
         "--n_steps",
         type=int,
-        default=500,
+        default=350,
         help="Maximum number of steps"
     )
     parser.add_argument(
         "-o",
         "--output_path",
         type=str,
-        default="./isaac_sim/plan.pkl",
+        default=str(Path(__file__).parent / "plan.pkl"),
         help="Output path for the plan"
     )
     parser.add_argument(
@@ -404,9 +767,34 @@ def main():
         help="Random seed"
     )
     parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Named config preset to match inference_single_map.py behavior.",
+    )
+    parser.add_argument(
+        "--use-mcts",
+        dest="use_mcts",
+        action="store_true",
+        help="Enable MCTS planning at each extraction step. Off by default.",
+    )
+    parser.add_argument(
+        "--num_simulations",
+        "-sim",
+        type=int,
+        default=32,
+        help="MCTS simulations per step when --use-mcts is set.",
+    )
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=None,
+        help="Discount factor for MCTS. Defaults to checkpoint config.gamma or 0.99.",
+    )
+    parser.add_argument(
         "--serialize",
         action="store_true",
-        help="Also save a JSON representation of the plan (default: False, only saves PKL)"
+        help="Deprecated: JSON is now saved by default next to the PKL."
     )
     parser.add_argument(
         "--render_plan_gif",
@@ -431,14 +819,13 @@ def main():
     config = jax.tree_map(_canon_lists, log["train_config"])
     config.num_test_rollouts = 1  # Only one environment
     config.num_devices = 1
-
-    # Disable action map clipping to see full terrain state
-    print(f"Original clip_action_maps setting: {config.clip_action_maps}")
-    config.clip_action_maps = False
-    # Add the missing attribute that the model expects when clipping is disabled
-    config.maps_net_normalization_bounds = [-100, 100]  # Reasonable range for terrain heights
-    print(f"Modified clip_action_maps setting: {config.clip_action_maps}")
-    print(f"Added maps_net_normalization_bounds: {config.maps_net_normalization_bounds}")
+    config.num_embeddings_agent_min = 60
+    config.num_simulations = args.num_simulations
+    if args.gamma is not None:
+        config.gamma = args.gamma
+    if not hasattr(config, "gamma"):
+        config.gamma = 0.99
+    print(f"clip_action_maps setting: {config.clip_action_maps}")
 
     # Create environment
     env_cfgs = jax.tree_map(_canon_lists, log["env_config"])
@@ -453,7 +840,64 @@ def main():
             # Scalar or bool - wrap in 1D array for vmap compatibility
             return jnp.atleast_1d(x)
     env_cfgs = jax.tree_map(_extract_single_env, env_cfgs)
+
+    batch_cfg = None
+    if args.config is not None:
+        try:
+            from configs.training_configs import get_config
+
+            preset = get_config(args.config)
+            print(f"\nLoading config preset: '{args.config}'")
+
+            env_cfgs = env_cfgs._replace(
+                agent_types=jnp.asarray(tuple(preset.agent_types), dtype=jnp.int32)[
+                    None, ...
+                ],
+                action_types=jnp.asarray(tuple(preset.action_types), dtype=jnp.int32)[
+                    None, ...
+                ],
+            )
+
+            if preset.maps and len(preset.maps) > 0:
+                curriculum_levels = []
+                for map_level in preset.maps:
+                    rewards_type = (
+                        RewardsType.DENSE
+                        if map_level.rewards_type == "DENSE"
+                        else RewardsType.SPARSE
+                    )
+                    curriculum_levels.append(
+                        {
+                            "maps_path": map_level.maps_path,
+                            "max_steps_in_episode": map_level.max_steps_in_episode,
+                            "rewards_type": rewards_type,
+                            "apply_trench_rewards": map_level.apply_trench_rewards,
+                        }
+                    )
+
+                class CustomCurriculumGlobalConfig(CurriculumGlobalConfig):
+                    levels = curriculum_levels
+
+                batch_cfg = BatchConfig(curriculum_global=CustomCurriculumGlobalConfig())
+                first_level = curriculum_levels[0]
+                env_cfgs = env_cfgs._replace(
+                    max_steps_in_episode=jnp.full(
+                        (1,), int(first_level["max_steps_in_episode"]), dtype=jnp.int32
+                    ),
+                    apply_trench_rewards=jnp.full(
+                        (1,), bool(first_level["apply_trench_rewards"]), dtype=jnp.bool_
+                    ),
+                )
+        except Exception as e:
+            print(f"Failed to load --config preset '{args.config}': {e}")
+
+    if batch_cfg is None:
+        batch_cfg = BatchConfig()
+
+    if args.use_mcts:
+        env_cfgs = fix_env_cfg_dtypes(env_cfgs)
     env = TerraEnvBatch(
+        batch_cfg=batch_cfg,
         rendering=args.render_rollout_gif,
         n_envs_x_rendering=1,
         n_envs_y_rendering=1,
@@ -461,6 +905,16 @@ def main():
         shuffle_maps=False,
         single_map_path=args.map_path,
     )
+
+    # Match inference_single_map.py: keep checkpoint env_cfgs fixed during rollout.
+    class _NoopCurriculumManager:
+        def reset_cfgs(self, env_cfgs):
+            return env_cfgs
+
+        def update_cfgs(self, timesteps, rng):
+            return timesteps
+
+    env.curriculum_manager = _NoopCurriculumManager()
 
     # Load neural network
     model = load_neural_network(config, env)
@@ -477,6 +931,7 @@ def main():
         seed=args.seed,
         render_rollout_gif=args.render_rollout_gif,
         rollout_gif_every=args.rollout_gif_every,
+        use_mcts=args.use_mcts,
     )
 
     raw_len = len(plan)
@@ -490,76 +945,76 @@ def main():
         )
 
     # Save plan
-    output_path = Path(args.output_path)
+    output_path = _timestamped_output_path(Path(args.output_path).expanduser())
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     print("[main] Saving PKL plan", flush=True)
     with open(output_path, 'wb') as f:
         pickle.dump(plan, f)
 
     print(f"Plan extracted and saved to {output_path} (PKL)")
     
-    # Optionally save a JSON representation for debugging/inspection.
-    if args.serialize:
-        if output_path.suffix:
-            json_path = output_path.with_suffix('.json')
-        else:
-            json_path = output_path.parent / f"{output_path.name}.json"
+    # Always save a JSON representation next to the PKL with the same base name.
+    if output_path.suffix:
+        json_path = output_path.with_suffix('.json')
+    else:
+        json_path = output_path.parent / f"{output_path.name}.json"
 
-        plan_json = {'waypoints': [_to_serializable(entry) for entry in plan]}
-        # Use compact array formatting (matching foundation-plan.json)
-        json_str = json.dumps(plan_json, indent=2)
-        
-        # Compact arrays while preserving dictionary structure
-        # Step 1: Compact arrays (content between [ and ])
-        # Match multi-line arrays and compact them
-        def compact_arrays(text):
-            result = []
-            i = 0
-            while i < len(text):
-                if text[i] == '[':
-                    # Find matching closing bracket
-                    depth = 1
-                    j = i + 1
-                    while j < len(text) and depth > 0:
-                        if text[j] == '[':
-                            depth += 1
-                        elif text[j] == ']':
-                            depth -= 1
-                        j += 1
-                    # Extract array content
-                    array_content = text[i+1:j-1]
-                    # Only compact if it spans multiple lines
-                    if '\n' in array_content:
-                        # Compact: remove all whitespace
-                        compacted = re.sub(r'\s+', '', array_content)
-                        result.append('[' + compacted + ']')
-                    else:
-                        result.append(text[i:j])
-                    i = j
+    plan_json = _plan_to_schema_v2(plan, Path(args.map_path))
+    # Use compact array formatting (matching foundation-plan.json)
+    json_str = json.dumps(plan_json, indent=2)
+
+    # Compact arrays while preserving dictionary structure
+    # Step 1: Compact arrays (content between [ and ])
+    # Match multi-line arrays and compact them
+    def compact_arrays(text):
+        result = []
+        i = 0
+        while i < len(text):
+            if text[i] == '[':
+                # Find matching closing bracket
+                depth = 1
+                j = i + 1
+                while j < len(text) and depth > 0:
+                    if text[j] == '[':
+                        depth += 1
+                    elif text[j] == ']':
+                        depth -= 1
+                    j += 1
+                # Extract array content
+                array_content = text[i+1:j-1]
+                # Only compact if it spans multiple lines
+                if '\n' in array_content:
+                    # Compact: remove all whitespace
+                    compacted = re.sub(r'\s+', '', array_content)
+                    result.append('[' + compacted + ']')
                 else:
-                    result.append(text[i])
-                    i += 1
-            return ''.join(result)
-        
-        json_str = compact_arrays(json_str)
-        
-        # Step 2: Ensure dictionary keys are on new lines with proper indentation
-        # Fix any dictionary keys that got compacted - each key should be on its own line
-        # Pattern: match comma followed by quoted key (any value type, not just objects)
-        # We need to handle: ,"key":value (where value can be number, bool, string, array, object)
-        def fix_dict_keys(text):
-            # First, ensure closing braces are on their own line
-            text = re.sub(r'\},\s*"', r'},\n      "', text)
-            # Then, ensure each key after a comma is on its own line
-            # Match: ,"key": followed by any value (not just {)
-            # This handles: ,"key":value where value is number, bool, string, array, or object
-            text = re.sub(r',\s*"([^"]+)":\s*', r',\n      "\1": ', text)
-            return text
-        
-        json_str = fix_dict_keys(json_str)
-        
-        with open(json_path, 'w', encoding='utf-8') as f:
-            f.write(json_str)
-        print(f"Also saved JSON representation to {json_path}")
+                    result.append(text[i:j])
+                i = j
+            else:
+                result.append(text[i])
+                i += 1
+        return ''.join(result)
+
+    json_str = compact_arrays(json_str)
+
+    # Step 2: Ensure dictionary keys are on new lines with proper indentation
+    # Fix any dictionary keys that got compacted - each key should be on its own line
+    # Pattern: match comma followed by quoted key (any value type, not just objects)
+    # We need to handle: ,"key":value (where value can be number, bool, string, array, object)
+    def fix_dict_keys(text):
+        # First, ensure closing braces are on their own line
+        text = re.sub(r'\},\s*"', r'},\n      "', text)
+        # Then, ensure each key after a comma is on its own line
+        # Match: ,"key": followed by any value (not just {)
+        # This handles: ,"key":value where value is number, bool, string, array, or object
+        text = re.sub(r',\s*"([^"]+)":\s*', r',\n      "\1": ', text)
+        return text
+
+    json_str = fix_dict_keys(json_str)
+
+    with open(json_path, 'w', encoding='utf-8') as f:
+        f.write(json_str)
+    print(f"Also saved JSON representation to {json_path}")
 
     # Optional: render plan GIF from the extracted waypoints
     if args.render_plan_gif:

@@ -43,6 +43,14 @@ class MapLevel:
 
 
 @dataclass
+class CurriculumSettings:
+    """Terra CurriculumManager thresholds (per parallel env)."""
+    increase_level_threshold: int = 20
+    decrease_level_threshold: int = 80
+    last_level_type: str = "random"  # "random" | "none"
+
+
+@dataclass
 class TrainingConfig:
     """Complete training configuration for a named setup."""
     name: str
@@ -54,6 +62,7 @@ class TrainingConfig:
     
     # Map configuration (curriculum levels)
     maps: List[MapLevel] = field(default_factory=list)
+    curriculum: CurriculumSettings = field(default_factory=CurriculumSettings)
     
     # Reward multipliers
     reward_multipliers: RewardMultipliers = field(default_factory=RewardMultipliers)
@@ -110,6 +119,13 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
                 rewards_type=m.get('rewards_type', 'DENSE'),
                 apply_trench_rewards=m.get('apply_trench_rewards', False),
             ))
+
+        cur_data = cfg.get('curriculum', {})
+        curriculum = CurriculumSettings(
+            increase_level_threshold=cur_data.get('increase_level_threshold', 20),
+            decrease_level_threshold=cur_data.get('decrease_level_threshold', 80),
+            last_level_type=cur_data.get('last_level_type', 'random'),
+        )
         
         # Create TrainingConfig
         _TRAINING_CONFIGS[name] = TrainingConfig(
@@ -118,6 +134,7 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             agent_types=tuple(cfg.get('agent_types', [0])),
             action_types=tuple(cfg.get('action_types', [0])),
             maps=maps,
+            curriculum=curriculum,
             reward_multipliers=reward_multipliers,
             truck_capacity=cfg.get('truck_capacity'),
             skidsteer_capacity=cfg.get('skidsteer_capacity'),

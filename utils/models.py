@@ -33,6 +33,11 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         raise ValueError(
             f"Unsupported model_size='{model_size}'. Expected 'base', 'medium', or 'large'."
         )
+    model_core = getattr(config, "model_core", "mlp")
+    if model_core not in ("mlp", "transformer"):
+        raise ValueError(
+            f"Unsupported model_core='{model_core}'. Expected 'mlp' or 'transformer'."
+        )
 
     model_kwargs = {}
     if model_size == "medium":
@@ -44,6 +49,10 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             "intermediate_mlp_layers": (320, 160),
             "intermediate_mlp_dim": 160,
             "local_map_hidden_dim_layers_mlp": (320, 64),
+            "transformer_model_dim": 192,
+            "transformer_num_layers": 2,
+            "transformer_num_heads": 4,
+            "transformer_ffn_dim": 384,
         }
     if model_size == "large":
         model_kwargs = {
@@ -54,6 +63,10 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             "intermediate_mlp_layers": (384, 192),
             "intermediate_mlp_dim": 192,
             "local_map_hidden_dim_layers_mlp": (384, 96),
+            "transformer_model_dim": 256,
+            "transformer_num_layers": 3,
+            "transformer_num_heads": 8,
+            "transformer_ffn_dim": 512,
         }
 
     model = SimplifiedCoupledCategoricalNet(
@@ -64,6 +77,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         loaded_max=config["loaded_max"],
         agent_types_max=2,  # Maximum agent type value (0=excavator, 1=truck, 2=skidsteer)
         action_type=env.batch_cfg.action_type,
+        model_core=model_core,
         **model_kwargs,
     )
 
@@ -460,6 +474,32 @@ class PreviousActionsNet(nn.Module):
         return x
 
 
+class TransformerEncoderBlock(nn.Module):
+    model_dim: int
+    num_heads: int
+    ffn_dim: int
+    dropout_rate: float = 0.0
+
+    @nn.compact
+    def __call__(self, x: Array, train: bool = True) -> Array:
+        h = nn.LayerNorm()(x)
+        h = nn.SelfAttention(
+            num_heads=self.num_heads,
+            qkv_features=self.model_dim,
+            out_features=self.model_dim,
+            dropout_rate=self.dropout_rate,
+            deterministic=not train,
+        )(h)
+        x = x + h
+
+        h2 = nn.LayerNorm()(x)
+        h2 = nn.Dense(self.ffn_dim)(h2)
+        h2 = nn.gelu(h2)
+        h2 = nn.Dense(self.model_dim)(h2)
+        x = x + h2
+        return x
+
+
 class SimplifiedCoupledCategoricalNet(nn.Module):
     """
     The full net for centralized dual-agent policy.
@@ -480,6 +520,11 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     cnn_channels: Sequence[int] = (16, 32, 32)
     cnn_dense_layers: Sequence[int] = (128, 32)
     local_map_hidden_dim_layers_mlp: Sequence[int] = (256, 32)
+    model_core: str = "mlp"  # "mlp" or "transformer"
+    transformer_model_dim: int = 128
+    transformer_num_layers: int = 2
+    transformer_num_heads: int = 4
+    transformer_ffn_dim: int = 256
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
@@ -527,6 +572,20 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         )
 
         self.activation = nn.relu
+        if self.model_core == "transformer":
+            self.token_agent_proj = nn.Dense(self.transformer_model_dim)
+            self.token_actions_proj = nn.Dense(self.transformer_model_dim)
+            self.token_local_proj = nn.Dense(self.transformer_model_dim)
+            self.token_maps_proj = nn.Dense(self.transformer_model_dim)
+            self.transformer_blocks = [
+                TransformerEncoderBlock(
+                    model_dim=self.transformer_model_dim,
+                    num_heads=self.transformer_num_heads,
+                    ffn_dim=self.transformer_ffn_dim,
+                )
+                for _ in range(self.transformer_num_layers)
+            ]
+            self.transformer_out_proj = nn.Dense(self.intermediate_mlp_dim)
 
     def __call__(self, obs: Array) -> Array:
         # OPTIMIZED: Batched processing for both agents
@@ -610,18 +669,34 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         
         # Concatenate features based on user request: AgentState(1), prv action, AgentState(2), CNN(Maps)
         # Local maps are also included.
-        # Build a single combined feature vector (all agent states + actions + active local maps)
-        combined_features = jnp.concatenate(
-            (x_agents_concat, x_actions, x_local_active_flat),
-            axis=-1,
-        )
-        combined_features = self.activation(combined_features)
+        if self.model_core == "transformer":
+            # Build lightweight token sequence:
+            # - per-agent tokens
+            # - one global token each for prev-actions, local map summary, global maps
+            agent_tokens = self.token_agent_proj(x_agents)  # [B, MAX_AGENTS, D]
+            actions_token = self.token_actions_proj(x_actions)[:, None, :]  # [B,1,D]
+            local_token = self.token_local_proj(x_local_active_flat)[:, None, :]  # [B,1,D]
+            maps_token = self.token_maps_proj(x_maps)[:, None, :]  # [B,1,D]
+            tokens = jnp.concatenate(
+                (agent_tokens, actions_token, local_token, maps_token),
+                axis=1,
+            )
+            for block in self.transformer_blocks:
+                tokens = block(tokens, train=True)
+            pooled = jnp.mean(tokens, axis=1)
+            x = self.activation(self.transformer_out_proj(pooled))
+        else:
+            # Build a single combined feature vector (all agent states + actions + active local maps)
+            combined_features = jnp.concatenate(
+                (x_agents_concat, x_actions, x_local_active_flat),
+                axis=-1,
+            )
+            combined_features = self.activation(combined_features)
 
-        # Concatenate combined features with MapNet output
-        x = jnp.concatenate((combined_features, x_maps), axis=-1)
-        
-        # Apply final activation
-        x = self.activation(x)
+            # Concatenate combined features with MapNet output
+            x = jnp.concatenate((combined_features, x_maps), axis=-1)
+            # Apply final activation
+            x = self.activation(x)
 
         v = self.mlp_v(x)
         xpi = self.mlp_pi(x)

@@ -24,7 +24,7 @@ solo_excavator:
     excavator_relocate_dumped_mult: 1.5
     excavator_relocate_dug_dirt_mult: 1.5
   maps:
-    - path: foundations_real_ring
+    - path: foundations
       max_steps: 450
 
 solo_excavator_rectangles:
@@ -49,7 +49,39 @@ solo_excavator_rectangles_dumpzone:
     excavator_relocate_dug_dirt_mult: 1.5
   maps:
     - path: foundations_rectangles_real_dumpzone
-      max_steps: 500
+      max_steps: 600
+
+dual_excavator_rectangles_dumpzone:
+  description: Single excavator agent with tracked movement on rectangle maps
+  agent_types: [0,0]
+  action_types: [0,0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dug_dirt_mult: 1.5
+    transport_relocate_mult: 1.5
+  maps:
+    - path: foundations_rectangles_real_dumpzone
+      max_steps: 750
+
+# 2-stage curriculum: ring -> dumpzone. Promote after 10 consecutive task_done;
+# demote after 100 consecutive failures. At max level stays on dumpzone.
+solo_excavator_rectangles_2stage:
+  description: Solo excavator 2-level curriculum - ring then dumpzone on task success
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 10
+    decrease_level_threshold: 100
+    last_level_type: none
+  maps:
+    - path: foundations_rectangles_real_ring
+      max_steps: 450
+    - path: foundations_rectangles_real_dumpzone
+      max_steps: 550
 
 
 solo_excavator_more_dumpbonus:
@@ -145,8 +177,8 @@ dual_excavator:
     excavator_relocate_dug_dirt_mult: 1.5
     transport_relocate_mult: 1.5
   maps:
-    - path: foundations_dumpzones_v3
-      max_steps: 800
+    - path: foundations #_dumpzones_v3
+      max_steps: 650
 
 # -----------------------------------------------------------------------------
 # Three-Agent Configurations

@@ -421,6 +421,9 @@ class MixedAgentTrainConfig:
     # Curriculum/maps override (from YAML config)
     # Format: list of dicts with keys: maps_path, max_steps_in_episode, rewards_type, apply_trench_rewards
     curriculum_levels_override: list | None = None
+    curriculum_increase_level_threshold: int | None = None
+    curriculum_decrease_level_threshold: int | None = None
+    curriculum_last_level_type: str | None = None
     # Optional single-map training path. When set, map loading uses this path directly
     # and does not rely on DATASET_PATH / DATASET_SIZE.
     single_map_path: str | None = None
@@ -428,6 +431,7 @@ class MixedAgentTrainConfig:
     replay_map_count: int = 0
     target_map_repeat: int = 0
     model_size: str = "base"
+    model_core: str = "mlp"
 
 
     def __post_init__(self):
@@ -572,15 +576,34 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
 
     # Create batch config - override curriculum levels if provided
     if curriculum_levels is not None and len(curriculum_levels) > 0:
-        # Create custom CurriculumGlobalConfig with the override levels
-        custom_curriculum = CurriculumGlobalConfig()
-        # We need to create a new class with the overridden levels since it's a NamedTuple
-        # NamedTuples can't have mutable class attributes overridden, so we work around this
+        increase_th = (
+            config.curriculum_increase_level_threshold
+            if config.curriculum_increase_level_threshold is not None
+            else CurriculumGlobalConfig.increase_level_threshold
+        )
+        decrease_th = (
+            config.curriculum_decrease_level_threshold
+            if config.curriculum_decrease_level_threshold is not None
+            else CurriculumGlobalConfig.decrease_level_threshold
+        )
+        last_level = (
+            config.curriculum_last_level_type
+            if config.curriculum_last_level_type is not None
+            else CurriculumGlobalConfig.last_level_type
+        )
+
         class CustomCurriculumGlobalConfig(CurriculumGlobalConfig):
             levels = curriculum_levels
-        
+            increase_level_threshold = increase_th
+            decrease_level_threshold = decrease_th
+            last_level_type = last_level
+
         batch_cfg = BatchConfig(curriculum_global=CustomCurriculumGlobalConfig())
         print(f"📍 Using maps from config: {[lvl['maps_path'] for lvl in curriculum_levels]}")
+        print(
+            f"📍 Curriculum: promote after {increase_th} task success(es), "
+            f"demote after {decrease_th} failure(s), last_level_type={last_level!r}"
+        )
     else:
         batch_cfg = BatchConfig()
         print("📍 Using default maps from config.py")
@@ -696,6 +719,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
 
     # Create the unified network with agent type features (now that num_prev_actions is set)
     print(f"🧠 Model size preset: {getattr(config, 'model_size', 'base')}", flush=True)
+    print(f"🧠 Model core: {getattr(config, 'model_core', 'mlp')}", flush=True)
     print("⏱️  Initializing model...", flush=True)
     t_model_init = time.time()
     network, network_params = get_model_ready(_rng, config, env)
@@ -703,6 +727,26 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
         f"⏱️  Model init done in {time.time() - t_model_init:.2f}s",
         flush=True,
     )
+    # Print architecture summary for easy debugging/comparison in logs.
+    model_core = getattr(config, "model_core", "mlp")
+    print("🏗️ Architecture:", flush=True)
+    print(f"   core: {model_core}", flush=True)
+    print(f"   model_size: {getattr(config, 'model_size', 'base')}", flush=True)
+    if model_core == "transformer":
+        max_agents = 4
+        token_count = max_agents + 3  # agent tokens + actions/local/maps tokens
+        print("   transformer details:", flush=True)
+        print(f"     tokens_total: {token_count}", flush=True)
+        print(f"     tokens_agent: {max_agents}", flush=True)
+        print("     tokens_global: 3 (prev_actions, local_map, global_maps)", flush=True)
+        print(f"     layers: {network.transformer_num_layers}", flush=True)
+        print(f"     heads: {network.transformer_num_heads}", flush=True)
+        print(f"     model_dim: {network.transformer_model_dim}", flush=True)
+        print(f"     ffn_dim: {network.transformer_ffn_dim}", flush=True)
+    else:
+        print("   mlp details:", flush=True)
+        print("     fusion: concat(agent_state, prev_actions, local_map, cnn_maps)", flush=True)
+        print(f"     intermediate_mlp_dim: {network.intermediate_mlp_dim}", flush=True)
     # Debug: print number of actions for current action type (kept as requested)
     try:
         num_actions_debug = env.batch_cfg.action_type.get_num_actions()
@@ -1408,6 +1452,13 @@ if __name__ == "__main__":
         help="Model capacity preset. 'medium' and 'large' progressively widen CNN and policy/value heads."
     )
     parser.add_argument(
+        "--model_core",
+        type=str,
+        default="mlp",
+        choices=["mlp", "transformer"],
+        help="Core policy architecture. 'mlp' keeps current behavior; 'transformer' uses a lightweight token-mixer core.",
+    )
+    parser.add_argument(
         "--agent_types", type=str, default=None,   # 0=excavator, 1=truck, 2=skidsteer
         help="Override agent types with a Python tuple, e.g. '(2,0,2,0)'. Overrides --config."
     )
@@ -1493,7 +1544,29 @@ if __name__ == "__main__":
         help="Do not load env_config from checkpoint; use default/current EnvConfig()."
     )
     
-    args, _ = parser.parse_known_args()
+    args, unknown = parser.parse_known_args()
+
+    # Common mistake: `--preset_name` instead of `--config preset_name`
+    if args.config is None and unknown:
+        try:
+            from configs.training_configs import list_configs
+            known_configs = set(list_configs())
+            for token in list(unknown):
+                candidate = token.lstrip("-")
+                if candidate in known_configs:
+                    print(
+                        f"⚠️  Treating {token!r} as --config {candidate} "
+                        "(use --config <name> for presets)"
+                    )
+                    args.config = candidate
+                    unknown.remove(token)
+        except ImportError:
+            pass
+    if unknown:
+        raise SystemExit(
+            f"Unrecognized arguments: {unknown}. "
+            "Load a YAML preset with --config <name> (e.g. --config solo_excavator_rectangles_2stage)."
+        )
     
     # default to True unless explicitly disabled
     if args.load_env_from_checkpoint is None:
@@ -1510,6 +1583,9 @@ if __name__ == "__main__":
     skidsteer_capacity = None
     truck_road_restricted = None
     curriculum_levels_override = None
+    curriculum_increase_level_threshold = None
+    curriculum_decrease_level_threshold = None
+    curriculum_last_level_type = None
     
     if args.config is not None:
         try:
@@ -1546,6 +1622,9 @@ if __name__ == "__main__":
                         "rewards_type": rewards_type,
                         "apply_trench_rewards": map_level.apply_trench_rewards,
                     })
+                curriculum_increase_level_threshold = preset.curriculum.increase_level_threshold
+                curriculum_decrease_level_threshold = preset.curriculum.decrease_level_threshold
+                curriculum_last_level_type = preset.curriculum.last_level_type
             
         except ImportError as e:
             print(f"⚠️  Failed to import training configs: {e}")
@@ -1643,10 +1722,14 @@ if __name__ == "__main__":
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,
         curriculum_levels_override=curriculum_levels_override,
+        curriculum_increase_level_threshold=curriculum_increase_level_threshold,
+        curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,
+        curriculum_last_level_type=curriculum_last_level_type,
         single_map_path=args.map_path,
         replay_map_count=args.replay_map_count,
         target_map_repeat=args.target_map_repeat,
         model_size=args.model_size,
+        model_core=args.model_core,
     )
     
     train_mixed_agents(config) 

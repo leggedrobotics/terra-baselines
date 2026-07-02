@@ -32,7 +32,7 @@ export DATASET_SIZE=1
 # Change to the directory containing visualize.py
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines/isaac_sim
 #JAX_PLATFORMS=cpu  python visualize_mixed.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-08-08-13-52-00.pkl
-python extract_map.py -policy /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-11-26-18-12-50.pkl
+python extract_map.py --policy /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-05-21-17-38-51.pkl --config solo_excavator --map map_13 --use-mcts --render_plan_gif
 #mixed-agents-skidsteer-skidsteer-local-2025-08-07-16-58-21_FINAL.pkl
 
 #JAX_PLATFORMS=cpu 

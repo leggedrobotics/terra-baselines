@@ -32,7 +32,7 @@ conda activate $CONDA_ENV
 # Change to the directory containing inference script
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference
 #JAX_PLATFORMS=cpu  python visualize_mixed.py --run_name /cluster/home/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2025-08-08-13-52-00.pkl
-python inference_single_map.py --policy /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-22-10-20-06.pkl --config solo_excavator --map_name hongg_archi_3
+python inference_single_map.py --policy /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-05-21-17-38-51.pkl --config solo_excavator --map_name map_13 --use-mcts
 #mixed-agents-skidsteer-skidsteer-local-2025-08-07-16-58-21_FINAL.pkl
 
 #JAX_PLATFORMS=cpu 

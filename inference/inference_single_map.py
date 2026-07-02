@@ -31,6 +31,7 @@ from train_mixed import MixedAgentTrainConfig
 from utils.helpers import load_pkl_object
 from utils.models import load_neural_network
 from utils.utils_ppo import obs_to_model_input, wrap_action
+from eval_mcts import fix_env_cfg_dtypes, make_mcts_step_fn
 
 sys.modules["__main__"].MixedAgentTrainConfig = MixedAgentTrainConfig
 
@@ -93,7 +94,15 @@ def _safe_scalar_float(v, default):
 
 
 def rollout_and_render_episode(
-    env, model, model_params, env_cfgs, rl_config, max_frames, seed, deterministic
+    env,
+    model,
+    model_params,
+    env_cfgs,
+    rl_config,
+    max_frames,
+    seed,
+    deterministic,
+    use_mcts=False,
 ):
     rng = jax.random.PRNGKey(seed)
     rng, _rng = jax.random.split(rng)
@@ -101,6 +110,26 @@ def rollout_and_render_episode(
 
     prev_actions = jnp.zeros((1, rl_config.num_prev_actions), dtype=jnp.int32)
     rewards = []
+    mcts_step = None
+    mcts_ppo_diff_count = 0
+
+    if use_mcts:
+        mcts_step = make_mcts_step_fn(model, env, rl_config)
+        print(
+            f"MCTS enabled: num_simulations={rl_config.num_simulations}, "
+            f"gamma={rl_config.gamma}"
+        )
+        print("Warming up MCTS JIT compilation...")
+        warm_rng, _, _, warm_action, _, _ = mcts_step(
+            model_params, rng, timestep, prev_actions
+        )
+        jax.block_until_ready(warm_action)
+
+        # Reset after warmup so the rendered rollout starts from the requested seed.
+        rng = jax.random.PRNGKey(seed)
+        rng, _rng = jax.random.split(rng)
+        timestep = env.reset(env_cfgs, jax.random.split(_rng, 1))
+        prev_actions = jnp.zeros((1, rl_config.num_prev_actions), dtype=jnp.int32)
 
     # Render initial frame immediately to avoid storing full trajectories in memory.
     initial_obs = dict(timestep.observation)
@@ -112,23 +141,31 @@ def rollout_and_render_episode(
     steps = 0
     pbar = tqdm(total=max_frames, desc="Rollout+Rendering")
     while True:
-        rng, rng_act, rng_step = jax.random.split(rng, 3)
-        obs_in = obs_to_model_input(timestep.observation, prev_actions, rl_config)
-        _, logits_pi = model.apply(model_params, obs_in)
-        if deterministic:
-            action = jnp.argmax(logits_pi, axis=-1)
+        if use_mcts:
+            rng, timestep, prev_actions, action, ppo_action, mcts_action = mcts_step(
+                model_params, rng, timestep, prev_actions
+            )
+            mcts_ppo_diff_count += int(
+                (np.asarray(ppo_action) != np.asarray(mcts_action)).sum()
+            )
         else:
-            pi = tfp.distributions.Categorical(logits=logits_pi)
-            action = pi.sample(seed=rng_act)
+            rng, rng_act, rng_step = jax.random.split(rng, 3)
+            obs_in = obs_to_model_input(timestep.observation, prev_actions, rl_config)
+            _, logits_pi = model.apply(model_params, obs_in)
+            if deterministic:
+                action = jnp.argmax(logits_pi, axis=-1)
+            else:
+                pi = tfp.distributions.Categorical(logits=logits_pi)
+                action = pi.sample(seed=rng_act)
 
-        prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
-        prev_actions = prev_actions.at[:, 0].set(action)
+            prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+            prev_actions = prev_actions.at[:, 0].set(action)
 
-        timestep = env.step(
-            timestep,
-            wrap_action(action, env.batch_cfg.action_type),
-            jax.random.split(rng_step, 1),
-        )
+            timestep = env.step(
+                timestep,
+                wrap_action(action, env.batch_cfg.action_type),
+                jax.random.split(rng_step, 1),
+            )
 
         steps += 1
         pbar.update(1)
@@ -150,7 +187,7 @@ def rollout_and_render_episode(
             break
 
     pbar.close()
-    return rewards, steps, task_done
+    return rewards, steps, task_done, mcts_ppo_diff_count
 
 
 if __name__ == "__main__":
@@ -177,6 +214,25 @@ if __name__ == "__main__":
     parser.add_argument("--deterministic", type=int, default=0, help="1=argmax actions, 0=sample")
     parser.add_argument("--out_path", type=str, default=None, help="Output gif path")
     parser.add_argument(
+        "--use-mcts",
+        dest="use_mcts",
+        action="store_true",
+        help="Enable MCTS planning at each inference step. Off by default.",
+    )
+    parser.add_argument(
+        "--num_simulations",
+        "-sim",
+        type=int,
+        default=32,
+        help="MCTS simulations per step when --use-mcts is set.",
+    )
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=None,
+        help="Discount factor for MCTS. Defaults to checkpoint config.gamma or 0.99.",
+    )
+    parser.add_argument(
         "--config",
         type=str,
         default=None,
@@ -189,6 +245,11 @@ if __name__ == "__main__":
     config.num_test_rollouts = 1
     config.num_devices = 1
     config.num_embeddings_agent_min = 60
+    config.num_simulations = args.num_simulations
+    if args.gamma is not None:
+        config.gamma = args.gamma
+    if not hasattr(config, "gamma"):
+        config.gamma = 0.99
 
     env_cfgs_ckpt = log.get("env_config", None)
     if env_cfgs_ckpt is not None and hasattr(env_cfgs_ckpt, "_fields"):
@@ -225,6 +286,9 @@ if __name__ == "__main__":
             env_cfg,
             is_leaf=lambda x: isinstance(x, tuple) and not hasattr(x, "_fields"),
         )
+
+    if args.use_mcts:
+        env_cfgs = fix_env_cfg_dtypes(env_cfgs)
 
     # Keep exactly the same default map/curriculum bootstrap behavior as visualize_mixed.
     batch_cfg = None
@@ -309,7 +373,7 @@ if __name__ == "__main__":
     model_params = log["model"]
 
     deterministic = bool(args.deterministic)
-    rewards, steps, task_done = rollout_and_render_episode(
+    rewards, steps, task_done, mcts_ppo_diff_count = rollout_and_render_episode(
         env=env,
         model=model,
         model_params=model_params,
@@ -318,6 +382,7 @@ if __name__ == "__main__":
         max_frames=args.n_steps,
         seed=args.seed,
         deterministic=deterministic,
+        use_mcts=args.use_mcts,
     )
 
     if args.out_path:
@@ -334,3 +399,7 @@ if __name__ == "__main__":
     mean_step_reward = float(np.mean(rewards)) if len(rewards) > 0 else 0.0
     print(f"GIF saved to {out_path}")
     print(f"steps={steps} return={total_return:.4f} mean_step_reward={mean_step_reward:.4f} task_done={task_done}")
+    if args.use_mcts:
+        total_decisions = max(steps, 1)
+        pct = 100.0 * mcts_ppo_diff_count / total_decisions
+        print(f"MCTS != PPO: {mcts_ppo_diff_count}/{total_decisions} ({pct:.1f}%)")
