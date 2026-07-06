@@ -161,6 +161,20 @@ def safe_jax_to_python(value):
         return value
 
 
+def _strip_checkpoint_env_axis(env_config, num_envs_per_device: int):
+    """Store/load EnvConfig without a leading vectorized-env axis when present."""
+    def _strip_leaf(x):
+        try:
+            arr = jnp.asarray(x)
+        except Exception:
+            return x
+        if arr.shape and arr.shape[0] == num_envs_per_device:
+            return arr[0]
+        return x
+
+    return jax.tree_util.tree_map(_strip_leaf, env_config)
+
+
 def randomize_initial_env_steps(timestep, reset_rng):
     """Stagger only the first training episode timeout across vectorized envs."""
 
@@ -211,18 +225,6 @@ def _maybe_load_single_map_metadata(map_path: Path):
     return None
 
 
-def _metadata_has_trench_axes(metadata_path: Path | None) -> bool:
-    if metadata_path is None or not metadata_path.exists():
-        return False
-    try:
-        with open(metadata_path) as f:
-            metadata = json.load(f)
-    except Exception:
-        return False
-    trench_axes = metadata.get("axes_ABC")
-    return isinstance(trench_axes, list) and len(trench_axes) > 0
-
-
 def _build_mixed_dataset_pool(
     curriculum_levels: list[dict],
     target_map_path: str,
@@ -269,7 +271,6 @@ def _build_mixed_dataset_pool(
     if target_actions is None:
         target_actions = np.zeros_like(target_image)
     target_metadata = _maybe_load_single_map_metadata(target_map_dir)
-    target_metadata_has_trench_axes = _metadata_has_trench_axes(target_metadata)
 
     temp_root = Path(tempfile.mkdtemp(prefix="terra_mixed_pool_", dir="/tmp"))
     mixed_levels = []
@@ -292,10 +293,7 @@ def _build_mixed_dataset_pool(
             (level_dir / subdir).mkdir(parents=True, exist_ok=True)
 
         dataset_has_actions = (source_dir / "actions").exists()
-        dataset_metadata_files = [source_dir / "metadata" / f"trench_{i}.json" for i in selected_indices]
-        keep_metadata = target_metadata_has_trench_axes and all(
-            path.exists() for path in dataset_metadata_files
-        )
+        metadata_copied = False
 
         out_idx = 1
         for src_idx in selected_indices:
@@ -320,11 +318,13 @@ def _build_mixed_dataset_pool(
             else:
                 np.save(level_dir / "actions" / f"img_{out_idx}.npy", np.zeros_like(target_image))
 
-            if keep_metadata:
+            dataset_metadata = source_dir / "metadata" / f"trench_{src_idx}.json"
+            if dataset_metadata.exists():
                 shutil.copy2(
-                    source_dir / "metadata" / f"trench_{src_idx}.json",
+                    dataset_metadata,
                     level_dir / "metadata" / f"trench_{out_idx}.json",
                 )
+                metadata_copied = True
             out_idx += 1
 
         for _ in range(target_map_repeat):
@@ -333,14 +333,15 @@ def _build_mixed_dataset_pool(
             np.save(level_dir / "dumpability" / f"img_{out_idx}.npy", target_dumpability)
             np.save(level_dir / "distance" / f"img_{out_idx}.npy", target_distance)
             np.save(level_dir / "actions" / f"img_{out_idx}.npy", target_actions)
-            if keep_metadata:
+            if target_metadata is not None:
                 shutil.copy2(
                     target_metadata,
                     level_dir / "metadata" / f"trench_{out_idx}.json",
                 )
+                metadata_copied = True
             out_idx += 1
 
-        if not keep_metadata:
+        if not metadata_copied:
             shutil.rmtree(level_dir / "metadata")
 
         mixed_level = dict(level)
@@ -403,6 +404,7 @@ class MixedAgentTrainConfig:
     # Checkpoint loading
     resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
     load_env_from_checkpoint: bool = True  # If true, use env_config from checkpoint
+    resume_update: int | None = None  # Optional override for old param-only checkpoints
     
     # Named configuration preset (loads from configs/training_configs.py)
     config_name: str | None = None  # e.g., "excavator_truck", "solo_excavator"
@@ -863,11 +865,21 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     # Optionally load checkpoint before creating states
     checkpoint = None
     env_params_override = None
+    resume_update = 0
     if config.resume_from is not None and os.path.exists(config.resume_from):
         try:
             checkpoint = helpers.load_pkl_object(config.resume_from)
             if config.load_env_from_checkpoint and "env_config" in checkpoint:
-                env_params_override = checkpoint["env_config"]
+                env_params_override = _strip_checkpoint_env_axis(
+                    checkpoint["env_config"],
+                    config.num_envs_per_device,
+                )
+            if "next_update" in checkpoint:
+                resume_update = int(checkpoint["next_update"])
+            elif "update" in checkpoint:
+                resume_update = int(checkpoint["update"]) + 1
+            if config.resume_update is not None:
+                resume_update = int(config.resume_update)
             print(f"Loaded checkpoint from {config.resume_from}")
         except Exception as e:
             print(f"Failed to load checkpoint from {config.resume_from}: {e}")
@@ -882,6 +894,27 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         try:
             train_state = train_state.replace(params=checkpoint["model"])
             print("Replaced model parameters from checkpoint.")
+            if "optimizer_state" in checkpoint:
+                train_state = train_state.replace(
+                    opt_state=checkpoint["optimizer_state"],
+                    step=checkpoint.get("train_state_step", train_state.step),
+                )
+                print(
+                    "Restored optimizer state from checkpoint "
+                    f"(next_update={resume_update})."
+                )
+            else:
+                if config.resume_update is None:
+                    resume_update = 0
+                print(
+                    "Checkpoint has no optimizer_state/update metadata; "
+                    "warm-starting params only with a fresh optimizer/schedule."
+                )
+                if config.resume_update is not None:
+                    print(
+                        "Using manual resume_update="
+                        f"{resume_update} for logging/entropy schedule."
+                    )
         except Exception as e:
             print(f"Failed to set model parameters from checkpoint: {e}")
 
@@ -1202,7 +1235,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             ent_end = float(config.ent_schedule_end)
             ent_T = float(config.ent_schedule_steps)
 
-            for i in tqdm(range(config.num_updates), desc="Training"):
+            for i in tqdm(range(resume_update, config.num_updates), desc="Training"):
                 f = min(1.0, i / ent_T) if ent_T > 0 else 1.0
                 # Cosine decay: starts at ent_start when f=0, ends at ent_end when f=1
                 ent_coef_current = ent_end + 0.5 * (ent_start - ent_end) * (1.0 + jnp.cos(jnp.pi * f))
@@ -1313,10 +1346,19 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     wandb.log(log_dict, step=i)
 
                 if i % config.checkpoint_interval == 0:
+                    env_config_checkpoint = _strip_checkpoint_env_axis(
+                        env_params_single,
+                        config.num_envs_per_device,
+                    )
                     checkpoint = {
+                        "checkpoint_version": 2,
                         "train_config": config,
-                        "env_config": env_params_single,
+                        "env_config": env_config_checkpoint,
                         "model": runner_state_single[1].params,
+                        "optimizer_state": runner_state_single[1].opt_state,
+                        "train_state_step": runner_state_single[1].step,
+                        "update": i,
+                        "next_update": i + 1,
                         "loss_info": loss_info_single,
                     }
                     helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
@@ -1441,11 +1483,21 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             agent_types_str = f"{type_names.get(a1, 'unknown')}_{type_names.get(a2, 'unknown')}"
         except Exception:
             agent_types_str = "unknown_unknown"
-        
+
+        final_env_config = _strip_checkpoint_env_axis(
+            train_info["runner_state"][2].env_cfg,
+            config.num_envs_per_device,
+        )
+        final_train_state = train_info["runner_state"][1]
         final_checkpoint = {
+            "checkpoint_version": 2,
             "train_config": config,
-            "env_config": train_info["runner_state"][2].env_cfg,  # timestep.env_cfg
-            "model": train_info["runner_state"][1].params,
+            "env_config": final_env_config,
+            "model": final_train_state.params,
+            "optimizer_state": final_train_state.opt_state,
+            "train_state_step": final_train_state.step,
+            "update": config.num_updates - 1,
+            "next_update": config.num_updates,
             "loss_info": train_info["loss_info"],
             "agent_types": agent_types_str,
             "network_type": "unified_with_agent_type_conditioning",
@@ -1592,6 +1644,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "-r", "--resume_from", type=str, default=None,
         help="Path to a checkpoint .pkl to resume training from."
+    )
+    parser.add_argument(
+        "--resume_update", type=int, default=None,
+        help=(
+            "Manual next update index for old checkpoints that only contain "
+            "model params. New checkpoints store this automatically."
+        ),
     )
     env_group = parser.add_mutually_exclusive_group()
     env_group.add_argument(
@@ -1779,6 +1838,7 @@ if __name__ == "__main__":
         log_eval_interval=args.log_eval_interval,
         checkpoint_interval=args.checkpoint_interval,
         resume_from=args.resume_from,
+        resume_update=args.resume_update,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,
         action_types_override=action_types_override,
