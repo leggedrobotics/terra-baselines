@@ -71,6 +71,7 @@ class TrainingConfig:
     truck_capacity: Optional[int] = None
     skidsteer_capacity: Optional[int] = None
     truck_road_restricted: Optional[bool] = None
+    foundation_dump_overlap_threshold: Optional[float] = None
 
 
 # Cache for loaded configs
@@ -139,6 +140,7 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             truck_capacity=cfg.get('truck_capacity'),
             skidsteer_capacity=cfg.get('skidsteer_capacity'),
             truck_road_restricted=cfg.get('truck_road_restricted'),
+            foundation_dump_overlap_threshold=cfg.get('foundation_dump_overlap_threshold'),
         )
     
     _CONFIGS_LOADED = True

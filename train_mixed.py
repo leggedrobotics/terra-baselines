@@ -412,6 +412,7 @@ class MixedAgentTrainConfig:
     excavator_relocate_dumped_mult: float | None = None
     excavator_relocate_dug_dirt_mult: float | None = None
     transport_relocate_mult: float | None = None
+    foundation_dump_overlap_threshold: float | None = None
     
     # Capacity overrides
     truck_capacity: int | None = None
@@ -469,6 +470,7 @@ def create_mixed_agent_env_config(
     truck_capacity=None,
     skidsteer_capacity=None,
     truck_road_restricted=None,
+    foundation_dump_overlap_threshold=None,
 ):
     """Create environment configuration optimized for mixed agent training
     
@@ -482,6 +484,8 @@ def create_mixed_agent_env_config(
         truck_capacity: Override for truck capacity
         skidsteer_capacity: Override for skidsteer capacity
         truck_road_restricted: Whether trucks are restricted to roads
+        foundation_dump_overlap_threshold: 0 disables; >0 blocks excavator
+            dumps whose cone covers too much remaining foundation.
     """
     
     # Use the existing dense rewards from config
@@ -510,6 +514,10 @@ def create_mixed_agent_env_config(
         env_config = env_config._replace(skidsteer_capacity=skidsteer_capacity)
     if truck_road_restricted is not None:
         env_config = env_config._replace(truck_road_restricted=truck_road_restricted)
+    if foundation_dump_overlap_threshold is not None:
+        env_config = env_config._replace(
+            foundation_dump_overlap_threshold=foundation_dump_overlap_threshold
+        )
     
     return env_config
 
@@ -644,6 +652,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                 truck_capacity=config.truck_capacity,
                 skidsteer_capacity=config.skidsteer_capacity,
                 truck_road_restricted=config.truck_road_restricted,
+                foundation_dump_overlap_threshold=config.foundation_dump_overlap_threshold,
             )
             # Verbose training configuration summary
             type_names = {0: "Excavator", 1: "Truck", 2: "SkidSteer"}
@@ -675,6 +684,16 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                     print(f"   excavator_relocate_dug_dirt_mult: {config.excavator_relocate_dug_dirt_mult}")
                 if config.transport_relocate_mult is not None:
                     print(f"   transport_relocate_mult: {config.transport_relocate_mult}")
+            if config.foundation_dump_overlap_threshold is not None:
+                print(
+                    "🧱 Foundation dump overlap threshold: "
+                    f"{config.foundation_dump_overlap_threshold}"
+                )
+
+    if config.foundation_dump_overlap_threshold is not None:
+        env_params = env_params._replace(
+            foundation_dump_overlap_threshold=config.foundation_dump_overlap_threshold
+        )
     
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
@@ -1302,26 +1321,41 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     }
                     helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
 
-                if i > 0 and i % config.log_eval_interval == 0:
-                    # Keep inline eval on a single device. The training update remains
-                    # pmapped, but eval does not need a device axis and this avoids an
-                    # XLA rank assertion seen on RTX 4090 during the first eval compile.
-                    rng_eval = jax.random.fold_in(rng_rollout, i)
-                    eval_stats = eval_ppo.rollout_single_device(
+                if (
+                    config.log_eval_interval > 0
+                    and i > 0
+                    and i % config.log_eval_interval == 0
+                ):
+                    # Keep eval in the same pmapped shape regime as training.
+                    # The RTX 4090 crash only appears in the separate
+                    # single-device eval compile at the first eval update.
+                    print(f"🧪 Starting pmapped eval at update {i}", flush=True)
+                    rng_eval = jax.random.split(
+                        jax.random.fold_in(rng_rollout, i),
+                        config.num_devices,
+                    )
+                    eval_stats = eval_ppo.rollout(
                         rng_eval,
                         env,
-                        env_params_single,
-                        train_state,
+                        runner_state[2].env_cfg,
+                        runner_state[1],
                         config,
                     )
+                    eval_stats = eval_ppo.aggregate_device_stats(eval_stats)
+                    print(f"🧪 Finished pmapped eval at update {i}", flush=True)
 
-                    # Total single-device eval env steps that contributed to the sums.
-                    n = config.num_envs_per_device * eval_stats.length
+                    # Total eval env steps that contributed to the sums.
+                    n = (
+                        config.num_devices
+                        * config.num_envs_per_device
+                        * eval_stats.length
+                    )
                     avg_positive_episode_length = jnp.where(
                         eval_stats.positive_terminations > 0,
                         eval_stats.positive_terminations_steps / eval_stats.positive_terminations,
                         jnp.zeros_like(eval_stats.positive_terminations_steps)
                     )
+                    total_eval_envs = config.num_devices * config.num_envs_per_device
                     loss_info_single.update(
                         {
                             "eval/rewards": eval_stats.reward / n,
@@ -1337,9 +1371,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             "eval/DO": eval_stats.action_6 / n,
                             "eval/DO_NOTHING %": eval_stats.action_7 / n,
                             "eval/positive_terminations": eval_stats.positive_terminations
-                            / config.num_envs_per_device,
+                            / total_eval_envs,
                             "eval/total_terminations": eval_stats.terminations
-                            / config.num_envs_per_device,
+                            / total_eval_envs,
                             "eval/avg_positive_episode_length": avg_positive_episode_length
                         }
                     )
@@ -1369,9 +1403,19 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     print(f"   - Training steps: {config.num_steps}")
     print(f"   - Total timesteps: {config.total_timesteps:,}")
     print(f"   - Learning rate: {config.lr}")
+    print(f"   - log_train_interval: {config.log_train_interval}")
+    print(f"   - log_eval_interval: {config.log_eval_interval}")
+    print(f"   - checkpoint_interval: {config.checkpoint_interval}")
     enforce_border_alignment = bool(jnp.ravel(env_params.enforce_foundation_border_alignment)[0])
     enable_reachability_obs = bool(jnp.ravel(env_params.enable_reachability_obs)[0])
+    foundation_dump_overlap_threshold = float(
+        jnp.ravel(getattr(env_params, "foundation_dump_overlap_threshold", jnp.array(0.0)))[0]
+    )
     print(f"   - enforce_foundation_border_alignment: {enforce_border_alignment}")
+    print(
+        "   - foundation_dump_overlap_threshold: "
+        f"{foundation_dump_overlap_threshold}"
+    )
     print(f"   - enable_reachability_obs: {enable_reachability_obs}")
     
     print("=" * 60)
@@ -1446,6 +1490,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "--total_timesteps", type=int, default=50_000_000_000,
         help="Total environment timesteps across all devices"
+    )
+    parser.add_argument(
+        "--log_train_interval", type=int, default=1,
+        help="Training metric logging interval in PPO updates."
+    )
+    parser.add_argument(
+        "--log_eval_interval", type=int, default=100,
+        help="Eval logging interval in PPO updates. Set 0 to disable inline eval."
+    )
+    parser.add_argument(
+        "--checkpoint_interval", type=int, default=100,
+        help="Checkpoint save interval in PPO updates."
     )
     parser.add_argument(
         "--model_size", type=str, default="base", choices=["base", "medium", "large"],
@@ -1524,6 +1580,13 @@ if __name__ == "__main__":
         "--transport_relocate_mult", type=float, default=None,
         help="Multiplier for transport relocation rewards (overrides config preset)"
     )
+    parser.add_argument(
+        "--foundation_dump_overlap_threshold", type=float, default=None,
+        help=(
+            "0 disables. Values in (0, 1] block excavator dumps when the current "
+            "cone covers more than this fraction of remaining foundation tiles."
+        ),
+    )
     
     # Checkpoint loading arguments
     parser.add_argument(
@@ -1582,6 +1645,7 @@ if __name__ == "__main__":
     truck_capacity = None
     skidsteer_capacity = None
     truck_road_restricted = None
+    foundation_dump_overlap_threshold = None
     curriculum_levels_override = None
     curriculum_increase_level_threshold = None
     curriculum_decrease_level_threshold = None
@@ -1608,6 +1672,7 @@ if __name__ == "__main__":
             truck_capacity = preset.truck_capacity
             skidsteer_capacity = preset.skidsteer_capacity
             truck_road_restricted = preset.truck_road_restricted
+            foundation_dump_overlap_threshold = preset.foundation_dump_overlap_threshold
             
             # Apply maps/curriculum from preset (convert MapLevel objects to dict format)
             if preset.maps and len(preset.maps) > 0:
@@ -1684,6 +1749,8 @@ if __name__ == "__main__":
         excavator_relocate_dug_dirt_mult = args.excavator_relocate_dug_dirt_mult
     if args.transport_relocate_mult is not None:
         transport_relocate_mult = args.transport_relocate_mult
+    if args.foundation_dump_overlap_threshold is not None:
+        foundation_dump_overlap_threshold = args.foundation_dump_overlap_threshold
     
     # Use default agent types if nothing was set
     if agent_types_override is None:
@@ -1708,6 +1775,9 @@ if __name__ == "__main__":
         lr=args.lr,
         num_envs_per_device=args.num_envs_per_device,
         total_timesteps=args.total_timesteps,
+        log_train_interval=args.log_train_interval,
+        log_eval_interval=args.log_eval_interval,
+        checkpoint_interval=args.checkpoint_interval,
         resume_from=args.resume_from,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,
@@ -1721,6 +1791,7 @@ if __name__ == "__main__":
         truck_capacity=truck_capacity,
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,
+        foundation_dump_overlap_threshold=foundation_dump_overlap_threshold,
         curriculum_levels_override=curriculum_levels_override,
         curriculum_increase_level_threshold=curriculum_increase_level_threshold,
         curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,

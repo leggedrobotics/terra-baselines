@@ -155,6 +155,12 @@ def _to_schema_v2_waypoint(entry: dict[str, Any], workspace_type: str) -> dict[s
     agent_state = entry.get("agent_state", {}) or {}
     loaded_change = entry.get("loaded_state_change", {}) or {}
     pos_base = agent_state.get("pos_base", [0.0, 0.0])
+    angle_base_rad = agent_state.get("angle_base_rad_override")
+    angle_cabin_rad = agent_state.get("angle_cabin_rad_override")
+    if angle_base_rad is None:
+        angle_base_rad = _terra_bucket_to_plan_yaw_rad(agent_state.get("angle_base", 0.0))
+    if angle_cabin_rad is None:
+        angle_cabin_rad = _terra_bucket_to_plan_yaw_rad(agent_state.get("angle_cabin", 0.0))
 
     return {
         "step": int(_to_serializable(entry.get("step", 0))),
@@ -167,8 +173,8 @@ def _to_schema_v2_waypoint(entry: dict[str, Any], workspace_type: str) -> dict[s
         "agent_index": int(_to_serializable(entry.get("agent_index", 0))),
         "agent_state": {
             "pos_base": [float(pos_base[0]), float(pos_base[1])],
-            "angle_base_rad": _terra_bucket_to_plan_yaw_rad(agent_state.get("angle_base", 0.0)),
-            "angle_cabin_rad": _terra_bucket_to_plan_yaw_rad(agent_state.get("angle_cabin", 0.0)),
+            "angle_base_rad": float(angle_base_rad),
+            "angle_cabin_rad": float(angle_cabin_rad),
             "wheel_angle_rad": _wheel_bucket_to_rad(agent_state.get("wheel_angle", 0.0)),
             "loaded": _as_py_bool(loaded_change.get("after", False)),
         },
@@ -277,6 +283,490 @@ def _filter_empty_do_actions(plan: list[dict[str, Any]]) -> tuple[list[dict[str,
     filtered = [entry for i, entry in enumerate(plan) if keep[i]]
     stats["kept_waypoints"] = len(filtered)
     return filtered, stats
+
+
+def _scalar_float(value: Any, default: float) -> float:
+    try:
+        arr = np.asarray(value).reshape(-1)
+        if arr.size:
+            return float(arr[0])
+    except Exception:
+        pass
+    return float(default)
+
+
+def _workspace_mask_for_adjustment(entry: dict[str, Any], shape: tuple[int, int]) -> np.ndarray:
+    for key in ("terrain_modification_mask", "actual_terrain_modification_mask", "dug_mask", "dump_mask"):
+        value = entry.get(key)
+        if value is None:
+            continue
+        try:
+            mask = np.asarray(value).astype(bool)
+            if mask.shape != shape:
+                mask = mask.reshape(shape)
+        except Exception:
+            continue
+        if mask.any():
+            return mask
+    return np.zeros(shape, dtype=bool)
+
+
+def _reach_limits_tiles(
+    env_cfgs: Any,
+    agent_type: int,
+    min_range_tiles_override: float | None,
+    max_range_tiles_override: float | None,
+) -> tuple[float, float]:
+    if min_range_tiles_override is not None and max_range_tiles_override is not None:
+        return float(min_range_tiles_override), float(max_range_tiles_override)
+
+    tile_size = _scalar_float(getattr(env_cfgs, "tile_size", None), 0.6875)
+    agent_cfg = getattr(env_cfgs, "agent", None)
+    agent_width = _scalar_float(getattr(agent_cfg, "width", None), 5.0)
+    agent_height = _scalar_float(getattr(agent_cfg, "height", None), 9.0)
+    dig_radius_tiles = _scalar_float(getattr(agent_cfg, "dig_radius_tiles", None), 6.0)
+    max_agent_dim = max(agent_width / 2.0, agent_height / 2.0)
+
+    if int(agent_type) in (1, 2):
+        # Matches Terra's skidsteer/truck cylindrical workspace in state.py.
+        min_range_tiles = max_agent_dim - 2.0 + 0.1 * dig_radius_tiles
+        max_range_tiles = max_agent_dim - 2.0 + 1.5 * dig_radius_tiles
+    else:
+        # Matches Terra's excavator workspace in state.py.
+        min_range_tiles = max_agent_dim + 0.5 / max(tile_size, 1e-6)
+        max_range_tiles = min_range_tiles + dig_radius_tiles
+
+    if min_range_tiles_override is not None:
+        min_range_tiles = float(min_range_tiles_override)
+    if max_range_tiles_override is not None:
+        max_range_tiles = float(max_range_tiles_override)
+    return float(min_range_tiles), float(max_range_tiles)
+
+
+def _base_position_is_traversable(
+    candidate: np.ndarray,
+    occupancy: np.ndarray,
+    traversability_mask: Any,
+) -> bool:
+    row = int(round(float(candidate[0])))
+    col = int(round(float(candidate[1])))
+    h, w = occupancy.shape
+    if row < 0 or row >= h or col < 0 or col >= w:
+        return False
+    if bool(occupancy[row, col]):
+        return False
+
+    if traversability_mask is None:
+        return True
+    try:
+        traversability = np.asarray(traversability_mask)
+        if traversability.shape != occupancy.shape:
+            traversability = traversability.reshape(occupancy.shape)
+    except Exception:
+        return True
+    return float(traversability[row, col]) <= 0.0
+
+
+def _workspace_range_is_valid(
+    candidate: np.ndarray,
+    workspace_rows_cols: np.ndarray,
+    min_allowed_tiles: float,
+    max_allowed_tiles: float,
+) -> bool:
+    closest, furthest = _workspace_range_distances(candidate, workspace_rows_cols)
+    return closest >= min_allowed_tiles and furthest <= max_allowed_tiles
+
+
+def _workspace_range_distances(
+    candidate: np.ndarray,
+    workspace_rows_cols: np.ndarray,
+) -> tuple[float, float]:
+    distances = np.linalg.norm(workspace_rows_cols - candidate[None, :], axis=1)
+    if distances.size == 0:
+        return float("inf"), float("inf")
+    return float(np.min(distances)), float(np.max(distances))
+
+
+def _range_failure_reason(
+    closest_tiles: float,
+    furthest_tiles: float,
+    min_allowed_tiles: float,
+    max_allowed_tiles: float,
+) -> str:
+    min_violation = closest_tiles < min_allowed_tiles
+    max_violation = furthest_tiles > max_allowed_tiles
+    if min_violation and max_violation:
+        return "min_dist_and_max_dist_violated"
+    if min_violation:
+        return "min_dist_violated"
+    if max_violation:
+        return "max_dist_violated"
+    return "range_ok"
+
+
+def _entry_plan_yaw_rads(entry: dict[str, Any]) -> tuple[float, float]:
+    agent_state = entry.get("agent_state", {}) or {}
+    angle_base_rad = agent_state.get("angle_base_rad_override")
+    angle_cabin_rad = agent_state.get("angle_cabin_rad_override")
+    if angle_base_rad is None:
+        angle_base_rad = _terra_bucket_to_plan_yaw_rad(agent_state.get("angle_base", 0.0))
+    if angle_cabin_rad is None:
+        angle_cabin_rad = _terra_bucket_to_plan_yaw_rad(agent_state.get("angle_cabin", 0.0))
+    return float(angle_base_rad), float(angle_cabin_rad)
+
+
+def _set_entry_pose(
+    entry: dict[str, Any],
+    pos_base: np.ndarray,
+    yaw_rads: tuple[float, float],
+) -> tuple[list[float] | None, list[float], float]:
+    agent_state = entry.setdefault("agent_state", {})
+    old_pos = agent_state.get("pos_base")
+    old_base = None
+    if old_pos is not None and len(old_pos) >= 2:
+        old_base = [float(old_pos[0]), float(old_pos[1])]
+
+    new_pos = [float(pos_base[0]), float(pos_base[1])]
+    movement_tiles = 0.0
+    if old_base is not None:
+        movement_tiles = float(np.linalg.norm(np.asarray(new_pos) - np.asarray(old_base)))
+
+    agent_state["pos_base"] = new_pos
+    agent_state["angle_base_rad_override"] = _wrap_to_pi(yaw_rads[0])
+    agent_state["angle_cabin_rad_override"] = _wrap_to_pi(yaw_rads[1])
+    return old_base, new_pos, movement_tiles
+
+
+def _paired_dig_dump_indices(plan: list[dict[str, Any]]) -> tuple[dict[int, int], dict[int, int]]:
+    dig_to_dump = {}
+    dump_to_dig = {}
+    pending_dig = None
+    for idx, entry in enumerate(plan):
+        if _is_load_transition(entry):
+            pending_dig = idx
+        elif pending_dig is not None and _is_unload_transition(entry):
+            dig_to_dump[pending_dig] = idx
+            dump_to_dig[idx] = pending_dig
+            pending_dig = None
+    return dig_to_dump, dump_to_dig
+
+
+def _foundation_border_mask(target: np.ndarray, border_width_tiles: int) -> np.ndarray:
+    dig_target = np.asarray(target) < 0
+    eroded = dig_target.copy()
+    for _ in range(max(0, int(border_width_tiles))):
+        padded = np.pad(eroded, 1, mode="constant", constant_values=False)
+        neighbor_sum = (
+            padded[:-2, :-2].astype(np.int8)
+            + padded[:-2, 1:-1].astype(np.int8)
+            + padded[:-2, 2:].astype(np.int8)
+            + padded[1:-1, :-2].astype(np.int8)
+            + padded[1:-1, 1:-1].astype(np.int8)
+            + padded[1:-1, 2:].astype(np.int8)
+            + padded[2:, :-2].astype(np.int8)
+            + padded[2:, 1:-1].astype(np.int8)
+            + padded[2:, 2:].astype(np.int8)
+        )
+        eroded = eroded & (neighbor_sum == 9)
+    return dig_target & ~eroded
+
+
+def _border_dump_facing_yaw_rad(
+    entry: dict[str, Any],
+    target: np.ndarray,
+    border_mask: np.ndarray,
+) -> float | None:
+    if not _is_load_transition(entry):
+        return None
+    if entry.get("dig_type") == "lift_dug_dirt":
+        return None
+
+    try:
+        changed = np.asarray(entry.get("actual_terrain_modification_mask")).astype(bool)
+        if changed.shape != target.shape:
+            changed = changed.reshape(target.shape)
+    except Exception:
+        return None
+
+    changed_border = changed & border_mask & (np.asarray(target) < 0)
+    if not changed_border.any():
+        return None
+
+    dump_rows, dump_cols = np.nonzero(np.asarray(target) > 0)
+    if dump_rows.size == 0:
+        return None
+
+    rows, cols = np.nonzero(changed_border)
+    center = np.asarray([float(rows.mean()), float(cols.mean())])
+    dump_center = np.asarray([float(dump_rows.mean()), float(dump_cols.mean())])
+
+    dig_target = (np.asarray(target) < 0).astype(np.float32)
+    padded = np.pad(dig_target, 1, mode="constant", constant_values=0.0)
+    grad_col = padded[1:-1, 2:] - padded[1:-1, :-2]
+    grad_row = padded[2:, 1:-1] - padded[:-2, 1:-1]
+    normal = np.asarray([float(grad_row[changed_border].mean()), float(grad_col[changed_border].mean())])
+    norm = float(np.linalg.norm(normal))
+    if norm <= 1e-9:
+        return None
+
+    tangent = np.asarray([-normal[1], normal[0]], dtype=float) / norm
+    to_dump = dump_center - center
+    if float(np.dot(tangent, to_dump)) < 0.0:
+        tangent = -tangent
+
+    return _wrap_to_pi(math.atan2(float(tangent[1]), float(tangent[0])))
+
+
+def _postprocess_base_positions(
+    plan: list[dict[str, Any]],
+    map_path: Path,
+    env_cfgs: Any,
+    step_tiles: float,
+    margin_tiles: float,
+    min_range_tiles_override: float | None,
+    max_range_tiles_override: float | None,
+    max_distance_m: float | None,
+    face_workspace: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    target, occupancy, _ = _load_single_map_arrays(map_path)
+    shape = occupancy.shape
+    tile_size = _scalar_float(getattr(env_cfgs, "tile_size", None), 0.6875)
+    border_width_tiles = int(round(_scalar_float(getattr(env_cfgs, "foundation_border_width_tiles", None), 2.0)))
+    border_mask = _foundation_border_mask(target, border_width_tiles)
+    dig_to_dump, dump_to_dig = _paired_dig_dump_indices(plan)
+    stats = {
+        "considered": 0,
+        "moved": 0,
+        "not_adjusted": 0,
+        "paired_dump_pose_copied": 0,
+        "border_yaw_aligned": 0,
+        "skipped_empty_mask": 0,
+        "skipped_missing_base": 0,
+        "skipped_invalid_range": 0,
+        "skipped_blocked": 0,
+        "adjustments": [],
+        "skipped_adjustments": [],
+    }
+
+    for waypoint_idx, entry in enumerate(plan):
+        stats["considered"] += 1
+        if waypoint_idx in dump_to_dig:
+            continue
+
+        agent_state = entry.get("agent_state", {}) or {}
+        pos_base = agent_state.get("pos_base")
+        if pos_base is None or len(pos_base) < 2:
+            stats["skipped_missing_base"] += 1
+            stats["not_adjusted"] += 1
+            stats["skipped_adjustments"].append(
+                {
+                    "waypoint_index": waypoint_idx,
+                    "step": int(_to_serializable(entry.get("step", waypoint_idx))),
+                    "reason": "missing_base",
+                }
+            )
+            continue
+
+        mask = _workspace_mask_for_adjustment(entry, shape)
+        rows, cols = np.nonzero(mask)
+        if rows.size == 0:
+            stats["skipped_empty_mask"] += 1
+            stats["not_adjusted"] += 1
+            stats["skipped_adjustments"].append(
+                {
+                    "waypoint_index": waypoint_idx,
+                    "step": int(_to_serializable(entry.get("step", waypoint_idx))),
+                    "reason": "empty_workspace_mask",
+                    "from": [float(pos_base[0]), float(pos_base[1])],
+                }
+            )
+            continue
+
+        workspace_rows_cols = np.stack([rows.astype(float), cols.astype(float)], axis=1)
+        workspace_center = workspace_rows_cols.mean(axis=0)
+        base = np.asarray([float(pos_base[0]), float(pos_base[1])], dtype=float)
+        from_workspace = base - workspace_center
+        center_distance = float(np.linalg.norm(from_workspace))
+        if center_distance <= 1e-9:
+            stats["skipped_invalid_range"] += 1
+            stats["not_adjusted"] += 1
+            stats["skipped_adjustments"].append(
+                {
+                    "waypoint_index": waypoint_idx,
+                    "step": int(_to_serializable(entry.get("step", waypoint_idx))),
+                    "reason": "base_at_workspace_center",
+                    "from": [float(base[0]), float(base[1])],
+                }
+            )
+            continue
+
+        yaw_rads = _entry_plan_yaw_rads(entry)
+        border_yaw_rad = _border_dump_facing_yaw_rad(entry, target, border_mask)
+        if border_yaw_rad is not None:
+            yaw_rads = (border_yaw_rad, border_yaw_rad)
+
+        min_range_tiles, max_range_tiles = _reach_limits_tiles(
+            env_cfgs,
+            int(_to_serializable(entry.get("agent_type", 0))),
+            min_range_tiles_override,
+            max_range_tiles_override,
+        )
+        min_allowed_tiles = min_range_tiles + margin_tiles
+        max_allowed_tiles = max_range_tiles - margin_tiles
+        if max_distance_m is not None and max_distance_m > 0.0:
+            max_allowed_tiles = min(max_allowed_tiles, float(max_distance_m) / max(tile_size, 1e-6))
+        if min_allowed_tiles >= max_allowed_tiles:
+            stats["skipped_invalid_range"] += 1
+            stats["not_adjusted"] += 1
+            stats["skipped_adjustments"].append(
+                {
+                    "waypoint_index": waypoint_idx,
+                    "step": int(_to_serializable(entry.get("step", waypoint_idx))),
+                    "reason": "invalid_reach_band",
+                    "from": [float(base[0]), float(base[1])],
+                    "min_allowed_tiles": min_allowed_tiles,
+                    "max_allowed_tiles": max_allowed_tiles,
+                    "min_allowed_m": min_allowed_tiles * tile_size,
+                    "max_allowed_m": max_allowed_tiles * tile_size,
+                }
+            )
+            continue
+
+        target_center_distance = min(
+            max(center_distance - step_tiles, min_allowed_tiles),
+            max_allowed_tiles,
+        )
+        desired = workspace_center + from_workspace / center_distance * target_center_distance
+        traversability_mask = entry.get("traversability_mask")
+
+        accepted = None
+        blocked_candidate_seen = False
+        failed_trials = []
+        for fraction in (1.0, 0.75, 0.5, 0.25):
+            candidate = base + (desired - base) * fraction
+            closest_tiles, furthest_tiles = _workspace_range_distances(candidate, workspace_rows_cols)
+            range_reason = _range_failure_reason(
+                closest_tiles,
+                furthest_tiles,
+                min_allowed_tiles,
+                max_allowed_tiles,
+            )
+            failed_trials.append(
+                {
+                    "fraction": fraction,
+                    "candidate": [float(candidate[0]), float(candidate[1])],
+                    "closest_tiles": closest_tiles,
+                    "furthest_tiles": furthest_tiles,
+                    "closest_m": closest_tiles * tile_size,
+                    "furthest_m": furthest_tiles * tile_size,
+                    "reason": range_reason,
+                    "range_violation_tiles": (
+                        max(0.0, min_allowed_tiles - closest_tiles)
+                        + max(0.0, furthest_tiles - max_allowed_tiles)
+                    ),
+                }
+            )
+            if range_reason != "range_ok":
+                continue
+            if not _base_position_is_traversable(candidate, occupancy, traversability_mask):
+                blocked_candidate_seen = True
+                failed_trials[-1]["reason"] = "blocked_or_non_traversable"
+                continue
+            accepted = candidate
+            break
+
+        if accepted is None:
+            accepted_from_failed_trials = True
+            if blocked_candidate_seen:
+                stats["skipped_blocked"] += 1
+            else:
+                stats["skipped_invalid_range"] += 1
+            accepted = base
+            best_trial = min(
+                failed_trials,
+                key=lambda trial: (
+                    trial["range_violation_tiles"],
+                    0 if trial["reason"] == "blocked_or_non_traversable" else 1,
+                ),
+            ) if failed_trials else None
+            skip_reason = "blocked_or_non_traversable" if blocked_candidate_seen else "no_valid_candidate"
+            if best_trial is not None and best_trial["reason"] != "range_ok":
+                skip_reason = best_trial["reason"]
+            stats["not_adjusted"] += 1
+            stats["skipped_adjustments"].append(
+                {
+                    "waypoint_index": waypoint_idx,
+                    "step": int(_to_serializable(entry.get("step", waypoint_idx))),
+                    "agent_index": int(_to_serializable(entry.get("agent_index", 0))),
+                    "agent_type": int(_to_serializable(entry.get("agent_type", 0))),
+                    "reason": skip_reason,
+                    "from": [float(base[0]), float(base[1])],
+                    "best_trial": best_trial,
+                    "min_allowed_tiles": min_allowed_tiles,
+                    "max_allowed_tiles": max_allowed_tiles,
+                    "min_allowed_m": min_allowed_tiles * tile_size,
+                    "max_allowed_m": max_allowed_tiles * tile_size,
+                }
+            )
+        else:
+            accepted_from_failed_trials = False
+
+        movement_tiles = float(np.linalg.norm(accepted - base))
+        if movement_tiles <= 1e-9 and border_yaw_rad is None and not accepted_from_failed_trials:
+            closest_tiles, furthest_tiles = _workspace_range_distances(base, workspace_rows_cols)
+            stats["not_adjusted"] += 1
+            stats["skipped_adjustments"].append(
+                {
+                    "waypoint_index": waypoint_idx,
+                    "step": int(_to_serializable(entry.get("step", waypoint_idx))),
+                    "agent_index": int(_to_serializable(entry.get("agent_index", 0))),
+                    "agent_type": int(_to_serializable(entry.get("agent_type", 0))),
+                    "reason": "base_position_unchanged",
+                    "from": [float(base[0]), float(base[1])],
+                    "closest_tiles": closest_tiles,
+                    "furthest_tiles": furthest_tiles,
+                    "closest_m": closest_tiles * tile_size,
+                    "furthest_m": furthest_tiles * tile_size,
+                    "min_allowed_tiles": min_allowed_tiles,
+                    "max_allowed_tiles": max_allowed_tiles,
+                    "min_allowed_m": min_allowed_tiles * tile_size,
+                    "max_allowed_m": max_allowed_tiles * tile_size,
+                }
+            )
+        if movement_tiles > 1e-9 and face_workspace and border_yaw_rad is None:
+            to_workspace = workspace_center - accepted
+            yaw_rad = math.atan2(float(to_workspace[1]), float(to_workspace[0]))
+            yaw_rads = (_wrap_to_pi(yaw_rad), _wrap_to_pi(yaw_rad))
+
+        entries_to_update = [(waypoint_idx, entry)]
+        paired_dump_idx = dig_to_dump.get(waypoint_idx)
+        if paired_dump_idx is not None:
+            entries_to_update.append((paired_dump_idx, plan[paired_dump_idx]))
+            stats["paired_dump_pose_copied"] += 1
+
+        for update_idx, update_entry in entries_to_update:
+            before, after, entry_movement_tiles = _set_entry_pose(update_entry, accepted, yaw_rads)
+            if entry_movement_tiles <= 1e-9 and border_yaw_rad is None and update_idx == waypoint_idx:
+                continue
+            stats["moved"] += 1
+            if border_yaw_rad is not None:
+                stats["border_yaw_aligned"] += 1
+            stats["adjustments"].append(
+                {
+                    "waypoint_index": update_idx,
+                    "step": int(_to_serializable(update_entry.get("step", update_idx))),
+                    "agent_index": int(_to_serializable(update_entry.get("agent_index", 0))),
+                    "agent_type": int(_to_serializable(update_entry.get("agent_type", 0))),
+                    "paired_with": paired_dump_idx if update_idx == waypoint_idx else waypoint_idx,
+                    "from": before,
+                    "to": after,
+                    "movement_tiles": entry_movement_tiles,
+                    "movement_m": entry_movement_tiles * tile_size,
+                    "border_yaw_aligned": border_yaw_rad is not None,
+                }
+            )
+
+    return plan, stats
 
 
 def _render_plan_gif(
@@ -484,14 +974,37 @@ def extract_plan(
         obstacle_mask = state.world.padding_mask.map == 1
         return jnp.logical_and(workspace_mask, ~obstacle_mask)
 
-    def _lift_dumped_dirt_workspace_mask(timestep, agent_index):
-        state = _state_for_agent(timestep, agent_index)
-        workspace_mask = _full_workspace_mask(timestep, agent_index)
-        already_dug_foundation = jnp.logical_and(
+    def _dilate_8_connected(mask):
+        padded = jnp.pad(mask.astype(jnp.bool_), 1, mode="constant", constant_values=False)
+        return (
+            padded[:-2, :-2]
+            | padded[:-2, 1:-1]
+            | padded[:-2, 2:]
+            | padded[1:-1, :-2]
+            | padded[1:-1, 1:-1]
+            | padded[1:-1, 2:]
+            | padded[2:, :-2]
+            | padded[2:, 1:-1]
+            | padded[2:, 2:]
+        )
+
+    def _already_dug_foundation_mask(state):
+        return jnp.logical_and(
             state.world.target_map.map < 0,
             state.world.action_map.map < 0,
         )
+
+    def _lift_dumped_dirt_workspace_mask(timestep, agent_index):
+        state = _state_for_agent(timestep, agent_index)
+        workspace_mask = _full_workspace_mask(timestep, agent_index)
+        already_dug_foundation = _already_dug_foundation_mask(state)
         return jnp.logical_and(workspace_mask, ~already_dug_foundation)
+
+    def _dump_workspace_mask(timestep, agent_index):
+        state = _state_for_agent(timestep, agent_index)
+        workspace_mask = _full_workspace_mask(timestep, agent_index)
+        buffered_foundation = _dilate_8_connected(_already_dug_foundation_mask(state))
+        return jnp.logical_and(workspace_mask, ~buffered_foundation)
 
     # Plan storage
     plan = []
@@ -559,7 +1072,7 @@ def extract_plan(
             action_type_label = f" (unchanged, loaded={bool(loaded_before)})"
 
         if loaded_before and not loaded_after:
-            terrain_modification_mask = _full_workspace_mask(
+            terrain_modification_mask = _dump_workspace_mask(
                 timestep_before, agent_index
             )
         elif dig_type == "lift_dug_dirt":
@@ -812,6 +1325,52 @@ def main():
         default=1,
         help="Render every Nth step into the rollout GIF (default: 1).",
     )
+    parser.add_argument(
+        "--postprocess_base_positions",
+        action="store_true",
+        help=(
+            "After DO extraction/filtering, move each recorded base position slightly "
+            "toward its workspace while keeping all workspace tiles within reach."
+        ),
+    )
+    parser.add_argument(
+        "--base_adjust_step_tiles",
+        type=float,
+        default=1.8,
+        help="Maximum continuous base-position adjustment toward the workspace, in Terra tile units.",
+    )
+    parser.add_argument(
+        "--base_adjust_margin_tiles",
+        type=float,
+        default=0.05,
+        help="Safety margin applied inside the min/max workspace reach band, in Terra tile units.",
+    )
+    parser.add_argument(
+        "--base_adjust_min_range_tiles",
+        type=float,
+        default=None,
+        help="Optional min allowed distance from adjusted base to closest workspace tile, in tile units.",
+    )
+    parser.add_argument(
+        "--base_adjust_max_range_tiles",
+        type=float,
+        default=None,
+        help="Optional max allowed distance from adjusted base to furthest workspace tile, in tile units.",
+    )
+    parser.add_argument(
+        "--base_adjust_max_distance_m",
+        type=float,
+        default=7.4,
+        help=(
+            "Hard cap on distance from adjusted base to the furthest workspace tile, in meters. "
+            "Use <= 0 to disable."
+        ),
+    )
+    parser.add_argument(
+        "--base_adjust_face_workspace",
+        action="store_true",
+        help="When adjusting a base position, emit schema-v2 base/cabin yaw pointing at the workspace.",
+    )
 
     args = parser.parse_args()
 
@@ -943,6 +1502,89 @@ def main():
             f"{filter_stats['kept_with_terrain_change']} terrain-only), "
             f"{filter_stats['dropped_empty_unchanged']} empty/unchanged dropped."
         )
+
+    if args.postprocess_base_positions:
+        postprocess_env_cfgs = env.update_env_cfgs(env_cfgs)
+        plan, base_adjust_stats = _postprocess_base_positions(
+            plan,
+            Path(args.map_path),
+            postprocess_env_cfgs,
+            step_tiles=max(0.0, float(args.base_adjust_step_tiles)),
+            margin_tiles=max(0.0, float(args.base_adjust_margin_tiles)),
+            min_range_tiles_override=args.base_adjust_min_range_tiles,
+            max_range_tiles_override=args.base_adjust_max_range_tiles,
+            max_distance_m=args.base_adjust_max_distance_m,
+            face_workspace=bool(args.base_adjust_face_workspace),
+        )
+        print(
+            "Post-processed base positions: "
+            f"{base_adjust_stats['moved']}/{base_adjust_stats['considered']} moved, "
+            f"{base_adjust_stats['not_adjusted']} not adjusted "
+            f"({base_adjust_stats['skipped_empty_mask']} empty mask, "
+            f"{base_adjust_stats['skipped_missing_base']} missing base, "
+            f"{base_adjust_stats['skipped_invalid_range']} range rejected, "
+            f"{base_adjust_stats['skipped_blocked']} blocked rejected, "
+            f"{base_adjust_stats['paired_dump_pose_copied']} paired dumps copied, "
+            f"{base_adjust_stats['border_yaw_aligned']} border-yaw aligned)."
+        )
+        for adj in base_adjust_stats["adjustments"]:
+            before = adj["from"]
+            after = adj["to"]
+            before_text = "missing"
+            if before is not None:
+                before_text = f"[{before[0]:.3f}, {before[1]:.3f}]"
+            paired_text = ""
+            if adj.get("paired_with") is not None:
+                paired_text = f" paired_with={adj['paired_with']}"
+            yaw_text = " border_yaw" if adj.get("border_yaw_aligned") else ""
+            print(
+                "  base adjusted "
+                f"waypoint={adj['waypoint_index']} step={adj['step']} "
+                f"agent={adj['agent_index']} type={adj['agent_type']}"
+                f"{paired_text}{yaw_text}: "
+                f"{before_text} -> "
+                f"[{after[0]:.3f}, {after[1]:.3f}] "
+                f"(delta={adj['movement_tiles']:.3f} tiles, {adj['movement_m']:.3f} m)"
+            )
+        for skipped in base_adjust_stats["skipped_adjustments"]:
+            before = skipped.get("from")
+            before_text = "missing"
+            if before is not None:
+                before_text = f"[{before[0]:.3f}, {before[1]:.3f}]"
+            trial = skipped.get("best_trial")
+            if trial is None:
+                closest_tiles = skipped.get("closest_tiles")
+                furthest_tiles = skipped.get("furthest_tiles")
+                closest_m = skipped.get("closest_m")
+                furthest_m = skipped.get("furthest_m")
+                trial_text = ""
+            else:
+                closest_tiles = trial.get("closest_tiles")
+                furthest_tiles = trial.get("furthest_tiles")
+                closest_m = trial.get("closest_m")
+                furthest_m = trial.get("furthest_m")
+                trial_text = f" best_fraction={trial['fraction']:.2f}"
+
+            range_text = ""
+            if closest_tiles is not None and furthest_tiles is not None:
+                range_text = (
+                    f" closest={closest_tiles:.3f} tiles/{closest_m:.3f} m "
+                    f"furthest={furthest_tiles:.3f} tiles/{furthest_m:.3f} m"
+                )
+            allowed_text = ""
+            if skipped.get("min_allowed_tiles") is not None and skipped.get("max_allowed_tiles") is not None:
+                allowed_text = (
+                    f" allowed=[{skipped['min_allowed_tiles']:.3f}, "
+                    f"{skipped['max_allowed_tiles']:.3f}] tiles/"
+                    f"[{skipped['min_allowed_m']:.3f}, {skipped['max_allowed_m']:.3f}] m"
+                )
+
+            print(
+                "  base not adjusted "
+                f"waypoint={skipped['waypoint_index']} step={skipped['step']} "
+                f"reason={skipped['reason']}: {before_text}"
+                f"{trial_text}{range_text}{allowed_text}"
+            )
 
     # Save plan
     output_path = _timestamped_output_path(Path(args.output_path).expanduser())

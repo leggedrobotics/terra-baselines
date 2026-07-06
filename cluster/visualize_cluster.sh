@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -n 1
-#SBATCH --cpus-per-task=2
-#SBATCH --gpus=gpu:2
+#SBATCH --cpus-per-task=4
+#SBATCH --gpus=gpu:1
 #SBATCH --time=4:00:00
 #SBATCH --mem-per-cpu=4G
 #SBATCH --job-name="visualization-$(date +"%Y-%m-%dT%H:%M")"
@@ -33,6 +33,6 @@ export DATASET_SIZE=25
 # Change to the directory containing visualize.py
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
 
-python visualize_mixed.py --config solo_excavator_rectangles_2stage --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-05-28-17-28-56.pkl
+python visualize_mixed.py --config solo_excavator_rectangles --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-07-03-12-17-11.pkl
 
 #JAX_PLATFORMS=cpu 

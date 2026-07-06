@@ -21,6 +21,7 @@ from tensorflow_probability.substrates import jax as tfp
 from train import TrainConfig  # needed for unpickling checkpoints
 from terra.config import EnvConfig, BatchConfig, CurriculumGlobalConfig, RewardsType, CurriculumConfig
 import sys
+from datetime import datetime
 from train_mixed import MixedAgentTrainConfig
 sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
 
@@ -125,9 +126,8 @@ if __name__ == "__main__":
         "-o",
         "--out_path",  
         type=str,
-        default="./solo-excavator-10-2026-05-28-17-28-56.pkl.gif",
-        #default="./visualize_mixed_skid_exec___foundations_dumpzones_harder_nodump_test_2x2_env_2.gif",
-        help="Output path.",
+        default=None,
+        help="Output path. Defaults to ./visualize_mixed_<timestamp>.gif.",
     )
     parser.add_argument(
         "-s",
@@ -143,6 +143,10 @@ if __name__ == "__main__":
         help="Named config preset to load maps from (e.g., 'solo_excavator', 'excavator_skidsteer'). See configs/training_configs.yaml",
     )
     args, _ = parser.parse_known_args()
+    if args.out_path is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        args.out_path = f"./visualize_mixed_{timestamp}.gif"
+
     n_envs = args.n_envs_x * args.n_envs_y
 
     log = load_pkl_object(f"{args.run_name}")

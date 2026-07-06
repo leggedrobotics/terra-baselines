@@ -118,10 +118,108 @@ def _rollout_impl(
 # `static_broadcasted_argnums`. Closure means each new (env, config) pair
 # retraces once; identical pairs reuse the compiled pmap.
 _PMAPPED_ROLLOUT_CACHE: dict = {}
+_SINGLE_DEVICE_STEP_CACHE: dict = {}
+
+
+def aggregate_device_stats(stats: RolloutStats) -> RolloutStats:
+    """Merge per-device rollout stats from `rollout` into scalar totals."""
+    return RolloutStats(
+        max_reward=jnp.max(stats.max_reward),
+        min_reward=jnp.min(stats.min_reward),
+        reward=jnp.sum(stats.reward),
+        length=jnp.max(stats.length),
+        episodes=jnp.sum(stats.episodes),
+        positive_terminations=jnp.sum(stats.positive_terminations),
+        terminations=jnp.sum(stats.terminations),
+        positive_terminations_steps=jnp.sum(stats.positive_terminations_steps),
+        action_0=jnp.sum(stats.action_0),
+        action_1=jnp.sum(stats.action_1),
+        action_2=jnp.sum(stats.action_2),
+        action_3=jnp.sum(stats.action_3),
+        action_4=jnp.sum(stats.action_4),
+        action_5=jnp.sum(stats.action_5),
+        action_6=jnp.sum(stats.action_6),
+        action_7=jnp.sum(stats.action_7),
+    )
 
 
 def rollout_single_device(rng, env, env_params, train_state, config):
-    return _rollout_impl(rng, env, env_params, train_state, config)
+    # Keep eval out of one large XLA control-flow graph. The RTX 4090 crash is
+    # triggered in this path, so smaller step-level compiles make it easier to
+    # isolate while preserving inline eval.
+    num_envs = config.num_envs_per_device
+    num_rollouts = config.num_rollouts_eval
+
+    key = (id(env), id(config))
+    eval_step = _SINGLE_DEVICE_STEP_CACHE.get(key)
+    if eval_step is None:
+        def _eval_step(rng_, stats_, timestep_, prev_actions_, train_state_):
+            rng_, _rng_step, _rng_model = jax.random.split(rng_, 3)
+
+            action, _, _, _ = select_action_ppo(
+                train_state_,
+                timestep_.observation,
+                prev_actions_,
+                _rng_model,
+                config,
+            )
+            _rng_step = jax.random.split(_rng_step, num_envs)
+            action_env = wrap_action(action, env.batch_cfg.action_type)
+            timestep_ = env.step(timestep_, action_env, _rng_step)
+            timestep_ = _strip_reward_components(timestep_)
+
+            prev_actions_ = jnp.roll(prev_actions_, shift=1, axis=-1)
+            prev_actions_ = prev_actions_.at[..., 0].set(action)
+
+            terminations_update = timestep_.done.sum()
+            positive_termination_update = timestep_.info["task_done"].sum()
+            positive_termination_steps_update = (
+                stats_.length + 1
+            ) * positive_termination_update
+
+            stats_ = RolloutStats(
+                max_reward=jnp.maximum(stats_.max_reward, timestep_.reward.max()),
+                min_reward=jnp.minimum(stats_.min_reward, timestep_.reward.min()),
+                reward=stats_.reward + timestep_.reward.sum(),
+                length=stats_.length + 1,
+                episodes=stats_.episodes + timestep_.done.any(),
+                positive_terminations=stats_.positive_terminations
+                + positive_termination_update,
+                terminations=stats_.terminations + terminations_update,
+                positive_terminations_steps=stats_.positive_terminations_steps
+                + positive_termination_steps_update,
+                action_0=stats_.action_0 + (action == 0).sum(),
+                action_1=stats_.action_1 + (action == 1).sum(),
+                action_2=stats_.action_2 + (action == 2).sum(),
+                action_3=stats_.action_3 + (action == 3).sum(),
+                action_4=stats_.action_4 + (action == 4).sum(),
+                action_5=stats_.action_5 + (action == 5).sum(),
+                action_6=stats_.action_6 + (action == 6).sum(),
+                action_7=stats_.action_7 + (action == 7).sum(),
+            )
+            return rng_, stats_, timestep_, prev_actions_
+
+        eval_step = jax.jit(_eval_step)
+        _SINGLE_DEVICE_STEP_CACHE[key] = eval_step
+
+    rng, _rng_reset = jax.random.split(rng)
+    _rng_reset = jax.random.split(_rng_reset, num_envs)
+    timestep = env.reset(env_params, _rng_reset)
+    timestep = _strip_reward_components(timestep)
+
+    prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
+    stats = RolloutStats()
+
+    for _ in range(num_rollouts):
+        rng, stats, timestep, prev_actions = eval_step(
+            rng,
+            stats,
+            timestep,
+            prev_actions,
+            train_state,
+        )
+
+    return jax.block_until_ready(stats)
 
 
 def rollout(rng, env, env_params, train_state, config):

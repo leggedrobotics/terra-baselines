@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -n 1
 #SBATCH --cpus-per-task=2
-#SBATCH --gpus=gpu:2
+#SBATCH --gpus=gpu:rtx_4090:2
 #SBATCH --time=24:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
@@ -33,13 +33,13 @@ export DATASET_SIZE=600
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
 
 python train_mixed.py \
-    --config dual_excavator \
-    --model_size base \
-    --model_core mlp
+    --config solo_excavator_rectangles \
+    --model_size medium \
+    --model_core mlp \
+    --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-07-03-12-17-11.pkl
     #--resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-05-21-17-38-51-best_rectangles.pkl \
     #--no-load-env-from-checkpoint
     # --num_envs_per_device 128 \
-    # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-04-21-13-36-45.pkl \
     # --map_path /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference/maps/hongg_archi_3 \
     # --replay_map_count 15 --target_map_repeat 10 \
     # --total_timesteps 5_000_000_000
