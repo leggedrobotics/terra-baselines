@@ -163,16 +163,54 @@ def safe_jax_to_python(value):
 
 def _strip_checkpoint_env_axis(env_config, num_envs_per_device: int):
     """Store/load EnvConfig without a leading vectorized-env axis when present."""
-    def _strip_leaf(x):
+    vectorized_lengths = {int(num_envs_per_device)}
+    for leaf in jax.tree_util.tree_leaves(env_config):
         try:
-            arr = jnp.asarray(x)
+            shape = np.asarray(leaf).shape
+        except Exception:
+            continue
+        vectorized_lengths.update(int(dim) for dim in shape if int(dim) > 16)
+
+    def _strip_agent_leaf(x):
+        arr = jnp.asarray(x)
+        if arr.ndim == 0:
+            return arr.reshape((1,))
+        if arr.ndim == 1:
+            if arr.shape[0] in vectorized_lengths:
+                return arr[:1]
+            return arr
+        if arr.ndim >= 3 and arr.shape[0] == 1 and arr.shape[1] in vectorized_lengths:
+            return arr[0, 0]
+        if arr.shape[0] in vectorized_lengths:
+            return arr[0]
+        if arr.shape[1] in vectorized_lengths:
+            return arr[:, 0]
+        while arr.ndim > 1 and arr.shape[0] == 1:
+            arr = arr[0]
+        return arr
+
+    def _strip_scalar_leaf(x):
+        arr = jnp.asarray(x)
+        while arr.ndim > 0 and (
+            arr.shape[0] == 1 or arr.shape[0] in vectorized_lengths
+        ):
+            arr = arr[0]
+        return arr
+
+    def _strip_node(x, field_name: str | None = None):
+        if isinstance(x, tuple) and hasattr(x, "_fields"):
+            return type(x)(
+                *(_strip_node(getattr(x, child), child) for child in x._fields)
+            )
+        try:
+            jnp.asarray(x)
         except Exception:
             return x
-        if arr.shape and arr.shape[0] == num_envs_per_device:
-            return arr[0]
-        return x
+        if field_name in {"agent_types", "action_types"}:
+            return _strip_agent_leaf(x)
+        return _strip_scalar_leaf(x)
 
-    return jax.tree_util.tree_map(_strip_leaf, env_config)
+    return _strip_node(env_config)
 
 
 def randomize_initial_env_steps(timestep, reset_rng):
@@ -414,7 +452,6 @@ class MixedAgentTrainConfig:
     excavator_relocate_dumped_mult: float | None = None
     excavator_relocate_dug_dirt_mult: float | None = None
     transport_relocate_mult: float | None = None
-    foundation_dump_overlap_threshold: float | None = None
     
     # Capacity overrides
     truck_capacity: int | None = None
@@ -472,7 +509,6 @@ def create_mixed_agent_env_config(
     truck_capacity=None,
     skidsteer_capacity=None,
     truck_road_restricted=None,
-    foundation_dump_overlap_threshold=None,
 ):
     """Create environment configuration optimized for mixed agent training
     
@@ -486,8 +522,6 @@ def create_mixed_agent_env_config(
         truck_capacity: Override for truck capacity
         skidsteer_capacity: Override for skidsteer capacity
         truck_road_restricted: Whether trucks are restricted to roads
-        foundation_dump_overlap_threshold: 0 disables; >0 blocks excavator
-            dumps whose cone covers too much remaining foundation.
     """
     
     # Use the existing dense rewards from config
@@ -516,10 +550,6 @@ def create_mixed_agent_env_config(
         env_config = env_config._replace(skidsteer_capacity=skidsteer_capacity)
     if truck_road_restricted is not None:
         env_config = env_config._replace(truck_road_restricted=truck_road_restricted)
-    if foundation_dump_overlap_threshold is not None:
-        env_config = env_config._replace(
-            foundation_dump_overlap_threshold=foundation_dump_overlap_threshold
-        )
     
     return env_config
 
@@ -654,7 +684,6 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                 truck_capacity=config.truck_capacity,
                 skidsteer_capacity=config.skidsteer_capacity,
                 truck_road_restricted=config.truck_road_restricted,
-                foundation_dump_overlap_threshold=config.foundation_dump_overlap_threshold,
             )
             # Verbose training configuration summary
             type_names = {0: "Excavator", 1: "Truck", 2: "SkidSteer"}
@@ -686,17 +715,6 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                     print(f"   excavator_relocate_dug_dirt_mult: {config.excavator_relocate_dug_dirt_mult}")
                 if config.transport_relocate_mult is not None:
                     print(f"   transport_relocate_mult: {config.transport_relocate_mult}")
-            if config.foundation_dump_overlap_threshold is not None:
-                print(
-                    "🧱 Foundation dump overlap threshold: "
-                    f"{config.foundation_dump_overlap_threshold}"
-                )
-
-    if config.foundation_dump_overlap_threshold is not None:
-        env_params = env_params._replace(
-            foundation_dump_overlap_threshold=config.foundation_dump_overlap_threshold
-        )
-    
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
 
@@ -800,6 +818,7 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
     action_type_names = {0: "tracked", 1: "wheeled"}
     agent_types = tuple(config.agent_types_override or env_defaults.agent_types)
     action_types = tuple(config.action_types_override or ((0,) * len(agent_types)))
+    dump_min_free_fraction = env_defaults.foundation_dump_min_free_fraction
 
     tags = [
         "mixed-agents",
@@ -807,6 +826,9 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         f"config:{_tag_value(config.config_name or 'manual')}",
         f"agents:{'-'.join(agent_type_names.get(int(t), str(t)) for t in agent_types)}",
         f"actions:{'-'.join(action_type_names.get(int(t), str(t)) for t in action_types)}",
+        f"dump-min-free-fraction:{_tag_value(dump_min_free_fraction)}",
+        f"move-tiles:{_tag_value(env_defaults.agent.move_tiles)}",
+        f"dig-radius-tiles:{_tag_value(env_defaults.agent.dig_radius_tiles)}",
         "edge-align:on" if env_defaults.enforce_foundation_border_alignment else "edge-align:off",
         "terminal:dump50-inner25-edge25",
         "edge-bonus:flat",
@@ -1368,23 +1390,51 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     and i > 0
                     and i % config.log_eval_interval == 0
                 ):
-                    # Keep eval in the same pmapped shape regime as training.
-                    # The RTX 4090 crash only appears in the separate
-                    # single-device eval compile at the first eval update.
-                    print(f"🧪 Starting pmapped eval at update {i}", flush=True)
-                    rng_eval = jax.random.split(
-                        jax.random.fold_in(rng_rollout, i),
-                        config.num_devices,
+                    # Reuse the training reset shape regime and keep only the
+                    # rollout loop outside XLA. This avoids the separate
+                    # env.reset compile that can crash on RTX 4090 eval.
+                    print(f"🧪 Starting pmapped step-wise eval at update {i}", flush=True)
+                    rng_eval_base = jax.random.fold_in(rng_rollout, i)
+                    rng_eval = jax.random.split(rng_eval_base, config.num_devices)
+                    reset_rng_eval = jax.random.split(
+                        jax.random.fold_in(rng_eval_base, 1),
+                        config.num_devices * config.num_envs_per_device,
+                    ).reshape((config.num_devices, config.num_envs_per_device, -1))
+                    (
+                        eval_env_params_reset,
+                        eval_target_maps,
+                        eval_padding_masks,
+                        eval_trench_axes,
+                        eval_trench_type,
+                        eval_foundation_border_axes,
+                        eval_foundation_border_type,
+                        eval_dumpability_mask_init,
+                        eval_action_maps,
+                        eval_distance_maps,
+                    ) = env.prepare_reset(runner_state[2].env_cfg, reset_rng_eval)
+                    reset_fn_p = jax.pmap(env.reset_prepared, axis_name="devices")
+                    eval_timestep = reset_fn_p(
+                        eval_env_params_reset,
+                        reset_rng_eval,
+                        eval_target_maps,
+                        eval_padding_masks,
+                        eval_trench_axes,
+                        eval_trench_type,
+                        eval_foundation_border_axes,
+                        eval_foundation_border_type,
+                        eval_dumpability_mask_init,
+                        eval_action_maps,
+                        eval_distance_maps,
                     )
-                    eval_stats = eval_ppo.rollout(
+                    eval_stats = eval_ppo.rollout_from_timestep(
                         rng_eval,
                         env,
-                        runner_state[2].env_cfg,
+                        eval_timestep,
                         runner_state[1],
                         config,
                     )
                     eval_stats = eval_ppo.aggregate_device_stats(eval_stats)
-                    print(f"🧪 Finished pmapped eval at update {i}", flush=True)
+                    print(f"🧪 Finished pmapped step-wise eval at update {i}", flush=True)
 
                     # Total eval env steps that contributed to the sums.
                     n = (
@@ -1450,13 +1500,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     print(f"   - checkpoint_interval: {config.checkpoint_interval}")
     enforce_border_alignment = bool(jnp.ravel(env_params.enforce_foundation_border_alignment)[0])
     enable_reachability_obs = bool(jnp.ravel(env_params.enable_reachability_obs)[0])
-    foundation_dump_overlap_threshold = float(
-        jnp.ravel(getattr(env_params, "foundation_dump_overlap_threshold", jnp.array(0.0)))[0]
+    foundation_dump_min_free_fraction = float(
+        jnp.ravel(getattr(env_params, "foundation_dump_min_free_fraction", jnp.array(0.0)))[0]
     )
     print(f"   - enforce_foundation_border_alignment: {enforce_border_alignment}")
     print(
-        "   - foundation_dump_overlap_threshold: "
-        f"{foundation_dump_overlap_threshold}"
+        "   - foundation_dump_min_free_fraction: "
+        f"{foundation_dump_min_free_fraction}"
     )
     print(f"   - enable_reachability_obs: {enable_reachability_obs}")
     
@@ -1632,14 +1682,6 @@ if __name__ == "__main__":
         "--transport_relocate_mult", type=float, default=None,
         help="Multiplier for transport relocation rewards (overrides config preset)"
     )
-    parser.add_argument(
-        "--foundation_dump_overlap_threshold", type=float, default=None,
-        help=(
-            "0 disables. Values in (0, 1] block excavator dumps when the current "
-            "cone covers more than this fraction of remaining foundation tiles."
-        ),
-    )
-    
     # Checkpoint loading arguments
     parser.add_argument(
         "-r", "--resume_from", type=str, default=None,
@@ -1704,7 +1746,6 @@ if __name__ == "__main__":
     truck_capacity = None
     skidsteer_capacity = None
     truck_road_restricted = None
-    foundation_dump_overlap_threshold = None
     curriculum_levels_override = None
     curriculum_increase_level_threshold = None
     curriculum_decrease_level_threshold = None
@@ -1731,7 +1772,6 @@ if __name__ == "__main__":
             truck_capacity = preset.truck_capacity
             skidsteer_capacity = preset.skidsteer_capacity
             truck_road_restricted = preset.truck_road_restricted
-            foundation_dump_overlap_threshold = preset.foundation_dump_overlap_threshold
             
             # Apply maps/curriculum from preset (convert MapLevel objects to dict format)
             if preset.maps and len(preset.maps) > 0:
@@ -1808,8 +1848,6 @@ if __name__ == "__main__":
         excavator_relocate_dug_dirt_mult = args.excavator_relocate_dug_dirt_mult
     if args.transport_relocate_mult is not None:
         transport_relocate_mult = args.transport_relocate_mult
-    if args.foundation_dump_overlap_threshold is not None:
-        foundation_dump_overlap_threshold = args.foundation_dump_overlap_threshold
     
     # Use default agent types if nothing was set
     if agent_types_override is None:
@@ -1851,7 +1889,6 @@ if __name__ == "__main__":
         truck_capacity=truck_capacity,
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,
-        foundation_dump_overlap_threshold=foundation_dump_overlap_threshold,
         curriculum_levels_override=curriculum_levels_override,
         curriculum_increase_level_threshold=curriculum_increase_level_threshold,
         curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,

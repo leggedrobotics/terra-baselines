@@ -119,6 +119,7 @@ def _rollout_impl(
 # retraces once; identical pairs reuse the compiled pmap.
 _PMAPPED_ROLLOUT_CACHE: dict = {}
 _SINGLE_DEVICE_STEP_CACHE: dict = {}
+_PMAPPED_STEP_CACHE: dict = {}
 
 
 def aggregate_device_stats(stats: RolloutStats) -> RolloutStats:
@@ -209,6 +210,90 @@ def rollout_single_device(rng, env, env_params, train_state, config):
 
     prev_actions = jnp.zeros((num_envs, config.num_prev_actions), dtype=jnp.int32)
     stats = RolloutStats()
+
+    for _ in range(num_rollouts):
+        rng, stats, timestep, prev_actions = eval_step(
+            rng,
+            stats,
+            timestep,
+            prev_actions,
+            train_state,
+        )
+
+    return jax.block_until_ready(stats)
+
+
+def rollout_from_timestep(rng, env, timestep, train_state, config):
+    """Evaluate from an already-reset pmapped timestep.
+
+    This keeps eval in the same pmap/env.step shape regime as training, but
+    keeps the rollout loop in Python so XLA does not lower one large eval graph.
+    """
+    num_devices = rng.shape[0]
+    num_envs = config.num_envs_per_device
+    num_rollouts = config.num_rollouts_eval
+
+    key = (id(env), id(config))
+    eval_step = _PMAPPED_STEP_CACHE.get(key)
+    if eval_step is None:
+        @partial(jax.pmap, axis_name="devices")
+        def _eval_step(rng_, stats_, timestep_, prev_actions_, train_state_):
+            rng_, _rng_step, _rng_model = jax.random.split(rng_, 3)
+
+            action, _, _, _ = select_action_ppo(
+                train_state_,
+                timestep_.observation,
+                prev_actions_,
+                _rng_model,
+                config,
+            )
+            _rng_step = jax.random.split(_rng_step, num_envs)
+            action_env = wrap_action(action, env.batch_cfg.action_type)
+            timestep_ = env.step(timestep_, action_env, _rng_step)
+            timestep_ = _strip_reward_components(timestep_)
+
+            prev_actions_ = jnp.roll(prev_actions_, shift=1, axis=-1)
+            prev_actions_ = prev_actions_.at[..., 0].set(action)
+
+            terminations_update = timestep_.done.sum()
+            positive_termination_update = timestep_.info["task_done"].sum()
+            positive_termination_steps_update = (
+                stats_.length + 1
+            ) * positive_termination_update
+
+            stats_ = RolloutStats(
+                max_reward=jnp.maximum(stats_.max_reward, timestep_.reward.max()),
+                min_reward=jnp.minimum(stats_.min_reward, timestep_.reward.min()),
+                reward=stats_.reward + timestep_.reward.sum(),
+                length=stats_.length + 1,
+                episodes=stats_.episodes + timestep_.done.any(),
+                positive_terminations=stats_.positive_terminations
+                + positive_termination_update,
+                terminations=stats_.terminations + terminations_update,
+                positive_terminations_steps=stats_.positive_terminations_steps
+                + positive_termination_steps_update,
+                action_0=stats_.action_0 + (action == 0).sum(),
+                action_1=stats_.action_1 + (action == 1).sum(),
+                action_2=stats_.action_2 + (action == 2).sum(),
+                action_3=stats_.action_3 + (action == 3).sum(),
+                action_4=stats_.action_4 + (action == 4).sum(),
+                action_5=stats_.action_5 + (action == 5).sum(),
+                action_6=stats_.action_6 + (action == 6).sum(),
+                action_7=stats_.action_7 + (action == 7).sum(),
+            )
+            return rng_, stats_, timestep_, prev_actions_
+
+        eval_step = _eval_step
+        _PMAPPED_STEP_CACHE[key] = eval_step
+
+    timestep = _strip_reward_components(timestep)
+    prev_actions = jnp.zeros(
+        (num_devices, num_envs, config.num_prev_actions), dtype=jnp.int32
+    )
+    stats = jax.tree_util.tree_map(
+        lambda x: jnp.repeat(jnp.asarray(x)[None], num_devices, axis=0),
+        RolloutStats(),
+    )
 
     for _ in range(num_rollouts):
         rng, stats, timestep, prev_actions = eval_step(

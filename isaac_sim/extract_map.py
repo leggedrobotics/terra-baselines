@@ -40,6 +40,19 @@ def _to_serializable(obj):
     return obj
 
 
+def _first_scalar(value: Any, default: float = 0.0) -> float:
+    try:
+        arr = np.asarray(value)
+        if arr.size == 0:
+            return default
+        return float(arr.reshape(-1)[0])
+    except Exception:
+        try:
+            return float(value)
+        except Exception:
+            return default
+
+
 def _timestamped_output_path(output_path: Path) -> Path:
     """Append a finish-time timestamp before the output suffix."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -182,29 +195,79 @@ def _to_schema_v2_waypoint(entry: dict[str, Any], workspace_type: str) -> dict[s
 
 
 def _schema_v2_waypoints(plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    waypoints, _ = _schema_v2_waypoints_and_metadata(plan)
+    return waypoints
+
+
+def _schema_v2_entry_summary(entry: dict[str, Any], idx: int, reason: str) -> dict[str, Any]:
+    return {
+        "source_index": idx,
+        "step": int(_to_serializable(entry.get("step", idx))),
+        "reason": reason,
+        "agent_type": int(_to_serializable(entry.get("agent_type", 0))),
+        "agent_index": int(_to_serializable(entry.get("agent_index", 0))),
+        "dig_type": entry.get("dig_type"),
+    }
+
+
+def _schema_v2_waypoints_and_metadata(plan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     waypoints = []
     pending_dig = None
+    pending_dig_idx = None
+    unpaired_loads = []
+    unpaired_unloads = []
+    paired_count = 0
 
-    for entry in plan:
+    for idx, entry in enumerate(plan):
         if _is_load_transition(entry):
+            if pending_dig is not None:
+                unpaired_loads.append(
+                    _schema_v2_entry_summary(
+                        pending_dig,
+                        pending_dig_idx,
+                        "replaced_by_next_load",
+                    )
+                )
             pending_dig = entry
+            pending_dig_idx = idx
             continue
 
-        if pending_dig is not None and _is_unload_transition(entry):
+        if _is_unload_transition(entry):
+            if pending_dig is None:
+                unpaired_unloads.append(
+                    _schema_v2_entry_summary(entry, idx, "unload_without_prior_load")
+                )
+                continue
             workspace_type = _workspace_type_for_pair(pending_dig)
             waypoints.append(_to_schema_v2_waypoint(pending_dig, workspace_type))
             waypoints.append(_to_schema_v2_waypoint(entry, workspace_type))
             pending_dig = None
+            pending_dig_idx = None
+            paired_count += 1
 
-    return waypoints
+    if pending_dig is not None:
+        unpaired_loads.append(
+            _schema_v2_entry_summary(pending_dig, pending_dig_idx, "end_without_unload")
+        )
+
+    metadata = {
+        "raw_waypoints": len(plan),
+        "paired_load_unload_pairs": paired_count,
+        "schema_v2_waypoints": len(waypoints),
+        "unpaired_load_waypoints": unpaired_loads,
+        "unpaired_unload_waypoints": unpaired_unloads,
+    }
+    return waypoints, metadata
 
 
 def _plan_to_schema_v2(plan: list[dict[str, Any]], map_path: Path) -> dict[str, Any]:
+    waypoints, metadata = _schema_v2_waypoints_and_metadata(plan)
     return {
         "schema_version": 2,
         "source_map_frame_id": "map",
         "alignment": _load_plan_alignment(map_path),
-        "waypoints": _schema_v2_waypoints(plan),
+        "metadata": metadata,
+        "waypoints": waypoints,
     }
 
 
@@ -404,21 +467,9 @@ def _range_failure_reason(
     return "range_ok"
 
 
-def _entry_plan_yaw_rads(entry: dict[str, Any]) -> tuple[float, float]:
-    agent_state = entry.get("agent_state", {}) or {}
-    angle_base_rad = agent_state.get("angle_base_rad_override")
-    angle_cabin_rad = agent_state.get("angle_cabin_rad_override")
-    if angle_base_rad is None:
-        angle_base_rad = _terra_bucket_to_plan_yaw_rad(agent_state.get("angle_base", 0.0))
-    if angle_cabin_rad is None:
-        angle_cabin_rad = _terra_bucket_to_plan_yaw_rad(agent_state.get("angle_cabin", 0.0))
-    return float(angle_base_rad), float(angle_cabin_rad)
-
-
 def _set_entry_pose(
     entry: dict[str, Any],
     pos_base: np.ndarray,
-    yaw_rads: tuple[float, float],
 ) -> tuple[list[float] | None, list[float], float]:
     agent_state = entry.setdefault("agent_state", {})
     old_pos = agent_state.get("pos_base")
@@ -432,8 +483,6 @@ def _set_entry_pose(
         movement_tiles = float(np.linalg.norm(np.asarray(new_pos) - np.asarray(old_base)))
 
     agent_state["pos_base"] = new_pos
-    agent_state["angle_base_rad_override"] = _wrap_to_pi(yaw_rads[0])
-    agent_state["angle_cabin_rad_override"] = _wrap_to_pi(yaw_rads[1])
     return old_base, new_pos, movement_tiles
 
 
@@ -451,72 +500,6 @@ def _paired_dig_dump_indices(plan: list[dict[str, Any]]) -> tuple[dict[int, int]
     return dig_to_dump, dump_to_dig
 
 
-def _foundation_border_mask(target: np.ndarray, border_width_tiles: int) -> np.ndarray:
-    dig_target = np.asarray(target) < 0
-    eroded = dig_target.copy()
-    for _ in range(max(0, int(border_width_tiles))):
-        padded = np.pad(eroded, 1, mode="constant", constant_values=False)
-        neighbor_sum = (
-            padded[:-2, :-2].astype(np.int8)
-            + padded[:-2, 1:-1].astype(np.int8)
-            + padded[:-2, 2:].astype(np.int8)
-            + padded[1:-1, :-2].astype(np.int8)
-            + padded[1:-1, 1:-1].astype(np.int8)
-            + padded[1:-1, 2:].astype(np.int8)
-            + padded[2:, :-2].astype(np.int8)
-            + padded[2:, 1:-1].astype(np.int8)
-            + padded[2:, 2:].astype(np.int8)
-        )
-        eroded = eroded & (neighbor_sum == 9)
-    return dig_target & ~eroded
-
-
-def _border_dump_facing_yaw_rad(
-    entry: dict[str, Any],
-    target: np.ndarray,
-    border_mask: np.ndarray,
-) -> float | None:
-    if not _is_load_transition(entry):
-        return None
-    if entry.get("dig_type") == "lift_dug_dirt":
-        return None
-
-    try:
-        changed = np.asarray(entry.get("actual_terrain_modification_mask")).astype(bool)
-        if changed.shape != target.shape:
-            changed = changed.reshape(target.shape)
-    except Exception:
-        return None
-
-    changed_border = changed & border_mask & (np.asarray(target) < 0)
-    if not changed_border.any():
-        return None
-
-    dump_rows, dump_cols = np.nonzero(np.asarray(target) > 0)
-    if dump_rows.size == 0:
-        return None
-
-    rows, cols = np.nonzero(changed_border)
-    center = np.asarray([float(rows.mean()), float(cols.mean())])
-    dump_center = np.asarray([float(dump_rows.mean()), float(dump_cols.mean())])
-
-    dig_target = (np.asarray(target) < 0).astype(np.float32)
-    padded = np.pad(dig_target, 1, mode="constant", constant_values=0.0)
-    grad_col = padded[1:-1, 2:] - padded[1:-1, :-2]
-    grad_row = padded[2:, 1:-1] - padded[:-2, 1:-1]
-    normal = np.asarray([float(grad_row[changed_border].mean()), float(grad_col[changed_border].mean())])
-    norm = float(np.linalg.norm(normal))
-    if norm <= 1e-9:
-        return None
-
-    tangent = np.asarray([-normal[1], normal[0]], dtype=float) / norm
-    to_dump = dump_center - center
-    if float(np.dot(tangent, to_dump)) < 0.0:
-        tangent = -tangent
-
-    return _wrap_to_pi(math.atan2(float(tangent[1]), float(tangent[0])))
-
-
 def _postprocess_base_positions(
     plan: list[dict[str, Any]],
     map_path: Path,
@@ -526,20 +509,16 @@ def _postprocess_base_positions(
     min_range_tiles_override: float | None,
     max_range_tiles_override: float | None,
     max_distance_m: float | None,
-    face_workspace: bool,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    target, occupancy, _ = _load_single_map_arrays(map_path)
+    _, occupancy, _ = _load_single_map_arrays(map_path)
     shape = occupancy.shape
     tile_size = _scalar_float(getattr(env_cfgs, "tile_size", None), 0.6875)
-    border_width_tiles = int(round(_scalar_float(getattr(env_cfgs, "foundation_border_width_tiles", None), 2.0)))
-    border_mask = _foundation_border_mask(target, border_width_tiles)
     dig_to_dump, dump_to_dig = _paired_dig_dump_indices(plan)
     stats = {
         "considered": 0,
         "moved": 0,
         "not_adjusted": 0,
         "paired_dump_pose_copied": 0,
-        "border_yaw_aligned": 0,
         "skipped_empty_mask": 0,
         "skipped_missing_base": 0,
         "skipped_invalid_range": 0,
@@ -600,11 +579,6 @@ def _postprocess_base_positions(
             )
             continue
 
-        yaw_rads = _entry_plan_yaw_rads(entry)
-        border_yaw_rad = _border_dump_facing_yaw_rad(entry, target, border_mask)
-        if border_yaw_rad is not None:
-            yaw_rads = (border_yaw_rad, border_yaw_rad)
-
         min_range_tiles, max_range_tiles = _reach_limits_tiles(
             env_cfgs,
             int(_to_serializable(entry.get("agent_type", 0))),
@@ -632,11 +606,13 @@ def _postprocess_base_positions(
             )
             continue
 
-        target_center_distance = min(
-            max(center_distance - step_tiles, min_allowed_tiles),
-            max_allowed_tiles,
-        )
-        desired = workspace_center + from_workspace / center_distance * target_center_distance
+        closest_base_tiles, furthest_base_tiles = _workspace_range_distances(base, workspace_rows_cols)
+        allowed_mid_tiles = 0.5 * (min_allowed_tiles + max_allowed_tiles)
+        current_mid_tiles = 0.5 * (closest_base_tiles + furthest_base_tiles)
+        direction = from_workspace / center_distance
+        signed_step_tiles = allowed_mid_tiles - current_mid_tiles
+        signed_step_tiles = float(np.clip(signed_step_tiles, -step_tiles, step_tiles))
+        desired = base + direction * signed_step_tiles
         traversability_mask = entry.get("traversability_mask")
 
         accepted = None
@@ -660,6 +636,8 @@ def _postprocess_base_positions(
                     "closest_m": closest_tiles * tile_size,
                     "furthest_m": furthest_tiles * tile_size,
                     "reason": range_reason,
+                    "target_mid_tiles": allowed_mid_tiles,
+                    "current_mid_tiles": current_mid_tiles,
                     "range_violation_tiles": (
                         max(0.0, min_allowed_tiles - closest_tiles)
                         + max(0.0, furthest_tiles - max_allowed_tiles)
@@ -712,7 +690,7 @@ def _postprocess_base_positions(
             accepted_from_failed_trials = False
 
         movement_tiles = float(np.linalg.norm(accepted - base))
-        if movement_tiles <= 1e-9 and border_yaw_rad is None and not accepted_from_failed_trials:
+        if movement_tiles <= 1e-9 and not accepted_from_failed_trials:
             closest_tiles, furthest_tiles = _workspace_range_distances(base, workspace_rows_cols)
             stats["not_adjusted"] += 1
             stats["skipped_adjustments"].append(
@@ -731,12 +709,10 @@ def _postprocess_base_positions(
                     "max_allowed_tiles": max_allowed_tiles,
                     "min_allowed_m": min_allowed_tiles * tile_size,
                     "max_allowed_m": max_allowed_tiles * tile_size,
+                    "target_mid_tiles": allowed_mid_tiles,
+                    "current_mid_tiles": current_mid_tiles,
                 }
             )
-        if movement_tiles > 1e-9 and face_workspace and border_yaw_rad is None:
-            to_workspace = workspace_center - accepted
-            yaw_rad = math.atan2(float(to_workspace[1]), float(to_workspace[0]))
-            yaw_rads = (_wrap_to_pi(yaw_rad), _wrap_to_pi(yaw_rad))
 
         entries_to_update = [(waypoint_idx, entry)]
         paired_dump_idx = dig_to_dump.get(waypoint_idx)
@@ -745,12 +721,11 @@ def _postprocess_base_positions(
             stats["paired_dump_pose_copied"] += 1
 
         for update_idx, update_entry in entries_to_update:
-            before, after, entry_movement_tiles = _set_entry_pose(update_entry, accepted, yaw_rads)
-            if entry_movement_tiles <= 1e-9 and border_yaw_rad is None and update_idx == waypoint_idx:
+            before, after, entry_movement_tiles = _set_entry_pose(update_entry, accepted)
+            if entry_movement_tiles <= 1e-9 and update_idx == waypoint_idx:
                 continue
             stats["moved"] += 1
-            if border_yaw_rad is not None:
-                stats["border_yaw_aligned"] += 1
+            closest_after, furthest_after = _workspace_range_distances(accepted, workspace_rows_cols)
             stats["adjustments"].append(
                 {
                     "waypoint_index": update_idx,
@@ -762,7 +737,11 @@ def _postprocess_base_positions(
                     "to": after,
                     "movement_tiles": entry_movement_tiles,
                     "movement_m": entry_movement_tiles * tile_size,
-                    "border_yaw_aligned": border_yaw_rad is not None,
+                    "closest_before_tiles": closest_base_tiles,
+                    "furthest_before_tiles": furthest_base_tiles,
+                    "closest_after_tiles": closest_after,
+                    "furthest_after_tiles": furthest_after,
+                    "target_mid_tiles": allowed_mid_tiles,
                 }
             )
 
@@ -904,6 +883,7 @@ def extract_plan(
     render_rollout_gif: bool = False,
     rollout_gif_every: int = 1,
     use_mcts: bool = False,
+    dump_diagnostics_limit: int = 5,
 ):
     """Extract plan by capturing action_map and robot state on DO actions."""
     rng = jax.random.PRNGKey(seed)
@@ -950,13 +930,16 @@ def extract_plan(
     def _full_action_map(timestep):
         return jnp.squeeze(timestep.state.world.action_map.map).copy()
 
+    def _host_array(value):
+        return np.asarray(jax.device_get(value)).copy()
+
     def _single_env_state(timestep):
         def _take_first_env(value):
             if isinstance(value, (jax.Array, np.ndarray)) and value.ndim > 0:
                 return value[0]
             return value
 
-        return jax.tree_map(_take_first_env, timestep.state)
+        return jax.tree_util.tree_map(_take_first_env, timestep.state)
 
     def _state_for_agent(timestep, agent_index):
         state = _single_env_state(timestep)
@@ -1006,8 +989,125 @@ def extract_plan(
         buffered_foundation = _dilate_8_connected(_already_dug_foundation_mask(state))
         return jnp.logical_and(workspace_mask, ~buffered_foundation)
 
+    def _step_without_terminal_reset(timestep, action, action_cls, rng_step):
+        rng_step = jax.random.split(rng_step, 1)
+        if hasattr(env, "step_no_reset"):
+            return env.step_no_reset(
+                timestep,
+                wrap_action(action, action_cls),
+                rng_step,
+            )
+        return env.step(
+            timestep,
+            wrap_action(action, action_cls),
+            rng_step,
+        )
+
+    def _mcts_final_env_step_key(rng_before_mcts_step):
+        # Keep this in sync with eval_mcts.make_mcts_step_fn:
+        #   rng, rng_mcts = split(rng)
+        #   ...
+        #   rng, rng_step = split(rng)
+        #   env.step(..., split(rng_step, num_envs))
+        rng_after_mcts_policy, _ = jax.random.split(rng_before_mcts_step)
+        _, rng_step = jax.random.split(rng_after_mcts_policy)
+        return rng_step
+
+    def _dump_noop_diagnostics(timestep_before, agent_index):
+        def _count(mask) -> int:
+            return int(np.asarray(jnp.sum(jnp.asarray(mask).astype(jnp.int32))))
+
+        try:
+            state = _state_for_agent(timestep_before, agent_index)
+            cur = state._get_current_agent_state()
+            raw_mask = state._build_dig_dump_cone()
+            after_dig = state._exclude_dig_tiles_from_dump_mask(raw_mask)
+            after_dumpability = state._exclude_dumpability_mask_tiles_from_dump_mask(
+                after_dig
+            )
+            after_traversability = state._exclude_traversability_mask_tiles_from_dump_mask(
+                after_dumpability
+            )
+            after_just_moved = state._exclude_just_moved_tiles_from_dump_mask(
+                after_traversability
+            )
+            lacks_free_space = state._dump_cone_lacks_free_space(after_just_moved)
+            raw_count = _count(raw_mask)
+            final_before_free_count = _count(after_just_moved)
+            min_free_fraction = _first_scalar(
+                getattr(state.env_cfg, "foundation_dump_min_free_fraction", 0.0)
+            )
+            free_fraction = (
+                final_before_free_count / raw_count
+                if raw_count > 0
+                else 1.0
+            )
+            final_mask = jax.lax.cond(
+                lacks_free_space,
+                lambda: jnp.zeros_like(after_just_moved, dtype=after_just_moved.dtype),
+                lambda: after_just_moved,
+            )
+            final_count = _count(final_mask)
+
+            diagnostics = {
+                "obstacle_blocked": bool(np.asarray(state._workspace_intersects_obstacle())),
+                "free_fraction_gate_blocked": bool(np.asarray(lacks_free_space)),
+                "min_free_fraction": min_free_fraction,
+                "free_fraction": free_fraction,
+                "raw": raw_count,
+                "after_dug_tiles": _count(after_dig),
+                "after_dumpability": _count(after_dumpability),
+                "after_traversability": _count(after_traversability),
+                "after_same_workspace": final_before_free_count,
+                "final": final_count,
+                "potential_blocked": None,
+            }
+
+            if final_count > 0:
+                dump_volume = jnp.sum(final_mask)
+                remaining_volume = cur.loaded % dump_volume
+                even_volume_per_tile = (cur.loaded - remaining_volume) / dump_volume
+                map_shape = state.world.action_map.map.shape[-2:]
+                target_map_2d = jnp.reshape(
+                    state.world.target_map.map, (-1,) + map_shape
+                )[0]
+                action_map_2d = jnp.reshape(
+                    state.world.action_map.map, (-1,) + map_shape
+                )[0]
+                predicted_flat = state._apply_dump_mask(
+                    action_map_2d.reshape(-1),
+                    final_mask,
+                    even_volume_per_tile,
+                    remaining_volume,
+                    target_map_2d,
+                    use_condensed_dump=True,
+                )
+                predicted_map = predicted_flat.reshape(target_map_2d.shape)
+                current_potential = state._compute_relocation_potential(
+                    state.world.action_map.map
+                )
+                predicted_potential = state._compute_relocation_potential(predicted_map)
+                baseline_eff = cur.carry_baseline_potential + (
+                    current_potential - cur.carry_potential_after_lift
+                )
+                diagnostics.update(
+                    {
+                        "potential_blocked": bool(
+                            np.asarray(predicted_potential > baseline_eff)
+                        ),
+                        "current_potential": _first_scalar(current_potential),
+                        "predicted_potential": _first_scalar(predicted_potential),
+                        "baseline_potential": _first_scalar(baseline_eff),
+                    }
+                )
+
+            return diagnostics
+        except Exception as exc:
+            return {"error": str(exc)}
+
     # Plan storage
     plan = []
+    no_op_diagnostics_printed = 0
 
     mcts_step = None
     mcts_ppo_diff_count = 0
@@ -1042,6 +1142,7 @@ def extract_plan(
         action_map_before,
         traversability_mask,
     ):
+        nonlocal no_op_diagnostics_printed
         agent_type_str = agent_type_names.get(
             agent_type_before, f"unknown({agent_type_before})"
         )
@@ -1083,15 +1184,67 @@ def extract_plan(
             # Keep normal foundation digging as the actually changed tiles.
             terrain_modification_mask = changed_tiles.astype(jnp.bool_)
 
-        print(f"DO action at step {t_counter} by agent {agent_index} ({agent_type_str}){action_type_label}, {jnp.sum(changed_tiles)} tiles modified")
+        changed_count = int(np.asarray(jnp.sum(changed_tiles)))
+        print(f"DO action at step {t_counter} by agent {agent_index} ({agent_type_str}){action_type_label}, {changed_count} tiles modified")
+        should_print_diagnostics = (
+            loaded_before
+            and loaded_after
+            and changed_count == 0
+            and (
+                dump_diagnostics_limit < 0
+                or no_op_diagnostics_printed < dump_diagnostics_limit
+            )
+        )
+        if should_print_diagnostics:
+            no_op_diagnostics_printed += 1
+            diagnostics = _dump_noop_diagnostics(timestep_before, agent_index)
+            if "error" in diagnostics:
+                print(f"  no-op dump diagnostics failed: {diagnostics['error']}")
+            else:
+                potential_text = ""
+                if diagnostics.get("potential_blocked") is not None:
+                    potential_text = (
+                        ", potential_blocked="
+                        f"{diagnostics['potential_blocked']}"
+                        f" (current={diagnostics['current_potential']:.1f}, "
+                        f"predicted={diagnostics['predicted_potential']:.1f}, "
+                        f"baseline={diagnostics['baseline_potential']:.1f})"
+                    )
+                print(
+                    "  no-op dump diagnostics: "
+                    f"obstacle_blocked={diagnostics['obstacle_blocked']}, "
+                    f"free_gate={diagnostics['free_fraction_gate_blocked']}, "
+                    f"free_fraction={diagnostics['free_fraction']:.3f}, "
+                    f"min_free_fraction={diagnostics['min_free_fraction']:.3f}, "
+                    f"mask_counts raw={diagnostics['raw']} "
+                    f"after_dug={diagnostics['after_dug_tiles']} "
+                    f"after_dumpability={diagnostics['after_dumpability']} "
+                    f"after_traversability={diagnostics['after_traversability']} "
+                    f"after_same_workspace={diagnostics['after_same_workspace']} "
+                    f"final={diagnostics['final']}"
+                    f"{potential_text}"
+                )
+        elif (
+            loaded_before
+            and loaded_after
+            and changed_count == 0
+            and dump_diagnostics_limit >= 0
+            and no_op_diagnostics_printed == dump_diagnostics_limit
+        ):
+            no_op_diagnostics_printed += 1
+            print(
+                "  no-op dump diagnostics suppressed "
+                f"after {dump_diagnostics_limit} event(s); use "
+                "--dump_diagnostics_limit -1 for unlimited diagnostics."
+            )
 
         plan_entry = {
             'step': t_counter,
-            'traversability_mask': traversability_mask,
-            'terrain_modification_mask': terrain_modification_mask,
-            'actual_terrain_modification_mask': changed_tiles.astype(jnp.bool_),
-            'dug_mask': dug_mask.copy(),
-            'dump_mask': dump_mask.copy(),
+            'traversability_mask': _host_array(traversability_mask),
+            'terrain_modification_mask': _host_array(terrain_modification_mask),
+            'actual_terrain_modification_mask': _host_array(changed_tiles.astype(jnp.bool_)),
+            'dug_mask': _host_array(dug_mask),
+            'dump_mask': _host_array(dump_mask),
             'agent_state': {
                 'pos_base': [float(np.array(acting_agent_state_before.pos_base).flatten()[0]),
                              float(np.array(acting_agent_state_before.pos_base).flatten()[1])],
@@ -1133,6 +1286,7 @@ def extract_plan(
             agent_type_before = int(np.array(acting_agent_state_before.agent_type).flatten()[0])
             action_map_before = _full_action_map(timestep)
             traversability_mask = jnp.squeeze(timestep.observation["traversability_mask"]).copy()
+            mcts_env_step_key = _mcts_final_env_step_key(rng)
 
             rng, timestep, prev_actions, action, ppo_action, mcts_action = mcts_step(
                 model_params, rng, timestep, prev_actions
@@ -1142,6 +1296,12 @@ def extract_plan(
             )
 
             if int(np.asarray(action).reshape(-1)[0]) == do_action:
+                timestep = _step_without_terminal_reset(
+                    timestep_before,
+                    action,
+                    env.batch_cfg.action_type,
+                    mcts_env_step_key,
+                )
                 _append_do_plan_entry(
                     timestep_before,
                     timestep,
@@ -1182,9 +1342,11 @@ def extract_plan(
                 prev_actions = prev_actions.at[:, 0].set(action)
 
                 # Take step in environment
-                rng_step = jax.random.split(rng_step, 1)
-                timestep = env.step(
-                    timestep, wrap_action(action, action_cls), rng_step
+                timestep = _step_without_terminal_reset(
+                    timestep,
+                    action,
+                    action_cls,
+                    rng_step,
                 )
 
                 _append_do_plan_entry(
@@ -1204,9 +1366,11 @@ def extract_plan(
                 prev_actions = prev_actions.at[:, 0].set(action)
 
                 # Take step in environment
-                rng_step = jax.random.split(rng_step, 1)
-                timestep = env.step(
-                    timestep, wrap_action(action, action_cls), rng_step
+                timestep = _step_without_terminal_reset(
+                    timestep,
+                    action,
+                    action_cls,
+                    rng_step,
                 )
 
         t_counter += 1
@@ -1305,6 +1469,24 @@ def main():
         help="Discount factor for MCTS. Defaults to checkpoint config.gamma or 0.99.",
     )
     parser.add_argument(
+        "--foundation_dump_min_free_fraction",
+        type=float,
+        default=None,
+        help=(
+            "Override the checkpoint env config for extraction. "
+            "Use 0 to disable the free-space dump gate."
+        ),
+    )
+    parser.add_argument(
+        "--dump_diagnostics_limit",
+        type=int,
+        default=5,
+        help=(
+            "Maximum no-op dump diagnostic lines to print during extraction. "
+            "Use 0 to disable, or -1 for unlimited."
+        ),
+    )
+    parser.add_argument(
         "--serialize",
         action="store_true",
         help="Deprecated: JSON is now saved by default next to the PKL."
@@ -1330,14 +1512,14 @@ def main():
         action="store_true",
         help=(
             "After DO extraction/filtering, move each recorded base position slightly "
-            "toward its workspace while keeping all workspace tiles within reach."
+            "toward the middle of its valid min/max workspace reach band."
         ),
     )
     parser.add_argument(
         "--base_adjust_step_tiles",
         type=float,
         default=1.8,
-        help="Maximum continuous base-position adjustment toward the workspace, in Terra tile units.",
+        help="Maximum continuous base-position adjustment toward balanced workspace reach, in Terra tile units.",
     )
     parser.add_argument(
         "--base_adjust_margin_tiles",
@@ -1366,16 +1548,10 @@ def main():
             "Use <= 0 to disable."
         ),
     )
-    parser.add_argument(
-        "--base_adjust_face_workspace",
-        action="store_true",
-        help="When adjusting a base position, emit schema-v2 base/cabin yaw pointing at the workspace.",
-    )
-
     args = parser.parse_args()
 
     log = load_pkl_object(args.policy_path)
-    config = jax.tree_map(_canon_lists, log["train_config"])
+    config = jax.tree_util.tree_map(_canon_lists, log["train_config"])
     config.num_test_rollouts = 1  # Only one environment
     config.num_devices = 1
     config.num_embeddings_agent_min = 60
@@ -1387,7 +1563,7 @@ def main():
     print(f"clip_action_maps setting: {config.clip_action_maps}")
 
     # Create environment
-    env_cfgs = jax.tree_map(_canon_lists, log["env_config"])
+    env_cfgs = jax.tree_util.tree_map(_canon_lists, log["env_config"])
     def _extract_single_env(x):
         """Extract first env config, handling scalars/bools that can't be subscripted.
         
@@ -1398,7 +1574,7 @@ def main():
         except (TypeError, IndexError):
             # Scalar or bool - wrap in 1D array for vmap compatibility
             return jnp.atleast_1d(x)
-    env_cfgs = jax.tree_map(_extract_single_env, env_cfgs)
+    env_cfgs = jax.tree_util.tree_map(_extract_single_env, env_cfgs)
 
     batch_cfg = None
     if args.config is not None:
@@ -1450,6 +1626,29 @@ def main():
         except Exception as e:
             print(f"Failed to load --config preset '{args.config}': {e}")
 
+    if args.foundation_dump_min_free_fraction is not None:
+        if hasattr(env_cfgs, "foundation_dump_min_free_fraction"):
+            env_cfgs = env_cfgs._replace(
+                foundation_dump_min_free_fraction=jnp.full(
+                    (1,),
+                    float(args.foundation_dump_min_free_fraction),
+                    dtype=jnp.float32,
+                )
+            )
+        else:
+            print(
+                "Warning: checkpoint env_config has no "
+                "foundation_dump_min_free_fraction field; override ignored."
+            )
+
+    effective_min_free_fraction = _first_scalar(
+        getattr(env_cfgs, "foundation_dump_min_free_fraction", 0.0)
+    )
+    print(
+        "foundation_dump_min_free_fraction effective value: "
+        f"{effective_min_free_fraction:.4f}"
+    )
+
     if batch_cfg is None:
         batch_cfg = BatchConfig()
 
@@ -1491,6 +1690,7 @@ def main():
         render_rollout_gif=args.render_rollout_gif,
         rollout_gif_every=args.rollout_gif_every,
         use_mcts=args.use_mcts,
+        dump_diagnostics_limit=args.dump_diagnostics_limit,
     )
 
     raw_len = len(plan)
@@ -1514,7 +1714,6 @@ def main():
             min_range_tiles_override=args.base_adjust_min_range_tiles,
             max_range_tiles_override=args.base_adjust_max_range_tiles,
             max_distance_m=args.base_adjust_max_distance_m,
-            face_workspace=bool(args.base_adjust_face_workspace),
         )
         print(
             "Post-processed base positions: "
@@ -1524,8 +1723,7 @@ def main():
             f"{base_adjust_stats['skipped_missing_base']} missing base, "
             f"{base_adjust_stats['skipped_invalid_range']} range rejected, "
             f"{base_adjust_stats['skipped_blocked']} blocked rejected, "
-            f"{base_adjust_stats['paired_dump_pose_copied']} paired dumps copied, "
-            f"{base_adjust_stats['border_yaw_aligned']} border-yaw aligned)."
+            f"{base_adjust_stats['paired_dump_pose_copied']} paired dumps copied)."
         )
         for adj in base_adjust_stats["adjustments"]:
             before = adj["from"]
@@ -1536,15 +1734,23 @@ def main():
             paired_text = ""
             if adj.get("paired_with") is not None:
                 paired_text = f" paired_with={adj['paired_with']}"
-            yaw_text = " border_yaw" if adj.get("border_yaw_aligned") else ""
+            range_text = ""
+            if adj.get("closest_before_tiles") is not None:
+                range_text = (
+                    f" range=[{adj['closest_before_tiles']:.3f}, "
+                    f"{adj['furthest_before_tiles']:.3f}] -> "
+                    f"[{adj['closest_after_tiles']:.3f}, "
+                    f"{adj['furthest_after_tiles']:.3f}]"
+                )
             print(
                 "  base adjusted "
                 f"waypoint={adj['waypoint_index']} step={adj['step']} "
                 f"agent={adj['agent_index']} type={adj['agent_type']}"
-                f"{paired_text}{yaw_text}: "
+                f"{paired_text}: "
                 f"{before_text} -> "
                 f"[{after[0]:.3f}, {after[1]:.3f}] "
                 f"(delta={adj['movement_tiles']:.3f} tiles, {adj['movement_m']:.3f} m)"
+                f"{range_text}"
             )
         for skipped in base_adjust_stats["skipped_adjustments"]:
             before = skipped.get("from")
@@ -1602,6 +1808,17 @@ def main():
         json_path = output_path.parent / f"{output_path.name}.json"
 
     plan_json = _plan_to_schema_v2(plan, Path(args.map_path))
+    schema_metadata = plan_json.get("metadata", {})
+    unpaired_loads = schema_metadata.get("unpaired_load_waypoints", [])
+    unpaired_unloads = schema_metadata.get("unpaired_unload_waypoints", [])
+    if unpaired_loads or unpaired_unloads:
+        print(
+            "WARNING: Schema-v2 conversion found "
+            f"{len(unpaired_loads)} unpaired load/dig waypoint(s) and "
+            f"{len(unpaired_unloads)} unpaired unload/dump waypoint(s). "
+            "Unpaired entries are listed in JSON metadata and are not emitted "
+            "as paired schema-v2 waypoints."
+        )
     # Use compact array formatting (matching foundation-plan.json)
     json_str = json.dumps(plan_json, indent=2)
 
@@ -1671,6 +1888,7 @@ def main():
         print(f"Also saved rollout GIF to {rollout_gif_path}")
     
     print(f"Total DO actions (filtered): {len(plan)}")
+    print(f"Schema-v2 waypoints: {len(plan_json['waypoints'])}")
 
 
 if __name__ == "__main__":

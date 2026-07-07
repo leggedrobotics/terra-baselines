@@ -31,7 +31,6 @@ solo_excavator_rectangles:
   description: Single excavator agent with tracked movement on rectangle maps
   agent_types: [0]
   action_types: [0]
-  foundation_dump_overlap_threshold: 0.5
   reward_multipliers:
     dump_bonus_mult: 0.5
     excavator_relocate_dumped_mult: 1.5
@@ -44,7 +43,6 @@ solo_excavator_rectangles_dumpzone:
   description: Single excavator agent with tracked movement on rectangle maps
   agent_types: [0]
   action_types: [0]
-  foundation_dump_overlap_threshold: 0.5
   reward_multipliers:
     dump_bonus_mult: 0.5
     excavator_relocate_dumped_mult: 1.5
@@ -71,7 +69,6 @@ solo_excavator_rectangles_2stage:
   description: Solo excavator 2-level curriculum - ring then dumpzone on task success
   agent_types: [0]
   action_types: [0]
-  foundation_dump_overlap_threshold: 0.5
   reward_multipliers:
     dump_bonus_mult: 0.5
     excavator_relocate_dumped_mult: 1.5

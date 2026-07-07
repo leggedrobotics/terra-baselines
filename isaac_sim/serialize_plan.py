@@ -163,29 +163,79 @@ def _to_schema_v2_waypoint(entry, workspace_type):
 
 
 def _schema_v2_waypoints(plan):
+    waypoints, _ = _schema_v2_waypoints_and_metadata(plan)
+    return waypoints
+
+
+def _schema_v2_entry_summary(entry, idx, reason):
+    return {
+        "source_index": idx,
+        "step": int(_to_serializable(entry.get("step", idx))),
+        "reason": reason,
+        "agent_type": int(_to_serializable(entry.get("agent_type", 0))),
+        "agent_index": int(_to_serializable(entry.get("agent_index", 0))),
+        "dig_type": entry.get("dig_type"),
+    }
+
+
+def _schema_v2_waypoints_and_metadata(plan):
     waypoints = []
     pending_dig = None
+    pending_dig_idx = None
+    unpaired_loads = []
+    unpaired_unloads = []
+    paired_count = 0
 
-    for entry in plan:
+    for idx, entry in enumerate(plan):
         if _is_load_transition(entry):
+            if pending_dig is not None:
+                unpaired_loads.append(
+                    _schema_v2_entry_summary(
+                        pending_dig,
+                        pending_dig_idx,
+                        "replaced_by_next_load",
+                    )
+                )
             pending_dig = entry
+            pending_dig_idx = idx
             continue
 
-        if pending_dig is not None and _is_unload_transition(entry):
+        if _is_unload_transition(entry):
+            if pending_dig is None:
+                unpaired_unloads.append(
+                    _schema_v2_entry_summary(entry, idx, "unload_without_prior_load")
+                )
+                continue
             workspace_type = _workspace_type_for_pair(pending_dig)
             waypoints.append(_to_schema_v2_waypoint(pending_dig, workspace_type))
             waypoints.append(_to_schema_v2_waypoint(entry, workspace_type))
             pending_dig = None
+            pending_dig_idx = None
+            paired_count += 1
 
-    return waypoints
+    if pending_dig is not None:
+        unpaired_loads.append(
+            _schema_v2_entry_summary(pending_dig, pending_dig_idx, "end_without_unload")
+        )
+
+    metadata = {
+        "raw_waypoints": len(plan),
+        "paired_load_unload_pairs": paired_count,
+        "schema_v2_waypoints": len(waypoints),
+        "unpaired_load_waypoints": unpaired_loads,
+        "unpaired_unload_waypoints": unpaired_unloads,
+    }
+    return waypoints, metadata
 
 
 def _plan_to_schema_v2(plan, map_path: Path | None):
+    waypoints, metadata = _schema_v2_waypoints_and_metadata(plan)
     return {
         "schema_version": 2,
         "source_map_frame_id": "map",
         "alignment": _load_plan_alignment(map_path),
-        "waypoints": _schema_v2_waypoints(plan),
+        "metadata": metadata,
+        "waypoints": waypoints,
     }
 
 
@@ -301,6 +351,17 @@ def main():
     # Serialize to schema-v2 JSON with compact arrays.
     print(f"Serializing to schema-v2 JSON...")
     plan_json = _plan_to_schema_v2(plan, map_path)
+    schema_metadata = plan_json.get("metadata", {})
+    unpaired_loads = schema_metadata.get("unpaired_load_waypoints", [])
+    unpaired_unloads = schema_metadata.get("unpaired_unload_waypoints", [])
+    if unpaired_loads or unpaired_unloads:
+        print(
+            "WARNING: Schema-v2 conversion found "
+            f"{len(unpaired_loads)} unpaired load/dig waypoint(s) and "
+            f"{len(unpaired_unloads)} unpaired unload/dump waypoint(s). "
+            "Unpaired entries are listed in JSON metadata and are not emitted "
+            "as paired schema-v2 waypoints."
+        )
     
     # Use json.dumps with indent, then compact arrays using regex
     import re

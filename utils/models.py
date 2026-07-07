@@ -412,13 +412,20 @@ class MapsNet(nn.Module):
         obs["traversability_mask"],
         obs["dumpability_mask"],
         """
-        traversability_map = obs[0]
-        reachability_map = obs[1]
-        action_map = obs[2]
-        target_map = obs[3]
-        padding_mask = obs[4]
-        dumpability_mask = obs[5]
-        interaction_mask = obs[6]
+        def as_map_batch(x: Array) -> Array:
+            if x.ndim == 2:
+                return x[None, :, :]
+            if x.ndim == 3:
+                return x
+            return x.reshape((-1,) + x.shape[-2:])
+
+        traversability_map = as_map_batch(obs[0])
+        reachability_map = as_map_batch(obs[1])
+        action_map = as_map_batch(obs[2])
+        target_map = as_map_batch(obs[3])
+        padding_mask = as_map_batch(obs[4])
+        dumpability_mask = as_map_batch(obs[5])
+        interaction_mask = as_map_batch(obs[6])
 
         x = jnp.concatenate(
             (
@@ -591,11 +598,17 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         # OPTIMIZED: Batched processing for both agents
         # Variable agents: obs[0] is [B, MAX_AGENTS, num_state_obs], obs[2] is num_agents
         agent_states_all = obs[0]
-        # Handle possible extra dims (e.g., (B,1) or (B,1,1)) for num_agents
-        num_agents = jnp.squeeze(obs[2]).astype(jnp.int32)
+        if agent_states_all.ndim == 2:
+            agent_states_all = agent_states_all[None, :, :]
+        elif agent_states_all.ndim > 3:
+            agent_states_all = agent_states_all.reshape(
+                (-1,) + agent_states_all.shape[-2:]
+            )
         # Encode all agents individually, mask inactive ones, and concatenate
         B = agent_states_all.shape[0]
         MAX_AGENTS = agent_states_all.shape[1]
+        # Handle possible extra dims (e.g., (B,1) or (B,1,1)) for num_agents
+        num_agents = jnp.asarray(obs[2], dtype=jnp.int32).reshape((B, -1))[:, 0]
         # Flatten agents into batch
         agent_states_flat = agent_states_all.reshape(B * MAX_AGENTS, -1)
         x_agents_flat = self.agent_state_net(agent_states_flat)
@@ -603,10 +616,8 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         x_agents = x_agents_flat.reshape(B, MAX_AGENTS, -1)
         # Build active mask from obs[1] directly (robust to shape quirks)
         active_mask_raw = obs[1]
-        active_mask = jnp.squeeze(active_mask_raw).astype(jnp.bool_)
-        # Ensure shape [B, MAX_AGENTS]
-        if active_mask.ndim == 1:
-            active_mask = active_mask[None, :].repeat(B, axis=0)
+        active_mask = jnp.asarray(active_mask_raw).astype(jnp.bool_)
+        active_mask = active_mask.reshape((B, MAX_AGENTS))
         # Zero out inactive agent embeddings
         x_agents = jnp.where(active_mask[..., None], x_agents, 0)
         # Concatenate all agent embeddings into a single vector

@@ -696,6 +696,16 @@ def train(config: TrainConfig):
 
     train_fn = make_train(env, env_params, config)
 
+    foundation_dump_min_free_fraction = float(
+        jnp.ravel(
+            getattr(env_params, "foundation_dump_min_free_fraction", jnp.array(0.0))
+        )[0]
+    )
+    print(
+        "foundation_dump_min_free_fraction: "
+        f"{foundation_dump_min_free_fraction}"
+    )
+
     print("Training...")
     try:  # Try block starts here
         t = time.time()
