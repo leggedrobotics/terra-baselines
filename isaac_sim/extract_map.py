@@ -374,6 +374,22 @@ def _workspace_mask_for_adjustment(entry: dict[str, Any], shape: tuple[int, int]
     return np.zeros(shape, dtype=bool)
 
 
+def _clearance_mask_for_adjustment(entry: dict[str, Any], shape: tuple[int, int]) -> np.ndarray:
+    for key in ("dug_mask", "actual_terrain_modification_mask", "terrain_modification_mask"):
+        value = entry.get(key)
+        if value is None:
+            continue
+        try:
+            mask = np.asarray(value).astype(bool)
+            if mask.shape != shape:
+                mask = mask.reshape(shape)
+        except Exception:
+            continue
+        if mask.any():
+            return mask
+    return np.zeros(shape, dtype=bool)
+
+
 def _reach_limits_tiles(
     env_cfgs: Any,
     agent_type: int,
@@ -450,6 +466,29 @@ def _workspace_range_distances(
     return float(np.min(distances)), float(np.max(distances))
 
 
+def _mask_closest_distance(candidate: np.ndarray, rows_cols: np.ndarray) -> float:
+    if rows_cols.size == 0:
+        return float("inf")
+    distances = np.linalg.norm(rows_cols - candidate[None, :], axis=1)
+    return float(np.min(distances))
+
+
+def _nearest_mask_direction(candidate: np.ndarray, rows_cols: np.ndarray) -> np.ndarray | None:
+    if rows_cols.size == 0:
+        return None
+    distances = np.linalg.norm(rows_cols - candidate[None, :], axis=1)
+    nearest = rows_cols[int(np.argmin(distances))]
+    direction = candidate - nearest
+    norm = float(np.linalg.norm(direction))
+    if norm <= 1e-9:
+        center_direction = candidate - rows_cols.mean(axis=0)
+        norm = float(np.linalg.norm(center_direction))
+        if norm <= 1e-9:
+            return None
+        return center_direction / norm
+    return direction / norm
+
+
 def _range_failure_reason(
     closest_tiles: float,
     furthest_tiles: float,
@@ -509,6 +548,7 @@ def _postprocess_base_positions(
     min_range_tiles_override: float | None,
     max_range_tiles_override: float | None,
     max_distance_m: float | None,
+    min_clearance_tiles: float,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     _, occupancy, _ = _load_single_map_arrays(map_path)
     shape = occupancy.shape
@@ -519,6 +559,7 @@ def _postprocess_base_positions(
         "moved": 0,
         "not_adjusted": 0,
         "paired_dump_pose_copied": 0,
+        "min_clearance_tiles": float(max(0.0, min_clearance_tiles)),
         "skipped_empty_mask": 0,
         "skipped_missing_base": 0,
         "skipped_invalid_range": 0,
@@ -562,6 +603,9 @@ def _postprocess_base_positions(
             continue
 
         workspace_rows_cols = np.stack([rows.astype(float), cols.astype(float)], axis=1)
+        clearance_mask = _clearance_mask_for_adjustment(entry, shape)
+        clearance_rows, clearance_cols = np.nonzero(clearance_mask)
+        clearance_rows_cols = np.stack([clearance_rows.astype(float), clearance_cols.astype(float)], axis=1)
         workspace_center = workspace_rows_cols.mean(axis=0)
         base = np.asarray([float(pos_base[0]), float(pos_base[1])], dtype=float)
         from_workspace = base - workspace_center
@@ -587,6 +631,10 @@ def _postprocess_base_positions(
         )
         min_allowed_tiles = min_range_tiles + margin_tiles
         max_allowed_tiles = max_range_tiles - margin_tiles
+        if min_clearance_tiles > 0.0:
+            clearance_extra_tiles = max(0.0, min_clearance_tiles - min_allowed_tiles)
+            min_allowed_tiles += clearance_extra_tiles
+            max_allowed_tiles += clearance_extra_tiles
         if max_distance_m is not None and max_distance_m > 0.0:
             max_allowed_tiles = min(max_allowed_tiles, float(max_distance_m) / max(tile_size, 1e-6))
         if min_allowed_tiles >= max_allowed_tiles:
@@ -607,12 +655,22 @@ def _postprocess_base_positions(
             continue
 
         closest_base_tiles, furthest_base_tiles = _workspace_range_distances(base, workspace_rows_cols)
+        closest_clearance_base_tiles = _mask_closest_distance(base, clearance_rows_cols)
         allowed_mid_tiles = 0.5 * (min_allowed_tiles + max_allowed_tiles)
         current_mid_tiles = 0.5 * (closest_base_tiles + furthest_base_tiles)
         direction = from_workspace / center_distance
         signed_step_tiles = allowed_mid_tiles - current_mid_tiles
         signed_step_tiles = float(np.clip(signed_step_tiles, -step_tiles, step_tiles))
-        desired = base + direction * signed_step_tiles
+        desired_delta = direction * signed_step_tiles
+        if min_clearance_tiles > 0.0 and closest_clearance_base_tiles < min_clearance_tiles:
+            clearance_direction = _nearest_mask_direction(base, clearance_rows_cols)
+            if clearance_direction is not None:
+                clearance_step_tiles = min(step_tiles, min_clearance_tiles - closest_clearance_base_tiles)
+                desired_delta = desired_delta + clearance_direction * clearance_step_tiles
+                delta_norm = float(np.linalg.norm(desired_delta))
+                if delta_norm > step_tiles:
+                    desired_delta = desired_delta / delta_norm * step_tiles
+        desired = base + desired_delta
         traversability_mask = entry.get("traversability_mask")
 
         accepted = None
@@ -621,26 +679,35 @@ def _postprocess_base_positions(
         for fraction in (1.0, 0.75, 0.5, 0.25):
             candidate = base + (desired - base) * fraction
             closest_tiles, furthest_tiles = _workspace_range_distances(candidate, workspace_rows_cols)
+            closest_clearance_tiles = _mask_closest_distance(candidate, clearance_rows_cols)
             range_reason = _range_failure_reason(
                 closest_tiles,
                 furthest_tiles,
                 min_allowed_tiles,
                 max_allowed_tiles,
             )
+            clearance_violation_tiles = 0.0
+            if min_clearance_tiles > 0.0:
+                clearance_violation_tiles = max(0.0, min_clearance_tiles - closest_clearance_tiles)
+                if range_reason == "range_ok" and clearance_violation_tiles > 0.0:
+                    range_reason = "clearance_min_violated"
             failed_trials.append(
                 {
                     "fraction": fraction,
                     "candidate": [float(candidate[0]), float(candidate[1])],
                     "closest_tiles": closest_tiles,
                     "furthest_tiles": furthest_tiles,
+                    "closest_clearance_tiles": closest_clearance_tiles,
                     "closest_m": closest_tiles * tile_size,
                     "furthest_m": furthest_tiles * tile_size,
+                    "closest_clearance_m": closest_clearance_tiles * tile_size,
                     "reason": range_reason,
                     "target_mid_tiles": allowed_mid_tiles,
                     "current_mid_tiles": current_mid_tiles,
                     "range_violation_tiles": (
                         max(0.0, min_allowed_tiles - closest_tiles)
                         + max(0.0, furthest_tiles - max_allowed_tiles)
+                        + clearance_violation_tiles
                     ),
                 }
             )
@@ -726,6 +793,7 @@ def _postprocess_base_positions(
                 continue
             stats["moved"] += 1
             closest_after, furthest_after = _workspace_range_distances(accepted, workspace_rows_cols)
+            closest_clearance_after = _mask_closest_distance(accepted, clearance_rows_cols)
             stats["adjustments"].append(
                 {
                     "waypoint_index": update_idx,
@@ -741,6 +809,8 @@ def _postprocess_base_positions(
                     "furthest_before_tiles": furthest_base_tiles,
                     "closest_after_tiles": closest_after,
                     "furthest_after_tiles": furthest_after,
+                    "closest_clearance_before_tiles": closest_clearance_base_tiles,
+                    "closest_clearance_after_tiles": closest_clearance_after,
                     "target_mid_tiles": allowed_mid_tiles,
                 }
             )
@@ -1534,6 +1604,15 @@ def main():
         help="Optional min allowed distance from adjusted base to closest workspace tile, in tile units.",
     )
     parser.add_argument(
+        "--base_adjust_min_clearance_tiles",
+        type=float,
+        default=6.0,
+        help=(
+            "Extra hard lower bound on distance from adjusted base to the closest "
+            "workspace/already-dug tile, in Terra tile units. Use <= 0 to disable."
+        ),
+    )
+    parser.add_argument(
         "--base_adjust_max_range_tiles",
         type=float,
         default=None,
@@ -1542,7 +1621,7 @@ def main():
     parser.add_argument(
         "--base_adjust_max_distance_m",
         type=float,
-        default=7.4,
+        default=8.0,
         help=(
             "Hard cap on distance from adjusted base to the furthest workspace tile, in meters. "
             "Use <= 0 to disable."
@@ -1714,6 +1793,7 @@ def main():
             min_range_tiles_override=args.base_adjust_min_range_tiles,
             max_range_tiles_override=args.base_adjust_max_range_tiles,
             max_distance_m=args.base_adjust_max_distance_m,
+            min_clearance_tiles=max(0.0, float(args.base_adjust_min_clearance_tiles)),
         )
         print(
             "Post-processed base positions: "
@@ -1723,7 +1803,8 @@ def main():
             f"{base_adjust_stats['skipped_missing_base']} missing base, "
             f"{base_adjust_stats['skipped_invalid_range']} range rejected, "
             f"{base_adjust_stats['skipped_blocked']} blocked rejected, "
-            f"{base_adjust_stats['paired_dump_pose_copied']} paired dumps copied)."
+            f"{base_adjust_stats['paired_dump_pose_copied']} paired dumps copied, "
+            f"min clearance {base_adjust_stats['min_clearance_tiles']:.3f} tiles)."
         )
         for adj in base_adjust_stats["adjustments"]:
             before = adj["from"]
@@ -1742,6 +1823,12 @@ def main():
                     f"[{adj['closest_after_tiles']:.3f}, "
                     f"{adj['furthest_after_tiles']:.3f}]"
                 )
+            clearance_text = ""
+            if adj.get("closest_clearance_before_tiles") is not None:
+                clearance_text = (
+                    f" clearance={adj['closest_clearance_before_tiles']:.3f}"
+                    f"->{adj['closest_clearance_after_tiles']:.3f}"
+                )
             print(
                 "  base adjusted "
                 f"waypoint={adj['waypoint_index']} step={adj['step']} "
@@ -1751,6 +1838,7 @@ def main():
                 f"[{after[0]:.3f}, {after[1]:.3f}] "
                 f"(delta={adj['movement_tiles']:.3f} tiles, {adj['movement_m']:.3f} m)"
                 f"{range_text}"
+                f"{clearance_text}"
             )
         for skipped in base_adjust_stats["skipped_adjustments"]:
             before = skipped.get("from")

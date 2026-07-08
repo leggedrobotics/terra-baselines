@@ -457,6 +457,7 @@ class MixedAgentTrainConfig:
     truck_capacity: int | None = None
     skidsteer_capacity: int | None = None
     truck_road_restricted: bool | None = None
+    enforce_foundation_border_alignment: bool | None = None
     
     # Curriculum/maps override (from YAML config)
     # Format: list of dicts with keys: maps_path, max_steps_in_episode, rewards_type, apply_trench_rewards
@@ -509,6 +510,7 @@ def create_mixed_agent_env_config(
     truck_capacity=None,
     skidsteer_capacity=None,
     truck_road_restricted=None,
+    enforce_foundation_border_alignment=None,
 ):
     """Create environment configuration optimized for mixed agent training
     
@@ -522,6 +524,7 @@ def create_mixed_agent_env_config(
         truck_capacity: Override for truck capacity
         skidsteer_capacity: Override for skidsteer capacity
         truck_road_restricted: Whether trucks are restricted to roads
+        enforce_foundation_border_alignment: Whether foundation border alignment is enforced
     """
     
     # Use the existing dense rewards from config
@@ -550,6 +553,10 @@ def create_mixed_agent_env_config(
         env_config = env_config._replace(skidsteer_capacity=skidsteer_capacity)
     if truck_road_restricted is not None:
         env_config = env_config._replace(truck_road_restricted=truck_road_restricted)
+    if enforce_foundation_border_alignment is not None:
+        env_config = env_config._replace(
+            enforce_foundation_border_alignment=enforce_foundation_border_alignment
+        )
     
     return env_config
 
@@ -684,6 +691,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                 truck_capacity=config.truck_capacity,
                 skidsteer_capacity=config.skidsteer_capacity,
                 truck_road_restricted=config.truck_road_restricted,
+                enforce_foundation_border_alignment=config.enforce_foundation_border_alignment,
             )
             # Verbose training configuration summary
             type_names = {0: "Excavator", 1: "Truck", 2: "SkidSteer"}
@@ -819,6 +827,11 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
     agent_types = tuple(config.agent_types_override or env_defaults.agent_types)
     action_types = tuple(config.action_types_override or ((0,) * len(agent_types)))
     dump_min_free_fraction = env_defaults.foundation_dump_min_free_fraction
+    edge_align_enabled = (
+        config.enforce_foundation_border_alignment
+        if config.enforce_foundation_border_alignment is not None
+        else env_defaults.enforce_foundation_border_alignment
+    )
 
     tags = [
         "mixed-agents",
@@ -829,7 +842,7 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         f"dump-min-free-fraction:{_tag_value(dump_min_free_fraction)}",
         f"move-tiles:{_tag_value(env_defaults.agent.move_tiles)}",
         f"dig-radius-tiles:{_tag_value(env_defaults.agent.dig_radius_tiles)}",
-        "edge-align:on" if env_defaults.enforce_foundation_border_alignment else "edge-align:off",
+        "edge-align:on" if edge_align_enabled else "edge-align:off",
         "terminal:dump50-inner25-edge25",
         "edge-bonus:flat",
     ]
@@ -1746,6 +1759,7 @@ if __name__ == "__main__":
     truck_capacity = None
     skidsteer_capacity = None
     truck_road_restricted = None
+    enforce_foundation_border_alignment = None
     curriculum_levels_override = None
     curriculum_increase_level_threshold = None
     curriculum_decrease_level_threshold = None
@@ -1772,6 +1786,7 @@ if __name__ == "__main__":
             truck_capacity = preset.truck_capacity
             skidsteer_capacity = preset.skidsteer_capacity
             truck_road_restricted = preset.truck_road_restricted
+            enforce_foundation_border_alignment = preset.enforce_foundation_border_alignment
             
             # Apply maps/curriculum from preset (convert MapLevel objects to dict format)
             if preset.maps and len(preset.maps) > 0:
@@ -1889,6 +1904,7 @@ if __name__ == "__main__":
         truck_capacity=truck_capacity,
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,
+        enforce_foundation_border_alignment=enforce_foundation_border_alignment,
         curriculum_levels_override=curriculum_levels_override,
         curriculum_increase_level_threshold=curriculum_increase_level_threshold,
         curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,

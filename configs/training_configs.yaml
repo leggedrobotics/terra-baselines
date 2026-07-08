@@ -31,6 +31,7 @@ solo_excavator_rectangles:
   description: Single excavator agent with tracked movement on rectangle maps
   agent_types: [0]
   action_types: [0]
+  enforce_foundation_border_alignment: true
   reward_multipliers:
     dump_bonus_mult: 0.5
     excavator_relocate_dumped_mult: 1.5
@@ -216,6 +217,19 @@ trench_excavator:
     excavator_relocate_dug_dirt_mult: 1.5
   maps:
     - path: trenches/single
+      max_steps: 500
+      apply_trench_rewards: true
+
+trench_excavator_double:
+  description: Excavator specialized for double trench digging
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: trenches/double
       max_steps: 500
       apply_trench_rewards: true
 

@@ -33,8 +33,8 @@ export DATASET_SIZE=600
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
 
 python train_mixed.py \
-    --config solo_excavator_rectangles \
-    --model_size medium \
+    --config solo_excavator \
+    --model_size base \
     --model_core mlp \
     # --num_envs_per_device 128 \
     # --map_path /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference/maps/map_13 \

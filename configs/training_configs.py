@@ -71,6 +71,7 @@ class TrainingConfig:
     truck_capacity: Optional[int] = None
     skidsteer_capacity: Optional[int] = None
     truck_road_restricted: Optional[bool] = None
+    enforce_foundation_border_alignment: Optional[bool] = None
 
 
 # Cache for loaded configs
@@ -139,6 +140,7 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             truck_capacity=cfg.get('truck_capacity'),
             skidsteer_capacity=cfg.get('skidsteer_capacity'),
             truck_road_restricted=cfg.get('truck_road_restricted'),
+            enforce_foundation_border_alignment=cfg.get('enforce_foundation_border_alignment'),
         )
     
     _CONFIGS_LOADED = True
