@@ -44,6 +44,7 @@ solo_excavator_rectangles_dumpzone:
   description: Single excavator agent with tracked movement on rectangle maps
   agent_types: [0]
   action_types: [0]
+  enforce_foundation_border_alignment: false
   reward_multipliers:
     dump_bonus_mult: 0.5
     excavator_relocate_dumped_mult: 1.5

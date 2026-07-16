@@ -26,6 +26,12 @@ from train_mixed import MixedAgentTrainConfig
 from eval_mcts import fix_env_cfg_dtypes, make_mcts_step_fn
 sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
 
+STEP_TEXT_POSITION = "top_right"  # Options: top_left, top_right, bottom_left, bottom_right, or (x, y).
+STEP_TEXT_FONT_SIZE = 24
+STEP_TEXT_PADDING = 8
+STEP_TEXT_FILL = (0, 0, 0)
+STEP_TEXT_BACKGROUND = (255, 255, 255)
+
 
 def _to_serializable(obj):
     """Convert JAX/NumPy containers into plain Python types for JSON dumping."""
@@ -96,6 +102,10 @@ def _is_unload_transition(entry: dict[str, Any]) -> bool:
     before = _as_py_bool(loaded_change.get("before", False))
     after = _as_py_bool(loaded_change.get("after", False))
     return before and (not after)
+
+
+def _entry_agent_key(entry: dict[str, Any]) -> int:
+    return int(_to_serializable(entry.get("agent_index", 0)))
 
 
 def _workspace_type_for_pair(dig_entry: dict[str, Any]) -> str:
@@ -212,15 +222,16 @@ def _schema_v2_entry_summary(entry: dict[str, Any], idx: int, reason: str) -> di
 
 def _schema_v2_waypoints_and_metadata(plan: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     waypoints = []
-    pending_dig = None
-    pending_dig_idx = None
+    pending_digs: dict[int, tuple[dict[str, Any], int]] = {}
     unpaired_loads = []
     unpaired_unloads = []
     paired_count = 0
 
     for idx, entry in enumerate(plan):
+        agent_key = _entry_agent_key(entry)
         if _is_load_transition(entry):
-            if pending_dig is not None:
+            if agent_key in pending_digs:
+                pending_dig, pending_dig_idx = pending_digs[agent_key]
                 unpaired_loads.append(
                     _schema_v2_entry_summary(
                         pending_dig,
@@ -228,24 +239,22 @@ def _schema_v2_waypoints_and_metadata(plan: list[dict[str, Any]]) -> tuple[list[
                         "replaced_by_next_load",
                     )
                 )
-            pending_dig = entry
-            pending_dig_idx = idx
+            pending_digs[agent_key] = (entry, idx)
             continue
 
         if _is_unload_transition(entry):
-            if pending_dig is None:
+            if agent_key not in pending_digs:
                 unpaired_unloads.append(
                     _schema_v2_entry_summary(entry, idx, "unload_without_prior_load")
                 )
                 continue
+            pending_dig, pending_dig_idx = pending_digs.pop(agent_key)
             workspace_type = _workspace_type_for_pair(pending_dig)
             waypoints.append(_to_schema_v2_waypoint(pending_dig, workspace_type))
             waypoints.append(_to_schema_v2_waypoint(entry, workspace_type))
-            pending_dig = None
-            pending_dig_idx = None
             paired_count += 1
 
-    if pending_dig is not None:
+    for pending_dig, pending_dig_idx in pending_digs.values():
         unpaired_loads.append(
             _schema_v2_entry_summary(pending_dig, pending_dig_idx, "end_without_unload")
         )
@@ -466,6 +475,182 @@ def _workspace_range_distances(
     return float(np.min(distances)), float(np.max(distances))
 
 
+def _workspace_kind_for_reassignment(entry: dict[str, Any]) -> str:
+    if _is_load_transition(entry):
+        if entry.get("dig_type") == "lift_dug_dirt":
+            return "lift"
+        return "dig"
+    if _is_unload_transition(entry):
+        return "dump"
+    return "terrain"
+
+
+def _four_connected_neighbor_count(mask: np.ndarray, row: int, col: int) -> int:
+    h, w = mask.shape
+    count = 0
+    for rr, cc in ((row - 1, col), (row + 1, col), (row, col - 1), (row, col + 1)):
+        if 0 <= rr < h and 0 <= cc < w and bool(mask[rr, cc]):
+            count += 1
+    return count
+
+
+def _entry_base_position(entry: dict[str, Any]) -> np.ndarray | None:
+    pos_base = (entry.get("agent_state", {}) or {}).get("pos_base")
+    if pos_base is None or len(pos_base) < 2:
+        return None
+    return np.asarray([float(pos_base[0]), float(pos_base[1])], dtype=np.float64)
+
+
+def _set_terrain_modification_mask(entry: dict[str, Any], mask: np.ndarray) -> None:
+    entry["terrain_modification_mask"] = mask.astype(bool)
+
+
+def _postprocess_reassign_isolated_workspace_tiles(
+    plan: list[dict[str, Any]],
+    map_path: Path,
+    env_cfgs: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    _, occupancy, _ = _load_single_map_arrays(map_path)
+    shape = occupancy.shape
+    stats = {
+        "considered_tiles": 0,
+        "moved_tiles": 0,
+        "skipped_empty_source": 0,
+        "skipped_missing_base": 0,
+        "skipped_no_better_workspace": 0,
+        "moves": [],
+    }
+
+    workspaces = []
+    for idx, entry in enumerate(plan):
+        mask = _workspace_mask_for_adjustment(entry, shape).astype(bool)
+        if not mask.any():
+            continue
+        base = _entry_base_position(entry)
+        if base is None:
+            stats["skipped_missing_base"] += 1
+            continue
+        min_range_tiles, max_range_tiles = _reach_limits_tiles(
+            env_cfgs,
+            int(_to_serializable(entry.get("agent_type", 0))),
+            None,
+            None,
+        )
+        workspaces.append(
+            {
+                "index": idx,
+                "entry": entry,
+                "mask": mask.copy(),
+                "base": base,
+                "kind": _workspace_kind_for_reassignment(entry),
+                "agent_type": int(_to_serializable(entry.get("agent_type", 0))),
+                "min_range_tiles": min_range_tiles,
+                "max_range_tiles": max_range_tiles,
+            }
+        )
+
+    for source in workspaces:
+        source_mask = source["mask"]
+        source_base = source["base"]
+        source_tile_count = int(np.sum(source_mask))
+        rows_cols = np.argwhere(source_mask)
+        for row, col in rows_cols:
+            row = int(row)
+            col = int(col)
+            if not source_mask[row, col]:
+                continue
+            if _four_connected_neighbor_count(source_mask, row, col) != 0:
+                continue
+
+            stats["considered_tiles"] += 1
+            if source_tile_count <= 1:
+                stats["skipped_empty_source"] += 1
+                continue
+
+            tile = np.asarray([float(row), float(col)], dtype=np.float64)
+            source_distance = float(np.linalg.norm(tile - source_base))
+            best = None
+            for candidate in workspaces:
+                if candidate is source:
+                    continue
+                if candidate["kind"] != source["kind"]:
+                    continue
+                if candidate["agent_type"] != source["agent_type"]:
+                    continue
+
+                candidate_mask = candidate["mask"]
+                if candidate_mask[row, col]:
+                    continue
+                candidate_connectivity = _four_connected_neighbor_count(
+                    candidate_mask,
+                    row,
+                    col,
+                )
+                if candidate_connectivity <= 0:
+                    continue
+
+                candidate_distance = float(np.linalg.norm(tile - candidate["base"]))
+                if candidate_distance + 1e-6 >= source_distance:
+                    continue
+                if not (
+                    candidate["min_range_tiles"]
+                    <= candidate_distance
+                    <= candidate["max_range_tiles"]
+                ):
+                    continue
+
+                candidate_rows_cols = np.argwhere(candidate_mask).astype(np.float64)
+                candidate_with_tile = np.vstack([candidate_rows_cols, tile[None, :]])
+                if not _workspace_range_is_valid(
+                    candidate["base"],
+                    candidate_with_tile,
+                    candidate["min_range_tiles"],
+                    candidate["max_range_tiles"],
+                ):
+                    continue
+
+                key = (
+                    candidate_connectivity,
+                    source_distance - candidate_distance,
+                    -candidate_distance,
+                )
+                if best is None or key > best["key"]:
+                    best = {
+                        "candidate": candidate,
+                        "candidate_distance": candidate_distance,
+                        "candidate_connectivity": candidate_connectivity,
+                        "key": key,
+                    }
+
+            if best is None:
+                stats["skipped_no_better_workspace"] += 1
+                continue
+
+            candidate = best["candidate"]
+            source_mask[row, col] = False
+            candidate["mask"][row, col] = True
+            source_tile_count -= 1
+            stats["moved_tiles"] += 1
+            stats["moves"].append(
+                {
+                    "tile": [row, col],
+                    "from_waypoint": source["index"],
+                    "to_waypoint": candidate["index"],
+                    "from_step": int(_to_serializable(source["entry"].get("step", source["index"]))),
+                    "to_step": int(_to_serializable(candidate["entry"].get("step", candidate["index"]))),
+                    "kind": source["kind"],
+                    "from_distance_tiles": source_distance,
+                    "to_distance_tiles": best["candidate_distance"],
+                    "to_connectivity": best["candidate_connectivity"],
+                }
+            )
+
+    for workspace in workspaces:
+        _set_terrain_modification_mask(workspace["entry"], workspace["mask"])
+
+    return plan, stats
+
+
 def _mask_closest_distance(candidate: np.ndarray, rows_cols: np.ndarray) -> float:
     if rows_cols.size == 0:
         return float("inf")
@@ -525,18 +710,242 @@ def _set_entry_pose(
     return old_base, new_pos, movement_tiles
 
 
+def _set_entry_pose_and_yaw(
+    entry: dict[str, Any],
+    pos_base: np.ndarray,
+    angle_base: float | None,
+) -> None:
+    agent_state = entry.setdefault("agent_state", {})
+    agent_state["pos_base"] = [float(pos_base[0]), float(pos_base[1])]
+    if angle_base is not None:
+        agent_state["angle_base"] = float(angle_base)
+        agent_state.pop("angle_base_rad_override", None)
+
+
 def _paired_dig_dump_indices(plan: list[dict[str, Any]]) -> tuple[dict[int, int], dict[int, int]]:
     dig_to_dump = {}
     dump_to_dig = {}
-    pending_dig = None
+    pending_digs: dict[int, int] = {}
     for idx, entry in enumerate(plan):
+        agent_key = _entry_agent_key(entry)
         if _is_load_transition(entry):
-            pending_dig = idx
-        elif pending_dig is not None and _is_unload_transition(entry):
+            pending_digs[agent_key] = idx
+        elif agent_key in pending_digs and _is_unload_transition(entry):
+            pending_dig = pending_digs.pop(agent_key)
             dig_to_dump[pending_dig] = idx
             dump_to_dig[idx] = pending_dig
-            pending_dig = None
     return dig_to_dump, dump_to_dig
+
+
+def _load_trench_axes(map_path: Path) -> np.ndarray:
+    metadata_dir = map_path / "metadata"
+    candidates = [metadata_dir / "map.json", map_path / "metadata.json"]
+    if metadata_dir.exists():
+        candidates.extend(sorted(metadata_dir.glob("*.json")))
+
+    axes = []
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen or not candidate.exists():
+            continue
+        seen.add(candidate)
+        try:
+            with candidate.open("r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        except Exception:
+            continue
+        for axis in metadata.get("axes_ABC", []) or []:
+            try:
+                if isinstance(axis, dict):
+                    abc = [float(axis["A"]), float(axis["B"]), float(axis["C"])]
+                else:
+                    abc = [float(axis[0]), float(axis[1]), float(axis[2])]
+            except Exception:
+                continue
+            if np.linalg.norm(abc[:2]) > 1e-6 and not np.allclose(abc, -97.0):
+                axes.append(abc)
+
+    if not axes:
+        return np.zeros((0, 3), dtype=np.float64)
+    return np.asarray(axes, dtype=np.float64)
+
+
+def _trench_axis_distance(pos_row_col: np.ndarray, axis_abc: np.ndarray) -> float:
+    # Terra trench metadata follows A*col + B*row + C = 0 for pos_base=[row, col].
+    normal_row_col = np.asarray([axis_abc[1], axis_abc[0]], dtype=np.float64)
+    denom = float(np.linalg.norm(normal_row_col))
+    if denom <= 1e-9:
+        return float("inf")
+    return float(abs((normal_row_col @ pos_row_col + axis_abc[2]) / denom))
+
+
+def _project_to_trench_axis(pos_row_col: np.ndarray, axis_abc: np.ndarray) -> np.ndarray:
+    normal_row_col = np.asarray([axis_abc[1], axis_abc[0]], dtype=np.float64)
+    denom_sq = float(normal_row_col @ normal_row_col)
+    if denom_sq <= 1e-9:
+        return pos_row_col.copy()
+    signed_scaled = (normal_row_col @ pos_row_col + axis_abc[2]) / denom_sq
+    return pos_row_col - signed_scaled * normal_row_col
+
+
+def _axis_tangent_angle(axis_abc: np.ndarray) -> float:
+    # axes_ABC is A*x + B*y + C = 0 with x=col and y=row in Terra maps.
+    # A tangent has (drow, dcol)=(-A, B). Schema/map yaw uses +row as 0 rad
+    # and +col as pi/2 rad, while Terra buckets export as bucket_rad + pi/2.
+    schema_yaw = math.atan2(axis_abc[1], -axis_abc[0])
+    return _wrap_to_pi(schema_yaw - math.pi / 2.0)
+
+
+def _angle_bucket_to_axis_rad(value: Any, n_bins: int) -> float:
+    return _wrap_to_pi(float(_to_serializable(value)) * 2.0 * math.pi / float(n_bins))
+
+
+def _axis_angle_diff(angle_a: float, angle_b: float) -> float:
+    diff = abs(_wrap_to_pi(angle_a - angle_b))
+    return float(min(diff, math.pi - diff))
+
+
+def _nearest_axis_yaw_bucket(axis_abc: np.ndarray, current_bucket: float, n_bins: int) -> int:
+    current_rad = _angle_bucket_to_axis_rad(current_bucket, n_bins)
+    tangent = _axis_tangent_angle(axis_abc)
+    candidates = []
+    for angle in (tangent, tangent + math.pi):
+        bucket = int(round((angle % (2.0 * math.pi)) / (2.0 * math.pi) * n_bins)) % n_bins
+        candidates.append((bucket, _axis_angle_diff(_angle_bucket_to_axis_rad(bucket, n_bins), current_rad)))
+    return min(candidates, key=lambda item: item[1])[0]
+
+
+def _capped_yaw_bucket(current_bucket: float, target_bucket: int, n_bins: int, max_steps: int) -> float:
+    current = int(round(current_bucket)) % n_bins
+    delta = (target_bucket - current + n_bins // 2) % n_bins - n_bins // 2
+    delta = int(np.clip(delta, -max_steps, max_steps))
+    return float((current + delta) % n_bins)
+
+
+def _fresh_trench_dig(entry: dict[str, Any]) -> bool:
+    if entry.get("dig_type") == "lift_dug_dirt":
+        return False
+    return _is_load_transition(entry)
+
+
+def _select_trench_axis(
+    axes: np.ndarray,
+    entry: dict[str, Any],
+    n_angles: int,
+    ambiguity_margin_tiles: float,
+    map_shape: tuple[int, int],
+) -> np.ndarray:
+    agent_state = entry.get("agent_state", {}) or {}
+    pos = np.asarray(agent_state.get("pos_base", [0.0, 0.0]), dtype=np.float64)
+    mask = _workspace_mask_for_adjustment(entry, map_shape)
+    rows_cols = np.argwhere(mask).astype(np.float64)
+    reference = rows_cols.mean(axis=0) if rows_cols.size else pos
+    distances = np.asarray([_trench_axis_distance(reference, axis) for axis in axes])
+    order = np.argsort(distances)
+    if len(order) <= 1:
+        return axes[order[0]]
+
+    best_idx = order[0]
+    second_idx = order[1]
+    if distances[second_idx] - distances[best_idx] > ambiguity_margin_tiles:
+        return axes[best_idx]
+
+    current_bucket = float(agent_state.get("angle_base", 0.0))
+    current_rad = _angle_bucket_to_axis_rad(current_bucket, n_angles)
+    tied = order[distances[order] <= distances[best_idx] + ambiguity_margin_tiles]
+    return min(
+        (axes[i] for i in tied),
+        key=lambda axis: _axis_angle_diff(_axis_tangent_angle(axis), current_rad),
+    )
+
+
+def _trench_aligned_pose(
+    entry: dict[str, Any],
+    axis: np.ndarray,
+    n_angles: int,
+    max_pos_delta_tiles: float,
+    max_yaw_delta_steps: int,
+) -> tuple[np.ndarray, float, bool]:
+    agent_state = entry.get("agent_state", {}) or {}
+    pos = np.asarray(agent_state.get("pos_base", [0.0, 0.0]), dtype=np.float64)
+    projected = _project_to_trench_axis(pos, axis)
+    delta = projected - pos
+    delta_norm = float(np.linalg.norm(delta))
+    limited = False
+    if max_pos_delta_tiles <= 0.0:
+        projected = pos.copy()
+        limited = delta_norm > 1e-9
+    elif delta_norm > max_pos_delta_tiles:
+        projected = pos + delta * (max_pos_delta_tiles / delta_norm)
+        limited = True
+
+    current_yaw = float(agent_state.get("angle_base", 0.0))
+    target_yaw = _nearest_axis_yaw_bucket(axis, current_yaw, n_angles)
+    yaw = _capped_yaw_bucket(current_yaw, target_yaw, n_angles, max(0, int(max_yaw_delta_steps)))
+    return projected, yaw, limited
+
+
+def _postprocess_trench_align(
+    plan: list[dict[str, Any]],
+    map_path: Path,
+    env_cfgs: Any,
+    max_pos_delta_tiles: float,
+    max_yaw_delta_steps: int,
+    ambiguity_margin_tiles: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    _, occupancy, _ = _load_single_map_arrays(map_path)
+    axes = _load_trench_axes(map_path)
+    stats = {
+        "axes": int(len(axes)),
+        "aligned_digs": 0,
+        "dump_pose_matched": 0,
+        "pos_delta_limited": 0,
+        "skipped_no_axes": 0,
+        "skipped_non_fresh_dig": 0,
+        "skipped_missing_base": 0,
+    }
+    if len(axes) == 0:
+        stats["skipped_no_axes"] = len(plan)
+        return plan, stats
+
+    agent_cfg = getattr(env_cfgs, "agent", None)
+    n_angles = max(1, int(round(_scalar_float(getattr(agent_cfg, "angles_base", None), 12))))
+    dig_to_dump, _ = _paired_dig_dump_indices(plan)
+
+    for dig_idx, dump_idx in dig_to_dump.items():
+        dig_entry = plan[dig_idx]
+        agent_state = dig_entry.get("agent_state", {}) or {}
+        if "pos_base" not in agent_state:
+            stats["skipped_missing_base"] += 1
+            continue
+
+        if _fresh_trench_dig(dig_entry):
+            axis = _select_trench_axis(
+                axes,
+                dig_entry,
+                n_angles,
+                ambiguity_margin_tiles,
+                occupancy.shape,
+            )
+            pos, yaw, limited = _trench_aligned_pose(
+                dig_entry,
+                axis,
+                n_angles,
+                max_pos_delta_tiles,
+                max_yaw_delta_steps,
+            )
+            _set_entry_pose_and_yaw(dig_entry, pos, yaw)
+            stats["aligned_digs"] += 1
+            stats["pos_delta_limited"] += int(limited)
+        else:
+            pos = np.asarray(agent_state["pos_base"], dtype=np.float64)
+            yaw = float(agent_state["angle_base"]) if "angle_base" in agent_state else None
+            stats["skipped_non_fresh_dig"] += 1
+
+        _set_entry_pose_and_yaw(plan[dump_idx], pos, yaw)
+        stats["dump_pose_matched"] += 1
+
+    return plan, stats
 
 
 def _postprocess_base_positions(
@@ -830,7 +1239,7 @@ def _render_plan_gif(
     If the plan has 0 waypoints, render a single frame of the base map so the CLI
     can still produce an artifact without failing.
     """
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
 
     target, occupancy, dumpability = _load_single_map_arrays(map_path)
     h, w = target.shape
@@ -879,7 +1288,40 @@ def _render_plan_gif(
         rgb[(~occupancy) & (~dumpability)] = (235, 235, 235)
         return rgb
 
-    def render_frame(entry):
+    def step_text_font():
+        for font_name in ("DejaVuSans-Bold.ttf", "Arial.ttf"):
+            try:
+                return ImageFont.truetype(font_name, STEP_TEXT_FONT_SIZE)
+            except OSError:
+                continue
+        try:
+            return ImageFont.load_default(size=STEP_TEXT_FONT_SIZE)
+        except TypeError:
+            return ImageFont.load_default()
+
+    def step_text_xy(img, text, font):
+        bbox = ImageDraw.Draw(img).textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        padding = int(STEP_TEXT_PADDING)
+
+        if isinstance(STEP_TEXT_POSITION, tuple):
+            return int(STEP_TEXT_POSITION[0]), int(STEP_TEXT_POSITION[1])
+
+        positions = {
+            "top_left": (padding, padding),
+            "top_right": (img.width - text_width - padding, padding),
+            "bottom_left": (padding, img.height - text_height - padding),
+            "bottom_right": (
+                img.width - text_width - padding,
+                img.height - text_height - padding,
+            ),
+        }
+        return positions.get(str(STEP_TEXT_POSITION), positions["top_right"])
+
+    step_font = step_text_font()
+
+    def render_frame(entry, waypoint_nr: int | None = None):
         pos = entry.get("agent_state", {}).get("pos_base", None)
         agent_row_col = (float(pos[0]), float(pos[1])) if pos is not None else None
 
@@ -926,12 +1368,26 @@ def _render_plan_gif(
                 width=1,
             )
 
-        step = entry.get("step")
-        if step is not None:
-            draw.text((4, 4), f"step {step}", fill=(0, 0, 0))
+        if waypoint_nr is not None:
+            step = entry.get("step")
+            text = f"waypoint {waypoint_nr}"
+            # text = f"step {step}"
+            x, y = step_text_xy(img, text, step_font)
+            bbox = draw.textbbox((x, y), text, font=step_font)
+            bg_pad = max(2, int(STEP_TEXT_PADDING) // 2)
+            draw.rectangle(
+                (
+                    bbox[0] - bg_pad,
+                    bbox[1] - bg_pad,
+                    bbox[2] + bg_pad,
+                    bbox[3] + bg_pad,
+                ),
+                fill=STEP_TEXT_BACKGROUND,
+            )
+            draw.text((x, y), text, fill=STEP_TEXT_FILL, font=step_font)
         return img
 
-    frames = [render_frame(e) for e in plan] if plan else [render_frame({})]
+    frames = [render_frame(e, idx + 1) for idx, e in enumerate(plan)] if plan else [render_frame({})]
     durations = duration_ms
     if len(plan) > 1:
         steps = [int(entry.get("step", idx)) for idx, entry in enumerate(plan)]
@@ -1222,6 +1678,8 @@ def extract_plan(
         action_map_after = _full_action_map(timestep_after)
         acting_agent_state_after = timestep_after.state.agent.agent_states[agent_index]
         loaded_after = bool(np.array(acting_agent_state_after.loaded).flatten()[0])
+        loaded_before_amount = int(np.array(acting_agent_state_before.loaded).flatten()[0])
+        loaded_after_amount = int(np.array(acting_agent_state_after.loaded).flatten()[0])
 
         changed_tiles = action_map_before != action_map_after
         dug_mask = (action_map_after < 0)
@@ -1256,6 +1714,80 @@ def extract_plan(
 
         changed_count = int(np.asarray(jnp.sum(changed_tiles)))
         print(f"DO action at step {t_counter} by agent {agent_index} ({agent_type_str}){action_type_label}, {changed_count} tiles modified")
+        state_after = _single_env_state(timestep_after)
+        target_map = jnp.squeeze(timestep_after.state.world.target_map.map)
+        target_dig_mask = target_map < 0
+        target_total = int(np.asarray(jnp.sum(target_dig_mask)))
+        target_dug = int(
+            np.asarray(jnp.sum(jnp.logical_and(target_dig_mask, action_map_after <= target_map)))
+        )
+        target_unmet_mask = jnp.logical_and(target_dig_mask, action_map_after > target_map)
+        target_unmet = int(np.asarray(jnp.sum(target_unmet_mask)))
+        target_zero = int(
+            np.asarray(jnp.sum(jnp.logical_and(target_unmet_mask, action_map_after == 0)))
+        )
+        target_dirt = int(
+            np.asarray(jnp.sum(jnp.logical_and(target_unmet_mask, action_map_after > 0)))
+        )
+        excess_above_target = int(
+            np.asarray(
+                jnp.sum(
+                    jnp.where(
+                        target_dig_mask,
+                        jnp.maximum(action_map_after - target_map, 0),
+                        0,
+                    )
+                )
+            )
+        )
+        dump_zone_mask = target_map > 0
+        has_dump_zone = bool(np.asarray(jnp.any(dump_zone_mask)))
+        positive_dirt_mask = action_map_after > 0
+        positive_dirt_tiles = int(np.asarray(jnp.sum(positive_dirt_mask)))
+        dump_status = f"positive_dirt={positive_dirt_tiles}"
+        if has_dump_zone:
+            expanded_dump_zone = state_after._dilate_mask(
+                dump_zone_mask,
+                kernel_size=3,
+            )
+            obstacle_mask = jnp.squeeze(
+                timestep_after.state.world.padding_mask.map
+            ) == 1
+            allowed_dump_zone = jnp.logical_and(
+                expanded_dump_zone,
+                jnp.logical_not(obstacle_mask),
+            )
+            dirt_outside_dump = jnp.logical_and(
+                positive_dirt_mask,
+                jnp.logical_not(allowed_dump_zone),
+            )
+            dirt_outside_dump_tiles = int(np.asarray(jnp.sum(dirt_outside_dump)))
+            dirt_outside_dump_volume = int(
+                np.asarray(jnp.sum(jnp.where(dirt_outside_dump, action_map_after, 0)))
+            )
+            dump_status += (
+                f", dirt_outside_dump={dirt_outside_dump_tiles} tiles"
+                f"/vol {dirt_outside_dump_volume}"
+            )
+        map_delta = int(np.asarray(jnp.sum(action_map_after) - jnp.sum(action_map_before)))
+        loaded_delta = loaded_after_amount - loaded_before_amount
+        volume_parts = [
+            f"loaded={loaded_before_amount}->{loaded_after_amount}",
+            f"map_delta={map_delta:+d}",
+        ]
+        if loaded_delta > 0:
+            volume_parts.append(f"lifted={loaded_delta}")
+        elif loaded_delta < 0:
+            volume_parts.append(f"dumped={-loaded_delta}")
+        print(
+            "  progress: "
+            f"target_dug={target_dug}/{target_total}, "
+            f"target_unmet={target_unmet} "
+            f"(zero={target_zero}, dirt={target_dirt}), "
+            f"excess_above_target={excess_above_target}, "
+            f"{dump_status}, "
+            + ", ".join(volume_parts)
+        )
         should_print_diagnostics = (
             loaded_before
             and loaded_after
@@ -1578,11 +2110,47 @@ def main():
         help="Render every Nth step into the rollout GIF (default: 1).",
     )
     parser.add_argument(
+        "--trench_align",
+        action="store_true",
+        help=(
+            "After DO extraction/filtering, locally align fresh dig base pose/yaw "
+            "to the nearest trench axis and copy that pose to the paired dump."
+        ),
+    )
+    parser.add_argument(
+        "--trench_align_max_pos_delta_tiles",
+        type=float,
+        default=1.5,
+        help="Maximum local base-position snap in Terra tile units for --trench_align.",
+    )
+    parser.add_argument(
+        "--trench_align_max_yaw_delta_steps",
+        type=int,
+        default=12,
+        help="Maximum base yaw bucket change for --trench_align.",
+    )
+    parser.add_argument(
+        "--trench_align_ambiguity_margin_tiles",
+        type=float,
+        default=0.75,
+        help="At ambiguous trench junctions, prefer current-yaw alignment within this distance margin.",
+    )
+    parser.add_argument(
         "--postprocess_base_positions",
         action="store_true",
         help=(
             "After DO extraction/filtering, move each recorded base position slightly "
             "toward the middle of its valid min/max workspace reach band."
+        ),
+    )
+    parser.add_argument(
+        "--no_reassign_isolated_workspace_tiles",
+        dest="reassign_isolated_workspace_tiles",
+        action="store_false",
+        default=True,
+        help=(
+            "Disable the default-on final pass that moves isolated workspace tiles "
+            "to a closer, better-connected compatible workspace."
         ),
     )
     parser.add_argument(
@@ -1782,6 +2350,28 @@ def main():
             f"{filter_stats['dropped_empty_unchanged']} empty/unchanged dropped."
         )
 
+    if args.trench_align:
+        postprocess_env_cfgs = env.update_env_cfgs(env_cfgs)
+        plan, trench_align_stats = _postprocess_trench_align(
+            plan,
+            Path(args.map_path),
+            postprocess_env_cfgs,
+            max_pos_delta_tiles=args.trench_align_max_pos_delta_tiles,
+            max_yaw_delta_steps=args.trench_align_max_yaw_delta_steps,
+            ambiguity_margin_tiles=args.trench_align_ambiguity_margin_tiles,
+        )
+        if trench_align_stats["axes"] == 0:
+            print("Trench align requested, but no axes_ABC metadata was found; plan left unchanged.")
+        else:
+            print(
+                "Trench align post-processing: "
+                f"{trench_align_stats['aligned_digs']} fresh digs aligned using "
+                f"{trench_align_stats['axes']} axes; "
+                f"{trench_align_stats['dump_pose_matched']} paired dump poses matched "
+                f"(pos limited: {trench_align_stats['pos_delta_limited']}, "
+                f"non-fresh skipped: {trench_align_stats['skipped_non_fresh_dig']})."
+            )
+
     if args.postprocess_base_positions:
         postprocess_env_cfgs = env.update_env_cfgs(env_cfgs)
         plan, base_adjust_stats = _postprocess_base_positions(
@@ -1878,6 +2468,30 @@ def main():
                 f"waypoint={skipped['waypoint_index']} step={skipped['step']} "
                 f"reason={skipped['reason']}: {before_text}"
                 f"{trial_text}{range_text}{allowed_text}"
+            )
+
+    if args.reassign_isolated_workspace_tiles:
+        postprocess_env_cfgs = env.update_env_cfgs(env_cfgs)
+        plan, reassign_stats = _postprocess_reassign_isolated_workspace_tiles(
+            plan,
+            Path(args.map_path),
+            postprocess_env_cfgs,
+        )
+        print(
+            "Reassigned isolated workspace tiles: "
+            f"{reassign_stats['moved_tiles']}/{reassign_stats['considered_tiles']} moved "
+            f"({reassign_stats['skipped_no_better_workspace']} no better workspace, "
+            f"{reassign_stats['skipped_empty_source']} would empty source, "
+            f"{reassign_stats['skipped_missing_base']} missing base)."
+        )
+        for move in reassign_stats["moves"]:
+            print(
+                "  workspace tile reassigned "
+                f"tile={move['tile']} kind={move['kind']} "
+                f"waypoint={move['from_waypoint']} step={move['from_step']} -> "
+                f"waypoint={move['to_waypoint']} step={move['to_step']} "
+                f"dist={move['from_distance_tiles']:.3f}->{move['to_distance_tiles']:.3f} "
+                f"connectivity={move['to_connectivity']}"
             )
 
     # Save plan

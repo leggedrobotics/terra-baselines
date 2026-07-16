@@ -20,6 +20,9 @@ Environment overrides (optional):
   N_STEPS=400           Max rollout steps (default: 400)
   SEED=0               RNG seed (default: 0)
   ROLLOUT_GIF_EVERY=2   Render every Nth step in rollout GIF (default: 2)
+  TRENCH_ALIGN=1        Locally align saved dig pose/yaw to trench axes and match paired dump pose (default: 0)
+  TRENCH_ALIGN_MAX_POS_DELTA_TILES=1.5  Max position snap for trench align
+  TRENCH_ALIGN_MAX_YAW_DELTA_STEPS=2    Max base yaw bucket change for trench align
   CONDA_ENV=terra       Conda env name (default: terra)
   PYTHONNOUSERSITE=1    Recommended to avoid ~/.local leakage
 USAGE
@@ -47,6 +50,9 @@ CONDA_ENV="${CONDA_ENV:-terra}"
 N_STEPS="${N_STEPS:-400}"
 SEED="${SEED:-0}"
 ROLLOUT_GIF_EVERY="${ROLLOUT_GIF_EVERY:-2}"
+TRENCH_ALIGN="${TRENCH_ALIGN:-0}"
+TRENCH_ALIGN_MAX_POS_DELTA_TILES="${TRENCH_ALIGN_MAX_POS_DELTA_TILES:-1.5}"
+TRENCH_ALIGN_MAX_YAW_DELTA_STEPS="${TRENCH_ALIGN_MAX_YAW_DELTA_STEPS:-2}"
 
 POLICY_PKL="${2:-}"
 if [[ -z "$POLICY_PKL" ]]; then
@@ -82,6 +88,15 @@ echo "Map:    $MAP_DIR"
 echo "Policy: $POLICY_PKL"
 echo "Out:    $OUT_PKL"
 
+EXTRA_ARGS=()
+if [[ "$TRENCH_ALIGN" == "1" || "$TRENCH_ALIGN" == "true" || "$TRENCH_ALIGN" == "TRUE" ]]; then
+  EXTRA_ARGS+=(
+    --trench_align
+    --trench_align_max_pos_delta_tiles "$TRENCH_ALIGN_MAX_POS_DELTA_TILES"
+    --trench_align_max_yaw_delta_steps "$TRENCH_ALIGN_MAX_YAW_DELTA_STEPS"
+  )
+fi
+
 conda run -n "$CONDA_ENV" env PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}" \
   python -u -s "$REPO_ROOT/isaac_sim/extract_map.py" \
     --policy_path "$POLICY_PKL" \
@@ -92,7 +107,8 @@ conda run -n "$CONDA_ENV" env PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}" \
     --serialize \
     --render_plan_gif \
     --render_rollout_gif \
-    --rollout_gif_every "$ROLLOUT_GIF_EVERY"
+    --rollout_gif_every "$ROLLOUT_GIF_EVERY" \
+    "${EXTRA_ARGS[@]}"
 
 echo "Done."
 echo "Wrote:"

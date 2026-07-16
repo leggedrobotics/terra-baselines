@@ -47,6 +47,12 @@ cd <path_to_terra_baselines>
 N_STEPS=800 SEED=7 ROLLOUT_GIF_EVERY=2 ./isaac_sim/moleworks_plan_on_map.sh <map_dir>
 ```
 
+Enable local trench-axis pose cleanup on the saved plan:
+
+```bash
+TRENCH_ALIGN=1 ./isaac_sim/moleworks_plan_on_map.sh <map_dir>
+```
+
 Artifacts written to `MAP_DIR/`:
 - `terra_plan.pkl`
 - `terra_plan.json`
@@ -88,6 +94,7 @@ conda run -n terra python -u -s isaac_sim/extract_map.py \
 - `--render_plan_gif`: write a lightweight DO-waypoints plan GIF.
 - `--render_rollout_gif`: write a full rollout GIF using Terra’s renderer.
 - `--rollout_gif_every`: subsample rollout frames for smaller GIFs.
+- `--trench_align`: post-process saved DO waypoints by locally snapping fresh-dig `pos_base` and `angle_base` toward the nearest current trench axis from `metadata/*` `axes_ABC`. The corresponding dump waypoint is forced to reuse its dig pose.
 
 ### Output naming
 

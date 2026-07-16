@@ -34,13 +34,14 @@ cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
 
 python train_mixed.py \
     --config solo_excavator \
-    --model_size base \
+    --model_size medium \
     --model_core mlp \
+    --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-07-14-17-30-39.pkl
     # --num_envs_per_device 128 \
     # --map_path /cluster/project/rsl/alesweber/TerraProject/terra-baselines/inference/maps/map_13 \
     # --replay_map_count 15 --target_map_repeat 10 \
     # --total_timesteps 5_000_000_000 \
-    # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-07-03-12-17-11.pkl
+    # --resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-07-07-12-56-06.pkl
     #--resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-05-21-17-38-51-best_rectangles.pkl \
     #--no-load-env-from-checkpoint
     

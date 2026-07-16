@@ -833,18 +833,21 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         else env_defaults.enforce_foundation_border_alignment
     )
 
+    model_size = config.model_size if hasattr(config, "model_size") else "unknown"
+
     tags = [
         "mixed-agents",
         "unified-network",
         f"config:{_tag_value(config.config_name or 'manual')}",
         f"agents:{'-'.join(agent_type_names.get(int(t), str(t)) for t in agent_types)}",
         f"actions:{'-'.join(action_type_names.get(int(t), str(t)) for t in action_types)}",
+        f"model-size:{_tag_value(model_size)}",
         f"dump-min-free-fraction:{_tag_value(dump_min_free_fraction)}",
         f"move-tiles:{_tag_value(env_defaults.agent.move_tiles)}",
         f"dig-radius-tiles:{_tag_value(env_defaults.agent.dig_radius_tiles)}",
         "edge-align:on" if edge_align_enabled else "edge-align:off",
-        "terminal:dump50-inner25-edge25",
-        "edge-bonus:flat",
+        "terminal:digdump60-inner20-edge20",
+        "terminal-fallback:digdump60-dig40",
     ]
 
     slurm_job_id = os.getenv("SLURM_JOB_ID") or os.getenv("SLURM_JOBID")
