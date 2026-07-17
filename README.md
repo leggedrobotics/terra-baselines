@@ -176,6 +176,13 @@ Evaluate your checkpoint with standard metrics using
 DATASET_PATH=/path/to/dataset DATASET_SIZE=<num_maps_per_type> python eval.py -run <checkpoint_path> -n <num_environments> -steps <num_steps>
 ```
 
+`eval_mcts.py --use-mcts` additionally requires `mctx==0.0.5`. Install it
+without allowing pip to replace the repository's validated JAX/CUDA stack:
+
+```bash
+python -m pip install --no-deps mctx==0.0.5
+```
+
 ## Visualize
 Visualize the rollout of your policy with
 ```

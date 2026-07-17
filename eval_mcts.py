@@ -23,7 +23,7 @@ import jax.random as jrandom
 from tensorflow_probability.substrates import jax as tfp
 
 from utils.models import load_neural_network
-from utils.helpers import load_pkl_object
+from utils.helpers import load_pkl_object, replicate_checkpoint_env_config
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from terra.env import TerraEnvBatch
 from terra.config import BatchConfig
@@ -79,6 +79,63 @@ def fix_env_cfg_dtypes(env_cfgs):
     return env_cfgs
 
 
+def make_mcts_recurrent_fn(model, env, config):
+    """Build the mctx recurrent_fn (exposed for testing)."""
+    if mctx is None:
+        raise ImportError(
+            f"mctx is required for MCTS eval but is not installed: {_MCTX_IMPORT_ERR}"
+        )
+
+    num_envs = config.num_test_rollouts
+
+    def apply_model(params, inp):
+        val, logits_pi = model.apply(params, inp)
+        pi = tfp.distributions.Categorical(logits=logits_pi)
+        return val, pi
+
+    def recurrent_fn(params, rng, actions, embedding):
+        timestep, prev_actions, absorbed = embedding
+        rng, rng_env = jrandom.split(rng)
+        rng_envs = jrandom.split(rng_env, num_envs)
+
+        actions = actions.astype(jnp.int32)
+        terra_actions = wrap_action(actions, env.batch_cfg.action_type)
+        next_timestep = env.step(timestep, terra_actions, rng_envs)
+        next_obs = next_timestep.observation
+
+        next_prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
+        next_prev_actions = next_prev_actions.at[:, 0].set(actions)
+        # Match training: action history is cleared at episode boundaries.
+        next_prev_actions = jnp.where(
+            next_timestep.done[:, None],
+            jnp.zeros_like(next_prev_actions),
+            next_prev_actions,
+        )
+
+        inp = obs_to_model_input(next_obs, next_prev_actions, config)
+        value, dist = apply_model(params, inp)
+
+        # Terminal states are absorbing inside the search tree. env.step
+        # auto-resets done envs to a fresh episode, so without this a branch
+        # that terminates (task done OR timeout) would keep simulating the
+        # reset episode and collect its rewards. The terminal step's own
+        # reward still counts; everything below it is zeroed.
+        step_done = next_timestep.done
+        next_absorbed = jnp.logical_or(absorbed, step_done)
+        reward = jnp.where(absorbed, 0.0, next_timestep.reward)
+        discount = jnp.where(next_absorbed, 0.0, config.gamma)
+        leaf_value = jnp.where(next_absorbed, 0.0, value[:, 0])
+
+        return mctx.RecurrentFnOutput(
+            reward=reward,
+            discount=discount,
+            prior_logits=dist.logits,
+            value=leaf_value,
+        ), (next_timestep, next_prev_actions, next_absorbed)
+
+    return recurrent_fn
+
+
 def make_mcts_step_fn(model, env, config):
     """Create a JIT-compiled MCTS step function using gumbel_muzero_policy."""
     if mctx is None:
@@ -93,32 +150,7 @@ def make_mcts_step_fn(model, env, config):
         pi = tfp.distributions.Categorical(logits=logits_pi)
         return val, pi
 
-    def recurrent_fn(params, rng, actions, embedding):
-        timestep, prev_actions = embedding
-        rng, rng_env = jrandom.split(rng)
-        rng_envs = jrandom.split(rng_env, num_envs)
-
-        actions = actions.astype(jnp.int32)
-        terra_actions = wrap_action(actions, env.batch_cfg.action_type)
-        next_timestep = env.step(timestep, terra_actions, rng_envs)
-        next_obs = next_timestep.observation
-
-        next_prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
-        next_prev_actions = next_prev_actions.at[:, 0].set(actions)
-
-        inp = obs_to_model_input(next_obs, next_prev_actions, config)
-        value, dist = apply_model(params, inp)
-
-        reward = next_timestep.reward
-        done = next_timestep.done
-        discount = (1.0 - done) * config.gamma
-
-        return mctx.RecurrentFnOutput(
-            reward=reward,
-            discount=discount,
-            prior_logits=dist.logits,
-            value=value[:, 0],
-        ), (next_timestep, next_prev_actions)
+    recurrent_fn = make_mcts_recurrent_fn(model, env, config)
 
     @jax.jit
     def mcts_step(params, rng, timestep, prev_actions):
@@ -131,7 +163,11 @@ def make_mcts_step_fn(model, env, config):
         root = mctx.RootFnOutput(
             prior_logits=dist.logits,
             value=value[:, 0],
-            embedding=(timestep, prev_actions),
+            embedding=(
+                timestep,
+                prev_actions,
+                jnp.zeros_like(timestep.done, dtype=jnp.bool_),
+            ),
         )
 
         rng, rng_mcts = jrandom.split(rng)
@@ -153,6 +189,12 @@ def make_mcts_step_fn(model, env, config):
 
         next_prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
         next_prev_actions = next_prev_actions.at[:, 0].set(actions)
+        # Match training: action history is cleared at episode boundaries.
+        next_prev_actions = jnp.where(
+            next_timestep.done[:, None],
+            jnp.zeros_like(next_prev_actions),
+            next_prev_actions,
+        )
 
         return rng, next_timestep, next_prev_actions, actions, ppo_action, mcts_action
 
@@ -267,8 +309,18 @@ def rollout_episode(
 
     t_counter = 0
     reward_seq = []
-    episode_done_once = None
-    episode_length = None
+    episode_terminated_once = jnp.zeros(
+        rl_config.num_test_rollouts, dtype=jnp.bool_
+    )
+    episode_succeeded_once = jnp.zeros_like(episode_terminated_once)
+    episode_length = jnp.zeros(
+        rl_config.num_test_rollouts, dtype=jnp.int32
+    )
+    terminal_total_completion = jnp.zeros(
+        rl_config.num_test_rollouts, dtype=jnp.float32
+    )
+    terminal_dig_completion = jnp.zeros_like(terminal_total_completion)
+    terminal_dump_completion = jnp.zeros_like(terminal_total_completion)
     obs_seq = {}
 
     per_agent_move_m = {
@@ -287,16 +339,21 @@ def rollout_episode(
     EXCAVATOR_TYPE = 0
 
     mcts_ppo_diff_count = 0
+    mcts_decision_count = 0
 
     start_time = time.time()
     while True:
         obs_seq = _append_to_obs(obs, obs_seq)
+        active_env_mask = ~episode_terminated_once
 
         if use_mcts:
             rng, timestep, prev_actions, action, ppo_act, mcts_act = mcts_step(
                 model_params, rng, timestep, prev_actions
             )
-            mcts_ppo_diff_count += int((np.array(ppo_act) != np.array(mcts_act)).sum())
+            disagreements = (np.array(ppo_act) != np.array(mcts_act))
+            active_host = np.asarray(active_env_mask)
+            mcts_ppo_diff_count += int((disagreements & active_host).sum())
+            mcts_decision_count += int(active_host.sum())
         else:
             rng, rng_act, rng_step = jrandom.split(rng, 3)
             obs_model = obs_to_model_input(timestep.observation, prev_actions, rl_config)
@@ -312,10 +369,36 @@ def rollout_episode(
             timestep = env.step(
                 timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
             )
+            # Match training: action history is cleared at episode boundaries.
+            prev_actions = jnp.where(
+                timestep.done[:, None], jnp.zeros_like(prev_actions), prev_actions
+            )
 
-        reward = timestep.reward
+        reward = jnp.where(active_env_mask, timestep.reward, 0.0)
         next_obs = timestep.observation
-        done = timestep.info["task_done"]
+        step_done = timestep.done
+        step_succeeded = timestep.info["task_done"]
+
+        reward_components = timestep.info.get("reward_components", {})
+        terminal_total_completion = jnp.where(
+            active_env_mask & step_done,
+            reward_components.get(
+                "total_dig_dump_completion", terminal_total_completion
+            ),
+            terminal_total_completion,
+        )
+        terminal_dig_completion = jnp.where(
+            active_env_mask & step_done,
+            reward_components.get("dig_completion_total", terminal_dig_completion),
+            terminal_dig_completion,
+        )
+        terminal_dump_completion = jnp.where(
+            active_env_mask & step_done,
+            reward_components.get(
+                "dump_completion_action_map", terminal_dump_completion
+            ),
+            terminal_dump_completion,
+        )
 
         # Per-agent accumulation (eval_mixed.py parity)
         try:
@@ -323,10 +406,6 @@ def rollout_episode(
             active_pos_batch = agent_states_batch[:, 0, 0:2]
             active_type_batch = agent_states_batch[:, 0, AGENT_TYPE_IDX].astype(jnp.int32)
 
-            if episode_done_once is None:
-                active_env_mask = jnp.ones(active_type_batch.shape[0], dtype=jnp.bool_)
-            else:
-                active_env_mask = ~episode_done_once
             active_env_f = active_env_mask.astype(jnp.float32)
             active_env_i = active_env_mask.astype(jnp.int32)
 
@@ -358,39 +437,36 @@ def rollout_episode(
 
         reward_seq.append(reward)
         t_counter += 1
-        if episode_done_once is None:
-            episode_done_once = done
-        if episode_length is None:
-            episode_length = jnp.zeros_like(done, dtype=jnp.int32)
-        episode_done_once = episode_done_once | done
-        episode_length += ~episode_done_once
+        episode_length += active_env_mask.astype(jnp.int32)
+        episode_succeeded_once |= active_env_mask & step_succeeded
+        episode_terminated_once |= active_env_mask & step_done
 
         if t_counter % 25 == 0:
             elapsed = time.time() - start_time
             sps = t_counter / max(elapsed, 1e-6)
             print(
                 f"[eval_mcts] step {t_counter}/{max_frames} | {sps:.1f} sps | "
-                f"done {int(episode_done_once.sum())}/{rl_config.num_test_rollouts}"
+                f"done {int(episode_terminated_once.sum())}/{rl_config.num_test_rollouts}"
             )
 
-        if jnp.all(done).item() or t_counter == max_frames:
-            print(f"[eval_mcts] episode ended: all_done={bool(jnp.all(done).item())}, t={t_counter}")
+        all_done = bool(jnp.all(episode_terminated_once).item())
+        if all_done or t_counter == max_frames:
+            print(f"[eval_mcts] episode ended: all_done={all_done}, t={t_counter}")
             break
 
         obs = next_obs
 
     if use_mcts:
-        total = t_counter * rl_config.num_test_rollouts
-        pct = 100.0 * mcts_ppo_diff_count / max(total, 1)
-        print(f"[eval_mcts] MCTS != PPO: {mcts_ppo_diff_count}/{total} ({pct:.1f}%)")
-
-    if episode_done_once is None:
-        return np.array([]), {}, obs_seq
+        pct = 100.0 * mcts_ppo_diff_count / max(mcts_decision_count, 1)
+        print(
+            f"[eval_mcts] MCTS != PPO: {mcts_ppo_diff_count}/"
+            f"{mcts_decision_count} ({pct:.1f}%)"
+        )
 
     # ---- Metrics (same as eval_mixed.py) ----
     team_move_m = per_agent_move_m[0] + per_agent_move_m.get(1, 0) + per_agent_move_m.get(2, 0)
     team_path_efficiency = (team_move_m / jnp.sqrt(areas))
-    path_efficiency = team_path_efficiency[episode_done_once]
+    path_efficiency = team_path_efficiency[episode_succeeded_once]
     path_efficiency_std = path_efficiency.std()
     path_efficiency_mean = path_efficiency.mean()
 
@@ -399,7 +475,9 @@ def rollout_episode(
     skidsteer_ops = per_agent_do_events.get(2, 0) // 2
     truck_ops = per_agent_do_events.get(1, 0)
     team_workspace_ops = excavator_ops + skidsteer_ops + truck_ops
-    workspaces_efficiency = (reference_workspace_area * (team_workspace_ops / areas))[episode_done_once]
+    workspaces_efficiency = (
+        reference_workspace_area * (team_workspace_ops / areas)
+    )[episode_succeeded_once]
     workspaces_efficiency_mean = workspaces_efficiency.mean()
     workspaces_efficiency_std = workspaces_efficiency.std()
 
@@ -421,30 +499,48 @@ def rollout_episode(
         loaded_sum = jnp.zeros_like(dumped_total)
     denom_total_dirt = dumped_total + undug_count + loaded_sum
     total_completion = jnp.where(denom_total_dirt > 0, dump_correct / jnp.maximum(denom_total_dirt, 1), 0.0)
-    coverage_scores = episode_done_once + (~episode_done_once) * total_completion
-    dig_cov_scores = episode_done_once + (~episode_done_once) * dig_coverage
-    dump_cov_scores = episode_done_once + (~episode_done_once) * dump_coverage
+    coverage_scores = jnp.where(
+        episode_succeeded_once,
+        1.0,
+        jnp.where(
+            episode_terminated_once, terminal_total_completion, total_completion
+        ),
+    )
+    dig_cov_scores = jnp.where(
+        episode_succeeded_once,
+        1.0,
+        jnp.where(episode_terminated_once, terminal_dig_completion, dig_coverage),
+    )
+    dump_cov_scores = jnp.where(
+        episode_succeeded_once,
+        1.0,
+        jnp.where(episode_terminated_once, terminal_dump_completion, dump_coverage),
+    )
     coverage_score_mean = coverage_scores.mean()
     coverage_score_std = coverage_scores.std()
 
     avg_steps_till_completion = (
-        episode_length[episode_done_once].mean() if episode_length is not None else jnp.array(0)
+        episode_length[episode_succeeded_once].mean()
+        if episode_succeeded_once.any()
+        else jnp.array(0)
     )
     try:
         num_agents_arr = timestep.observation["num_agents"].astype(jnp.float32)
         avg_num_agents_completed = (
-            num_agents_arr[episode_done_once].mean() if episode_done_once.any() else jnp.array(1.0)
+            num_agents_arr[episode_succeeded_once].mean()
+            if episode_succeeded_once.any()
+            else jnp.array(1.0)
         )
     except Exception:
         avg_num_agents_completed = jnp.array(1.0)
     parallel_steps_to_goal_mean = (
         float(avg_steps_till_completion) / max(float(avg_num_agents_completed), 1.0)
-        if episode_length is not None
+        if episode_succeeded_once.any()
         else 0.0
     )
 
     if episode_length is not None:
-        completed_steps = episode_length[episode_done_once]
+        completed_steps = episode_length[episode_succeeded_once]
         goal_steps_mean = completed_steps.mean() if completed_steps.size > 0 else jnp.array(0)
         goal_steps_std = completed_steps.std() if completed_steps.size > 0 else jnp.array(0)
         goal_efficiency_mean = (
@@ -464,7 +560,7 @@ def rollout_episode(
         out = {}
         for k, v in v_dict.items():
             try:
-                out[k] = jnp.where(episode_done_once, v, 0).sum() / jnp.maximum(episode_done_once.sum(), 1)
+                out[k] = jnp.where(episode_succeeded_once, v, 0).sum() / jnp.maximum(episode_succeeded_once.sum(), 1)
             except Exception:
                 out[k] = jnp.array(0)
         return out
@@ -476,8 +572,8 @@ def rollout_episode(
     per_agent_path_eff_mean = {}
     for k, v in per_agent_move_m.items():
         try:
-            path_eff = jnp.where(episode_done_once, v / sqrt_areas, 0)
-            per_agent_path_eff_mean[k] = path_eff.sum() / jnp.maximum(episode_done_once.sum(), 1)
+            path_eff = jnp.where(episode_succeeded_once, v / sqrt_areas, 0)
+            per_agent_path_eff_mean[k] = path_eff.sum() / jnp.maximum(episode_succeeded_once.sum(), 1)
         except Exception:
             per_agent_path_eff_mean[k] = jnp.array(0.0)
 
@@ -485,8 +581,8 @@ def rollout_episode(
     for k, v in per_agent_do_events.items():
         try:
             n_ops = v if k == 1 else v // 2
-            ws_eff = jnp.where(episode_done_once, reference_workspace_area * (n_ops / areas), 0)
-            per_agent_workspace_eff_mean[k] = ws_eff.sum() / jnp.maximum(episode_done_once.sum(), 1)
+            ws_eff = jnp.where(episode_succeeded_once, reference_workspace_area * (n_ops / areas), 0)
+            per_agent_workspace_eff_mean[k] = ws_eff.sum() / jnp.maximum(episode_succeeded_once.sum(), 1)
         except Exception:
             per_agent_workspace_eff_mean[k] = jnp.array(0.0)
 
@@ -510,7 +606,8 @@ def rollout_episode(
     diversity_entropy = -jnp.sum(jnp.where(p > 0, p * jnp.log(p + 1e-8), 0.0))
 
     stats = {
-        "episode_done_once": episode_done_once,
+        "episode_done_once": episode_succeeded_once,
+        "episode_terminated_once": episode_terminated_once,
         "episode_length": episode_length,
         "path_efficiency": {"mean": path_efficiency_mean, "std": path_efficiency_std},
         "workspaces_efficiency": {
@@ -564,7 +661,7 @@ def rollout_episode(
             "mcts_ppo_disagreements": int(mcts_ppo_diff_count),
         },
     }
-    return np.cumsum(reward_seq), stats, obs_seq
+    return np.cumsum(np.stack(reward_seq), axis=0), stats, obs_seq
 
 
 def print_stats(stats):
@@ -705,17 +802,7 @@ if __name__ == "__main__":
     print(f"agent_types: {agent_types_ckpt}")
     print(f"action_types: {action_types_ckpt}")
 
-    def replicate_field(x):
-        if x is None:
-            return None
-        if isinstance(x, tuple):
-            return jnp.array(x)[None, ...].repeat(n_envs, 0)
-        elif isinstance(x, (int, float, bool)):
-            return jnp.array([x] * n_envs)
-        else:
-            return x[0][None, ...].repeat(n_envs, 0)
-
-    env_cfgs = jax.tree_map(replicate_field, env_cfgs)
+    env_cfgs = replicate_checkpoint_env_config(env_cfgs, n_envs)
 
     # Fix dtypes only when MCTS is enabled (avoids needless changes in default path)
     if args.use_mcts:

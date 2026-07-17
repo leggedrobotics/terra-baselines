@@ -1782,8 +1782,11 @@ if __name__ == "__main__":
         "--map_encoder",
         type=str,
         default="atari",
-        choices=["atari", "resnet_delayed"],
-        help="Global-map encoder. 'resnet_delayed' preserves 64x64 detail before downsampling.",
+        choices=["atari", "resnet_delayed", "resnet_spatial_v2"],
+        help=(
+            "Global-map encoder. 'resnet_delayed' retains PR #15 checkpoint "
+            "compatibility; 'resnet_spatial_v2' uses the scaled 8x8 spatial readout."
+        ),
     )
     parser.add_argument(
         "--agent_types", type=str, default=None,   # 0=excavator, 1=truck, 2=skidsteer

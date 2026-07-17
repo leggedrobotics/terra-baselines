@@ -8,7 +8,7 @@ import jax
 import math
 from tqdm import tqdm
 from utils.models import load_neural_network
-from utils.helpers import load_pkl_object
+from utils.helpers import load_pkl_object, replicate_checkpoint_env_config
 from terra.env import TerraEnvBatch
 from terra.actions import (
     WheeledAction,
@@ -634,21 +634,7 @@ if __name__ == "__main__":
     print(f"agent_types: {agent_types_ckpt}")
     print(f"action_types: {action_types_ckpt}")
     
-    # Custom handling for different field types (same as visualize_mixed.py)
-    def replicate_field(x):
-        if x is None:
-            return None
-        # Handle tuples generically (e.g., agent_types of length 1–4)
-        if isinstance(x, tuple):
-            return jnp.array(x)[None, ...].repeat(n_envs, 0)
-        # Handle scalars (int, float, bool) - just replicate the value
-        elif isinstance(x, (int, float, bool)):
-            return jnp.array([x] * n_envs)
-        # Handle arrays - take first element and replicate
-        else:
-            return x[0][None, ...].repeat(n_envs, 0)
-    
-    env_cfgs = jax.tree_map(replicate_field, env_cfgs)
+    env_cfgs = replicate_checkpoint_env_config(env_cfgs, n_envs)
     
     # Choose env batch action type from checkpoint action_types
     action_types_ckpt = getattr(env_cfgs, "action_types", 0)

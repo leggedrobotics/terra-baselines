@@ -19,6 +19,7 @@ from train_mixed import (
     _validate_checkpoint_history_width,
     _validate_resume_update,
 )
+from utils.helpers import replicate_checkpoint_env_config
 
 
 class TrainingAccountingTest(unittest.TestCase):
@@ -109,6 +110,14 @@ class CheckpointCompatibilityTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "map_encoder"):
             _validate_checkpoint_architecture(checkpoint, self.config)
 
+        spatial_config = SimpleNamespace(
+            map_encoder="resnet_spatial_v2",
+            model_core="mlp",
+            model_size="base",
+        )
+        with self.assertRaisesRegex(ValueError, "map_encoder"):
+            _validate_checkpoint_architecture(checkpoint, spatial_config)
+
     def test_history_width_mismatch_fails(self):
         checkpoint = {"train_config": {"num_prev_actions": 20}}
         with self.assertRaisesRegex(ValueError, "action-history width"):
@@ -164,6 +173,19 @@ class CheckpointCompatibilityTest(unittest.TestCase):
         scalar_again = _strip_checkpoint_env_axis(scalar, num_envs_per_device=2)
         np.testing.assert_array_equal(np.asarray(scalar_again.agent_types), [0, 2])
         np.testing.assert_array_equal(np.asarray(scalar_again.action_types), [0, 0])
+
+        replicated = replicate_checkpoint_env_config(scalar, n_envs=4)
+        np.testing.assert_array_equal(
+            np.asarray(replicated.agent_types),
+            np.tile(np.array([[0, 2]]), (4, 1)),
+        )
+        self.assertEqual(np.asarray(replicated.tile_size).shape, (4,))
+
+        legacy_replicated = replicate_checkpoint_env_config(batched, n_envs=4)
+        np.testing.assert_array_equal(
+            np.asarray(legacy_replicated.agent_types),
+            np.tile(np.array([[0, 2]]), (4, 1)),
+        )
 
 
 if __name__ == "__main__":

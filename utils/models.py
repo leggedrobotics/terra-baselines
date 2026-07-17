@@ -45,9 +45,11 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         model_kwargs = {
             "cnn_channels": (24, 48, 48),
             "cnn_dense_layers": (192, 48),
+            "resnet_stage_channels": (24, 48, 64, 96),
+            "resnet_blocks_per_stage": (1, 2, 2, 2),
+            "resnet_dense_layers": (192, 160),
             "hidden_dim_pi": (160, 48),
             "hidden_dim_v": (160, 48, 1),
-            "intermediate_mlp_layers": (320, 160),
             "intermediate_mlp_dim": 160,
             "local_map_hidden_dim_layers_mlp": (320, 64),
             "transformer_model_dim": 192,
@@ -59,9 +61,11 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         model_kwargs = {
             "cnn_channels": (32, 64, 64),
             "cnn_dense_layers": (256, 64),
+            "resnet_stage_channels": (32, 64, 96, 128),
+            "resnet_blocks_per_stage": (2, 2, 3, 3),
+            "resnet_dense_layers": (256, 192),
             "hidden_dim_pi": (192, 64),
             "hidden_dim_v": (192, 64, 1),
-            "intermediate_mlp_layers": (384, 192),
             "intermediate_mlp_dim": 192,
             "local_map_hidden_dim_layers_mlp": (384, 96),
             "transformer_model_dim": 256,
@@ -396,7 +400,7 @@ class ResidualMapBlock(nn.Module):
 
 
 class DelayedDownsampleResNet(nn.Module):
-    """Encode 64x64 maps before pooling them to a fixed 128-feature vector."""
+    """PR #15 encoder kept stable for existing ``resnet_delayed`` checkpoints."""
 
     @nn.compact
     def __call__(self, x):
@@ -410,8 +414,6 @@ class DelayedDownsampleResNet(nn.Module):
         x = nn.LayerNorm()(x)
         x = nn.relu(x)
 
-        # Keep the first residual stage at full resolution; downsample only
-        # when entering the two later stages so narrow map details survive.
         for stage, features in enumerate(channels):
             for block in range(2):
                 strides = (2, 2) if stage > 0 and block == 0 else (1, 1)
@@ -422,6 +424,39 @@ class DelayedDownsampleResNet(nn.Module):
         )
         x = nn.relu(nn.Dense(features=128)(x))
         return nn.Dense(features=128)(x)
+
+
+class SpatialDelayedDownsampleResNet(nn.Module):
+    """Spatial v2 encoder with an 8x8 flattened readout."""
+
+    stage_channels: Sequence[int] = (16, 32, 48, 64)
+    blocks_per_stage: Sequence[int] = (1, 1, 2, 2)
+    dense_layers: Sequence[int] = (128, 128)
+
+    @nn.compact
+    def __call__(self, x):
+        x = nn.Conv(
+            features=self.stage_channels[0],
+            kernel_size=(3, 3),
+            padding="SAME",
+            use_bias=False,
+        )(x)
+        x = nn.LayerNorm()(x)
+        x = nn.relu(x)
+
+        # Keep the first residual stage at full resolution so narrow map
+        # details survive; each later stage halves the grid (64 -> 8).
+        for stage, (features, num_blocks) in enumerate(
+            zip(self.stage_channels, self.blocks_per_stage)
+        ):
+            for block in range(num_blocks):
+                strides = (2, 2) if stage > 0 and block == 0 else (1, 1)
+                x = ResidualMapBlock(features=features, strides=strides)(x)
+
+        x = x.reshape((x.shape[0], -1))
+        for features in self.dense_layers[:-1]:
+            x = nn.relu(nn.Dense(features=features)(x))
+        return nn.Dense(features=self.dense_layers[-1])(x)
 
 
 @jax.jit
@@ -465,6 +500,9 @@ class MapsNet(nn.Module):
     cnn_channels: Sequence[int] = (16, 32, 32)
     cnn_dense_layers: Sequence[int] = (128, 32)
     encoder_type: str = "atari"
+    resnet_stage_channels: Sequence[int] = (16, 32, 48, 64)
+    resnet_blocks_per_stage: Sequence[int] = (1, 1, 2, 2)
+    resnet_dense_layers: Sequence[int] = (128, 128)
 
     def setup(self) -> None:
         if self.encoder_type == "atari":
@@ -476,21 +514,20 @@ class MapsNet(nn.Module):
         if self.encoder_type == "resnet_delayed":
             self.cnn = DelayedDownsampleResNet()
             return
+        if self.encoder_type == "resnet_spatial_v2":
+            self.cnn = SpatialDelayedDownsampleResNet(
+                stage_channels=self.resnet_stage_channels,
+                blocks_per_stage=self.resnet_blocks_per_stage,
+                dense_layers=self.resnet_dense_layers,
+            )
+            return
         raise ValueError(f"Unknown map encoder: {self.encoder_type}")
 
     def __call__(self, obs: dict[str, Array]):
         """
-        obs["agent_states"],
-        obs["local_map_action_neg"],
-        obs["local_map_action_pos"],
-        obs["local_map_target_neg"],
-        obs["local_map_target_pos"],
-        obs["local_map_dumpability"],
-        obs["local_map_obstacles"],
-        obs["action_map"],
-        obs["target_map"],
-        obs["traversability_mask"],
-        obs["dumpability_mask"],
+        Expects 7 global maps in order:
+        traversability_mask, reachability_mask, action_map, target_map,
+        padding_mask, dumpability_mask, interaction_mask.
         """
         def as_map_batch(x: Array) -> Array:
             if x.ndim == 2:
@@ -503,6 +540,15 @@ class MapsNet(nn.Module):
         reachability_map = as_map_batch(obs[1])
         action_map = as_map_batch(obs[2])
         target_map = as_map_batch(obs[3])
+        # Version preprocessing together with the topology. Legacy Atari and
+        # resnet_delayed checkpoints consumed raw unclipped height maps.
+        if self.encoder_type == "resnet_spatial_v2":
+            action_map = normalize(
+                action_map, self.map_min_max[0], self.map_min_max[1]
+            )
+            target_map = normalize(
+                target_map, self.map_min_max[0], self.map_min_max[1]
+            )
         padding_mask = as_map_batch(obs[4])
         dumpability_mask = as_map_batch(obs[5])
         interaction_mask = as_map_batch(obs[6])
@@ -603,9 +649,11 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     hidden_dim_v: Sequence[int] = (128, 32, 1)
     mlp_use_layernorm: bool = False
     intermediate_mlp_dim: int = 128
-    intermediate_mlp_layers: Sequence[int] = (256, 128)
     cnn_channels: Sequence[int] = (16, 32, 32)
     cnn_dense_layers: Sequence[int] = (128, 32)
+    resnet_stage_channels: Sequence[int] = (16, 32, 48, 64)
+    resnet_blocks_per_stage: Sequence[int] = (1, 1, 2, 2)
+    resnet_dense_layers: Sequence[int] = (128, 128)
     local_map_hidden_dim_layers_mlp: Sequence[int] = (256, 32)
     model_core: str = "mlp"  # "mlp" or "transformer"
     map_encoder: str = "atari"
@@ -646,18 +694,14 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             cnn_channels=self.cnn_channels,
             cnn_dense_layers=self.cnn_dense_layers,
             encoder_type=self.map_encoder,
+            resnet_stage_channels=self.resnet_stage_channels,
+            resnet_blocks_per_stage=self.resnet_blocks_per_stage,
+            resnet_dense_layers=self.resnet_dense_layers,
         )
 
         self.actions_net = PreviousActionsNet(
             num_actions=num_actions,
             mlp_use_layernorm=self.mlp_use_layernorm,
-        )
-
-        # New intermediate MLP to process concatenated features
-        self.intermediate_mlp = MLP(
-            hidden_dim_layers=self.intermediate_mlp_layers + (self.intermediate_mlp_dim,),
-            use_layer_norm=self.mlp_use_layernorm,
-            last_layer_init_scaling=1.0,
         )
 
         self.activation = nn.relu
