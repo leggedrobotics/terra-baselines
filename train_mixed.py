@@ -473,6 +473,7 @@ class MixedAgentTrainConfig:
     target_map_repeat: int = 0
     model_size: str = "base"
     model_core: str = "mlp"
+    map_encoder: str = "atari"
 
 
     def __post_init__(self):
@@ -767,6 +768,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     # Create the unified network with agent type features (now that num_prev_actions is set)
     print(f"🧠 Model size preset: {getattr(config, 'model_size', 'base')}", flush=True)
     print(f"🧠 Model core: {getattr(config, 'model_core', 'mlp')}", flush=True)
+    print(f"🧠 Map encoder: {getattr(config, 'map_encoder', 'atari')}", flush=True)
     print("⏱️  Initializing model...", flush=True)
     t_model_init = time.time()
     network, network_params = get_model_ready(_rng, config, env)
@@ -779,6 +781,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     print("🏗️ Architecture:", flush=True)
     print(f"   core: {model_core}", flush=True)
     print(f"   model_size: {getattr(config, 'model_size', 'base')}", flush=True)
+    print(f"   map_encoder: {getattr(config, 'map_encoder', 'atari')}", flush=True)
     if model_core == "transformer":
         max_agents = 4
         token_count = max_agents + 3  # agent tokens + actions/local/maps tokens
@@ -834,6 +837,7 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
     )
 
     model_size = config.model_size if hasattr(config, "model_size") else "unknown"
+    map_encoder = getattr(config, "map_encoder", "atari")
 
     tags = [
         "mixed-agents",
@@ -842,6 +846,7 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         f"agents:{'-'.join(agent_type_names.get(int(t), str(t)) for t in agent_types)}",
         f"actions:{'-'.join(action_type_names.get(int(t), str(t)) for t in action_types)}",
         f"model-size:{_tag_value(model_size)}",
+        f"map-encoder:{_tag_value(map_encoder)}",
         f"dump-min-free-fraction:{_tag_value(dump_min_free_fraction)}",
         f"move-tiles:{_tag_value(env_defaults.agent.move_tiles)}",
         f"dig-radius-tiles:{_tag_value(env_defaults.agent.dig_radius_tiles)}",
@@ -1633,6 +1638,13 @@ if __name__ == "__main__":
         help="Core policy architecture. 'mlp' keeps current behavior; 'transformer' uses a lightweight token-mixer core.",
     )
     parser.add_argument(
+        "--map_encoder",
+        type=str,
+        default="atari",
+        choices=["atari", "resnet_delayed"],
+        help="Global-map encoder. 'resnet_delayed' preserves 64x64 detail before downsampling.",
+    )
+    parser.add_argument(
         "--agent_types", type=str, default=None,   # 0=excavator, 1=truck, 2=skidsteer
         help="Override agent types with a Python tuple, e.g. '(2,0,2,0)'. Overrides --config."
     )
@@ -1917,6 +1929,7 @@ if __name__ == "__main__":
         target_map_repeat=args.target_map_repeat,
         model_size=args.model_size,
         model_core=args.model_core,
+        map_encoder=args.map_encoder,
     )
     
     train_mixed_agents(config) 

@@ -125,6 +125,9 @@ python train_mixed.py --config excavator_truck --transport_relocate_mult 2.0
 
 # Use preset but override agent types
 python train_mixed.py --config solo_excavator --agent_types "(0,2)"
+
+# Use the delayed-downsampling residual encoder for 64x64 global maps
+python train_mixed.py --config solo_excavator --map_encoder resnet_delayed
 ```
 
 

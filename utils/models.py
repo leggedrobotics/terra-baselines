@@ -38,6 +38,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         raise ValueError(
             f"Unsupported model_core='{model_core}'. Expected 'mlp' or 'transformer'."
         )
+    map_encoder = getattr(config, "map_encoder", "atari")
 
     model_kwargs = {}
     if model_size == "medium":
@@ -78,6 +79,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         agent_types_max=2,  # Maximum agent type value (0=excavator, 1=truck, 2=skidsteer)
         action_type=env.batch_cfg.action_type,
         model_core=model_core,
+        map_encoder=map_encoder,
         **model_kwargs,
     )
 
@@ -354,6 +356,74 @@ class AtariCNN(nn.Module):
         return x
 
 
+class ResidualMapBlock(nn.Module):
+    """Two map convolutions with a projected skip connection when needed."""
+
+    features: int
+    strides: tuple[int, int] = (1, 1)
+
+    @nn.compact
+    def __call__(self, x):
+        residual = x
+        x = nn.Conv(
+            features=self.features,
+            kernel_size=(3, 3),
+            strides=self.strides,
+            padding="SAME",
+            use_bias=False,
+        )(x)
+        x = nn.LayerNorm()(x)
+        x = nn.relu(x)
+        x = nn.Conv(
+            features=self.features,
+            kernel_size=(3, 3),
+            padding="SAME",
+            use_bias=False,
+        )(x)
+        x = nn.LayerNorm()(x)
+
+        if residual.shape[-1] != self.features or self.strides != (1, 1):
+            residual = nn.Conv(
+                features=self.features,
+                kernel_size=(1, 1),
+                strides=self.strides,
+                padding="SAME",
+                use_bias=False,
+            )(residual)
+            residual = nn.LayerNorm()(residual)
+
+        return nn.relu(x + residual)
+
+
+class DelayedDownsampleResNet(nn.Module):
+    """Encode 64x64 maps before pooling them to a fixed 128-feature vector."""
+
+    @nn.compact
+    def __call__(self, x):
+        channels = (16, 32, 32)
+        x = nn.Conv(
+            features=channels[0],
+            kernel_size=(3, 3),
+            padding="SAME",
+            use_bias=False,
+        )(x)
+        x = nn.LayerNorm()(x)
+        x = nn.relu(x)
+
+        # Keep the first residual stage at full resolution; downsample only
+        # when entering the two later stages so narrow map details survive.
+        for stage, features in enumerate(channels):
+            for block in range(2):
+                strides = (2, 2) if stage > 0 and block == 0 else (1, 1)
+                x = ResidualMapBlock(features=features, strides=strides)(x)
+
+        x = jnp.concatenate(
+            (jnp.mean(x, axis=(1, 2)), jnp.max(x, axis=(1, 2))), axis=-1
+        )
+        x = nn.relu(nn.Dense(features=128)(x))
+        return nn.Dense(features=128)(x)
+
+
 @jax.jit
 def min_pool(x):
     pool_fn = partial(
@@ -394,9 +464,19 @@ class MapsNet(nn.Module):
     map_min_max: Sequence[int]
     cnn_channels: Sequence[int] = (16, 32, 32)
     cnn_dense_layers: Sequence[int] = (128, 32)
+    encoder_type: str = "atari"
 
     def setup(self) -> None:
-        self.cnn = AtariCNN(conv_channels=self.cnn_channels, dense_layers=self.cnn_dense_layers)
+        if self.encoder_type == "atari":
+            self.cnn = AtariCNN(
+                conv_channels=self.cnn_channels,
+                dense_layers=self.cnn_dense_layers,
+            )
+            return
+        if self.encoder_type == "resnet_delayed":
+            self.cnn = DelayedDownsampleResNet()
+            return
+        raise ValueError(f"Unknown map encoder: {self.encoder_type}")
 
     def __call__(self, obs: dict[str, Array]):
         """
@@ -528,6 +608,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     cnn_dense_layers: Sequence[int] = (128, 32)
     local_map_hidden_dim_layers_mlp: Sequence[int] = (256, 32)
     model_core: str = "mlp"  # "mlp" or "transformer"
+    map_encoder: str = "atari"
     transformer_model_dim: int = 128
     transformer_num_layers: int = 2
     transformer_num_heads: int = 4
@@ -564,6 +645,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             self.map_min_max,
             cnn_channels=self.cnn_channels,
             cnn_dense_layers=self.cnn_dense_layers,
+            encoder_type=self.map_encoder,
         )
 
         self.actions_net = PreviousActionsNet(
