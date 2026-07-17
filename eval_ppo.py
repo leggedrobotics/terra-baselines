@@ -69,6 +69,11 @@ def _rollout_impl(
 
         prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
         prev_actions = prev_actions.at[..., 0].set(action)
+        prev_actions = jnp.where(
+            timestep.done[..., None],
+            jnp.zeros_like(prev_actions),
+            prev_actions,
+        )
 
         terminations_update = timestep.done.sum()
         positive_termination_update = timestep.info["task_done"].sum()
@@ -171,6 +176,11 @@ def rollout_single_device(rng, env, env_params, train_state, config):
 
             prev_actions_ = jnp.roll(prev_actions_, shift=1, axis=-1)
             prev_actions_ = prev_actions_.at[..., 0].set(action)
+            prev_actions_ = jnp.where(
+                timestep_.done[..., None],
+                jnp.zeros_like(prev_actions_),
+                prev_actions_,
+            )
 
             terminations_update = timestep_.done.sum()
             positive_termination_update = timestep_.info["task_done"].sum()
@@ -254,6 +264,11 @@ def rollout_from_timestep(rng, env, timestep, train_state, config):
 
             prev_actions_ = jnp.roll(prev_actions_, shift=1, axis=-1)
             prev_actions_ = prev_actions_.at[..., 0].set(action)
+            prev_actions_ = jnp.where(
+                timestep_.done[..., None],
+                jnp.zeros_like(prev_actions_),
+                prev_actions_,
+            )
 
             terminations_update = timestep_.done.sum()
             positive_termination_update = timestep_.info["task_done"].sum()

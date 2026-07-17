@@ -128,6 +128,7 @@ class Transition(struct.PyTreeNode):
     action: jax.Array
     value: jax.Array
     reward: jax.Array
+    terminal_reward: jax.Array
     dig_completion_edge: jax.Array
     dig_completion_inner: jax.Array
     dig_completion_total: jax.Array
@@ -163,37 +164,23 @@ def safe_jax_to_python(value):
 
 def _strip_checkpoint_env_axis(env_config, num_envs_per_device: int):
     """Store/load EnvConfig without a leading vectorized-env axis when present."""
-    vectorized_lengths = {int(num_envs_per_device)}
-    for leaf in jax.tree_util.tree_leaves(env_config):
-        try:
-            shape = np.asarray(leaf).shape
-        except Exception:
-            continue
-        vectorized_lengths.update(int(dim) for dim in shape if int(dim) > 16)
+    del num_envs_per_device
 
     def _strip_agent_leaf(x):
+        if isinstance(x, (tuple, list)):
+            return jnp.stack([_strip_scalar_leaf(member) for member in x])
         arr = jnp.asarray(x)
         if arr.ndim == 0:
             return arr.reshape((1,))
-        if arr.ndim == 1:
-            if arr.shape[0] in vectorized_lengths:
-                return arr[:1]
-            return arr
-        if arr.ndim >= 3 and arr.shape[0] == 1 and arr.shape[1] in vectorized_lengths:
-            return arr[0, 0]
-        if arr.shape[0] in vectorized_lengths:
-            return arr[0]
-        if arr.shape[1] in vectorized_lengths:
-            return arr[:, 0]
-        while arr.ndim > 1 and arr.shape[0] == 1:
+        # Agent/action vectors are the final axis. Drop only explicit leading
+        # device/environment axes and keep an already-scalar vector unchanged.
+        while arr.ndim > 1:
             arr = arr[0]
         return arr
 
     def _strip_scalar_leaf(x):
         arr = jnp.asarray(x)
-        while arr.ndim > 0 and (
-            arr.shape[0] == 1 or arr.shape[0] in vectorized_lengths
-        ):
+        while arr.ndim > 0:
             arr = arr[0]
         return arr
 
@@ -211,6 +198,91 @@ def _strip_checkpoint_env_axis(env_config, num_envs_per_device: int):
         return _strip_scalar_leaf(x)
 
     return _strip_node(env_config)
+
+
+def _checkpoint_config_value(checkpoint, field_name: str, default):
+    saved_config = checkpoint.get("train_config")
+    if saved_config is None:
+        return default
+    if isinstance(saved_config, dict):
+        return saved_config.get(field_name, default)
+    return getattr(saved_config, field_name, default)
+
+
+def _validate_checkpoint_architecture(checkpoint, config) -> None:
+    """Fail before model initialization when checkpoint/model shapes cannot match."""
+    defaults = {
+        "map_encoder": "atari",
+        "model_core": "mlp",
+        "model_size": "base",
+    }
+    mismatches = []
+    for field_name, default in defaults.items():
+        saved = _checkpoint_config_value(checkpoint, field_name, default)
+        current = getattr(config, field_name, default)
+        if saved != current:
+            mismatches.append(f"{field_name}: checkpoint={saved!r}, current={current!r}")
+    if mismatches:
+        raise ValueError(
+            "Checkpoint architecture does not match the requested model: "
+            + "; ".join(mismatches)
+            + ". Pass matching --map_encoder, --model_core, and --model_size values."
+        )
+
+
+def _validate_checkpoint_history_width(checkpoint, config) -> None:
+    saved = _checkpoint_config_value(checkpoint, "num_prev_actions", None)
+    if saved is not None and int(saved) != int(config.num_prev_actions):
+        raise ValueError(
+            "Checkpoint action-history width does not match the selected environment: "
+            f"checkpoint={int(saved)}, current={int(config.num_prev_actions)}"
+        )
+
+
+def _num_agents_from_env_params(env_params) -> int:
+    agent_types = getattr(env_params, "agent_types", None)
+    if isinstance(agent_types, (tuple, list)):
+        return len(agent_types)
+    if hasattr(agent_types, "shape"):
+        return 1 if agent_types.ndim == 0 else int(agent_types.shape[-1])
+    raise ValueError("environment config has no usable agent_types")
+
+
+def _validate_resume_update(resume_update: int, num_updates: int) -> None:
+    if not 0 <= resume_update < num_updates:
+        raise ValueError(
+            f"resume_update must be in [0, {num_updates}), got {resume_update}. "
+            "Increase --total_timesteps when continuing a completed checkpoint."
+        )
+
+
+def _backfill_terminal_rewards(
+    reward_seq: jax.Array,
+    terminal_reward_seq: jax.Array,
+    done_seq: jax.Array,
+    num_agents_per_env: jax.Array,
+    max_agents: int = 4,
+) -> jax.Array:
+    """Share terminal credit with prior same-episode agent turns."""
+    terminal_reward_seq = jnp.where(done_seq, terminal_reward_seq, 0.0)
+    backfill = jnp.zeros_like(reward_seq)
+    for k in range(1, max_agents):
+        zeros = jnp.zeros_like(terminal_reward_seq[:k])
+        shifted = jnp.concatenate([terminal_reward_seq[k:], zeros], axis=0)
+
+        # A reward at t+k belongs to the same episode as t only when no step in
+        # [t, t+k) terminated an episode.
+        same_episode = jnp.ones_like(done_seq, dtype=jnp.bool_)
+        for offset in range(k):
+            done_ahead = jnp.concatenate(
+                [done_seq[offset:], jnp.ones_like(done_seq[:offset])],
+                axis=0,
+            )
+            same_episode = jnp.logical_and(same_episode, ~done_ahead)
+
+        use_k = (num_agents_per_env > k).astype(reward_seq.dtype)
+        backfill += jnp.where(same_episode, shifted, 0.0) * use_k
+    return reward_seq + backfill
 
 
 def randomize_initial_env_steps(timestep, reset_rng):
@@ -419,13 +491,13 @@ class MixedAgentTrainConfig:
     checkpoint_interval: int = 100
     
     # Model settings optimized for mixed agents
-    num_prev_actions = 10  # will be overridden to 5 * num_agents at runtime
-    clip_action_maps = True  # clips the action maps to [-1, 1]
-    local_map_normalization_bounds = [-16, 16]
-    maps_net_normalization_bounds = [-10, 10]  # Required field for network initialization
-    loaded_max = 100
-    num_rollouts_eval = 200  # max length of an episode in Terra for eval
-    cache_clear_interval = 1000  # Less frequent cache clearing for speed
+    num_prev_actions: int = 10  # overridden to 5 * num_agents at runtime
+    clip_action_maps: bool = True  # clips the action maps to [-1, 1]
+    local_map_normalization_bounds: tuple[int, int] = (-16, 16)
+    maps_net_normalization_bounds: tuple[int, int] = (-10, 10)
+    loaded_max: int = 100
+    num_rollouts_eval: int = 200
+    cache_clear_interval: int = 1000
     # Entropy scheduler (cosine decay)
     ent_schedule_start: float = 0.15
     ent_schedule_end: float = 0.005
@@ -480,18 +552,47 @@ class MixedAgentTrainConfig:
         self.num_devices = (
             jax.local_device_count() if self.num_devices == 0 else self.num_devices
         )
+        if not 1 <= self.num_devices <= jax.local_device_count():
+            raise ValueError(
+                f"num_devices must be in [1, {jax.local_device_count()}], "
+                f"got {self.num_devices}"
+            )
+        if (
+            self.num_envs_per_device <= 0
+            or self.num_steps <= 0
+            or self.update_epochs <= 0
+            or self.num_minibatches <= 0
+        ):
+            raise ValueError(
+                "num_envs_per_device, num_steps, update_epochs, and "
+                "num_minibatches must be positive"
+            )
+        if self.num_envs_per_device % self.num_minibatches != 0:
+            raise ValueError("num_envs_per_device must be divisible by num_minibatches")
+        if (
+            self.agent_types_override is not None
+            and self.action_types_override is not None
+            and len(self.agent_types_override) != len(self.action_types_override)
+        ):
+            raise ValueError("agent_types_override and action_types_override must have equal length")
         self.num_envs = self.num_envs_per_device * self.num_devices
         self.total_timesteps_per_device = self.total_timesteps // self.num_devices
         self.eval_episodes_per_device = self.eval_episodes // self.num_devices
         assert (
             self.num_envs % self.num_devices == 0
         ), "Number of environments must be divisible by the number of devices."
-        self.num_updates = (
-            self.total_timesteps // (self.num_steps * self.num_envs)
-        ) // self.num_devices
+        self.env_steps_per_update = self.num_steps * self.num_envs
+        self.num_updates = self.total_timesteps // self.env_steps_per_update
+        if self.num_updates <= 0:
+            raise ValueError("total_timesteps must cover at least one PPO update")
+        self.actual_total_timesteps = self.num_updates * self.env_steps_per_update
 
         print(f"Devices: {jax.devices()}")
-        print(f"Mixed Agent Training - Devices: {self.num_devices}, Updates: {self.num_updates}")
+        print(
+            "Mixed Agent Training - "
+            f"Devices: {self.num_devices}, Updates: {self.num_updates}, "
+            f"Env steps/update: {self.env_steps_per_update}"
+        )
         print(f"Using overridden agent types: {self.agent_types_override}")
 
     # make object subscriptable - required for compatibility with existing code
@@ -748,17 +849,17 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     # Infer num_prev_actions as 5 per agent without triggering a reset/pmap
     try:
         MAX_AGENTS = 4
-        # Priority 1: explicit override
-        if config.agent_types_override is not None:
-            na = len(tuple(config.agent_types_override))
-        # Priority 2: env params we just batched include agent_types with trailing num_agents dim
-        elif hasattr(env_params, 'agent_types') and hasattr(env_params.agent_types, 'shape'):
-            na = int(env_params.agent_types.shape[-1])
-        # Priority 3: batch config on env, if present as a tuple/list
-        elif hasattr(env.batch_cfg, 'agent_types') and isinstance(env.batch_cfg.agent_types, (tuple, list)):
-            na = len(env.batch_cfg.agent_types)
-        else:
-            na = MAX_AGENTS
+        # The actual batched environment is authoritative, including when it
+        # came from a checkpoint and the CLI still has its default override.
+        try:
+            na = _num_agents_from_env_params(env_params)
+        except ValueError:
+            if config.agent_types_override is not None:
+                na = len(tuple(config.agent_types_override))
+            elif hasattr(env.batch_cfg, 'agent_types') and isinstance(env.batch_cfg.agent_types, (tuple, list)):
+                na = len(env.batch_cfg.agent_types)
+            else:
+                na = MAX_AGENTS
         na = max(1, min(MAX_AGENTS, int(na)))
         config.num_prev_actions = int(5 * na)
         print(f"Setting num_prev_actions to {config.num_prev_actions} (5 per agent × {na} agents)", flush=True)
@@ -909,9 +1010,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     checkpoint = None
     env_params_override = None
     resume_update = 0
-    if config.resume_from is not None and os.path.exists(config.resume_from):
+    if config.resume_from is not None:
+        if not os.path.exists(config.resume_from):
+            raise FileNotFoundError(f"Checkpoint does not exist: {config.resume_from}")
         try:
             checkpoint = helpers.load_pkl_object(config.resume_from)
+            if "model" not in checkpoint:
+                raise KeyError("checkpoint has no 'model' parameters")
+            _validate_checkpoint_architecture(checkpoint, config)
             if config.load_env_from_checkpoint and "env_config" in checkpoint:
                 env_params_override = _strip_checkpoint_env_axis(
                     checkpoint["env_config"],
@@ -925,12 +1031,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 resume_update = int(config.resume_update)
             print(f"Loaded checkpoint from {config.resume_from}")
         except Exception as e:
-            print(f"Failed to load checkpoint from {config.resume_from}: {e}")
-
+            raise RuntimeError(f"Failed to load checkpoint from {config.resume_from}") from e
     # Initialize training components (optionally with env override)
     rng, env, env_params, train_state = make_mixed_agent_states(
         config, env_params_override=env_params_override
     )
+    if checkpoint is not None:
+        _validate_checkpoint_history_width(checkpoint, config)
 
     # If checkpoint has model params, overwrite initialized params
     if checkpoint is not None and "model" in checkpoint:
@@ -946,6 +1053,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "Restored optimizer state from checkpoint "
                     f"(next_update={resume_update})."
                 )
+                print(
+                    "Environment, RNG, and action-history state restart on resume; "
+                    "the continuation is not bit-exact."
+                )
             else:
                 if config.resume_update is None:
                     resume_update = 0
@@ -959,7 +1070,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         f"{resume_update} for logging/entropy schedule."
                     )
         except Exception as e:
-            print(f"Failed to set model parameters from checkpoint: {e}")
+            raise RuntimeError("Failed to restore checkpoint training state") from e
+    _validate_resume_update(resume_update, config.num_updates)
 
     # Removed agent-type curriculum monitoring
     
@@ -1061,8 +1173,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
 
             # TRAIN LOOP
-            @partial(jax.pmap, axis_name="devices")
-            def _update_step(runner_state, ent_coef_current, update_idx):
+            @partial(jax.pmap, axis_name="devices", donate_argnums=(0,))
+            def _update_step(runner_state, ent_coef_current):
                 # COLLECT TRAJECTORIES
                 def _env_step(runner_state, step_idx):
                     rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
@@ -1086,6 +1198,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         action=action,
                         value=value,
                         reward=timestep.reward,
+                        terminal_reward=reward_components["terminal"],
                         dig_completion_edge=reward_components["dig_completion_edge"],
                         dig_completion_inner=reward_components["dig_completion_inner"],
                         dig_completion_total=reward_components["dig_completion_total"],
@@ -1113,21 +1226,23 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     # UPDATE PREVIOUS ACTIONS
                     prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
                     prev_actions = prev_actions.at[..., 0].set(action)
+                    prev_actions = jnp.where(
+                        timestep.done[..., None],
+                        jnp.zeros_like(prev_actions),
+                        prev_actions,
+                    )
 
                     runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
                     return runner_state, transition
 
                 # transitions: [seq_len, batch_size, ...]
                 runner_state, transitions = jax.lax.scan(
-                    _env_step, runner_state, jnp.arange(config.num_steps), config.num_steps
+                    _env_step, runner_state, None, config.num_steps
                 )
 
-                # Distribute terminal reward to the last num_agents alternating steps
-                # This attributes the shared terminal to all agents that acted in the final round
+                # Share terminal credit with preceding same-episode agent turns.
                 done_seq = transitions.done            # [seq, batch]
                 reward_seq = transitions.reward        # [seq, batch]
-                # Terminal bonus only on terminal steps
-                terminal_bonus = jnp.where(done_seq, reward_seq, 0.0)  # [seq, batch]
 
                 # Get num_agents per env (assumed constant across sequence); shape [batch]
                 # transitions.obs stores prev_timestep.observation
@@ -1136,24 +1251,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 MAX_AGENTS = 4
                 num_agents_per_env = jnp.clip(num_agents_per_env.astype(jnp.int32), 1, MAX_AGENTS)
 
-                # Build windowed backfill: sum of shifts 0..K-1, where K=num_agents_per_env
-                # shifted[k] = terminal_bonus shifted backward by k (zeros for first k rows)
-                def shift_back(arr, k):
-                    zeros = jnp.zeros_like(arr[:k])
-                    return jnp.concatenate([zeros, arr[:-k]], axis=0) if k > 0 else arr
-
-                shifted_stack = []
-                # Start at k=1 to avoid including the unshifted terminal bonus (no double-count)
-                for k in range(1, MAX_AGENTS):
-                    shifted_k = shift_back(terminal_bonus, k)  # [seq, batch]
-                    # Mask this shift per env if k < num_agents
-                    use_k = (num_agents_per_env > k).astype(jnp.float32)  # [batch]
-                    shifted_k = shifted_k * use_k  # broadcast over seq
-                    shifted_stack.append(shifted_k)
-                window_sum = jnp.stack(shifted_stack, axis=0).sum(axis=0)  # [seq, batch]
-
-                # With k starting at 1, we don't include the terminal step itself in the sum
-                augmented_reward = reward_seq + window_sum
+                augmented_reward = _backfill_terminal_rewards(
+                    reward_seq,
+                    transitions.terminal_reward,
+                    done_seq,
+                    num_agents_per_env,
+                    max_agents=MAX_AGENTS,
+                )
                 transitions = transitions.replace(reward=augmented_reward)
 
                 # CALCULATE ADVANTAGE
@@ -1288,28 +1392,42 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 ent_broadcast = jnp.array([ent_coef_current] * config.num_devices)
                 start_time = time.time()
                 runner_state, loss_info = jax.block_until_ready(
-                    _update_step(runner_state, ent_broadcast, jnp.array([i] * config.num_devices))
+                    _update_step(runner_state, ent_broadcast)
                 )
                 end_time = time.time()
 
                 iteration_duration = end_time - start_time
                 iterations_per_second = 1 / iteration_duration
-                steps_per_second = (
-                    iterations_per_second
-                    * config.num_steps
-                    * config.num_envs
-                    * config.num_devices
-                )
+                steps_per_second = iterations_per_second * config.env_steps_per_update
+                steps_per_second_per_gpu = steps_per_second / config.num_devices
 
                 tqdm.write(f"Steps/s: {steps_per_second:.2f}")
 
-                # Use data from the first device for stats and eval
-                loss_info_single = unreplicate(loss_info)
-                runner_state_single = unreplicate(runner_state)
-                _, train_state, timestep, prev_actions = runner_state_single[:4]
-                env_params_single = timestep.env_cfg
+                need_train_log = (
+                    config.log_train_interval > 0
+                    and i % config.log_train_interval == 0
+                )
+                need_checkpoint = (
+                    config.checkpoint_interval > 0
+                    and i % config.checkpoint_interval == 0
+                )
+                need_eval = (
+                    config.log_eval_interval > 0
+                    and i > 0
+                    and i % config.log_eval_interval == 0
+                )
+                need_final_state = i == config.num_updates - 1
+                need_host_state = (
+                    need_train_log or need_checkpoint or need_eval or need_final_state
+                )
 
-                if i % config.log_train_interval == 0:
+                if need_host_state:
+                    loss_info_single = unreplicate(loss_info)
+                    runner_state_single = unreplicate(runner_state)
+                    _, _, timestep, prev_actions = runner_state_single[:4]
+                    env_params_single = timestep.env_cfg
+
+                if need_train_log:
                     # Consolidated logging to prevent step ordering issues
                     curriculum_levels = get_curriculum_levels(
                         env_params_single, env.batch_cfg.curriculum_global.levels
@@ -1318,7 +1436,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     # Start with base metrics
                     log_dict = {
                         "performance/steps_per_second": steps_per_second,
+                        "performance/steps_per_second_per_gpu": steps_per_second_per_gpu,
                         "performance/iterations_per_second": iterations_per_second,
+                        "performance/env_steps_per_update": config.env_steps_per_update,
+                        "performance/actual_env_steps": (i + 1)
+                        * config.env_steps_per_update,
                         "curriculum_levels": curriculum_levels,
                         "lr": config.lr,
                         "sched/entropy_coef": float(ent_coef_current),
@@ -1388,7 +1510,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     # Single consolidated wandb.log call
                     wandb.log(log_dict, step=i)
 
-                if i % config.checkpoint_interval == 0:
+                if need_checkpoint:
                     env_config_checkpoint = _strip_checkpoint_env_axis(
                         env_params_single,
                         config.num_envs_per_device,
@@ -1406,11 +1528,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     }
                     helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
 
-                if (
-                    config.log_eval_interval > 0
-                    and i > 0
-                    and i % config.log_eval_interval == 0
-                ):
+                if need_eval:
                     # Reuse the training reset shape regime and keep only the
                     # rollout loop outside XLA. This avoids the separate
                     # env.reset compile that can crash on RTX 4090 eval.
@@ -1494,7 +1612,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     wandb.log(loss_info_single)
 
                 # Clear JAX caches and run garbage collection to stabilize memory use
-                if i % config.cache_clear_interval == 0:
+                if (
+                    config.cache_clear_interval > 0
+                    and (i + 1) % config.cache_clear_interval == 0
+                ):
                     jax.clear_caches()
                     import gc
                     gc.collect()
@@ -1615,6 +1736,18 @@ if __name__ == "__main__":
         help="Total environment timesteps across all devices"
     )
     parser.add_argument(
+        "--num_steps", type=int, default=32,
+        help="Rollout length per PPO update"
+    )
+    parser.add_argument(
+        "--update_epochs", type=int, default=2,
+        help="Number of PPO epochs per rollout"
+    )
+    parser.add_argument(
+        "--num_minibatches", type=int, default=16,
+        help="Number of minibatches per PPO epoch"
+    )
+    parser.add_argument(
         "--log_train_interval", type=int, default=1,
         help="Training metric logging interval in PPO updates."
     )
@@ -1625,6 +1758,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint_interval", type=int, default=100,
         help="Checkpoint save interval in PPO updates."
+    )
+    parser.add_argument(
+        "--eval_episodes", type=int, default=100,
+        help="Requested evaluation episode count (evaluation is currently step-limited)."
+    )
+    parser.add_argument(
+        "--cache_clear_interval", type=int, default=1000,
+        help="JAX cache-clear interval in updates; set 0 to disable."
     )
     parser.add_argument(
         "--model_size", type=str, default="base", choices=["base", "medium", "large"],
@@ -1901,10 +2042,15 @@ if __name__ == "__main__":
         num_devices=args.num_devices,
         lr=args.lr,
         num_envs_per_device=args.num_envs_per_device,
+        num_steps=args.num_steps,
+        update_epochs=args.update_epochs,
+        num_minibatches=args.num_minibatches,
         total_timesteps=args.total_timesteps,
+        eval_episodes=args.eval_episodes,
         log_train_interval=args.log_train_interval,
         log_eval_interval=args.log_eval_interval,
         checkpoint_interval=args.checkpoint_interval,
+        cache_clear_interval=args.cache_clear_interval,
         resume_from=args.resume_from,
         resume_update=args.resume_update,
         load_env_from_checkpoint=args.load_env_from_checkpoint,

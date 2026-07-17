@@ -52,28 +52,51 @@ class TrainConfig:
     )
     checkpoint_interval: int = 50  # Number of updates between checkpoints
     # model settings
-    num_prev_actions = 10
-    clip_action_maps = True  # clips the action maps to [-1, 1]
-    local_map_normalization_bounds = [-16, 16]
-    maps_net_normalization_bounds = [-10, 10]  # Required field for network initialization
-    loaded_max = 100
-    num_rollouts_eval = 500  # max length of an episode in Terra for eval (for training it is in Terra's curriculum)
-    cache_clear_interval = 1000  # Number of updates between clearing caches
+    num_prev_actions: int = 10
+    clip_action_maps: bool = True  # clips the action maps to [-1, 1]
+    local_map_normalization_bounds: tuple[int, int] = (-16, 16)
+    maps_net_normalization_bounds: tuple[int, int] = (-10, 10)
+    loaded_max: int = 100
+    num_rollouts_eval: int = 500
+    cache_clear_interval: int = 1000
 
     def __post_init__(self):
         self.num_devices = (
             jax.local_device_count() if self.num_devices == 0 else self.num_devices
         )
+        if not 1 <= self.num_devices <= jax.local_device_count():
+            raise ValueError(
+                f"num_devices must be in [1, {jax.local_device_count()}], "
+                f"got {self.num_devices}"
+            )
+        if (
+            self.num_envs_per_device <= 0
+            or self.num_steps <= 0
+            or self.update_epochs <= 0
+            or self.num_minibatches <= 0
+        ):
+            raise ValueError(
+                "num_envs_per_device, num_steps, update_epochs, and "
+                "num_minibatches must be positive"
+            )
+        if self.num_envs_per_device % self.num_minibatches != 0:
+            raise ValueError("num_envs_per_device must be divisible by num_minibatches")
         self.num_envs = self.num_envs_per_device * self.num_devices
         self.total_timesteps_per_device = self.total_timesteps // self.num_devices
         self.eval_episodes_per_device = self.eval_episodes // self.num_devices
         assert (
             self.num_envs % self.num_devices == 0
         ), "Number of environments must be divisible by the number of devices."
-        self.num_updates = (
-            self.total_timesteps // (self.num_steps * self.num_envs)
-        ) // self.num_devices
-        print(f"Num devices: {self.num_devices}, Num updates: {self.num_updates}")
+        self.env_steps_per_update = self.num_steps * self.num_envs
+        self.num_updates = self.total_timesteps // self.env_steps_per_update
+        if self.num_updates <= 0:
+            raise ValueError("total_timesteps must cover at least one PPO update")
+        self.actual_total_timesteps = self.num_updates * self.env_steps_per_update
+        print(
+            "Num devices: "
+            f"{self.num_devices}, Num updates: {self.num_updates}, "
+            f"Env steps/update: {self.env_steps_per_update}"
+        )
 
     # make object subscriptable
     def __getitem__(self, key):
@@ -166,9 +189,6 @@ def ppo_update_networks(
     def _loss_fn(params):
         # Terra: Reshape
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
-        if 'agent_states' in transitions.obs:
-            print(f"ppo_update_networks agent_states[0] shape={transitions.obs['agent_states'][:,0,:].shape}")
-        print(f"ppo_update_networks {transitions.prev_actions.shape=}")
         transitions_obs_reshaped = jax.tree_map(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
             transitions.obs,
@@ -177,10 +197,6 @@ def ppo_update_networks(
             lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
             transitions.prev_actions,
         )
-        if 'agent_states' in transitions_obs_reshaped:
-            print(f"ppo_update_networks agent_states[0] shape={transitions_obs_reshaped['agent_states'][:,0,:].shape}")
-        print(f"ppo_update_networks {transitions_actions_reshaped.shape=}")
-
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
         obs = obs_to_model_input(transitions_obs_reshaped, transitions_actions_reshaped, config)
         value, dist = policy(train_state.apply_fn, params, obs)
@@ -335,6 +351,8 @@ def make_train(
             padding_masks,
             trench_axes,
             trench_type,
+            foundation_border_axes,
+            foundation_border_type,
             dumpability_mask_init,
             action_maps,
             distance_maps,
@@ -347,6 +365,8 @@ def make_train(
             padding_masks,
             trench_axes,
             trench_type,
+            foundation_border_axes,
+            foundation_border_type,
             dumpability_mask_init,
             action_maps,
             distance_maps,
@@ -357,8 +377,8 @@ def make_train(
         prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
 
         # TRAIN LOOP
-        @partial(jax.pmap, axis_name="devices")
-        def _update_step(runner_state, _):
+        @partial(jax.pmap, axis_name="devices", donate_argnums=(0,))
+        def _update_step(runner_state):
             """
             Performs a single update step in the training loop.
 
@@ -429,6 +449,11 @@ def make_train(
                 # UPDATE PREVIOUS ACTIONS
                 prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
                 prev_actions = prev_actions.at[..., 0].set(action)
+                prev_actions = jnp.where(
+                    timestep.done[..., None],
+                    jnp.zeros_like(prev_actions),
+                    prev_actions,
+                )
 
                 runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
                 return runner_state, transition
@@ -547,44 +572,61 @@ def make_train(
         for i in tqdm(range(config.num_updates), desc="Training"):
             start_time = time.time()  # Start time for measuring iteration speed
             runner_state, loss_info = jax.block_until_ready(
-                _update_step(runner_state, None)
+                _update_step(runner_state)
             )
             end_time = time.time()
 
             iteration_duration = end_time - start_time
             iterations_per_second = 1 / iteration_duration
-            steps_per_second = (
-                iterations_per_second
-                * config.num_steps
-                * config.num_envs
-                * config.num_devices
-            )
+            steps_per_second = iterations_per_second * config.env_steps_per_update
+            steps_per_second_per_gpu = steps_per_second / config.num_devices
 
             tqdm.write(
                 f"Steps/s: {steps_per_second:.2f}"
             )  # Display steps and iterations per second
 
-            # Use data from the first device for stats and eval
-            loss_info_single = unreplicate(loss_info)
-            runner_state_single = unreplicate(runner_state)
-            _, train_state, timestep, prev_actions = runner_state_single[:4]
-            env_params_single = timestep.env_cfg
+            need_train_log = (
+                config.log_train_interval > 0
+                and i % config.log_train_interval == 0
+            )
+            need_checkpoint = (
+                config.checkpoint_interval > 0
+                and i % config.checkpoint_interval == 0
+            )
+            need_eval = (
+                config.log_eval_interval > 0
+                and i % config.log_eval_interval == 0
+            )
+            need_final_state = i == config.num_updates - 1
+            need_host_state = (
+                need_train_log or need_checkpoint or need_eval or need_final_state
+            )
 
-            if i % config.log_train_interval == 0:
+            if need_host_state:
+                loss_info_single = unreplicate(loss_info)
+                runner_state_single = unreplicate(runner_state)
+                _, _, timestep, prev_actions = runner_state_single[:4]
+                env_params_single = timestep.env_cfg
+
+            if need_train_log:
                 curriculum_levels = get_curriculum_levels(
                     env_params_single, env.batch_cfg.curriculum_global.levels
                 )
                 wandb.log(
                     {
                         "performance/steps_per_second": steps_per_second,
+                        "performance/steps_per_second_per_gpu": steps_per_second_per_gpu,
                         "performance/iterations_per_second": iterations_per_second,
+                        "performance/env_steps_per_update": config.env_steps_per_update,
+                        "performance/actual_env_steps": (i + 1)
+                        * config.env_steps_per_update,
                         "curriculum_levels": curriculum_levels,
                         "lr": config.lr,
                         **loss_info_single,
                     }
                 )
 
-            if i % config.checkpoint_interval == 0:
+            if need_checkpoint:
                 checkpoint = {
                     "train_config": config,
                     "env_config": env_params_single,
@@ -593,7 +635,7 @@ def make_train(
                 }
                 helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
 
-            if i % config.log_eval_interval == 0:
+            if need_eval:
                 train_state_replicated = runner_state[1]
                 env_params_replicated = runner_state[2].env_cfg
                 rng_rollout_per_device = jax.random.split(
@@ -654,7 +696,10 @@ def make_train(
                 wandb.log(loss_info_single)
 
             # Clear JAX caches and run garbage collection to stabilize memory use
-            if i % config.cache_clear_interval == 0:
+            if (
+                config.cache_clear_interval > 0
+                and (i + 1) % config.cache_clear_interval == 0
+            ):
                 jax.clear_caches()
                 import gc
                 gc.collect()
