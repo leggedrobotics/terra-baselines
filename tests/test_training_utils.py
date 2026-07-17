@@ -61,6 +61,18 @@ class TrainingAccountingTest(unittest.TestCase):
                 action_types_override=(0,),
             )
 
+    def test_new_configs_store_canonical_encoder_names(self):
+        config = MixedAgentTrainConfig(
+            name="test",
+            num_devices=1,
+            num_envs_per_device=8,
+            num_steps=4,
+            num_minibatches=2,
+            total_timesteps=32,
+            map_encoder="resnet_spatial_v2",
+        )
+        self.assertEqual(config.map_encoder, "resnet_spatial_8x8")
+
     def test_four_device_accounting_does_not_divide_twice(self):
         with patch("train_mixed.jax.local_device_count", return_value=4), patch(
             "train_mixed.jax.devices", return_value=["cpu"] * 4
@@ -106,17 +118,31 @@ class CheckpointCompatibilityTest(unittest.TestCase):
         _validate_checkpoint_architecture({"train_config": {}}, self.config)
 
     def test_encoder_mismatch_fails_before_model_init(self):
-        checkpoint = {"train_config": {"map_encoder": "resnet_delayed"}}
+        checkpoint = {"train_config": {"map_encoder": "resnet_global_pool"}}
         with self.assertRaisesRegex(ValueError, "map_encoder"):
             _validate_checkpoint_architecture(checkpoint, self.config)
 
         spatial_config = SimpleNamespace(
-            map_encoder="resnet_spatial_v2",
+            map_encoder="resnet_spatial_8x8",
             model_core="mlp",
             model_size="base",
         )
         with self.assertRaisesRegex(ValueError, "map_encoder"):
             _validate_checkpoint_architecture(checkpoint, spatial_config)
+
+        # Historical names are aliases, not new architectures.
+        _validate_checkpoint_architecture(
+            {"train_config": {"map_encoder": "resnet_delayed"}},
+            SimpleNamespace(
+                map_encoder="resnet_global_pool",
+                model_core="mlp",
+                model_size="base",
+            ),
+        )
+        _validate_checkpoint_architecture(
+            {"train_config": {"map_encoder": "resnet_spatial_v2"}},
+            spatial_config,
+        )
 
     def test_history_width_mismatch_fails(self):
         checkpoint = {"train_config": {"num_prev_actions": 20}}

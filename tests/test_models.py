@@ -7,16 +7,16 @@ import numpy as np
 from terra.config import BatchConfig, MapsDimsConfig
 
 from utils.models import (
-    DelayedDownsampleResNet,
     MapsNet,
-    SpatialDelayedDownsampleResNet,
+    Spatial8x8MapResNet,
+    canonical_map_encoder,
     get_model_ready,
 )
 
 
-class DelayedDownsampleResNetTest(unittest.TestCase):
+class ResidualMapEncoderTest(unittest.TestCase):
     def test_output_shape_and_backward_pass(self):
-        model = SpatialDelayedDownsampleResNet()
+        model = Spatial8x8MapResNet()
         inputs = jax.random.normal(
             jax.random.PRNGKey(1), (2, 64, 64, 7), dtype=jnp.float32
         )
@@ -37,7 +37,7 @@ class DelayedDownsampleResNetTest(unittest.TestCase):
         )
 
     def test_spatial_readout_flattens_the_8x8_feature_grid(self):
-        model = SpatialDelayedDownsampleResNet()
+        model = Spatial8x8MapResNet()
         inputs = jnp.zeros((1, 64, 64, 7), dtype=jnp.float32)
         params = model.init(jax.random.PRNGKey(0), inputs)
         dense_kernels = [
@@ -48,7 +48,7 @@ class DelayedDownsampleResNetTest(unittest.TestCase):
         self.assertTrue(any(kernel.shape == (8 * 8 * 64, 128) for kernel in dense_kernels))
 
     def test_scaled_configuration_changes_output_and_params(self):
-        model = SpatialDelayedDownsampleResNet(
+        model = Spatial8x8MapResNet(
             stage_channels=(32, 64, 96, 128),
             blocks_per_stage=(2, 2, 3, 3),
             dense_layers=(256, 192),
@@ -61,7 +61,7 @@ class DelayedDownsampleResNetTest(unittest.TestCase):
         self.assertGreater(sum(x.size for x in jax.tree.leaves(params)), 1_000_000)
 
     def test_maps_net_selects_residual_encoder(self):
-        model = MapsNet(map_min_max=(-1, 1), encoder_type="resnet_delayed")
+        model = MapsNet(map_min_max=(-1, 1), encoder_type="resnet_global_pool")
         maps = [jnp.zeros((2, 64, 64), dtype=jnp.float32) for _ in range(7)]
         params = model.init(jax.random.PRNGKey(0), maps)
 
@@ -70,8 +70,8 @@ class DelayedDownsampleResNetTest(unittest.TestCase):
 
     def test_spatial_v2_has_a_distinct_checkpoint_identity(self):
         maps = [jnp.zeros((1, 64, 64), dtype=jnp.float32) for _ in range(7)]
-        legacy = MapsNet(map_min_max=(-1, 1), encoder_type="resnet_delayed")
-        spatial = MapsNet(map_min_max=(-1, 1), encoder_type="resnet_spatial_v2")
+        legacy = MapsNet(map_min_max=(-1, 1), encoder_type="resnet_global_pool")
+        spatial = MapsNet(map_min_max=(-1, 1), encoder_type="resnet_spatial_8x8")
         legacy_params = legacy.init(jax.random.PRNGKey(0), maps)
         spatial_params = spatial.init(jax.random.PRNGKey(0), maps)
         self.assertNotEqual(
@@ -101,10 +101,10 @@ class DelayedDownsampleResNetTest(unittest.TestCase):
         )
 
         spatial_scaled = MapsNet(
-            map_min_max=(-10, 10), encoder_type="resnet_spatial_v2"
+            map_min_max=(-10, 10), encoder_type="resnet_spatial_8x8"
         )
         spatial_identity = MapsNet(
-            map_min_max=(-1, 1), encoder_type="resnet_spatial_v2"
+            map_min_max=(-1, 1), encoder_type="resnet_spatial_8x8"
         )
         spatial_params = spatial_scaled.init(jax.random.PRNGKey(0), maps)
         self.assertGreater(
@@ -127,7 +127,7 @@ class DelayedDownsampleResNetTest(unittest.TestCase):
             clip_action_maps=False,
             loaded_max=6,
             local_map_normalization_bounds=(-1, 1),
-            map_encoder="resnet_spatial_v2",
+            map_encoder="resnet_spatial_8x8",
             maps_net_normalization_bounds=(-1, 1),
             model_core="mlp",
             model_size="base",
@@ -138,7 +138,7 @@ class DelayedDownsampleResNetTest(unittest.TestCase):
         )
 
         model, params = get_model_ready(jax.random.PRNGKey(0), config, env)
-        self.assertEqual(model.map_encoder, "resnet_spatial_v2")
+        self.assertEqual(model.map_encoder, "resnet_spatial_8x8")
         base_param_count = sum(x.size for x in jax.tree.leaves(params))
         self.assertGreater(base_param_count, 0)
 
@@ -150,6 +150,24 @@ class DelayedDownsampleResNetTest(unittest.TestCase):
         self.assertEqual(model_large.resnet_stage_channels, (32, 64, 96, 128))
         large_param_count = sum(x.size for x in jax.tree.leaves(params_large))
         self.assertGreater(large_param_count, base_param_count)
+
+    def test_old_encoder_names_are_exact_aliases(self):
+        self.assertEqual(
+            canonical_map_encoder("resnet_delayed"), "resnet_global_pool"
+        )
+        self.assertEqual(
+            canonical_map_encoder("resnet_spatial_v2"), "resnet_spatial_8x8"
+        )
+
+        maps = [jnp.zeros((1, 64, 64), dtype=jnp.float32) for _ in range(7)]
+        canonical = MapsNet(
+            map_min_max=(-1, 1), encoder_type="resnet_global_pool"
+        )
+        alias = MapsNet(map_min_max=(-1, 1), encoder_type="resnet_delayed")
+        map_params = canonical.init(jax.random.PRNGKey(0), maps)
+        np.testing.assert_array_equal(
+            canonical.apply(map_params, maps), alias.apply(map_params, maps)
+        )
 
 
 if __name__ == "__main__":

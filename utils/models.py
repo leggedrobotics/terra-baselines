@@ -8,6 +8,26 @@ from terra.env import TerraEnvBatch
 from functools import partial
 
 
+MAP_ENCODER_ALIASES = {
+    "atari": "atari",
+    "resnet_global_pool": "resnet_global_pool",
+    "resnet_delayed": "resnet_global_pool",
+    "resnet_spatial_8x8": "resnet_spatial_8x8",
+    "resnet_spatial_v2": "resnet_spatial_8x8",
+}
+
+
+def canonical_map_encoder(name: str) -> str:
+    """Return the stable architecture name used by new checkpoints."""
+    try:
+        return MAP_ENCODER_ALIASES[name]
+    except KeyError as error:
+        choices = ", ".join(sorted(MAP_ENCODER_ALIASES))
+        raise ValueError(
+            f"Unsupported map_encoder={name!r}. Expected one of: {choices}."
+        ) from error
+
+
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     """Instantiate a model according to obs shape of environment."""
     init_batch_size = 1
@@ -38,7 +58,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         raise ValueError(
             f"Unsupported model_core='{model_core}'. Expected 'mlp' or 'transformer'."
         )
-    map_encoder = getattr(config, "map_encoder", "atari")
+    map_encoder = canonical_map_encoder(getattr(config, "map_encoder", "atari"))
 
     model_kwargs = {}
     if model_size == "medium":
@@ -399,8 +419,8 @@ class ResidualMapBlock(nn.Module):
         return nn.relu(x + residual)
 
 
-class DelayedDownsampleResNet(nn.Module):
-    """PR #15 encoder kept stable for existing ``resnet_delayed`` checkpoints."""
+class GlobalPoolMapResNet(nn.Module):
+    """PR #15 residual encoder with global mean+max pooling."""
 
     @nn.compact
     def __call__(self, x):
@@ -426,8 +446,8 @@ class DelayedDownsampleResNet(nn.Module):
         return nn.Dense(features=128)(x)
 
 
-class SpatialDelayedDownsampleResNet(nn.Module):
-    """Spatial v2 encoder with an 8x8 flattened readout."""
+class Spatial8x8MapResNet(nn.Module):
+    """Residual map encoder with a flattened 8x8 spatial readout."""
 
     stage_channels: Sequence[int] = (16, 32, 48, 64)
     blocks_per_stage: Sequence[int] = (1, 1, 2, 2)
@@ -505,23 +525,24 @@ class MapsNet(nn.Module):
     resnet_dense_layers: Sequence[int] = (128, 128)
 
     def setup(self) -> None:
-        if self.encoder_type == "atari":
+        encoder_type = canonical_map_encoder(self.encoder_type)
+        if encoder_type == "atari":
             self.cnn = AtariCNN(
                 conv_channels=self.cnn_channels,
                 dense_layers=self.cnn_dense_layers,
             )
             return
-        if self.encoder_type == "resnet_delayed":
-            self.cnn = DelayedDownsampleResNet()
+        if encoder_type == "resnet_global_pool":
+            self.cnn = GlobalPoolMapResNet()
             return
-        if self.encoder_type == "resnet_spatial_v2":
-            self.cnn = SpatialDelayedDownsampleResNet(
+        if encoder_type == "resnet_spatial_8x8":
+            self.cnn = Spatial8x8MapResNet(
                 stage_channels=self.resnet_stage_channels,
                 blocks_per_stage=self.resnet_blocks_per_stage,
                 dense_layers=self.resnet_dense_layers,
             )
             return
-        raise ValueError(f"Unknown map encoder: {self.encoder_type}")
+        raise AssertionError(f"Unhandled map encoder: {encoder_type}")
 
     def __call__(self, obs: dict[str, Array]):
         """
@@ -540,9 +561,9 @@ class MapsNet(nn.Module):
         reachability_map = as_map_batch(obs[1])
         action_map = as_map_batch(obs[2])
         target_map = as_map_batch(obs[3])
-        # Version preprocessing together with the topology. Legacy Atari and
-        # resnet_delayed checkpoints consumed raw unclipped height maps.
-        if self.encoder_type == "resnet_spatial_v2":
+        # Version preprocessing together with the topology. Atari and the
+        # global-pool ResNet consumed raw unclipped height maps historically.
+        if canonical_map_encoder(self.encoder_type) == "resnet_spatial_8x8":
             action_map = normalize(
                 action_map, self.map_min_max[0], self.map_min_max[1]
             )

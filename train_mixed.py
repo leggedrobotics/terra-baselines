@@ -94,7 +94,7 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
-from utils.models import get_model_ready
+from utils.models import MAP_ENCODER_ALIASES, canonical_map_encoder, get_model_ready
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig, BatchConfig, Rewards, CurriculumGlobalConfig, RewardsType
 from flax.training.train_state import TrainState
@@ -220,6 +220,9 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
     for field_name, default in defaults.items():
         saved = _checkpoint_config_value(checkpoint, field_name, default)
         current = getattr(config, field_name, default)
+        if field_name == "map_encoder":
+            saved = canonical_map_encoder(saved)
+            current = canonical_map_encoder(current)
         if saved != current:
             mismatches.append(f"{field_name}: checkpoint={saved!r}, current={current!r}")
     if mismatches:
@@ -549,6 +552,7 @@ class MixedAgentTrainConfig:
 
 
     def __post_init__(self):
+        self.map_encoder = canonical_map_encoder(self.map_encoder)
         self.num_devices = (
             jax.local_device_count() if self.num_devices == 0 else self.num_devices
         )
@@ -1782,10 +1786,11 @@ if __name__ == "__main__":
         "--map_encoder",
         type=str,
         default="atari",
-        choices=["atari", "resnet_delayed", "resnet_spatial_v2"],
+        choices=sorted(MAP_ENCODER_ALIASES),
         help=(
-            "Global-map encoder. 'resnet_delayed' retains PR #15 checkpoint "
-            "compatibility; 'resnet_spatial_v2' uses the scaled 8x8 spatial readout."
+            "Global-map encoder. Use 'resnet_global_pool' for the PR #15 "
+            "topology or 'resnet_spatial_8x8' for the scaled spatial readout. "
+            "The old names remain accepted as compatibility aliases."
         ),
     )
     parser.add_argument(

@@ -126,9 +126,33 @@ python train_mixed.py --config excavator_truck --transport_relocate_mult 2.0
 # Use preset but override agent types
 python train_mixed.py --config solo_excavator --agent_types "(0,2)"
 
-# Use the delayed-downsampling residual encoder for 64x64 global maps
-python train_mixed.py --config solo_excavator --map_encoder resnet_delayed
+# Use the spatial residual encoder for a new 64x64-map experiment
+python train_mixed.py --config solo_excavator --map_encoder resnet_spatial_8x8
 ```
+
+### Global Map Encoders
+
+`train_mixed.py --map_encoder` accepts these canonical names:
+
+| Name | Readout | Intended use |
+|---|---|---|
+| `atari` | Flattened convolution features | Fast default and existing baseline comparisons |
+| `resnet_global_pool` | Global mean+max pooling | Exact PR #15 topology and existing residual checkpoints |
+| `resnet_spatial_8x8` | Flattened 8x8 feature grid | Preferred residual candidate for new training runs |
+
+The spatial encoder does **not** use global pooling. For the base model it uses
+stage channels `(16, 32, 48, 64)` with `(1, 1, 2, 2)` residual blocks. The
+first stage stays at 64x64; the following stages downsample to 32x32, 16x16,
+and 8x8. That 8x8 grid is flattened before the dense readout, preserving where
+work remains. Its deepest features have a nominal 97x97 receptive field, while
+the flattened readout gives the policy access to all 8x8 spatial locations.
+
+The names `resnet_delayed` and `resnet_spatial_v2` remain accepted aliases for
+`resnet_global_pool` and `resnet_spatial_8x8`, respectively. They exist only so
+old commands and checkpoints keep working; use the canonical names for new
+experiments. Compare learning curves by environment steps and report runtime
+separately in wall-clock time or steps/s: both residual encoders are
+substantially slower than `atari`.
 
 
 ## Sweep
