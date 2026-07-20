@@ -209,8 +209,20 @@ W&B project `aless-weber-eth/mixed-agents`, tag `spatial-v3-batch-2026-07-20`.
   from `grow_checkpoint.py` output via `--resume_from` if param loading accepts it; otherwise
   fresh init + kickstart is the supported path.
 
-Gate order per terra-rl skill: py_compile → unit tests (CPU) → 1-update local GPU smoke per
-config (if the local 4090 is free) → Euler W&B-disabled full-shape smoke (update 1 completes)
+### Euler logistics (verified 2026-07-20)
+
+- Workspace: `TERRA_WORK=/cluster/home/lterenzi/codex_terra_edge_validation`; venv
+  `/cluster/scratch/lterenzi/codex_terra_edge_venv` (verified present). Code runs from
+  snapshot dirs: `$TERRA_WORK/snapshots/<tag>/{terra,terra-baselines}` — create a new
+  snapshot for this branch (e.g. `main-cdab283+spatial-v3`), rsync the worktree + terra main.
+- Template sbatch (job name pattern, GPU guard, smoke-then-train structure):
+  `$TERRA_WORK/scripts/terra_foundation_spatial8x8_base_4gpu_20260717.sbatch`.
+- **E3 teacher checkpoint (pqtmfmqy final):**
+  `$TERRA_WORK/snapshots/main-34b5d39d-095b261/terra-baselines/checkpoints/terra-foundation-spatial8x8-mb32-10k-euler-2026-07-19-07-19-27_FINAL.pkl`
+- The local 4090 is occupied by a Newton workload (96% util) — skip local GPU smokes; use the
+  Euler W&B-disabled smoke stage in the sbatch template instead.
+
+Gate order per terra-rl skill: py_compile → unit tests (CPU) → Euler W&B-disabled full-shape smoke (update 1 completes)
 → production submit → verify allocation GPU types via sacct + nvidia-smi → record Slurm job
 IDs, W&B ids, and ledger entries. Success metrics per skill: `eval/positive_terminations`,
 `eval/rewards`, `eval/max_reward`, DO/DO_NOTHING rates, explained variance. Compare E1/E2/E3
