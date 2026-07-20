@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 import flax.linen as nn
-from typing import Sequence, Union
+from typing import Any, Sequence, Union
 from terra.actions import TrackedAction, WheeledAction
 from terra.env import TerraEnvBatch
 from functools import partial
@@ -14,6 +14,7 @@ MAP_ENCODER_ALIASES = {
     "resnet_delayed": "resnet_global_pool",
     "resnet_spatial_8x8": "resnet_spatial_8x8",
     "resnet_spatial_v2": "resnet_spatial_8x8",
+    "resnet_spatial_v3": "resnet_spatial_v3",
 }
 
 
@@ -26,6 +27,19 @@ def canonical_map_encoder(name: str) -> str:
         raise ValueError(
             f"Unsupported map_encoder={name!r}. Expected one of: {choices}."
         ) from error
+
+
+def _config_option(config, name: str, default):
+    """Read an optional config field from dict-like or dataclass configs.
+
+    Dict-backed test configs raise ``KeyError`` on missing attributes while
+    dataclasses raise ``AttributeError``; treat both as "field absent".
+    """
+    try:
+        value = getattr(config, name)
+    except (AttributeError, KeyError):
+        return default
+    return value if value is not None else default
 
 
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
@@ -94,6 +108,33 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             "transformer_ffn_dim": 512,
         }
 
+    # Optional critic-head width override (F4). When unset the model_size preset
+    # (or the module default for "base") is left untouched.
+    critic_hidden_dims = _config_option(config, "critic_hidden_dims", None)
+    if critic_hidden_dims is not None:
+        model_kwargs["hidden_dim_v"] = tuple(int(f) for f in critic_hidden_dims) + (1,)
+        print(f"critic_hidden_dims override -> hidden_dim_v = {model_kwargs['hidden_dim_v']}")
+
+    # Encoder mixed-precision compute dtype (F3). Default float32 keeps the
+    # existing param tree and numerics identical.
+    encoder_compute_dtype_name = _config_option(config, "encoder_compute_dtype", "float32")
+    if encoder_compute_dtype_name not in ("float32", "bfloat16"):
+        raise ValueError(
+            f"Unsupported encoder_compute_dtype={encoder_compute_dtype_name!r}. "
+            "Expected 'float32' or 'bfloat16'."
+        )
+    if encoder_compute_dtype_name == "bfloat16" and map_encoder in (
+        "atari",
+        "resnet_global_pool",
+    ):
+        raise ValueError(
+            "encoder_compute_dtype='bfloat16' is only supported for the spatial "
+            f"ResNet encoders, not map_encoder={map_encoder!r}."
+        )
+    encoder_compute_dtype = (
+        jnp.bfloat16 if encoder_compute_dtype_name == "bfloat16" else jnp.float32
+    )
+
     model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=config["num_prev_actions"],
         num_embeddings_agent=num_embeddings_agent,
@@ -104,6 +145,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         action_type=env.batch_cfg.action_type,
         model_core=model_core,
         map_encoder=map_encoder,
+        encoder_compute_dtype=encoder_compute_dtype,
         **model_kwargs,
     )
 
@@ -385,6 +427,9 @@ class ResidualMapBlock(nn.Module):
 
     features: int
     strides: tuple[int, int] = (1, 1)
+    use_se: bool = False
+    se_reduction: int = 4
+    compute_dtype: Any = jnp.float32
 
     @nn.compact
     def __call__(self, x):
@@ -395,16 +440,38 @@ class ResidualMapBlock(nn.Module):
             strides=self.strides,
             padding="SAME",
             use_bias=False,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
         )(x)
-        x = nn.LayerNorm()(x)
+        x = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
         x = nn.relu(x)
         x = nn.Conv(
             features=self.features,
             kernel_size=(3, 3),
             padding="SAME",
             use_bias=False,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
         )(x)
-        x = nn.LayerNorm()(x)
+        x = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
+
+        if self.use_se:
+            # Squeeze-and-excitation gate: recalibrate channels using a global
+            # descriptor before the residual add (residual is post-relu >= 0).
+            se = jnp.mean(x, axis=(1, 2))
+            se = nn.Dense(
+                features=self.features // self.se_reduction,
+                dtype=self.compute_dtype,
+                param_dtype=jnp.float32,
+            )(se)
+            se = nn.relu(se)
+            se = nn.Dense(
+                features=self.features,
+                dtype=self.compute_dtype,
+                param_dtype=jnp.float32,
+            )(se)
+            se = nn.sigmoid(se)
+            x = x * se[:, None, None, :]
 
         if residual.shape[-1] != self.features or self.strides != (1, 1):
             residual = nn.Conv(
@@ -413,8 +480,12 @@ class ResidualMapBlock(nn.Module):
                 strides=self.strides,
                 padding="SAME",
                 use_bias=False,
+                dtype=self.compute_dtype,
+                param_dtype=jnp.float32,
             )(residual)
-            residual = nn.LayerNorm()(residual)
+            residual = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(
+                residual
+            )
 
         return nn.relu(x + residual)
 
@@ -452,6 +523,8 @@ class Spatial8x8MapResNet(nn.Module):
     stage_channels: Sequence[int] = (16, 32, 48, 64)
     blocks_per_stage: Sequence[int] = (1, 1, 2, 2)
     dense_layers: Sequence[int] = (128, 128)
+    use_se: bool = False
+    compute_dtype: Any = jnp.float32
 
     @nn.compact
     def __call__(self, x):
@@ -460,8 +533,10 @@ class Spatial8x8MapResNet(nn.Module):
             kernel_size=(3, 3),
             padding="SAME",
             use_bias=False,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
         )(x)
-        x = nn.LayerNorm()(x)
+        x = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
         x = nn.relu(x)
 
         # Keep the first residual stage at full resolution so narrow map
@@ -471,12 +546,27 @@ class Spatial8x8MapResNet(nn.Module):
         ):
             for block in range(num_blocks):
                 strides = (2, 2) if stage > 0 and block == 0 else (1, 1)
-                x = ResidualMapBlock(features=features, strides=strides)(x)
+                x = ResidualMapBlock(
+                    features=features,
+                    strides=strides,
+                    use_se=self.use_se,
+                    compute_dtype=self.compute_dtype,
+                )(x)
 
         x = x.reshape((x.shape[0], -1))
         for features in self.dense_layers[:-1]:
-            x = nn.relu(nn.Dense(features=features)(x))
-        return nn.Dense(features=self.dense_layers[-1])(x)
+            x = nn.relu(
+                nn.Dense(
+                    features=features,
+                    dtype=self.compute_dtype,
+                    param_dtype=jnp.float32,
+                )(x)
+            )
+        return nn.Dense(
+            features=self.dense_layers[-1],
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(x)
 
 
 @jax.jit
@@ -523,6 +613,7 @@ class MapsNet(nn.Module):
     resnet_stage_channels: Sequence[int] = (16, 32, 48, 64)
     resnet_blocks_per_stage: Sequence[int] = (1, 1, 2, 2)
     resnet_dense_layers: Sequence[int] = (128, 128)
+    encoder_compute_dtype: Any = jnp.float32
 
     def setup(self) -> None:
         encoder_type = canonical_map_encoder(self.encoder_type)
@@ -540,6 +631,17 @@ class MapsNet(nn.Module):
                 stage_channels=self.resnet_stage_channels,
                 blocks_per_stage=self.resnet_blocks_per_stage,
                 dense_layers=self.resnet_dense_layers,
+                use_se=False,
+                compute_dtype=self.encoder_compute_dtype,
+            )
+            return
+        if encoder_type == "resnet_spatial_v3":
+            self.cnn = Spatial8x8MapResNet(
+                stage_channels=self.resnet_stage_channels,
+                blocks_per_stage=self.resnet_blocks_per_stage,
+                dense_layers=self.resnet_dense_layers,
+                use_se=True,
+                compute_dtype=self.encoder_compute_dtype,
             )
             return
         raise AssertionError(f"Unhandled map encoder: {encoder_type}")
@@ -557,13 +659,35 @@ class MapsNet(nn.Module):
                 return x
             return x.reshape((-1,) + x.shape[-2:])
 
+        encoder_type = canonical_map_encoder(self.encoder_type)
+        is_spatial_v3 = encoder_type == "resnet_spatial_v3"
+
         traversability_map = as_map_batch(obs[0])
         reachability_map = as_map_batch(obs[1])
         action_map = as_map_batch(obs[2])
         target_map = as_map_batch(obs[3])
+
+        # v3 derived channels are computed from RAW action/target height maps,
+        # BEFORE the normalize() that follows (F1).
+        if is_spatial_v3:
+            remaining_dig = (
+                (target_map < 0) & (action_map > target_map)
+            ).astype(jnp.float32)
+            dump_deficit = (
+                (target_map > 0) & (action_map <= 0)
+            ).astype(jnp.float32)
+            grid_h = action_map.shape[-2]
+            grid_w = action_map.shape[-1]
+            coord_rows = jnp.linspace(-1.0, 1.0, grid_h, dtype=jnp.float32)
+            coord_cols = jnp.linspace(-1.0, 1.0, grid_w, dtype=jnp.float32)
+            coord_y, coord_x = jnp.meshgrid(coord_rows, coord_cols, indexing="ij")
+            coord_x = jnp.broadcast_to(coord_x, action_map.shape)
+            coord_y = jnp.broadcast_to(coord_y, action_map.shape)
+
         # Version preprocessing together with the topology. Atari and the
-        # global-pool ResNet consumed raw unclipped height maps historically.
-        if canonical_map_encoder(self.encoder_type) == "resnet_spatial_8x8":
+        # global-pool ResNet consumed raw unclipped height maps historically;
+        # both spatial ResNet encoders normalize action/target heights.
+        if encoder_type in ("resnet_spatial_8x8", "resnet_spatial_v3"):
             action_map = normalize(
                 action_map, self.map_min_max[0], self.map_min_max[1]
             )
@@ -574,19 +698,30 @@ class MapsNet(nn.Module):
         dumpability_mask = as_map_batch(obs[5])
         interaction_mask = as_map_batch(obs[6])
 
-        x = jnp.concatenate(
-            (
-                traversability_map[..., None],
-                reachability_map[..., None],
-                action_map[..., None],
-                target_map[..., None],
-                padding_mask[..., None],
-                dumpability_mask[..., None],
-                interaction_mask[..., None],
-            ),
-            axis=-1,
-        )
+        channels = [
+            traversability_map[..., None],
+            reachability_map[..., None],
+            action_map[..., None],
+            target_map[..., None],
+            padding_mask[..., None],
+            dumpability_mask[..., None],
+            interaction_mask[..., None],
+        ]
+        if is_spatial_v3:
+            channels.extend(
+                [
+                    remaining_dig[..., None],
+                    dump_deficit[..., None],
+                    coord_x[..., None],
+                    coord_y[..., None],
+                ]
+            )
+
+        x = jnp.concatenate(channels, axis=-1)
+        # Encoder mixed precision (F3): compute in compute_dtype, return f32.
+        x = x.astype(self.encoder_compute_dtype)
         x = self.cnn(x)
+        x = x.astype(jnp.float32)
         return x
 
 
@@ -678,6 +813,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     local_map_hidden_dim_layers_mlp: Sequence[int] = (256, 32)
     model_core: str = "mlp"  # "mlp" or "transformer"
     map_encoder: str = "atari"
+    encoder_compute_dtype: Any = jnp.float32
     transformer_model_dim: int = 128
     transformer_num_layers: int = 2
     transformer_num_heads: int = 4
@@ -718,6 +854,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             resnet_stage_channels=self.resnet_stage_channels,
             resnet_blocks_per_stage=self.resnet_blocks_per_stage,
             resnet_dense_layers=self.resnet_dense_layers,
+            encoder_compute_dtype=self.encoder_compute_dtype,
         )
 
         self.actions_net = PreviousActionsNet(

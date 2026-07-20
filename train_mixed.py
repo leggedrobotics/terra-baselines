@@ -549,6 +549,11 @@ class MixedAgentTrainConfig:
     model_size: str = "base"
     model_core: str = "mlp"
     map_encoder: str = "atari"
+    # Encoder mixed precision: "float32" (default) or "bfloat16". bf16 is only
+    # valid for the spatial ResNet encoders (validated in get_model_ready).
+    encoder_compute_dtype: str = "float32"
+    # Optional critic-head width override; None keeps the model_size preset.
+    critic_hidden_dims: tuple | None = None
 
 
     def __post_init__(self):
@@ -943,6 +948,13 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
 
     model_size = config.model_size if hasattr(config, "model_size") else "unknown"
     map_encoder = getattr(config, "map_encoder", "atari")
+    encoder_compute_dtype = getattr(config, "encoder_compute_dtype", "float32")
+    critic_hidden_dims = getattr(config, "critic_hidden_dims", None)
+    critic_hidden_tag = (
+        "-".join(str(int(x)) for x in critic_hidden_dims)
+        if critic_hidden_dims
+        else "preset"
+    )
 
     tags = [
         "mixed-agents",
@@ -952,6 +964,8 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         f"actions:{'-'.join(action_type_names.get(int(t), str(t)) for t in action_types)}",
         f"model-size:{_tag_value(model_size)}",
         f"map-encoder:{_tag_value(map_encoder)}",
+        f"encoder-dtype:{_tag_value(encoder_compute_dtype)}",
+        f"critic-hidden:{_tag_value(critic_hidden_tag)}",
         f"dump-min-free-fraction:{_tag_value(dump_min_free_fraction)}",
         f"move-tiles:{_tag_value(env_defaults.agent.move_tiles)}",
         f"dig-radius-tiles:{_tag_value(env_defaults.agent.dig_radius_tiles)}",
@@ -1850,7 +1864,28 @@ if __name__ == "__main__":
         help=(
             "Global-map encoder. Use 'resnet_global_pool' for the PR #15 "
             "topology or 'resnet_spatial_8x8' for the scaled spatial readout. "
+            "'resnet_spatial_v3' adds derived channels, coordinates, and SE gates. "
             "The old names remain accepted as compatibility aliases."
+        ),
+    )
+    parser.add_argument(
+        "--encoder_compute_dtype",
+        type=str,
+        default="float32",
+        choices=["float32", "bfloat16"],
+        help=(
+            "Compute dtype for the spatial ResNet encoder. 'bfloat16' halves "
+            "encoder memory bandwidth while keeping float32 params/loss math. "
+            "Only valid with the spatial ResNet encoders."
+        ),
+    )
+    parser.add_argument(
+        "--critic_hidden_dims",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated critic-head widths, e.g. '512,256'. Overrides the "
+            "model_size preset's value head. Omit to keep the preset."
         ),
     )
     parser.add_argument(
@@ -2103,8 +2138,25 @@ if __name__ == "__main__":
                 f"for auto-load, push-mode, and reverse-dump mechanics."
             )
     
+    # Parse critic-head width override from a comma-separated string.
+    critic_hidden_dims = None
+    if args.critic_hidden_dims is not None:
+        try:
+            critic_hidden_dims = tuple(
+                int(token.strip())
+                for token in args.critic_hidden_dims.split(",")
+                if token.strip()
+            )
+            if not critic_hidden_dims:
+                raise ValueError("no dimensions parsed")
+        except ValueError as e:
+            raise ValueError(
+                f"Failed to parse --critic_hidden_dims '{args.critic_hidden_dims}': {e}. "
+                "Use a comma-separated list like '512,256'."
+            )
+
     name = f"{args.name}-{args.machine}-{DT}"
-    
+
     config = MixedAgentTrainConfig(
         name=name, 
         num_devices=args.num_devices,
@@ -2144,6 +2196,8 @@ if __name__ == "__main__":
         model_size=args.model_size,
         model_core=args.model_core,
         map_encoder=args.map_encoder,
+        encoder_compute_dtype=args.encoder_compute_dtype,
+        critic_hidden_dims=critic_hidden_dims,
     )
-    
-    train_mixed_agents(config) 
+
+    train_mixed_agents(config)
