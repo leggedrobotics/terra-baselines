@@ -249,3 +249,61 @@ matched update counts.
    (b) `--map_encoder resnet_spatial_v3 --no_value_clip --flat_minibatch_shuffle`,
    (c) same + `--teacher_checkpoint` pointing at a checkpoint saved from (a).
    (Use DATASET_PATH/DATASET_SIZE as in tests; tiny env counts; JAX_PLATFORMS=cpu.)
+
+---
+
+# Addendum 2026-07-20b — F13: cross-attention readout (encoder v4)
+
+Motivation: the flatten readout has position-rigid weights — no mechanism to *dynamically*
+select task-relevant cells (leftover dig cells, piles near dump zones) independent of where
+they are. A small agent-conditioned cross-attention branch adds content-based selection
+("attend where remaining_dig=1", "attend to piles when loaded"), the pattern that carries
+AlphaStar-style agents. Conv trunk stays (Lux evidence: CNN trunks win; attention only as
+recalibration/readout).
+
+## F13 — `resnet_spatial_8x8_se_xattn` (canonical, behavior-based; alias `resnet_spatial_v4`)
+
+Identical to `resnet_spatial_8x8_se` (11-channel input, SE trunk, same stage presets) plus a
+cross-attention readout branch. All decisions below are final:
+
+- **Tokens**: the final 8×8×C feature map (pre-flatten) → 64 tokens of dim C. Add a learned
+  positional embedding table (64×C, zeros-init) to the tokens (coord channels already carry
+  position in content; the table is cheap insurance). Pre-LayerNorm on tokens.
+- **Queries (5 total)**: one projected from the ACTIVE agent's embedding (the
+  `AgentStateNet` output for agent index 0 — obs are ordered acting-agent-first), plus 4
+  learned latent query vectors. LayerNorm on queries.
+- **Attention**: `nn.MultiHeadDotProductAttention`, num_heads=4, qkv_features=`attn_qkv`,
+  out_features=`attn_qkv` per query; flatten the 5 query outputs and project with a Dense to
+  `attn_out` features, relu.
+- **Fusion (encoder output dim unchanged)**: `out = Dense(dense_layers[-1])( concat(
+  relu(Dense(dense_layers[0])(flatten)), attn_branch ) )` — the flatten path stays exactly as
+  in v3 (pure-addition change; low regression risk).
+- **Sizes**: base `attn_qkv=64, attn_out=128`; medium `96/160`; large `128/192` (add to the
+  model_size preset dicts as `resnet_attn_qkv`, `resnet_attn_out`).
+- **Interface**: `MapsNet.__call__(obs, agent_embedding=None)` — the parent net passes the
+  active agent's `AgentStateNet` embedding (`x_agents[:, 0, :]`, computed before the maps
+  branch) ONLY for the xattn encoder; default None keeps every existing encoder path
+  byte-identical (param trees and numerics of atari / global_pool / spatial_8x8 / _se must
+  not change). Hard-fail (ValueError) if the xattn encoder is selected and agent_embedding
+  is None.
+- **bf16**: attention runs in `encoder_compute_dtype` like the trunk (dtype=compute,
+  param_dtype=f32); branch output cast back to f32 with the rest.
+- **Grow interplay**: growing v3→v4 copies the trunk via the stage-aware remap and
+  fresh-inits the attention leaves (documented, not function-preserving; kickstart covers).
+  No grow-script changes required — new leaves fall into the existing "fresh" category.
+
+Tests (tests/test_models.py additions): (1) v3 param tree unchanged by the new code paths;
+(2) v4 init + forward shapes at base and medium (output dim = dense_layers[-1]);
+(3) content-based-selection probe: identical maps except one remaining-dig cell at two
+different positions → attended branch outputs differ (run with the flatten-path weights
+zeroed or compare full outputs; assert max-abs diff > tolerance); (4) agent-conditioning
+probe: same maps, loaded=0 vs loaded=max in the agent obs → v4 outputs differ;
+(5) ValueError when xattn selected without agent_embedding; (6) bf16 v4: f32 output dtype,
+finite grads; (7) model_size medium changes attn param shapes.
+
+## E4 (run after review; own snapshot)
+
+E2's exact flags with the v4 encoder: `--map_encoder resnet_spatial_8x8_se_xattn
+--encoder_compute_dtype bfloat16 --critic_hidden_dims 512,256 --no_value_clip
+--flat_minibatch_shuffle`, ent 0.15→0.005 over 19000, 20k updates, 4×4090. E4 vs E2
+isolates the readout. Snapshot tag `spatial-v4-<sha>`; E1/E2/E3 keep reading the v3 snapshot.
