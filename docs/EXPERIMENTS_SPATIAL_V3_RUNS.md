@@ -203,3 +203,15 @@ lands on scratch — this was the exact point attempt 1 died).
   ent schedule rescaled to 38000 updates so entropy-vs-env-steps matches pqtmfmqy.
   Purpose: if learning-per-env-step matches E2, single-GPU runs become the default
   screening tool (4 experiments per node instead of 1; ~94% aggregate throughput).
+
+## E4 — cross-attention readout (submitted 2026-07-20 ~17:05Z)
+
+- Encoder v4 `resnet_spatial_8x8_se_xattn` (F13, commit 0cf7f4a): agent-conditioned
+  cross-attention readout (64 tokens @8x8, agent query + 4 latents, 4 heads) fused with the
+  unchanged flatten path. E4 vs E2 isolates the readout; all other flags identical to E2
+  (bf16, critic 512,256, no value clip, flat shuffle, ent 0.15->0.005 over 19k, 20k updates).
+- Local GPU probe (4090, batch 256): fwd+bwd 19.1 ms f32 / 9.9 ms bf16 (1.93x), grads finite,
+  attention branch cost within noise of v3. Params: v4 base 1,088,733 (+86k over v3).
+- Remote CPU gate on snapshot `snapshots/spatial-v4-0cf7f4a`: test_models 31/31 OK.
+- Slurm **7889031**, sbatch `terra_sv4_E4_xattn_bf16_4gpu_20260720.sbatch` (derived from E2's;
+  models.py sha pin recomputed; all four pins verified).
