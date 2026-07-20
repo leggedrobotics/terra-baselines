@@ -544,5 +544,35 @@ class KickstartLossTermsTest(unittest.TestCase):
         self.assertGreater(float(info["kickstart/kl"]), 0.0)
 
 
+class RegisterCheckpointConfigClassesTest(unittest.TestCase):
+    def test_does_not_overwrite_main_defined_config_class(self):
+        # Regression for Euler job 7862190: a derived per-run trainer running
+        # as __main__ defines its own MixedAgentTrainConfig; the teacher-load
+        # path calls register_checkpoint_config_classes(), and overwriting the
+        # __main__ class makes pickling the FINAL checkpoint fail with
+        # "it's not the same object as __main__.MixedAgentTrainConfig".
+        import pickle
+        import sys
+        import types
+
+        from utils.helpers import register_checkpoint_config_classes
+
+        class MainConfig:
+            pass
+
+        fake_main = types.ModuleType("__main__")
+        fake_main.MixedAgentTrainConfig = MainConfig
+        real_main = sys.modules["__main__"]
+        sys.modules["__main__"] = fake_main
+        try:
+            register_checkpoint_config_classes()
+            # __main__'s own class must be untouched...
+            self.assertIs(fake_main.MixedAgentTrainConfig, MainConfig)
+            # ...and the missing name must have been filled in.
+            self.assertTrue(hasattr(fake_main, "TrainConfig"))
+        finally:
+            sys.modules["__main__"] = real_main
+
+
 if __name__ == "__main__":
     unittest.main()

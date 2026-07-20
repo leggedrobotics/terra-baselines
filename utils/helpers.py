@@ -46,9 +46,15 @@ def register_checkpoint_config_classes():
     from train import TrainConfig
     from train_mixed import MixedAgentTrainConfig
 
+    # Only fill in MISSING names. When the running __main__ already defines a
+    # config class (train_mixed.py itself, or a derived per-run trainer),
+    # overwriting it makes pickle refuse to SAVE new checkpoints with
+    # "it's not the same object as __main__.MixedAgentTrainConfig".
     main_module = sys.modules["__main__"]
-    main_module.TrainConfig = TrainConfig
-    main_module.MixedAgentTrainConfig = MixedAgentTrainConfig
+    if not hasattr(main_module, "TrainConfig"):
+        main_module.TrainConfig = TrainConfig
+    if not hasattr(main_module, "MixedAgentTrainConfig"):
+        main_module.MixedAgentTrainConfig = MixedAgentTrainConfig
 
 
 def replicate_checkpoint_env_config(env_config, n_envs: int):
