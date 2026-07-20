@@ -187,3 +187,19 @@ lands on scratch — this was the exact point attempt 1 died).
 - E1 (7866454, still pending) and E2 (7862189, running) are unaffected: neither invokes the
   teacher loader, and their own-class pickling is self-consistent. They stay on the
   3a21cd6 snapshot.
+
+## Addendum 2026-07-20 (evening)
+
+- **Speed probe** `terra-sv3-speed1g` (Slurm 7882583, COMPLETED): E2 config on 1x4090,
+  steady 11.3-11.5k steps/s vs E2's 10.8k/GPU → ~94% multi-GPU scaling efficiency.
+  Also first end-to-end bf16 GPU training evidence (200 updates, clean).
+- **E3 attempt 1 (7862190) FAILED** at the smoke's final checkpoint save:
+  `register_checkpoint_config_classes()` overwrote `__main__.MixedAgentTrainConfig` in the
+  sed-derived trainer → pickle identity error. Kickstart smoke itself trained fine.
+  Fixed in `d1765d7` (register only missing names + regression test), helpers.py synced to
+  the snapshot, **resubmitted as 7886071**.
+- **E4 single-GPU learning pilot** `terra-sv3-E4-1g` (Slurm 7887940): exact E2 config on
+  1x4090, same total data budget as the original A/B (1.31B env steps = 40k updates),
+  ent schedule rescaled to 38000 updates so entropy-vs-env-steps matches pqtmfmqy.
+  Purpose: if learning-per-env-step matches E2, single-GPU runs become the default
+  screening tool (4 experiments per node instead of 1; ~94% aggregate throughput).
