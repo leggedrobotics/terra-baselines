@@ -571,6 +571,14 @@ def make_train(
                 successful_episodes,
                 completed_episodes,
             )
+            last_step_terminations = jax.lax.psum(
+                jnp.sum(done_mask[-1]),
+                "devices",
+            )
+            loss_info["progress/last_step_termination_fraction"] = (
+                last_step_terminations
+                / (config.num_devices * config.num_envs_per_device)
+            )
 
             rng, train_state = update_state[:2]
             # EVALUATE AGENT

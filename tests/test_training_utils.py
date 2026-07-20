@@ -8,7 +8,8 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 
-from terra.config import EnvConfig
+from terra.actions import TrackedAction
+from terra.config import EnvConfig, RewardsType
 from train import TrainConfig
 from train_mixed import (
     MixedAgentTrainConfig,
@@ -19,7 +20,7 @@ from train_mixed import (
     _validate_checkpoint_history_width,
     _validate_resume_update,
 )
-from utils.helpers import replicate_checkpoint_env_config
+from utils.helpers import checkpoint_batch_config, replicate_checkpoint_env_config
 
 
 class TrainingAccountingTest(unittest.TestCase):
@@ -48,6 +49,30 @@ class TrainingAccountingTest(unittest.TestCase):
         )
         self.assertEqual(standard.num_updates, 3)
         self.assertEqual(standard.actual_total_timesteps, 96)
+
+    def test_checkpoint_batch_config_restores_saved_map_curriculum(self):
+        config = SimpleNamespace(
+            curriculum_levels_override=[
+                {
+                    "maps_path": "foundations",
+                    "max_steps_in_episode": 450,
+                    "rewards_type": RewardsType.DENSE,
+                    "apply_trench_rewards": False,
+                }
+            ],
+            curriculum_increase_level_threshold=3,
+            curriculum_decrease_level_threshold=7,
+            curriculum_last_level_type="none",
+        )
+
+        batch_config = checkpoint_batch_config(config, TrackedAction)
+
+        self.assertIs(batch_config.action_type, TrackedAction)
+        self.assertEqual(batch_config.curriculum_global.levels, config.curriculum_levels_override)
+        self.assertEqual(batch_config.curriculum_global.increase_level_threshold, 3)
+        self.assertEqual(batch_config.curriculum_global.decrease_level_threshold, 7)
+        self.assertEqual(batch_config.curriculum_global.last_level_type, "none")
+        self.assertEqual(tuple(batch_config.curriculum_global), (3, 7))
 
     def test_invalid_agent_action_lengths_fail(self):
         with self.assertRaises(ValueError):

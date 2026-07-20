@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import eval_mcts
+import eval_mixed
 from eval_mcts import make_mcts_recurrent_fn, make_mcts_step_fn, rollout_episode
 from terra.actions import TrackedAction
 from terra.env import TimeStep
@@ -131,6 +132,9 @@ class RolloutEpisodeAccountingTest(unittest.TestCase):
         np.testing.assert_array_equal(stats["episode_done_once"], [True, False])
         np.testing.assert_array_equal(stats["episode_length"], [1, 2])
         np.testing.assert_allclose(cumulative_rewards[-1], [1.0, 4.0])
+
+    def test_eval_mixed_reuses_the_authoritative_rollout(self):
+        self.assertIs(eval_mixed.rollout_episode, rollout_episode)
 
 
 @unittest.skipIf(eval_mcts.mctx is None, "mctx is not installed")

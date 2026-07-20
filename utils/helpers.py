@@ -69,3 +69,52 @@ def replicate_checkpoint_env_config(env_config, n_envs: int):
         return jnp.broadcast_to(array, (n_envs,))
 
     return _replicate(env_config)
+
+
+def checkpoint_batch_config(train_config, action_type):
+    """Rebuild the map curriculum used to create a training checkpoint."""
+    from terra.config import BatchConfig, CurriculumGlobalConfig
+
+    levels = getattr(train_config, "curriculum_levels_override", None)
+    if not levels:
+        return BatchConfig(action_type=action_type)
+
+    increase_threshold = getattr(
+        train_config,
+        "curriculum_increase_level_threshold",
+        None,
+    )
+    decrease_threshold = getattr(
+        train_config,
+        "curriculum_decrease_level_threshold",
+        None,
+    )
+    last_level_type = getattr(train_config, "curriculum_last_level_type", None)
+    checkpoint_levels = levels
+    checkpoint_last_level_type = last_level_type
+
+    class CheckpointCurriculumGlobalConfig(CurriculumGlobalConfig):
+        levels = checkpoint_levels
+        last_level_type = (
+            checkpoint_last_level_type
+            if checkpoint_last_level_type is not None
+            else CurriculumGlobalConfig.last_level_type
+        )
+
+    curriculum = CheckpointCurriculumGlobalConfig(
+        increase_level_threshold=(
+            increase_threshold
+            if increase_threshold is not None
+            else CurriculumGlobalConfig.increase_level_threshold
+        ),
+        decrease_level_threshold=(
+            decrease_threshold
+            if decrease_threshold is not None
+            else CurriculumGlobalConfig.decrease_level_threshold
+        ),
+    )
+
+    return BatchConfig(
+        action_type=action_type,
+        curriculum_global=curriculum,
+    )

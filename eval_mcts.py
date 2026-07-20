@@ -23,10 +23,13 @@ import jax.random as jrandom
 from tensorflow_probability.substrates import jax as tfp
 
 from utils.models import load_neural_network
-from utils.helpers import load_pkl_object, replicate_checkpoint_env_config
+from utils.helpers import (
+    checkpoint_batch_config,
+    load_pkl_object,
+    replicate_checkpoint_env_config,
+)
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from terra.env import TerraEnvBatch
-from terra.config import BatchConfig
 from terra.actions import (
     WheeledAction,
     TrackedAction,
@@ -665,7 +668,8 @@ def rollout_episode(
 
 
 def print_stats(stats):
-    episode_done_once = stats["episode_done_once"]
+    episode_succeeded_once = stats["episode_done_once"]
+    episode_terminated_once = stats.get("episode_terminated_once")
     path_efficiency = stats["path_efficiency"]
     workspaces_efficiency = stats["workspaces_efficiency"]
     coverage = stats["coverage"]
@@ -675,20 +679,36 @@ def print_stats(stats):
     goal_eff = stats.get("goal_efficiency", {})
     mcts_info = stats.get("mcts", {})
 
-    if episode_done_once is None:
-        completion_rate = 0.0
+    if episode_succeeded_once is None:
+        success_count = 0
+        rollout_count = 0
+        success_rate = 0.0
     else:
         try:
-            completion_rate = 100 * episode_done_once.sum() / len(episode_done_once)
+            success_count = int(episode_succeeded_once.sum())
+            rollout_count = len(episode_succeeded_once)
+            success_rate = 100 * success_count / rollout_count
         except (TypeError, IndexError):
-            completion_rate = 100.0 if episode_done_once.sum() > 0 else 0.0
+            success_count = int(episode_succeeded_once.sum() > 0)
+            rollout_count = 1
+            success_rate = 100.0 if success_count else 0.0
 
     print("\nStats:\n")
     if mcts_info:
         print(f"MCTS used: {mcts_info.get('used', False)}")
         if mcts_info.get("used"):
             print(f"  MCTS != PPO disagreements: {mcts_info.get('mcts_ppo_disagreements', 0)}")
-    print(f"Completion: {completion_rate:.2f}%")
+    print(
+        "Success within horizon: "
+        f"{success_count}/{rollout_count} ({success_rate:.2f}%)"
+    )
+    if episode_terminated_once is not None:
+        terminated_count = int(episode_terminated_once.sum())
+        print(
+            "Initial episodes terminated: "
+            f"{terminated_count}/{rollout_count} "
+            f"({100 * terminated_count / max(rollout_count, 1):.2f}%)"
+        )
     print(f"Path efficiency: {path_efficiency['mean']:.2f} ({path_efficiency['std']:.2f})")
     print(f"Workspaces efficiency: {workspaces_efficiency['mean']:.2f} ({workspaces_efficiency['std']:.2f})")
     try:
@@ -746,7 +766,7 @@ def print_stats(stats):
             pass
 
 
-if __name__ == "__main__":
+def main():
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -829,8 +849,13 @@ if __name__ == "__main__":
         return [0]
     action_types_list = _normalize_types_list(action_types_ckpt)
     all_wheeled = len(action_types_list) > 0 and all(t == 1 for t in action_types_list)
-    batch_cfg = BatchConfig(action_type=WheeledAction if all_wheeled else TrackedAction)
+    action_type = WheeledAction if all_wheeled else TrackedAction
+    batch_cfg = checkpoint_batch_config(config, action_type)
     print(f"selected batch action_type: {'WheeledAction' if batch_cfg.action_type is WheeledAction else 'TrackedAction'}")
+    print(
+        "checkpoint map curriculum: "
+        f"{[level['maps_path'] for level in batch_cfg.curriculum_global.levels]}"
+    )
 
     shuffle_maps = single_map_path is None
     env = TerraEnvBatch(
@@ -862,3 +887,7 @@ if __name__ == "__main__":
         use_mcts=args.use_mcts,
     )
     print_stats(stats)
+
+
+if __name__ == "__main__":
+    main()
