@@ -48,6 +48,27 @@ Do not compare throughput while another process is saturating the GPU.
 Before committing, verify `git status -sb` and leave unrelated files such as
 local lockfiles or run artifacts untouched.
 
+## Euler Storage Contract
+
+`/cluster/home/lterenzi` is a hard 50 GB cap and is for code and small config
+only. On 2026-07-20 a Terra job died with `Disk quota exceeded` because
+`WANDB_DIR` and checkpoints were written under home (home was 44.2/50 GB). Run
+artifacts belong on scratch.
+
+- sbatch scripts MUST set `WANDB_DIR` and checkpoint output dirs to
+  `/cluster/scratch/lterenzi/codex_terra_edge_runs/` (symlinked from the home
+  workspace), never `/cluster/home`. Run logs go there too.
+- Scratch is purged when a file is not accessed for ~15 days. Anything needed
+  long-term must be `rsync`'d to `/cluster/work/rsl/lterenzi` (final large
+  checkpoints, tars) or `/cluster/project/rsl/lterenzi` (venvs, many small
+  files) — both verified writable — or be rebuildable. A venv left on scratch
+  was already corrupted by the purge (empty `jax` namespace package).
+- The dataset stays read-only at
+  `/cluster/project/rsl/alesweber/TerraProject/...`; do not copy it into home.
+- Smoke gates MUST fail fast if home is near full: parse `lquota` and abort
+  before training when `/cluster/home/lterenzi` space usage exceeds ~90% of the
+  hard quota (i.e. above ~45 GB of 50 GB).
+
 ## Training Metric Contract
 
 - `train/episode_success_rate` is the bounded online ratio of successful task

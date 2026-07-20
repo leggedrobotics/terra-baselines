@@ -6,8 +6,26 @@ This guide is a **general** template for running Terra + terra-baselines on Eule
 
 - **Code (shared/persistent):** `/cluster/home/<user>/terra-workspace/`
   - `terra/` and `terra-baselines/` live here
+  - Home is a **hard 50 GB cap** (not purged): code and small config only.
 - **Dataset (large, ephemeral):** `/cluster/scratch/<user>/terra/data/terra/train/`
 - **WandB logs:** `/cluster/scratch/<user>/wandb/`
+- **Checkpoints + run logs:** `/cluster/scratch/<user>/codex_terra_edge_runs/`
+
+### Euler storage contract (do not violate)
+
+- `WANDB_DIR`, checkpoint dirs, and run logs go on **scratch**, NEVER
+  `/cluster/home`. On 2026-07-20 a Terra job died with `Disk quota exceeded`
+  because these were written to home (home was 44.2/50 GB); the fix was to move
+  them to `/cluster/scratch/<user>/codex_terra_edge_runs/` and symlink from the
+  home workspace.
+- **Scratch is purged when a file is not accessed for ~15 days.** Anything
+  needed long-term must be `rsync`'d to `/cluster/work/rsl/<user>` (final large
+  checkpoints, tars; ≤200 GB) or `/cluster/project/rsl/<user>` (conda envs /
+  venvs, many small files; ≤75 GB, high inode) — both verified writable — or be
+  rebuildable. A venv left on scratch was already corrupted by the purge (empty
+  `jax` namespace package, imports fail).
+- Smoke/preflight should parse `lquota` and abort before training if
+  `/cluster/home/<user>` is above ~90% of its hard quota.
 
 ## 2) Sync code + dataset
 
@@ -178,13 +196,16 @@ Logs are created where you submitted the job:
 
 ## 8) Checkpoints
 
-Checkpoints are saved under:
+Point the checkpoint output at **scratch**, not the in-repo `terra-baselines/checkpoints/`
+default (which lands in home and will hit the 50 GB cap):
 
 ```
-/cluster/home/<user>/terra-workspace/terra-baselines/checkpoints/
+/cluster/scratch/<user>/codex_terra_edge_runs/checkpoints/
 ```
 
-They are overwritten every `checkpoint_interval`; copy them if you want a stable snapshot for evaluation.
+They are overwritten every `checkpoint_interval`. Scratch is purged after ~15 days of no access,
+so `rsync` any checkpoint you want to keep to `/cluster/work/rsl/<user>` (large, persistent)
+before it is evaluated or archived.
 
 ## Sync local code changes to Euler
 
@@ -209,7 +230,7 @@ Tip: add `--delete` if you want the cluster copy to exactly mirror your local tr
 Checkpoints live on the cluster at:
 
 ```
-/cluster/home/<user>/terra-workspace/terra-baselines/checkpoints/
+/cluster/scratch/<user>/codex_terra_edge_runs/checkpoints/
 ```
 
 To pull them to your local machine:
@@ -217,11 +238,11 @@ To pull them to your local machine:
 ```bash
 # Pull all checkpoints
 rsync -az --info=progress2 \
-  <user>@euler.ethz.ch:/cluster/home/<user>/terra-workspace/terra-baselines/checkpoints/ \
+  <user>@euler.ethz.ch:/cluster/scratch/<user>/codex_terra_edge_runs/checkpoints/ \
   ~/Desktop/terra-workspace/terra-baselines/checkpoints/
 
 # Or pull a single checkpoint
 rsync -az --info=progress2 \
-  <user>@euler.ethz.ch:/cluster/home/<user>/terra-workspace/terra-baselines/checkpoints/<checkpoint>.pkl \
+  <user>@euler.ethz.ch:/cluster/scratch/<user>/codex_terra_edge_runs/checkpoints/<checkpoint>.pkl \
   ~/Desktop/terra-workspace/terra-baselines/checkpoints/
 ```
