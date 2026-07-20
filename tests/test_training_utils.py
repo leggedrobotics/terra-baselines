@@ -4,15 +4,19 @@ from types import SimpleNamespace
 from typing import NamedTuple
 from unittest.mock import patch
 
+import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
+import optax
+from flax.training.train_state import TrainState
 
 from terra.actions import TrackedAction
-from terra.config import EnvConfig, RewardsType
-from train import TrainConfig
+from terra.config import BatchConfig, EnvConfig, MapsDimsConfig, RewardsType
+from train import Transition as BaseTransition, TrainConfig, ppo_update_networks
 from train_mixed import (
     MixedAgentTrainConfig,
+    kickstart_coef_schedule,
     _backfill_terminal_rewards,
     _strip_checkpoint_env_axis,
     _num_agents_from_env_params,
@@ -21,6 +25,116 @@ from train_mixed import (
     _validate_resume_update,
 )
 from utils.helpers import checkpoint_batch_config, replicate_checkpoint_env_config
+from utils.models import get_model_ready
+
+
+class _PPOConfig(dict):
+    """Dict config that supports attribute access for ppo_update_networks."""
+
+    __getattr__ = dict.__getitem__
+
+
+def _model_config(num_prev_actions=5, map_edge=64):
+    return _PPOConfig(
+        clip_action_maps=True,
+        loaded_max=6,
+        local_map_normalization_bounds=(-1, 1),
+        map_encoder="atari",
+        maps_net_normalization_bounds=(-1, 1),
+        model_core="mlp",
+        model_size="base",
+        num_prev_actions=num_prev_actions,
+    )
+
+
+def _ppo_config(use_value_clip=True, flat_minibatch_shuffle=False):
+    return _PPOConfig(
+        clip_eps=0.2,
+        vf_coef=2.0,
+        ent_coef=0.01,
+        clip_action_maps=True,
+        use_value_clip=use_value_clip,
+        flat_minibatch_shuffle=flat_minibatch_shuffle,
+    )
+
+
+def _make_train_state(rng_seed=0, num_prev_actions=5, map_edge=64):
+    env = SimpleNamespace(
+        batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=map_edge))
+    )
+    model, params = get_model_ready(
+        jax.random.PRNGKey(rng_seed), _model_config(num_prev_actions, map_edge), env
+    )
+    train_state = TrainState.create(
+        apply_fn=model.apply, params=params, tx=optax.adam(1e-3)
+    )
+    return train_state, env
+
+
+def _make_transition(shape_prefix, env, num_prev_actions, old_value, log_prob=0.0):
+    """Build a train.Transition whose obs/prev_actions match obs_to_model_input."""
+    edge = env.batch_cfg.maps_dims.maps_edge_length
+    angles = env.batch_cfg.agent.angles_cabin
+    num_state_obs = env.batch_cfg.agent.num_state_obs
+    max_agents = 4
+
+    def m(*trailing):
+        return jnp.zeros(shape_prefix + trailing, dtype=jnp.float32)
+
+    grid = lambda: m(edge, edge)
+    local = lambda: m(angles)
+    agent_active = jnp.zeros(shape_prefix + (max_agents,), dtype=jnp.int8)
+    agent_active = agent_active.at[..., 0].set(1)
+    obs = {
+        "agent_states": m(max_agents, num_state_obs),
+        "agent_active": agent_active,
+        "num_agents": jnp.ones(shape_prefix, dtype=jnp.int32),
+        "local_map_action_neg": local(),
+        "local_map_action_pos": local(),
+        "local_map_target_neg": local(),
+        "local_map_target_pos": local(),
+        "local_map_dumpability": local(),
+        "local_map_obstacles": local(),
+        "local_map_border_workspace": local(),
+        "local_map_edge_alignment_error": local(),
+        "local_map_border_diggable": local(),
+        "traversability_mask": grid(),
+        "reachability_mask": grid(),
+        "action_map": grid(),
+        "target_map": grid(),
+        "agent_width": jnp.zeros(shape_prefix, dtype=jnp.int32),
+        "agent_height": jnp.zeros(shape_prefix, dtype=jnp.int32),
+        "padding_mask": grid(),
+        "dumpability_mask": grid(),
+        "interaction_mask": grid(),
+    }
+    return BaseTransition(
+        done=jnp.zeros(shape_prefix, dtype=jnp.bool_),
+        task_done=jnp.zeros(shape_prefix, dtype=jnp.bool_),
+        action=jnp.zeros(shape_prefix, dtype=jnp.int32),
+        value=jnp.full(shape_prefix, old_value, dtype=jnp.float32),
+        reward=jnp.zeros(shape_prefix, dtype=jnp.float32),
+        log_prob=jnp.full(shape_prefix, log_prob, dtype=jnp.float32),
+        obs=obs,
+        prev_actions=jnp.zeros(shape_prefix + (num_prev_actions,), dtype=jnp.int32),
+        prev_reward=jnp.zeros(shape_prefix, dtype=jnp.float32),
+    )
+
+
+def _run_ppo_update(config, train_state, transitions, advantages, targets, **kwargs):
+    """Run ppo_update_networks under a size-1 'devices' axis (mirrors pmap)."""
+
+    def _f(ts, tr, adv, tgt):
+        return ppo_update_networks(ts, tr, adv, tgt, config, **kwargs)
+
+    add = lambda x: jnp.asarray(x)[None]
+    _, info = jax.vmap(_f, axis_name="devices")(
+        jtu.tree_map(add, train_state),
+        jtu.tree_map(add, transitions),
+        advantages[None],
+        targets[None],
+    )
+    return jtu.tree_map(lambda x: x[0], info)
 
 
 class TrainingAccountingTest(unittest.TestCase):
@@ -237,6 +351,186 @@ class CheckpointCompatibilityTest(unittest.TestCase):
             np.asarray(legacy_replicated.agent_types),
             np.tile(np.array([[0, 2]]), (4, 1)),
         )
+
+
+class ValueClipToggleTest(unittest.TestCase):
+    def test_value_clip_on_off_differ_when_clipping_binds(self):
+        train_state, env = _make_train_state(rng_seed=0)
+        # Old value far from the near-zero fresh prediction and target 0 makes
+        # the clipped-max value loss much larger than the plain MSE.
+        transitions = _make_transition((2, 3), env, 5, old_value=5.0)
+        advantages = jnp.ones((2, 3), dtype=jnp.float32)
+        targets = jnp.zeros((2, 3), dtype=jnp.float32)
+
+        info_clip = _run_ppo_update(
+            _ppo_config(use_value_clip=True), train_state, transitions, advantages, targets
+        )
+        info_noclip = _run_ppo_update(
+            _ppo_config(use_value_clip=False), train_state, transitions, advantages, targets
+        )
+
+        for info in (info_clip, info_noclip):
+            self.assertTrue(bool(jnp.isfinite(info["total_loss"])))
+            self.assertTrue(bool(jnp.isfinite(info["value_loss"])))
+        # Clipping binds: clipped value loss is much larger than the plain MSE.
+        self.assertGreater(
+            float(info_clip["value_loss"]), float(info_noclip["value_loss"]) + 1.0
+        )
+        # No teacher -> no kickstart keys leak into update_info.
+        self.assertNotIn("kickstart/kl", info_clip)
+
+        # Default path is numerically the historical clipped objective:
+        # recompute both value losses from a direct forward pass.
+        from utils.utils_ppo import obs_to_model_input, policy
+
+        config = _ppo_config()
+        obs_flat = jtu.tree_map(
+            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
+            transitions.obs,
+        )
+        prev_actions_flat = jnp.reshape(
+            transitions.prev_actions, (-1, transitions.prev_actions.shape[-1])
+        )
+        model_obs = obs_to_model_input(dict(obs_flat), prev_actions_flat, config)
+        value, _ = policy(train_state.apply_fn, train_state.params, model_obs)
+        value = jnp.reshape(value[:, 0], transitions.value.shape)
+        clipped_pred = transitions.value + (value - transitions.value).clip(
+            -config.clip_eps, config.clip_eps
+        )
+        expected_clip = 0.5 * jnp.maximum(
+            jnp.square(value - targets), jnp.square(clipped_pred - targets)
+        ).mean()
+        expected_noclip = 0.5 * jnp.square(value - targets).mean()
+        self.assertAlmostEqual(
+            float(info_clip["value_loss"]), float(expected_clip), places=5
+        )
+        self.assertAlmostEqual(
+            float(info_noclip["value_loss"]), float(expected_noclip), places=5
+        )
+
+
+class FlatMinibatchShuffleTest(unittest.TestCase):
+    def test_flat_update_produces_finite_losses(self):
+        train_state, env = _make_train_state(rng_seed=0)
+        # Flat layout: a single [n_samples] axis, no seq dimension.
+        transitions = _make_transition((6,), env, 5, old_value=0.3)
+        advantages = jax.random.normal(jax.random.PRNGKey(3), (6,))
+        targets = jax.random.normal(jax.random.PRNGKey(4), (6,))
+
+        info = _run_ppo_update(
+            _ppo_config(flat_minibatch_shuffle=True),
+            train_state,
+            transitions,
+            advantages,
+            targets,
+        )
+        for key in ("total_loss", "value_loss", "actor_loss", "entropy"):
+            self.assertTrue(bool(jnp.isfinite(info[key])), key)
+
+    def test_blocked_default_path_still_runs(self):
+        train_state, env = _make_train_state(rng_seed=0)
+        transitions = _make_transition((2, 3), env, 5, old_value=0.3)
+        advantages = jax.random.normal(jax.random.PRNGKey(3), (2, 3))
+        targets = jax.random.normal(jax.random.PRNGKey(4), (2, 3))
+        info = _run_ppo_update(
+            _ppo_config(flat_minibatch_shuffle=False),
+            train_state,
+            transitions,
+            advantages,
+            targets,
+        )
+        self.assertTrue(bool(jnp.isfinite(info["total_loss"])))
+
+    def test_flat_shuffle_consumes_every_sample_exactly_once(self):
+        # Mirror the flat minibatch preparation: flatten [seq, env] -> [seq*env],
+        # permute over all samples, reshape into minibatches, and confirm the
+        # union of minibatch samples is exactly the full sample set.
+        num_steps, num_envs, num_minibatches = 4, 6, 3
+        n_samples = num_steps * num_envs
+        # A [seq, env] field carrying a unique id per sample.
+        ids = jnp.arange(n_samples, dtype=jnp.int32).reshape(num_steps, num_envs)
+        flat = jnp.reshape(ids, (n_samples,) + ids.shape[2:])
+        permutation = jax.random.permutation(jax.random.PRNGKey(0), n_samples)
+        shuffled = jnp.take(flat, permutation, axis=0)
+        minibatches = jnp.reshape(shuffled, (num_minibatches, -1) + shuffled.shape[1:])
+        union = np.sort(np.asarray(minibatches).reshape(-1))
+        np.testing.assert_array_equal(union, np.arange(n_samples))
+        self.assertEqual(n_samples % num_minibatches, 0)
+
+
+class KickstartScheduleTest(unittest.TestCase):
+    def test_cosine_anneals_to_zero_and_clamps(self):
+        self.assertEqual(kickstart_coef_schedule(0, 1.0, 100), 1.0)
+        self.assertAlmostEqual(kickstart_coef_schedule(50, 1.0, 100), 0.5, places=6)
+        self.assertEqual(kickstart_coef_schedule(100, 1.0, 100), 0.0)
+        self.assertEqual(kickstart_coef_schedule(150, 1.0, 100), 0.0)  # clamped
+        self.assertEqual(kickstart_coef_schedule(0, 0.5, 500), 0.5)
+        self.assertAlmostEqual(kickstart_coef_schedule(250, 0.5, 500), 0.25, places=6)
+        # A non-positive window is inert.
+        self.assertEqual(kickstart_coef_schedule(5, 1.0, 0), 0.0)
+
+
+class KickstartLossTermsTest(unittest.TestCase):
+    def test_no_kickstart_terms_when_teacher_is_none(self):
+        train_state, env = _make_train_state(rng_seed=0)
+        transitions = _make_transition((2, 3), env, 5, old_value=0.3)
+        advantages = jax.random.normal(jax.random.PRNGKey(3), (2, 3))
+        targets = jax.random.normal(jax.random.PRNGKey(4), (2, 3))
+        info = _run_ppo_update(
+            _ppo_config(), train_state, transitions, advantages, targets
+        )
+        self.assertNotIn("kickstart/kl", info)
+        self.assertNotIn("kickstart/value_mse", info)
+
+    def test_identical_teacher_gives_zero_kickstart_terms(self):
+        train_state, env = _make_train_state(rng_seed=0)
+        transitions = _make_transition((2, 3), env, 5, old_value=0.3)
+        advantages = jax.random.normal(jax.random.PRNGKey(3), (2, 3))
+        targets = jax.random.normal(jax.random.PRNGKey(4), (2, 3))
+
+        base_info = _run_ppo_update(
+            _ppo_config(), train_state, transitions, advantages, targets
+        )
+        teacher_info = _run_ppo_update(
+            _ppo_config(),
+            train_state,
+            transitions,
+            advantages,
+            targets,
+            teacher_apply_fn=train_state.apply_fn,
+            teacher_params=train_state.params,
+            kickstart_kl_coef=1.0,
+            kickstart_value_coef=1.0,
+        )
+        # Teacher == student -> KL and value MSE are ~0, total loss unchanged.
+        self.assertIn("kickstart/kl", teacher_info)
+        self.assertIn("kickstart/value_mse", teacher_info)
+        self.assertLess(float(jnp.abs(teacher_info["kickstart/kl"])), 1e-5)
+        self.assertLess(float(jnp.abs(teacher_info["kickstart/value_mse"])), 1e-6)
+        self.assertAlmostEqual(
+            float(teacher_info["total_loss"]), float(base_info["total_loss"]), places=5
+        )
+
+    def test_different_teacher_gives_positive_kl(self):
+        train_state, env = _make_train_state(rng_seed=0)
+        teacher_state, _ = _make_train_state(rng_seed=999)
+        transitions = _make_transition((2, 3), env, 5, old_value=0.3)
+        advantages = jax.random.normal(jax.random.PRNGKey(3), (2, 3))
+        targets = jax.random.normal(jax.random.PRNGKey(4), (2, 3))
+
+        info = _run_ppo_update(
+            _ppo_config(),
+            train_state,
+            transitions,
+            advantages,
+            targets,
+            teacher_apply_fn=teacher_state.apply_fn,
+            teacher_params=teacher_state.params,
+            kickstart_kl_coef=1.0,
+            kickstart_value_coef=0.5,
+        )
+        self.assertTrue(bool(jnp.isfinite(info["kickstart/kl"])))
+        self.assertGreater(float(info["kickstart/kl"]), 0.0)
 
 
 if __name__ == "__main__":

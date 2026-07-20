@@ -178,11 +178,23 @@ def ppo_update_networks(
     targets: jax.Array,
     config,
     ent_coef_override: float | None = None,
+    teacher_apply_fn=None,
+    teacher_params=None,
+    kickstart_kl_coef: float = 0.0,
+    kickstart_value_coef: float = 0.0,
 ):
     clip_eps = config.clip_eps
     vf_coef = config.vf_coef
     # Allow runtime override of entropy coefficient for schedulers
     ent_coef = ent_coef_override if ent_coef_override is not None else config.ent_coef
+    # F5: value-clipping toggle. train.py's own TrainConfig has no such field, so
+    # a defensive getattr keeps this function bit-identical there (default True =
+    # historical clipped-value objective).
+    use_value_clip = getattr(config, "use_value_clip", True)
+    # F6: flat env x time minibatches have already collapsed the [seq, env] axes
+    # into a single sample axis, so the obs/prev-action reshape that merges the
+    # leading two axes must be skipped for those layouts.
+    flat_minibatch_shuffle = getattr(config, "flat_minibatch_shuffle", False)
 
     # NORMALIZE ADVANTAGES
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
@@ -190,35 +202,63 @@ def ppo_update_networks(
     def _loss_fn(params):
         # Terra: Reshape
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
-        transitions_obs_reshaped = jax.tree_map(
-            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
-            transitions.obs,
-        )
-        transitions_actions_reshaped = jax.tree_map(
-            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
-            transitions.prev_actions,
-        )
+        if flat_minibatch_shuffle:
+            transitions_obs_reshaped = transitions.obs
+            transitions_prev_actions_flat = transitions.prev_actions
+        else:
+            transitions_obs_reshaped = jax.tree_map(
+                lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
+                transitions.obs,
+            )
+            transitions_prev_actions_flat = jax.tree_map(
+                lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
+                transitions.prev_actions,
+            )
         # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
-        obs = obs_to_model_input(transitions_obs_reshaped, transitions_actions_reshaped, config)
+        obs = obs_to_model_input(transitions_obs_reshaped, transitions_prev_actions_flat, config)
         value, dist = policy(train_state.apply_fn, params, obs)
         value = value[:, 0]
         # action = dist.sample(seed=rng_model)
-        transitions_actions_reshaped = jnp.reshape(
+        actions_flat = jnp.reshape(
             transitions.action, (-1, *transitions.action.shape[2:])
         )
-        log_prob = dist.log_prob(transitions_actions_reshaped)
+        log_prob = dist.log_prob(actions_flat)
+
+        # F7: kickstart distillation. Computed on the same flat per-sample obs the
+        # PPO loss uses, before the value/log_prob reshapes. Teacher outputs are
+        # stop-gradient; the teacher forward may run in f32 regardless of the
+        # student encoder dtype.
+        if teacher_apply_fn is not None:
+            teacher_value, teacher_dist = policy(teacher_apply_fn, teacher_params, obs)
+            teacher_value = jax.lax.stop_gradient(teacher_value[:, 0])
+            teacher_logits = jax.lax.stop_gradient(teacher_dist.logits_parameter())
+            student_logits = dist.logits_parameter()
+            teacher_logp = jax.nn.log_softmax(teacher_logits, axis=-1)
+            student_logp = jax.nn.log_softmax(student_logits, axis=-1)
+            teacher_p = jnp.exp(teacher_logp)
+            # KL(teacher || student) = sum_a p_T (log p_T - log p_S).
+            kickstart_kl = jnp.sum(
+                teacher_p * (teacher_logp - student_logp), axis=-1
+            ).mean()
+            kickstart_value_mse = jnp.mean((value - teacher_value) ** 2)
+        else:
+            kickstart_kl = jnp.zeros((), dtype=jnp.float32)
+            kickstart_value_mse = jnp.zeros((), dtype=jnp.float32)
 
         # Terra: Reshape
         value = jnp.reshape(value, transitions.value.shape)
         log_prob = jnp.reshape(log_prob, transitions.log_prob.shape)
 
         # CALCULATE VALUE LOSS
-        value_pred_clipped = transitions.value + (value - transitions.value).clip(
-            -clip_eps, clip_eps
-        )
-        value_loss = jnp.square(value - targets)
-        value_loss_clipped = jnp.square(value_pred_clipped - targets)
-        value_loss = 0.5 * jnp.maximum(value_loss, value_loss_clipped).mean()
+        if use_value_clip:
+            value_pred_clipped = transitions.value + (value - transitions.value).clip(
+                -clip_eps, clip_eps
+            )
+            value_loss = jnp.square(value - targets)
+            value_loss_clipped = jnp.square(value_pred_clipped - targets)
+            value_loss = 0.5 * jnp.maximum(value_loss, value_loss_clipped).mean()
+        else:
+            value_loss = 0.5 * jnp.square(value - targets).mean()
 
         # CALCULATE ACTOR LOSS
         ratio = jnp.exp(log_prob - transitions.log_prob)
@@ -228,13 +268,25 @@ def ppo_update_networks(
         entropy = dist.entropy().mean()
 
         total_loss = actor_loss + vf_coef * value_loss - ent_coef * entropy
-        return total_loss, (value_loss, actor_loss, entropy)
+        if teacher_apply_fn is not None:
+            total_loss = (
+                total_loss
+                + kickstart_kl_coef * kickstart_kl
+                + kickstart_value_coef * kickstart_value_mse
+            )
+        return total_loss, (
+            value_loss,
+            actor_loss,
+            entropy,
+            kickstart_kl,
+            kickstart_value_mse,
+        )
 
-    (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
-        train_state.params
-    )
-    (loss, vloss, aloss, entropy, grads) = jax.lax.pmean(
-        (loss, vloss, aloss, entropy, grads), axis_name="devices"
+    (loss, (vloss, aloss, entropy, k_kl, k_vmse)), grads = jax.value_and_grad(
+        _loss_fn, has_aux=True
+    )(train_state.params)
+    (loss, vloss, aloss, entropy, k_kl, k_vmse, grads) = jax.lax.pmean(
+        (loss, vloss, aloss, entropy, k_kl, k_vmse, grads), axis_name="devices"
     )
     train_state = train_state.apply_gradients(grads=grads)
     update_info = {
@@ -243,6 +295,9 @@ def ppo_update_networks(
         "actor_loss": aloss,
         "entropy": entropy,
     }
+    if teacher_apply_fn is not None:
+        update_info["kickstart/kl"] = k_kl
+        update_info["kickstart/value_mse"] = k_vmse
     return train_state, update_info
 
 

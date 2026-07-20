@@ -122,6 +122,22 @@ from train import get_curriculum_levels, calculate_gae, ppo_update_networks
 jax.config.update("jax_threefry_partitionable", True)
 
 
+def kickstart_coef_schedule(update_index: int, initial_coef: float, anneal_updates: float) -> float:
+    """Cosine-anneal a kickstart coefficient from ``initial_coef`` to 0.
+
+    Returns ``initial_coef`` at update 0, ``0.5*initial_coef`` at the midpoint,
+    and exactly 0 at (and after) ``anneal_updates`` (clamped past the window).
+    """
+    import math
+
+    if anneal_updates <= 0:
+        return 0.0
+    if update_index >= anneal_updates:
+        return 0.0
+    fraction = update_index / anneal_updates
+    return float(initial_coef * 0.5 * (1.0 + math.cos(math.pi * fraction)))
+
+
 class Transition(struct.PyTreeNode):
     done: jax.Array
     task_done: jax.Array
@@ -554,6 +570,20 @@ class MixedAgentTrainConfig:
     encoder_compute_dtype: str = "float32"
     # Optional critic-head width override; None keeps the model_size preset.
     critic_hidden_dims: tuple | None = None
+    # F5: PPO value-clipping toggle. Default True preserves current behavior;
+    # --no_value_clip flips to a plain 0.5*MSE value loss.
+    use_value_clip: bool = True
+    # F6: flatten [seq, env] into a single sample axis before per-minibatch
+    # permutation. Default False keeps the env-only shuffle (blocked layout).
+    flat_minibatch_shuffle: bool = False
+    # F7: kickstart distillation. teacher_checkpoint=None disables the feature
+    # entirely; everything below is inert while it is None.
+    teacher_checkpoint: str | None = None
+    kickstart_kl_coef: float = 1.0
+    kickstart_kl_anneal_updates: int = 1500
+    kickstart_value_coef: float = 0.5
+    kickstart_value_anneal_updates: int = 500
+    kickstart_lr_warmup_updates: int = 100
 
 
     def __post_init__(self):
@@ -914,12 +944,41 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     except Exception as e:
         print(f"🛠️ Debug: Failed to read number of actions: {e}", flush=True)
     
-    # Optimizer with mixed agent considerations
+    # Optimizer with mixed agent considerations.
+    # F7: when a kickstart teacher is set, warm the LR up linearly from lr/3 to
+    # lr over kickstart_lr_warmup_updates PPO updates, then hold constant. Each
+    # PPO update runs update_epochs*num_minibatches optax steps, so convert the
+    # warmup window from updates to optimizer steps. Without a teacher the LR is
+    # the plain constant, keeping default runs bit-identical.
+    if getattr(config, "teacher_checkpoint", None) is not None:
+        warmup_updates = int(getattr(config, "kickstart_lr_warmup_updates", 0))
+        grad_steps_per_update = config.update_epochs * config.num_minibatches
+        warmup_steps = max(1, warmup_updates * grad_steps_per_update)
+        lr_schedule = optax.join_schedules(
+            schedules=[
+                optax.linear_schedule(
+                    init_value=config.lr / 3.0,
+                    end_value=config.lr,
+                    transition_steps=warmup_steps,
+                ),
+                optax.constant_schedule(config.lr),
+            ],
+            boundaries=[warmup_steps],
+        )
+        adam_learning_rate = lr_schedule
+        print(
+            "🔥 Kickstart LR warmup: "
+            f"{config.lr / 3.0:.2e} -> {config.lr:.2e} over "
+            f"{warmup_updates} updates ({warmup_steps} optax steps)",
+            flush=True,
+        )
+    else:
+        adam_learning_rate = config.lr
     tx = optax.chain(
         optax.clip_by_global_norm(config.max_grad_norm),
-        optax.adam(learning_rate=config.lr, eps=1e-5),
+        optax.adam(learning_rate=adam_learning_rate, eps=1e-5),
     )
-    
+
     train_state = TrainState.create(
         apply_fn=network.apply, params=network_params, tx=tx
     )
@@ -1091,8 +1150,62 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             raise RuntimeError("Failed to restore checkpoint training state") from e
     _validate_resume_update(resume_update, config.num_updates)
 
+    # F7: kickstart distillation teacher setup. Built after
+    # make_mixed_agent_states so config.num_prev_actions is finalized. The
+    # teacher architecture comes from ITS OWN train_config; the student keeps
+    # the current run config. Frozen teacher params are closure-captured by the
+    # pmapped update below (~1M params replicated per device).
+    teacher_apply_fn = None
+    teacher_params = None
+    if config.teacher_checkpoint is not None:
+        if not os.path.exists(config.teacher_checkpoint):
+            raise FileNotFoundError(
+                f"Teacher checkpoint does not exist: {config.teacher_checkpoint}"
+            )
+        teacher_ckpt = helpers.load_pkl_object(config.teacher_checkpoint)
+        if "model" not in teacher_ckpt:
+            raise KeyError("teacher checkpoint has no 'model' parameters")
+        teacher_train_config = teacher_ckpt.get("train_config")
+        if teacher_train_config is None:
+            raise KeyError("teacher checkpoint has no 'train_config'")
+
+        def _teacher_field(name, default=None):
+            if isinstance(teacher_train_config, dict):
+                return teacher_train_config.get(name, default)
+            return getattr(teacher_train_config, name, default)
+
+        teacher_num_prev_actions = _teacher_field("num_prev_actions")
+        if teacher_num_prev_actions is None or int(teacher_num_prev_actions) != int(
+            config.num_prev_actions
+        ):
+            raise ValueError(
+                "Teacher/student action-history width mismatch: teacher "
+                f"num_prev_actions={teacher_num_prev_actions}, student "
+                f"num_prev_actions={config.num_prev_actions}. The teacher must "
+                "share the student's environment interface."
+            )
+        rng, rng_teacher = jax.random.split(rng)
+        teacher_model, _ = get_model_ready(rng_teacher, teacher_train_config, env)
+        teacher_apply_fn = teacher_model.apply
+        teacher_params = teacher_ckpt["model"]
+        print(
+            "🎓 Kickstart teacher loaded from "
+            f"{config.teacher_checkpoint} "
+            f"(map_encoder={_teacher_field('map_encoder', 'atari')}, "
+            f"model_size={_teacher_field('model_size', 'base')})",
+            flush=True,
+        )
+        if float(config.ent_schedule_start) > 0.05:
+            print(
+                "⚠️  Kickstart teacher is set but ent_schedule_start="
+                f"{config.ent_schedule_start} > 0.05. A low entropy schedule "
+                "(e.g. 0.02 -> 0.005) is recommended so distillation is not "
+                "swamped by exploration entropy.",
+                flush=True,
+            )
+
     # Removed agent-type curriculum monitoring
-    
+
     def log_environment_metrics(timestep, update_num):
         """Log environment metrics for all mixed agent training"""
         try:
@@ -1117,7 +1230,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             except:
                 pass  # If even this fails, just continue training
     
-    def make_mixed_agent_train(env, env_params, config):
+    def make_mixed_agent_train(
+        env, env_params, config, teacher_apply_fn=None, teacher_params=None
+    ):
         def train(rng: jax.Array, train_state: TrainState):
             # INIT ENV
             rng, _rng = jax.random.split(rng)
@@ -1192,7 +1307,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
             # TRAIN LOOP
             @partial(jax.pmap, axis_name="devices", donate_argnums=(0,))
-            def _update_step(runner_state, ent_coef_current):
+            def _update_step(
+                runner_state,
+                ent_coef_current,
+                kickstart_kl_coef_current,
+                kickstart_value_coef_current,
+            ):
                 # COLLECT TRAJECTORIES
                 def _env_step(runner_state, step_idx):
                     rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
@@ -1299,6 +1419,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             targets=targets,
                             config=config,
                             ent_coef_override=ent_coef_current,
+                            teacher_apply_fn=teacher_apply_fn,
+                            teacher_params=teacher_params,
+                            kickstart_kl_coef=kickstart_kl_coef_current,
+                            kickstart_value_coef=kickstart_value_coef_current,
                         )
                         return new_train_state, update_info
 
@@ -1306,22 +1430,49 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
                     # MINIBATCHES PREPARATION
                     rng, _rng = jax.random.split(rng)
-                    permutation = jax.random.permutation(_rng, config.num_envs_per_device)
-                    # [seq_len, batch_size, ...]
-                    batch = (transitions, advantages, targets)
-                    # [batch_size, seq_len, ...], as our model assumes
-                    batch = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
+                    if getattr(config, "flat_minibatch_shuffle", False):
+                        # F6: collapse [seq_len, batch_size] into a single sample
+                        # axis, permute over ALL samples, then reshape into
+                        # minibatches. GAE was computed above and is unaffected;
+                        # ppo_update_networks skips the [mb, seq] reshape for the
+                        # resulting flat layout.
+                        # [seq_len, batch_size, ...]
+                        batch = (transitions, advantages, targets)
+                        n_samples = config.num_steps * config.num_envs_per_device
+                        flat_batch = jtu.tree_map(
+                            lambda x: jnp.reshape(x, (n_samples,) + x.shape[2:]),
+                            batch,
+                        )
+                        permutation = jax.random.permutation(_rng, n_samples)
+                        shuffled_batch = jtu.tree_map(
+                            lambda x: jnp.take(x, permutation, axis=0), flat_batch
+                        )
+                        # [num_minibatches, minibatch_size, ...] (no seq axis)
+                        minibatches = jtu.tree_map(
+                            lambda x: jnp.reshape(
+                                x, (config.num_minibatches, -1) + x.shape[1:]
+                            ),
+                            shuffled_batch,
+                        )
+                    else:
+                        permutation = jax.random.permutation(
+                            _rng, config.num_envs_per_device
+                        )
+                        # [seq_len, batch_size, ...]
+                        batch = (transitions, advantages, targets)
+                        # [batch_size, seq_len, ...], as our model assumes
+                        batch = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
 
-                    shuffled_batch = jtu.tree_map(
-                        lambda x: jnp.take(x, permutation, axis=0), batch
-                    )
-                    # [num_minibatches, minibatch_size, seq_len, ...]
-                    minibatches = jtu.tree_map(
-                        lambda x: jnp.reshape(
-                            x, (config.num_minibatches, -1) + x.shape[1:]
-                        ),
-                        shuffled_batch,
-                    )
+                        shuffled_batch = jtu.tree_map(
+                            lambda x: jnp.take(x, permutation, axis=0), batch
+                        )
+                        # [num_minibatches, minibatch_size, seq_len, ...]
+                        minibatches = jtu.tree_map(
+                            lambda x: jnp.reshape(
+                                x, (config.num_minibatches, -1) + x.shape[1:]
+                            ),
+                            shuffled_batch,
+                        )
                     train_state, update_info = jax.lax.scan(
                         _update_minbatch, train_state, minibatches
                     )
@@ -1431,9 +1582,35 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 # ent_coef_current = ent_start + (ent_end - ent_start) * f
                 # Broadcast scalar to devices for pmap input
                 ent_broadcast = jnp.array([ent_coef_current] * config.num_devices)
+                # F7: host-computed cosine-annealed kickstart coefficients,
+                # broadcast to devices like the entropy coefficient. Zero (and
+                # inert) whenever no teacher is configured.
+                if teacher_apply_fn is not None:
+                    kickstart_kl_coef_current = kickstart_coef_schedule(
+                        i, config.kickstart_kl_coef, config.kickstart_kl_anneal_updates
+                    )
+                    kickstart_value_coef_current = kickstart_coef_schedule(
+                        i,
+                        config.kickstart_value_coef,
+                        config.kickstart_value_anneal_updates,
+                    )
+                else:
+                    kickstart_kl_coef_current = 0.0
+                    kickstart_value_coef_current = 0.0
+                kickstart_kl_broadcast = jnp.array(
+                    [kickstart_kl_coef_current] * config.num_devices
+                )
+                kickstart_value_broadcast = jnp.array(
+                    [kickstart_value_coef_current] * config.num_devices
+                )
                 start_time = time.time()
                 runner_state, loss_info = jax.block_until_ready(
-                    _update_step(runner_state, ent_broadcast)
+                    _update_step(
+                        runner_state,
+                        ent_broadcast,
+                        kickstart_kl_broadcast,
+                        kickstart_value_broadcast,
+                    )
                 )
                 end_time = time.time()
 
@@ -1487,7 +1664,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "sched/entropy_coef": float(ent_coef_current),
                         **loss_info_single,
                     }
-                    
+                    # F7: log the annealed kickstart coefficients (loss terms
+                    # kickstart/kl and kickstart/value_mse arrive via loss_info).
+                    if teacher_apply_fn is not None:
+                        log_dict["kickstart/kl_coef"] = float(kickstart_kl_coef_current)
+                        log_dict["kickstart/value_coef"] = float(
+                            kickstart_value_coef_current
+                        )
+
                     # Removed fixed agent1/agent2 type metrics to support dynamic agent counts
                     
                     # Add environment metrics (without separate wandb.log call)
@@ -1702,7 +1886,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
         return train
     
-    train_fn = make_mixed_agent_train(env, env_params, config)
+    train_fn = make_mixed_agent_train(
+        env, env_params, config, teacher_apply_fn, teacher_params
+    )
     
     def train_with_monitoring(rng, train_state):
         return train_fn(rng, train_state)
@@ -1886,6 +2072,69 @@ if __name__ == "__main__":
         help=(
             "Comma-separated critic-head widths, e.g. '512,256'. Overrides the "
             "model_size preset's value head. Omit to keep the preset."
+        ),
+    )
+    # F5: value-clipping toggle.
+    parser.add_argument(
+        "--no_value_clip",
+        dest="use_value_clip",
+        action="store_false",
+        help=(
+            "Disable PPO value clipping and use a plain 0.5*MSE value loss. "
+            "Default keeps the clipped-value objective."
+        ),
+    )
+    parser.set_defaults(use_value_clip=True)
+    # F6: flat env x time minibatch shuffling.
+    parser.add_argument(
+        "--flat_minibatch_shuffle",
+        action="store_true",
+        help=(
+            "Flatten [seq, env] into a single sample axis and permute over all "
+            "samples per minibatch, instead of the default env-only shuffle."
+        ),
+    )
+    # F7: kickstart distillation.
+    parser.add_argument(
+        "--teacher_checkpoint",
+        type=str,
+        default=None,
+        help=(
+            "Path to a teacher checkpoint .pkl for kickstart distillation. When "
+            "unset the feature is disabled entirely."
+        ),
+    )
+    parser.add_argument(
+        "--kickstart_kl_coef",
+        type=float,
+        default=1.0,
+        help="Initial KL(teacher||student) coefficient for kickstart distillation.",
+    )
+    parser.add_argument(
+        "--kickstart_kl_anneal_updates",
+        type=int,
+        default=1500,
+        help="Cosine-anneal the kickstart KL coefficient to 0 over this many updates.",
+    )
+    parser.add_argument(
+        "--kickstart_value_coef",
+        type=float,
+        default=0.5,
+        help="Initial value-distillation coefficient for kickstart distillation.",
+    )
+    parser.add_argument(
+        "--kickstart_value_anneal_updates",
+        type=int,
+        default=500,
+        help="Cosine-anneal the kickstart value coefficient to 0 over this many updates.",
+    )
+    parser.add_argument(
+        "--kickstart_lr_warmup_updates",
+        type=int,
+        default=100,
+        help=(
+            "Linear LR warmup from lr/3 to lr over this many updates, applied "
+            "only when --teacher_checkpoint is set."
         ),
     )
     parser.add_argument(
@@ -2198,6 +2447,14 @@ if __name__ == "__main__":
         map_encoder=args.map_encoder,
         encoder_compute_dtype=args.encoder_compute_dtype,
         critic_hidden_dims=critic_hidden_dims,
+        use_value_clip=args.use_value_clip,
+        flat_minibatch_shuffle=args.flat_minibatch_shuffle,
+        teacher_checkpoint=args.teacher_checkpoint,
+        kickstart_kl_coef=args.kickstart_kl_coef,
+        kickstart_kl_anneal_updates=args.kickstart_kl_anneal_updates,
+        kickstart_value_coef=args.kickstart_value_coef,
+        kickstart_value_anneal_updates=args.kickstart_value_anneal_updates,
+        kickstart_lr_warmup_updates=args.kickstart_lr_warmup_updates,
     )
 
     train_mixed_agents(config)
