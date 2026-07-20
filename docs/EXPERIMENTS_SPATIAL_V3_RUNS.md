@@ -170,3 +170,20 @@ lands on scratch — this was the exact point attempt 1 died).
 
 - Known mitigation on cuDNN autotune failure (not needed so far): add
   `export XLA_FLAGS=--xla_gpu_autotune_level=0` to the affected script and resubmit.
+
+## E3 attempt 1 failure + resubmission (2026-07-20 ~16:40Z)
+
+- Slurm 7862190 FAILED at the END of its smoke phase: training itself completed
+  (1/1 smoke updates, kickstart medium + bf16 healthy on 4x4090), but the final smoke
+  checkpoint save raised `_pickle.PicklingError: Can't pickle <class
+  '__main__.MixedAgentTrainConfig'>: it's not the same object`. Root cause: the teacher
+  loader's `register_checkpoint_config_classes()` overwrote `__main__`'s config class in
+  the sed-derived per-run trainer. Fixed on the branch by `d1765d7`
+  (register fills only MISSING names); the 3a21cd6 snapshot predated the fix.
+- Remediation: new snapshot `snapshots/spatial-v3-d1765d7` (git archive of 009445d;
+  terra hard-linked from the old snapshot; grown checkpoint copied in), derived sbatch
+  `terra_sv3_E3_kickstart_med_4gpu_20260720b.sbatch` (only TERRA_SOURCE changed; all four
+  sha pins re-verified), resubmitted as Slurm **7886677**.
+- E1 (7866454, still pending) and E2 (7862189, running) are unaffected: neither invokes the
+  teacher loader, and their own-class pickling is self-consistent. They stay on the
+  3a21cd6 snapshot.
