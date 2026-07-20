@@ -215,3 +215,13 @@ lands on scratch — this was the exact point attempt 1 died).
 - Remote CPU gate on snapshot `snapshots/spatial-v4-0cf7f4a`: test_models 31/31 OK.
 - Slurm **7889031**, sbatch `terra_sv4_E4_xattn_bf16_4gpu_20260720.sbatch` (derived from E2's;
   models.py sha pin recomputed; all four pins verified).
+
+## Coordination note (2026-07-20 ~19:05Z, main session)
+
+- E3 resubmit **7886071** reached RUNNING on 4x RTX 4090 (teacher loaded, kickstart coefs
+  active, smoke compiling); pending duplicate **7886677** cancelled — resubmit
+  `terra_sv3_E3_kickstart_med_4gpu_20260720b.sbatch` if 7886071 fails.
+- E4 xattn config verified locally end-to-end before its cluster slot: 62/62 unit tests at
+  948c788 + 3-update CPU training smoke with the full E4 flag set (bf16, critic 512,256,
+  no value clip, flat shuffle) including per-update + FINAL checkpoint saves and a
+  foreign-entrypoint reload of the saved pkl.
