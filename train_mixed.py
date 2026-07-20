@@ -231,6 +231,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "map_encoder": "atari",
         "model_core": "mlp",
         "model_size": "base",
+        "critic_hidden_dims": None,
     }
     mismatches = []
     for field_name, default in defaults.items():
@@ -239,13 +240,20 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         if field_name == "map_encoder":
             saved = canonical_map_encoder(saved)
             current = canonical_map_encoder(current)
+        elif field_name == "critic_hidden_dims":
+            # None (use the model_size preset) vs an explicit override are
+            # different value-head shapes; compare as tuples so (512, 256) and
+            # [512, 256] read as equal.
+            saved = tuple(saved) if saved is not None else None
+            current = tuple(current) if current is not None else None
         if saved != current:
             mismatches.append(f"{field_name}: checkpoint={saved!r}, current={current!r}")
     if mismatches:
         raise ValueError(
             "Checkpoint architecture does not match the requested model: "
             + "; ".join(mismatches)
-            + ". Pass matching --map_encoder, --model_core, and --model_size values."
+            + ". Pass matching --map_encoder, --model_core, --model_size, and "
+            "--critic_hidden_dims values."
         )
 
 
@@ -1162,6 +1170,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             raise FileNotFoundError(
                 f"Teacher checkpoint does not exist: {config.teacher_checkpoint}"
             )
+        # F6: teachers may have been saved by train.py (config pickled as
+        # __main__.TrainConfig); alias those classes so the pkl unpickles here.
+        helpers.register_checkpoint_config_classes()
         teacher_ckpt = helpers.load_pkl_object(config.teacher_checkpoint)
         if "model" not in teacher_ckpt:
             raise KeyError("teacher checkpoint has no 'model' parameters")
@@ -1169,12 +1180,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         if teacher_train_config is None:
             raise KeyError("teacher checkpoint has no 'train_config'")
 
-        def _teacher_field(name, default=None):
-            if isinstance(teacher_train_config, dict):
-                return teacher_train_config.get(name, default)
-            return getattr(teacher_train_config, name, default)
-
-        teacher_num_prev_actions = _teacher_field("num_prev_actions")
+        teacher_num_prev_actions = _checkpoint_config_value(
+            teacher_ckpt, "num_prev_actions", None
+        )
         if teacher_num_prev_actions is None or int(teacher_num_prev_actions) != int(
             config.num_prev_actions
         ):
@@ -1184,6 +1192,47 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 f"num_prev_actions={config.num_prev_actions}. The teacher must "
                 "share the student's environment interface."
             )
+
+        # F3: the teacher forward runs on obs preprocessed with the STUDENT
+        # config (obs_to_model_input in ppo_update_networks). A teacher trained
+        # with different map preprocessing would see out-of-distribution inputs
+        # and emit meaningless distillation targets, so hard-fail on a mismatch.
+        # Missing teacher fields fall back to the class defaults.
+        def _normalize_bound(value):
+            return tuple(value) if isinstance(value, (list, tuple)) else value
+
+        preprocessing_fields = (
+            ("clip_action_maps", MixedAgentTrainConfig.clip_action_maps),
+            (
+                "maps_net_normalization_bounds",
+                MixedAgentTrainConfig.maps_net_normalization_bounds,
+            ),
+            (
+                "local_map_normalization_bounds",
+                MixedAgentTrainConfig.local_map_normalization_bounds,
+            ),
+            ("loaded_max", MixedAgentTrainConfig.loaded_max),
+        )
+        preprocessing_mismatches = []
+        for field_name, field_default in preprocessing_fields:
+            teacher_value = _normalize_bound(
+                _checkpoint_config_value(teacher_ckpt, field_name, field_default)
+            )
+            student_value = _normalize_bound(
+                getattr(config, field_name, field_default)
+            )
+            if teacher_value != student_value:
+                preprocessing_mismatches.append(
+                    f"{field_name}: teacher={teacher_value!r}, student={student_value!r}"
+                )
+        if preprocessing_mismatches:
+            raise ValueError(
+                "Teacher/student observation-preprocessing mismatch: "
+                + "; ".join(preprocessing_mismatches)
+                + ". The teacher is evaluated on obs preprocessed with the "
+                "student config, so these fields must match."
+            )
+
         rng, rng_teacher = jax.random.split(rng)
         teacher_model, _ = get_model_ready(rng_teacher, teacher_train_config, env)
         teacher_apply_fn = teacher_model.apply
@@ -1191,8 +1240,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         print(
             "🎓 Kickstart teacher loaded from "
             f"{config.teacher_checkpoint} "
-            f"(map_encoder={_teacher_field('map_encoder', 'atari')}, "
-            f"model_size={_teacher_field('model_size', 'base')})",
+            f"(map_encoder={_checkpoint_config_value(teacher_ckpt, 'map_encoder', 'atari')}, "
+            f"model_size={_checkpoint_config_value(teacher_ckpt, 'model_size', 'base')})",
             flush=True,
         )
         if float(config.ent_schedule_start) > 0.05:
@@ -2050,8 +2099,9 @@ if __name__ == "__main__":
         help=(
             "Global-map encoder. Use 'resnet_global_pool' for the PR #15 "
             "topology or 'resnet_spatial_8x8' for the scaled spatial readout. "
-            "'resnet_spatial_v3' adds derived channels, coordinates, and SE gates. "
-            "The old names remain accepted as compatibility aliases."
+            "'resnet_spatial_8x8_se' (alias 'resnet_spatial_v3') adds derived "
+            "channels, coordinates, and SE gates. The old names remain accepted "
+            "as compatibility aliases."
         ),
     )
     parser.add_argument(

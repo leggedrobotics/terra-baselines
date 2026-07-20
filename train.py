@@ -229,18 +229,43 @@ def ppo_update_networks(
         # stop-gradient; the teacher forward may run in f32 regardless of the
         # student encoder dtype.
         if teacher_apply_fn is not None:
-            teacher_value, teacher_dist = policy(teacher_apply_fn, teacher_params, obs)
-            teacher_value = jax.lax.stop_gradient(teacher_value[:, 0])
-            teacher_logits = jax.lax.stop_gradient(teacher_dist.logits_parameter())
-            student_logits = dist.logits_parameter()
-            teacher_logp = jax.nn.log_softmax(teacher_logits, axis=-1)
-            student_logp = jax.nn.log_softmax(student_logits, axis=-1)
-            teacher_p = jnp.exp(teacher_logp)
-            # KL(teacher || student) = sum_a p_T (log p_T - log p_S).
-            kickstart_kl = jnp.sum(
-                teacher_p * (teacher_logp - student_logp), axis=-1
-            ).mean()
-            kickstart_value_mse = jnp.mean((value - teacher_value) ** 2)
+            # F4: once the kickstart coefficients have annealed to 0 the KL/value
+            # terms no longer affect the gradient, so gate the whole teacher
+            # forward + distillation compute on a traced predicate and return
+            # zeros past the anneal window. The outer `teacher_apply_fn is not
+            # None` check stays Python-static (teacher params are captured by the
+            # pmapped closure); only this inner branch is data-dependent.
+            def _compute_kickstart(_):
+                teacher_value, teacher_dist = policy(
+                    teacher_apply_fn, teacher_params, obs
+                )
+                teacher_value = jax.lax.stop_gradient(teacher_value[:, 0])
+                teacher_logits = jax.lax.stop_gradient(
+                    teacher_dist.logits_parameter()
+                )
+                student_logits = dist.logits_parameter()
+                teacher_logp = jax.nn.log_softmax(teacher_logits, axis=-1)
+                student_logp = jax.nn.log_softmax(student_logits, axis=-1)
+                teacher_p = jnp.exp(teacher_logp)
+                # KL(teacher || student) = sum_a p_T (log p_T - log p_S).
+                kl = jnp.sum(
+                    teacher_p * (teacher_logp - student_logp), axis=-1
+                ).mean()
+                vmse = jnp.mean((value - teacher_value) ** 2)
+                return kl, vmse
+
+            def _zero_kickstart(_):
+                return (
+                    jnp.zeros((), dtype=jnp.float32),
+                    jnp.zeros((), dtype=jnp.float32),
+                )
+
+            kickstart_kl, kickstart_value_mse = jax.lax.cond(
+                (kickstart_kl_coef + kickstart_value_coef) > 0,
+                _compute_kickstart,
+                _zero_kickstart,
+                None,
+            )
         else:
             kickstart_kl = jnp.zeros((), dtype=jnp.float32)
             kickstart_value_mse = jnp.zeros((), dtype=jnp.float32)

@@ -203,6 +203,13 @@ class ResidualMapEncoderTest(unittest.TestCase):
         self.assertEqual(
             canonical_map_encoder("resnet_spatial_v2"), "resnet_spatial_8x8"
         )
+        # Version-style v3 name is an alias of the behavior-based canonical name.
+        self.assertEqual(
+            canonical_map_encoder("resnet_spatial_v3"), "resnet_spatial_8x8_se"
+        )
+        self.assertEqual(
+            canonical_map_encoder("resnet_spatial_8x8_se"), "resnet_spatial_8x8_se"
+        )
 
         maps = [jnp.zeros((1, 64, 64), dtype=jnp.float32) for _ in range(7)]
         canonical = MapsNet(
@@ -286,7 +293,7 @@ class SpatialV3EncoderTest(unittest.TestCase):
             _full_model_config("resnet_spatial_v3"),
             _dummy_env(),
         )
-        self.assertEqual(model.map_encoder, "resnet_spatial_v3")
+        self.assertEqual(model.map_encoder, "resnet_spatial_8x8_se")
         conv_kernels = [
             leaf
             for path, leaf in jax.tree_util.tree_flatten_with_path(params)[0]

@@ -25,6 +25,32 @@ def save_pkl_object(obj, filename):
     print(f"Stored data at {filename}.")
 
 
+def register_checkpoint_config_classes():
+    """Alias the training config dataclasses into ``__main__`` for unpickling.
+
+    ``train.py`` / ``train_mixed.py`` run as scripts, so their ``TrainConfig`` /
+    ``MixedAgentTrainConfig`` dataclasses are pickled inside checkpoints under
+    ``__main__.<name>``. When a checkpoint is later loaded from a different
+    entry point (e.g. ``grow_checkpoint.py``, or a ``train_mixed`` run loading a
+    ``train.py``-saved teacher), the current ``__main__`` does not define those
+    names and unpickling fails. Alias both classes into the running ``__main__``
+    so any checkpoint unpickles regardless of which script is executing.
+
+    Both modules are always importable in this repository, so the imports are
+    plain. They are performed lazily inside the function to avoid a circular
+    import when ``utils.helpers`` is first loaded (``train``/``train_mixed``
+    import ``utils.helpers`` at module load time).
+    """
+    import sys
+
+    from train import TrainConfig
+    from train_mixed import MixedAgentTrainConfig
+
+    main_module = sys.modules["__main__"]
+    main_module.TrainConfig = TrainConfig
+    main_module.MixedAgentTrainConfig = MixedAgentTrainConfig
+
+
 def replicate_checkpoint_env_config(env_config, n_envs: int):
     """Batch a scalar checkpoint EnvConfig without losing agent-type vectors.
 

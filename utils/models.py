@@ -14,7 +14,11 @@ MAP_ENCODER_ALIASES = {
     "resnet_delayed": "resnet_global_pool",
     "resnet_spatial_8x8": "resnet_spatial_8x8",
     "resnet_spatial_v2": "resnet_spatial_8x8",
-    "resnet_spatial_v3": "resnet_spatial_v3",
+    # Behavior-based canonical name (AGENTS.md): the spatial 8x8 readout plus
+    # squeeze-excitation gating and derived/coordinate channels.
+    "resnet_spatial_8x8_se": "resnet_spatial_8x8_se",
+    # Version-style alias kept for compatibility; resolves to the canonical name.
+    "resnet_spatial_v3": "resnet_spatial_8x8_se",
 }
 
 
@@ -32,13 +36,18 @@ def canonical_map_encoder(name: str) -> str:
 def _config_option(config, name: str, default):
     """Read an optional config field from dict-like or dataclass configs.
 
-    Dict-backed test configs raise ``KeyError`` on missing attributes while
-    dataclasses raise ``AttributeError``; treat both as "field absent".
+    Attribute-style access is tried first (dataclasses, and the dict subclasses
+    with ``__getattr__ = __getitem__`` used in tests). A plain ``dict`` has no
+    such attribute and raises ``AttributeError``, so fall back to subscript
+    access. Missing fields and stored ``None`` both resolve to ``default``.
     """
     try:
         value = getattr(config, name)
     except (AttributeError, KeyError):
-        return default
+        try:
+            value = config[name]
+        except (TypeError, KeyError, IndexError):
+            return default
     return value if value is not None else default
 
 
@@ -626,21 +635,12 @@ class MapsNet(nn.Module):
         if encoder_type == "resnet_global_pool":
             self.cnn = GlobalPoolMapResNet()
             return
-        if encoder_type == "resnet_spatial_8x8":
+        if encoder_type in ("resnet_spatial_8x8", "resnet_spatial_8x8_se"):
             self.cnn = Spatial8x8MapResNet(
                 stage_channels=self.resnet_stage_channels,
                 blocks_per_stage=self.resnet_blocks_per_stage,
                 dense_layers=self.resnet_dense_layers,
-                use_se=False,
-                compute_dtype=self.encoder_compute_dtype,
-            )
-            return
-        if encoder_type == "resnet_spatial_v3":
-            self.cnn = Spatial8x8MapResNet(
-                stage_channels=self.resnet_stage_channels,
-                blocks_per_stage=self.resnet_blocks_per_stage,
-                dense_layers=self.resnet_dense_layers,
-                use_se=True,
+                use_se=(encoder_type == "resnet_spatial_8x8_se"),
                 compute_dtype=self.encoder_compute_dtype,
             )
             return
@@ -660,22 +660,25 @@ class MapsNet(nn.Module):
             return x.reshape((-1,) + x.shape[-2:])
 
         encoder_type = canonical_map_encoder(self.encoder_type)
-        is_spatial_v3 = encoder_type == "resnet_spatial_v3"
+        is_spatial_se = encoder_type == "resnet_spatial_8x8_se"
 
         traversability_map = as_map_batch(obs[0])
         reachability_map = as_map_batch(obs[1])
         action_map = as_map_batch(obs[2])
         target_map = as_map_batch(obs[3])
 
-        # v3 derived channels are computed from RAW action/target height maps,
-        # BEFORE the normalize() that follows (F1).
-        if is_spatial_v3:
-            remaining_dig = (
-                (target_map < 0) & (action_map > target_map)
-            ).astype(jnp.float32)
-            dump_deficit = (
-                (target_map > 0) & (action_map <= 0)
-            ).astype(jnp.float32)
+        # Derived channels are computed from the action/target maps BEFORE the
+        # normalize() that follows (F1). Note these are not raw heights: with
+        # clip_action_maps=True (obs_to_model_input) the action map has already
+        # been clipped to [-1, 1] upstream, so remaining_dig/dump_deficit are
+        # exact only for depth-1 dig targets (target values in {-1, 0, 1}); for
+        # deeper targets the clipped action height still yields a usable, if
+        # slightly conservative, membership mask.
+        if is_spatial_se:
+            # Kept boolean here; cast straight to the compute dtype at assembly
+            # so no float32 intermediate is materialized (F12).
+            remaining_dig = (target_map < 0) & (action_map > target_map)
+            dump_deficit = (target_map > 0) & (action_map <= 0)
             grid_h = action_map.shape[-2]
             grid_w = action_map.shape[-1]
             coord_rows = jnp.linspace(-1.0, 1.0, grid_h, dtype=jnp.float32)
@@ -687,7 +690,7 @@ class MapsNet(nn.Module):
         # Version preprocessing together with the topology. Atari and the
         # global-pool ResNet consumed raw unclipped height maps historically;
         # both spatial ResNet encoders normalize action/target heights.
-        if encoder_type in ("resnet_spatial_8x8", "resnet_spatial_v3"):
+        if encoder_type in ("resnet_spatial_8x8", "resnet_spatial_8x8_se"):
             action_map = normalize(
                 action_map, self.map_min_max[0], self.map_min_max[1]
             )
@@ -698,28 +701,31 @@ class MapsNet(nn.Module):
         dumpability_mask = as_map_batch(obs[5])
         interaction_mask = as_map_batch(obs[6])
 
+        # Encoder mixed precision (F3/F12): cast each channel to the compute
+        # dtype BEFORE concatenating (bool masks / derived channels convert
+        # straight to bf16), so the full multi-channel f32 tensor is never
+        # materialized. The encoder returns f32 again below.
+        compute_dtype = self.encoder_compute_dtype
         channels = [
-            traversability_map[..., None],
-            reachability_map[..., None],
-            action_map[..., None],
-            target_map[..., None],
-            padding_mask[..., None],
-            dumpability_mask[..., None],
-            interaction_mask[..., None],
+            traversability_map[..., None].astype(compute_dtype),
+            reachability_map[..., None].astype(compute_dtype),
+            action_map[..., None].astype(compute_dtype),
+            target_map[..., None].astype(compute_dtype),
+            padding_mask[..., None].astype(compute_dtype),
+            dumpability_mask[..., None].astype(compute_dtype),
+            interaction_mask[..., None].astype(compute_dtype),
         ]
-        if is_spatial_v3:
+        if is_spatial_se:
             channels.extend(
                 [
-                    remaining_dig[..., None],
-                    dump_deficit[..., None],
-                    coord_x[..., None],
-                    coord_y[..., None],
+                    remaining_dig[..., None].astype(compute_dtype),
+                    dump_deficit[..., None].astype(compute_dtype),
+                    coord_x[..., None].astype(compute_dtype),
+                    coord_y[..., None].astype(compute_dtype),
                 ]
             )
 
         x = jnp.concatenate(channels, axis=-1)
-        # Encoder mixed precision (F3): compute in compute_dtype, return f32.
-        x = x.astype(self.encoder_compute_dtype)
         x = self.cnn(x)
         x = x.astype(jnp.float32)
         return x

@@ -94,6 +94,87 @@ class GrowFunctionPreservationTest(unittest.TestCase):
             atol=1e-6,
         )
 
+    def test_nonfinal_stage_depth_growth_is_exactly_function_preserving(self):
+        # F1: growing a NON-final stage (1,1,2,2)->(1,2,2,2) shifts every later
+        # block's flax auto-name. Stage-aware remap + zero-init of the added
+        # block's second conv must yield an EXACT identity (max abs diff 0).
+        source = Spatial8x8MapResNet(blocks_per_stage=(1, 1, 2, 2))
+        target = Spatial8x8MapResNet(blocks_per_stage=(1, 2, 2, 2))
+        inputs = jax.random.normal(jax.random.PRNGKey(11), (3, 64, 64, 7))
+        source_params = source.init(jax.random.PRNGKey(0), inputs)
+        target_params = target.init(jax.random.PRNGKey(1), inputs)
+
+        grown_params, report = grow_params(source_params, target_params)
+
+        source_out = source.apply(source_params, inputs)
+        grown_out = target.apply(grown_params, inputs)
+        self.assertEqual(float(jnp.max(jnp.abs(source_out - grown_out))), 0.0)
+
+        # Exactly one added block: stage 1, block 1 -> sequential index 2.
+        zero_leaves = [e for e in report if e["category"] == "zero-init"]
+        self.assertEqual(len(zero_leaves), 1)
+        grown_leaves = _leaf_map(grown_params)
+        added_key = "['params']['ResidualMapBlock_2']['Conv_1']['kernel']"
+        self.assertIn(added_key, grown_leaves)
+        self.assertTrue(bool(jnp.all(grown_leaves[added_key] == 0)))
+
+        # The later pre-existing blocks are copied verbatim onto their SHIFTED
+        # target indices (source block 2 -> target block 3).
+        source_leaves = _leaf_map(source_params)
+        np.testing.assert_array_equal(
+            np.asarray(
+                grown_leaves["['params']['ResidualMapBlock_3']['Conv_0']['kernel']"]
+            ),
+            np.asarray(
+                source_leaves["['params']['ResidualMapBlock_2']['Conv_0']['kernel']"]
+            ),
+        )
+
+    def test_channel_growth_dense_embed_places_source_rows(self):
+        # F1: growing the final-stage channel count reorders the flatten-Dense
+        # input rows (C interleaved fastest). The embed must place the source
+        # kernel at [:, :, :c_src, :out_src] of the (H, W, C, out) view.
+        source = Spatial8x8MapResNet(
+            stage_channels=(16, 32, 48, 64),
+            blocks_per_stage=(1, 1, 2, 2),
+            dense_layers=(128, 128),
+        )
+        target = Spatial8x8MapResNet(
+            stage_channels=(16, 32, 48, 96),
+            blocks_per_stage=(1, 1, 2, 2),
+            dense_layers=(192, 128),
+        )
+        inputs = jax.random.normal(jax.random.PRNGKey(13), (2, 64, 64, 7))
+        source_params = source.init(jax.random.PRNGKey(0), inputs)
+        target_params = target.init(jax.random.PRNGKey(1), inputs)
+
+        grown_params, report = grow_params(source_params, target_params)
+
+        dense_key = "['params']['Dense_0']['kernel']"
+        grown_dense = _leaf_map(grown_params)[dense_key]
+        src_dense = _leaf_map(source_params)[dense_key]
+        tgt_dense = _leaf_map(target_params)[dense_key]
+
+        # Manual reference embed: (H, W, C, out) with C fastest.
+        c_src, c_tgt = 64, 96
+        out_src, out_tgt = 128, 192
+        h = 8  # 64x64 -> 8x8 after three downsampling stages
+        self.assertEqual(src_dense.shape, (h * h * c_src, out_src))
+        self.assertEqual(tgt_dense.shape, (h * h * c_tgt, out_tgt))
+        expected = (0.1 * jnp.asarray(tgt_dense)).reshape(h, h, c_tgt, out_tgt)
+        expected = expected.at[:, :, :c_src, :out_src].set(
+            jnp.asarray(src_dense).reshape(h, h, c_src, out_src)
+        )
+        expected = expected.reshape(h * h * c_tgt, out_tgt)
+        np.testing.assert_array_equal(np.asarray(grown_dense), np.asarray(expected))
+
+        embed_entries = [
+            e
+            for e in report
+            if e["category"] == "dense-embed" and e["key"] == dense_key
+        ]
+        self.assertEqual(len(embed_entries), 1)
+
 
 class GrowFullModelTest(unittest.TestCase):
     def test_base_v2_to_medium_v3_grows_without_errors(self):
@@ -178,7 +259,9 @@ class GrowFullModelTest(unittest.TestCase):
 
             # Reload and rebuild the model from the stored train_config.
             reloaded = helpers.load_pkl_object(out_path)
-            self.assertEqual(reloaded["train_config"]["map_encoder"], "resnet_spatial_v3")
+            self.assertEqual(
+                reloaded["train_config"]["map_encoder"], "resnet_spatial_8x8_se"
+            )
             self.assertEqual(reloaded["train_config"]["model_size"], "medium")
             self.assertEqual(
                 tuple(reloaded["train_config"]["critic_hidden_dims"]), (512, 256)

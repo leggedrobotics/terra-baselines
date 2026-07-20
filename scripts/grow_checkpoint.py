@@ -27,37 +27,17 @@ Usage:
 """
 
 import argparse
-import sys
+import re
 from types import SimpleNamespace
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 import utils.helpers as helpers
+from terra.actions import TrackedAction, WheeledAction
 from terra.config import BatchConfig, MapsDimsConfig
-from utils.models import canonical_map_encoder, get_model_ready
-
-
-def _register_checkpoint_config_classes():
-    """Checkpoints pickle their config dataclass under ``__main__``.
-
-    train.py / train_mixed.py run as scripts, so their TrainConfig /
-    MixedAgentTrainConfig classes are referenced as ``__main__.<name>`` inside
-    the pkl. Alias them into this script's ``__main__`` so unpickling works.
-    """
-    main_module = sys.modules["__main__"]
-    try:
-        from train import TrainConfig
-
-        main_module.TrainConfig = TrainConfig
-    except ImportError:
-        pass
-    try:
-        from train_mixed import MixedAgentTrainConfig
-
-        main_module.MixedAgentTrainConfig = MixedAgentTrainConfig
-    except ImportError:
-        pass
+from utils.models import _config_option, canonical_map_encoder, get_model_ready
 
 
 # ----------------------------------------------------------------------------
@@ -70,11 +50,20 @@ class _DictConfig(dict):
     __getattr__ = dict.__getitem__
 
 
-def _cfg_get(config, name, default):
-    """Read a field from a dataclass-like or dict-like config."""
-    if isinstance(config, dict):
-        return config.get(name, default)
-    return getattr(config, name, default)
+# Spatial ResNet stage presets, mirroring get_model_ready's model_size kwargs.
+# The base preset matches Spatial8x8MapResNet's class defaults.
+_RESNET_STAGE_PRESETS = {
+    "base": ((1, 1, 2, 2), (16, 32, 48, 64)),
+    "medium": ((1, 2, 2, 2), (24, 48, 64, 96)),
+    "large": ((2, 2, 3, 3), (32, 64, 96, 128)),
+}
+
+_SPATIAL_ENCODERS = ("resnet_spatial_8x8", "resnet_spatial_8x8_se")
+
+
+def _resnet_stage_spec(model_size):
+    """Return (blocks_per_stage, stage_channels) for a model_size preset."""
+    return _RESNET_STAGE_PRESETS.get(model_size, _RESNET_STAGE_PRESETS["base"])
 
 
 def build_target_config(source_train_config, overrides):
@@ -85,22 +74,22 @@ def build_target_config(source_train_config, overrides):
     the source checkpoint value.
     """
     target = _DictConfig(
-        clip_action_maps=_cfg_get(source_train_config, "clip_action_maps", True),
-        maps_net_normalization_bounds=_cfg_get(
+        clip_action_maps=_config_option(source_train_config, "clip_action_maps", True),
+        maps_net_normalization_bounds=_config_option(
             source_train_config, "maps_net_normalization_bounds", (-10, 10)
         ),
-        local_map_normalization_bounds=_cfg_get(
+        local_map_normalization_bounds=_config_option(
             source_train_config, "local_map_normalization_bounds", (-16, 16)
         ),
-        loaded_max=_cfg_get(source_train_config, "loaded_max", 100),
-        num_prev_actions=_cfg_get(source_train_config, "num_prev_actions", 10),
-        model_core=_cfg_get(source_train_config, "model_core", "mlp"),
-        model_size=_cfg_get(source_train_config, "model_size", "base"),
-        map_encoder=_cfg_get(source_train_config, "map_encoder", "atari"),
-        encoder_compute_dtype=_cfg_get(
+        loaded_max=_config_option(source_train_config, "loaded_max", 100),
+        num_prev_actions=_config_option(source_train_config, "num_prev_actions", 10),
+        model_core=_config_option(source_train_config, "model_core", "mlp"),
+        model_size=_config_option(source_train_config, "model_size", "base"),
+        map_encoder=_config_option(source_train_config, "map_encoder", "atari"),
+        encoder_compute_dtype=_config_option(
             source_train_config, "encoder_compute_dtype", "float32"
         ),
-        critic_hidden_dims=_cfg_get(source_train_config, "critic_hidden_dims", None),
+        critic_hidden_dims=_config_option(source_train_config, "critic_hidden_dims", None),
     )
     for key, value in overrides.items():
         if value is not None:
@@ -109,9 +98,55 @@ def build_target_config(source_train_config, overrides):
     return target
 
 
-def _dummy_env(maps_edge_length):
+def _normalize_action_types(value):
+    """Coerce a recorded action_types field into a flat list of ints."""
+    if value is None:
+        return []
+    try:
+        if isinstance(value, (tuple, list)):
+            return [int(v) for v in value]
+        if hasattr(value, "ndim"):
+            arr = np.asarray(value)
+            if arr.ndim == 0:
+                return [int(arr.item())]
+            if arr.ndim >= 2:
+                arr = arr[0]
+            return [int(v) for v in arr.tolist()]
+        if isinstance(value, int):
+            return [int(value)]
+    except Exception:
+        pass
+    return []
+
+
+def _derive_action_type(checkpoint):
+    """Pick WheeledAction/TrackedAction from the source checkpoint (F5).
+
+    Mirrors eval_mcts.py: read the recorded action_types (from env_config, or the
+    train_config's action_types_override) and use WheeledAction only when every
+    agent is wheeled. Defaults to TrackedAction when nothing is recorded. Using
+    the default BatchConfig would pin TrackedAction and mis-size the policy head
+    for wheeled checkpoints.
+    """
+    action_types = None
+    env_config = checkpoint.get("env_config")
+    if env_config is not None:
+        action_types = getattr(env_config, "action_types", None)
+    if action_types is None:
+        action_types = _config_option(
+            checkpoint.get("train_config"), "action_types_override", None
+        )
+    types_list = _normalize_action_types(action_types)
+    all_wheeled = len(types_list) > 0 and all(t == 1 for t in types_list)
+    return WheeledAction if all_wheeled else TrackedAction
+
+
+def _dummy_env(maps_edge_length, action_type):
     return SimpleNamespace(
-        batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=maps_edge_length))
+        batch_cfg=BatchConfig(
+            action_type=action_type,
+            maps_dims=MapsDimsConfig(maps_edge_length=maps_edge_length),
+        )
     )
 
 
@@ -123,6 +158,9 @@ def _leaf_map(params):
     """Return {keystr: leaf} for every parameter leaf."""
     leaves, _ = jax.tree_util.tree_flatten_with_path(params)
     return {jax.tree_util.keystr(path): leaf for path, leaf in leaves}
+
+
+_BLOCK_TOKEN = re.compile(r"ResidualMapBlock_(\d+)")
 
 
 def _is_added_block_second_conv(key: str) -> bool:
@@ -138,6 +176,106 @@ def _is_added_block_second_conv(key: str) -> bool:
     )
 
 
+def _is_flatten_readout_dense(key: str) -> bool:
+    """True for the spatial encoder's post-flatten ``Dense_0`` kernel.
+
+    Spatial8x8MapResNet flattens (H, W, C) then applies ``Dense_0``. That is the
+    only ``Dense_0`` kernel outside a ResidualMapBlock in the (mlp-core) spatial
+    model, and its input rows interleave channels fastest, so it needs the
+    reshape-aware embed rather than a plain leading-row slice.
+    """
+    return (
+        "Dense_0" in key
+        and "ResidualMapBlock" not in key
+        and key.rstrip("]'").endswith("kernel")
+    )
+
+
+def _sequential_block_remap(source_blocks_per_stage, target_blocks_per_stage):
+    """Map source ResidualMapBlock sequential indices onto the target's.
+
+    Flax auto-names blocks sequentially across ALL stages in
+    ``Spatial8x8MapResNet.__call__``, so the sequential index of (stage, block)
+    is ``sum(blocks_per_stage[:stage]) + block``. Growing depth in a non-final
+    stage shifts every later index. Returns ``(remap, added)`` where
+    ``remap[src_seq] = tgt_seq`` for blocks present in both and ``added`` is the
+    set of newly introduced target sequential indices.
+    """
+    remap = {}
+    added = set()
+    for stage in range(len(target_blocks_per_stage)):
+        src_count = (
+            source_blocks_per_stage[stage]
+            if stage < len(source_blocks_per_stage)
+            else 0
+        )
+        src_base = sum(source_blocks_per_stage[:stage])
+        tgt_base = sum(target_blocks_per_stage[:stage])
+        for block in range(target_blocks_per_stage[stage]):
+            tgt_seq = tgt_base + block
+            if block < src_count:
+                remap[src_base + block] = tgt_seq
+            else:
+                added.add(tgt_seq)
+    return remap, added
+
+
+def _remap_source_leaves(source_leaves, block_remap):
+    """Relabel ResidualMapBlock indices in source leaf keys per ``block_remap``.
+
+    Non-block keys pass through unchanged. Block leaves whose source index is not
+    in the remap (target is shallower at that stage) are dropped so they cannot
+    collide with a remapped target key.
+    """
+    remapped = {}
+    for key, leaf in source_leaves.items():
+        match = _BLOCK_TOKEN.search(key)
+        if match is None:
+            remapped[key] = leaf
+            continue
+        src_seq = int(match.group(1))
+        if src_seq not in block_remap:
+            continue
+        new_key = _BLOCK_TOKEN.sub(
+            f"ResidualMapBlock_{block_remap[src_seq]}", key, count=1
+        )
+        remapped[new_key] = leaf
+    return remapped
+
+
+def _derive_stage_spec_from_params(params):
+    """Infer (blocks_per_stage, stage_channels) from a Spatial8x8MapResNet tree.
+
+    Blocks are grouped into stages by the presence of a residual-projection conv
+    (``Conv_2``), which is only added at the first block of each downsampling
+    stage. Returns ``(None, None)`` when no residual blocks are present (e.g.
+    the atari encoder), which disables both remapping and the flatten embed.
+    """
+    leaves = _leaf_map(params)
+    block_features = {}
+    block_has_proj = {}
+    for key, leaf in leaves.items():
+        match = _BLOCK_TOKEN.search(key)
+        if match is None:
+            continue
+        idx = int(match.group(1))
+        if "Conv_0" in key and key.rstrip("]'").endswith("kernel"):
+            block_features[idx] = int(leaf.shape[-1])
+        if "Conv_2" in key:
+            block_has_proj[idx] = True
+    if not block_features:
+        return None, None
+    blocks_per_stage = []
+    stage_channels = []
+    for pos, idx in enumerate(sorted(block_features)):
+        if pos == 0 or block_has_proj.get(idx, False):
+            blocks_per_stage.append(1)
+            stage_channels.append(block_features[idx])
+        else:
+            blocks_per_stage[-1] += 1
+    return tuple(blocks_per_stage), tuple(stage_channels)
+
+
 def _slice_copy(source_leaf, target_leaf):
     """Copy the source into the leading slices; 0.1-scale fresh init elsewhere."""
     grown = 0.1 * target_leaf
@@ -145,13 +283,78 @@ def _slice_copy(source_leaf, target_leaf):
     return grown.at[slices].set(source_leaf)
 
 
-def grow_params(source_params, target_params):
+def _embed_flatten_dense(source_kernel, target_kernel, c_src, c_tgt):
+    """Embed the source flatten-Dense kernel into a channel-grown target kernel.
+
+    The flatten of Spatial8x8MapResNet interleaves (H, W, C) with C fastest, so
+    growing C reorders the input rows. Reshape both kernels to (H, W, C, out),
+    place the source block at ``[:, :, :c_src, :out_src]`` over the 0.1-scaled
+    fresh init, then flatten back. Refuses to grow when the implied H (== W)
+    differs, i.e. the source and target maps_edge_length differ.
+    """
+    rows_src, out_src = source_kernel.shape
+    rows_tgt, out_tgt = target_kernel.shape
+    h_src = int(round((rows_src / c_src) ** 0.5))
+    h_tgt = int(round((rows_tgt / c_tgt) ** 0.5))
+    if h_src * h_src * c_src != rows_src:
+        raise ValueError(
+            f"flatten Dense source rows {rows_src} are not H*W*C for c_src={c_src}"
+        )
+    if h_tgt * h_tgt * c_tgt != rows_tgt:
+        raise ValueError(
+            f"flatten Dense target rows {rows_tgt} are not H*W*C for c_tgt={c_tgt}"
+        )
+    if h_src != h_tgt:
+        raise ValueError(
+            "Refusing to grow: source/target maps_edge_length differ "
+            f"(flatten grid {h_src}x{h_src} vs {h_tgt}x{h_tgt}). Rebuild the "
+            "target at the source checkpoint's map edge length."
+        )
+    grown_4d = (0.1 * target_kernel).reshape(h_tgt, h_tgt, c_tgt, out_tgt)
+    src_4d = jnp.asarray(source_kernel, dtype=target_kernel.dtype).reshape(
+        h_src, h_src, c_src, out_src
+    )
+    grown_4d = grown_4d.at[:, :, :c_src, :out_src].set(src_4d)
+    return grown_4d.reshape(rows_tgt, out_tgt)
+
+
+def grow_params(
+    source_params,
+    target_params,
+    source_stage_spec=None,
+    target_stage_spec=None,
+):
     """Grow ``source_params`` into the shape of ``target_params``.
 
-    ``target_params`` supplies the fresh init and the output structure. Returns
-    ``(grown_params, report)`` where report is a list of per-leaf dicts.
+    ``target_params`` supplies the fresh init and the output structure.
+    ``*_stage_spec`` are ``(blocks_per_stage, stage_channels)`` tuples for the
+    spatial ResNet encoder; when omitted they are inferred from the param trees.
+    They drive (F1) the stage-aware ResidualMapBlock relabeling and the
+    channel-interleave-aware flatten-Dense embed. Returns ``(grown_params,
+    report)`` where report is a list of per-leaf dicts.
     """
+    if source_stage_spec is None:
+        source_stage_spec = _derive_stage_spec_from_params(source_params)
+    if target_stage_spec is None:
+        target_stage_spec = _derive_stage_spec_from_params(target_params)
+    source_blocks_per_stage, source_stage_channels = source_stage_spec
+    target_blocks_per_stage, target_stage_channels = target_stage_spec
+
     source_leaves = _leaf_map(source_params)
+
+    # F1a: stage-aware block relabeling, applied BEFORE any shape matching so a
+    # non-final-stage depth increase does not slice mismatched blocks together.
+    if source_blocks_per_stage is not None and target_blocks_per_stage is not None:
+        block_remap, _added = _sequential_block_remap(
+            source_blocks_per_stage, target_blocks_per_stage
+        )
+        source_leaves = _remap_source_leaves(source_leaves, block_remap)
+
+    # F1b: the last-stage channel counts drive the flatten-Dense embed. Only
+    # meaningful for the spatial encoder (None otherwise).
+    c_src = source_stage_channels[-1] if source_stage_channels else None
+    c_tgt = target_stage_channels[-1] if target_stage_channels else None
+
     report = []
 
     def _grow_leaf(path, target_leaf):
@@ -161,6 +364,15 @@ def grow_params(source_params, target_params):
             if source_leaf.shape == target_leaf.shape:
                 category = "copied"
                 grown = jnp.asarray(source_leaf, dtype=target_leaf.dtype)
+            elif (
+                c_src is not None
+                and c_tgt is not None
+                and c_src != c_tgt
+                and _is_flatten_readout_dense(key)
+            ):
+                # Channels grew: reorder the interleaved input rows (F1b).
+                category = "dense-embed"
+                grown = _embed_flatten_dense(source_leaf, target_leaf, c_src, c_tgt)
             elif source_leaf.ndim == target_leaf.ndim and all(
                 t >= s for s, t in zip(source_leaf.shape, target_leaf.shape)
             ):
@@ -196,10 +408,17 @@ def _param_count(params):
     return int(sum(x.size for x in jax.tree_util.tree_leaves(params)))
 
 
-def print_report(report, source_params, target_params, grown_params):
+def print_report(
+    report,
+    source_params,
+    target_params,
+    grown_params,
+    source_stage_spec=None,
+    target_stage_spec=None,
+):
     """Print the per-leaf growth report and parameter counts."""
     print("\nPer-leaf growth report:")
-    counts = {"copied": 0, "sliced": 0, "zero-init": 0, "fresh": 0}
+    counts = {"copied": 0, "sliced": 0, "dense-embed": 0, "zero-init": 0, "fresh": 0}
     for entry in report:
         counts[entry["category"]] += 1
         print(
@@ -209,7 +428,18 @@ def print_report(report, source_params, target_params, grown_params):
     print("\nCategory totals:")
     for name, count in counts.items():
         print(f"  {name:9s}: {count}")
-    unused = set(_leaf_map(source_params)) - {e["key"] for e in report}
+    # Report genuinely unused source params against the post-remap key space so
+    # relabeled ResidualMapBlocks are not spuriously flagged.
+    effective_source = _leaf_map(source_params)
+    if source_stage_spec is not None and target_stage_spec is not None:
+        source_blocks_per_stage = source_stage_spec[0]
+        target_blocks_per_stage = target_stage_spec[0]
+        if source_blocks_per_stage is not None and target_blocks_per_stage is not None:
+            block_remap, _ = _sequential_block_remap(
+                source_blocks_per_stage, target_blocks_per_stage
+            )
+            effective_source = _remap_source_leaves(effective_source, block_remap)
+    unused = set(effective_source) - {e["key"] for e in report}
     if unused:
         print(f"\nSource leaves not used ({len(unused)}):")
         for key in sorted(unused):
@@ -292,7 +522,9 @@ def main():
     )
     args = parser.parse_args()
 
-    _register_checkpoint_config_classes()
+    # F6: shared __main__-unpickling shim so train.py- and train_mixed.py-saved
+    # checkpoints both load here.
+    helpers.register_checkpoint_config_classes()
     checkpoint = helpers.load_pkl_object(args.src)
     if "model" not in checkpoint:
         raise KeyError("source checkpoint has no 'model' parameters")
@@ -307,17 +539,58 @@ def main():
         "encoder_compute_dtype": args.encoder_compute_dtype,
     }
     target_config = build_target_config(source_train_config, overrides)
-    env = _dummy_env(args.maps_edge_length)
+
+    # F5: size the policy head for the source checkpoint's action type instead of
+    # the default (Tracked) BatchConfig.
+    action_type = _derive_action_type(checkpoint)
+    print(f"derived action_type: {action_type.__name__}")
+    env = _dummy_env(args.maps_edge_length, action_type)
     _, target_params = get_model_ready(jax.random.PRNGKey(0), target_config, env)
 
-    grown_params, report = grow_params(source_params, target_params)
-    print_report(report, source_params, target_params, grown_params)
+    # F1: derive the spatial stage layout from the source/target model_size
+    # presets so ResidualMapBlock relabeling and the flatten-Dense embed are
+    # correct across non-final-stage depth growth and channel growth.
+    source_map_encoder = canonical_map_encoder(
+        _config_option(source_train_config, "map_encoder", "atari")
+    )
+    source_stage_spec = (
+        _resnet_stage_spec(_config_option(source_train_config, "model_size", "base"))
+        if source_map_encoder in _SPATIAL_ENCODERS
+        else None
+    )
+    target_stage_spec = (
+        _resnet_stage_spec(target_config["model_size"])
+        if target_config["map_encoder"] in _SPATIAL_ENCODERS
+        else None
+    )
+
+    grown_params, report = grow_params(
+        source_params, target_params, source_stage_spec, target_stage_spec
+    )
+    print_report(
+        report,
+        source_params,
+        target_params,
+        grown_params,
+        source_stage_spec,
+        target_stage_spec,
+    )
 
     out_checkpoint = dict(checkpoint)
     out_checkpoint["model"] = grown_params
     out_checkpoint["train_config"] = _update_out_train_config(
         source_train_config, target_config
     )
+
+    # F2: a grown network restarts optimization from scratch, so drop any
+    # optimizer/step bookkeeping carried by the source checkpoint.
+    stale_keys = ["optimizer_state", "train_state_step", "update", "next_update"]
+    dropped = [key for key in stale_keys if key in out_checkpoint]
+    for key in dropped:
+        del out_checkpoint[key]
+    if dropped:
+        print(f"Stripped stale optimization state (fresh restart): {', '.join(dropped)}")
+
     helpers.save_pkl_object(out_checkpoint, args.out)
     print(f"\n✅ Grown checkpoint written to {args.out}")
 

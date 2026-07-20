@@ -212,6 +212,17 @@ class TrainingAccountingTest(unittest.TestCase):
         )
         self.assertEqual(config.map_encoder, "resnet_spatial_8x8")
 
+        se_config = MixedAgentTrainConfig(
+            name="test",
+            num_devices=1,
+            num_envs_per_device=8,
+            num_steps=4,
+            num_minibatches=2,
+            total_timesteps=32,
+            map_encoder="resnet_spatial_v3",
+        )
+        self.assertEqual(se_config.map_encoder, "resnet_spatial_8x8_se")
+
     def test_four_device_accounting_does_not_divide_twice(self):
         with patch("train_mixed.jax.local_device_count", return_value=4), patch(
             "train_mixed.jax.devices", return_value=["cpu"] * 4

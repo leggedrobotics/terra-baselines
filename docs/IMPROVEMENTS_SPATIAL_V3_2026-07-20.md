@@ -31,10 +31,12 @@ Reference runs: spatial `pqtmfmqy`, atari control `nnsksyva`
 
 ## F1 — `resnet_spatial_v3` encoder: derived channels + coordinates (utils/models.py)
 
-New canonical encoder name `resnet_spatial_v3` (add to `MAP_ENCODER_ALIASES`, alias
-`resnet_spatial_v3` → itself). Selected via `--map_encoder resnet_spatial_v3`.
+Canonical encoder name `resnet_spatial_8x8_se` (behavior-based per AGENTS.md), with
+`resnet_spatial_v3` kept as a compatibility alias mapping to it in `MAP_ENCODER_ALIASES`.
+Selected via `--map_encoder resnet_spatial_8x8_se` (the `resnet_spatial_v3` spelling is
+still accepted).
 
-Input assembly in `MapsNet.__call__` when the canonical encoder is `resnet_spatial_v3`
+Input assembly in `MapsNet.__call__` when the canonical encoder is `resnet_spatial_8x8_se`
 (compute from **raw** action/target maps BEFORE the normalize() call, then normalize
 action/target exactly as the v2 path does):
 
@@ -224,9 +226,14 @@ W&B project `aless-weber-eth/mixed-agents`, tag `spatial-v3-batch-2026-07-20`.
 
 Gate order per terra-rl skill: py_compile → unit tests (CPU) → Euler W&B-disabled full-shape smoke (update 1 completes)
 → production submit → verify allocation GPU types via sacct + nvidia-smi → record Slurm job
-IDs, W&B ids, and ledger entries. Success metrics per skill: `eval/positive_terminations`,
-`eval/rewards`, `eval/max_reward`, DO/DO_NOTHING rates, explained variance. Compare E1/E2/E3
-against pqtmfmqy (2.81 / 0.131) and nnsksyva (2.02 / 0.095) at matched update counts.
+IDs, W&B ids, and ledger entries. **Primary success metric: `eval/success_within_horizon_rate`**
+(the bounded evaluation metric per the AGENTS.md Training Metric Contract — fraction of initial
+reset episodes that succeed within the fixed eval step budget). Secondary/diagnostic:
+`eval/rewards`, `eval/max_reward`, DO/DO_NOTHING rates, explained variance.
+`eval/positive_terminations` is retained as a **legacy** secondary metric only for
+comparability with the reference runs (per-env episodes, can exceed 1). Compare E1/E2/E3
+against pqtmfmqy (positive_terminations 2.81 / reward 0.131) and nnsksyva (2.02 / 0.095) at
+matched update counts.
 
 ## Acceptance gates (implementation)
 
