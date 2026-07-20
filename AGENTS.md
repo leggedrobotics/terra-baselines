@@ -47,3 +47,27 @@ Do not compare throughput while another process is saturating the GPU.
 
 Before committing, verify `git status -sb` and leave unrelated files such as
 local lockfiles or run artifacts untouched.
+
+## Training Metric Contract
+
+- `train/episode_success_rate` is the bounded online ratio of successful task
+  completions to all completed episodes (successes plus timeouts) in the latest
+  PPO rollout, aggregated across devices. A window with no completed episode is
+  reported as NaN so it is not confused with zero success. Use W&B smoothing
+  when individual rollout windows are sparse.
+- `eval/success_within_horizon_rate` is the primary bounded evaluation metric:
+  the fraction of initial reset episodes that succeed within the fixed eval step
+  budget. Auto-reset episodes are excluded. Inspect
+  `eval/initial_episode_completion_rate` to see how much of the initial cohort
+  terminated before the horizon.
+- `eval/completed_episode_success_rate` is success among all completed episodes
+  in the auto-reset eval stream. It is secondary because unfinished episodes are
+  censored and a horizon shorter than the timeout can make it trivially one.
+- `eval/positive_terminations` and `eval/total_terminations` are legacy
+  episodes-per-initial-environment metrics. Evaluation environments auto-reset,
+  so these values can exceed one. The explicit aliases are
+  `eval/successful_episodes_per_env` and `eval/completed_episodes_per_env`.
+- `progress/episode_completion_rate` is a legacy name for the fraction of
+  environments terminal on the final training-rollout step. It includes
+  timeouts and is not a success rate; use
+  `progress/last_step_termination_fraction` when that quantity is needed.

@@ -133,6 +133,7 @@ def make_states(config: TrainConfig, env_params: EnvConfig = EnvConfig()):
 
 class Transition(struct.PyTreeNode):
     done: jax.Array
+    task_done: jax.Array
     action: jax.Array
     value: jax.Array
     reward: jax.Array
@@ -437,6 +438,7 @@ def make_train(
                 transition = Transition(
                     # done=timestep.last(),
                     done=timestep.done,
+                    task_done=timestep.info["task_done"],
                     action=action,
                     value=value,
                     reward=timestep.reward,
@@ -555,6 +557,21 @@ def make_train(
             # averaging over minibatches then over epochs
             loss_info = jtu.tree_map(lambda x: x.mean(-1).mean(-1), loss_info)
 
+            done_mask = transitions.done.astype(jnp.float32)
+            success_mask = jnp.logical_and(
+                transitions.done,
+                transitions.task_done,
+            ).astype(jnp.float32)
+            completed_episodes = jax.lax.psum(jnp.sum(done_mask), "devices")
+            successful_episodes = jax.lax.psum(jnp.sum(success_mask), "devices")
+            loss_info = dict(loss_info)
+            loss_info["train/completed_episodes"] = completed_episodes
+            loss_info["train/successful_episodes"] = successful_episodes
+            loss_info["train/episode_success_rate"] = eval_ppo.episode_success_rate(
+                successful_episodes,
+                completed_episodes,
+            )
+
             rng, train_state = update_state[:2]
             # EVALUATE AGENT
             rng, _rng = jax.random.split(rng)
@@ -657,6 +674,8 @@ def make_train(
                     positive_terminations=eval_stats_per_device.positive_terminations.sum(),
                     terminations=eval_stats_per_device.terminations.sum(),
                     positive_terminations_steps=eval_stats_per_device.positive_terminations_steps.sum(),
+                    initial_episode_successes=eval_stats_per_device.initial_episode_successes.sum(),
+                    initial_episode_terminations=eval_stats_per_device.initial_episode_terminations.sum(),
                     action_0=eval_stats_per_device.action_0.sum(),
                     action_1=eval_stats_per_device.action_1.sum(),
                     action_2=eval_stats_per_device.action_2.sum(),
@@ -672,6 +691,7 @@ def make_train(
                     eval_stats.positive_terminations_steps / eval_stats.positive_terminations,
                     jnp.zeros_like(eval_stats.positive_terminations_steps)
                 )
+                total_eval_envs = config.num_envs_per_device * config.num_devices
                 loss_info_single.update(
                     {
                         "eval/rewards": eval_stats.reward / n,
@@ -686,9 +706,33 @@ def make_train(
                         "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
                         "eval/DO": eval_stats.action_6 / n,
                         "eval/positive_terminations": eval_stats.positive_terminations
-                        / (config.num_envs_per_device * config.num_devices),
+                        / total_eval_envs,
                         "eval/total_terminations": eval_stats.terminations
-                        / (config.num_envs_per_device * config.num_devices),
+                        / total_eval_envs,
+                        "eval/successful_episodes_per_env": (
+                            eval_stats.positive_terminations / total_eval_envs
+                        ),
+                        "eval/completed_episodes_per_env": (
+                            eval_stats.terminations / total_eval_envs
+                        ),
+                        "eval/successful_episodes": eval_stats.positive_terminations,
+                        "eval/completed_episodes": eval_stats.terminations,
+                        "eval/completed_episode_success_rate": eval_ppo.episode_success_rate(
+                            eval_stats.positive_terminations,
+                            eval_stats.terminations,
+                        ),
+                        "eval/initial_episode_successes": (
+                            eval_stats.initial_episode_successes
+                        ),
+                        "eval/initial_episode_terminations": (
+                            eval_stats.initial_episode_terminations
+                        ),
+                        "eval/success_within_horizon_rate": (
+                            eval_stats.initial_episode_successes / total_eval_envs
+                        ),
+                        "eval/initial_episode_completion_rate": (
+                            eval_stats.initial_episode_terminations / total_eval_envs
+                        ),
                         "eval/avg_positive_episode_length": avg_positive_episode_length
                     }
                 )

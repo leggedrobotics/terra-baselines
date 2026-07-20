@@ -1350,8 +1350,31 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         jnp.nan,
                     )
 
-                loss_info["terminal/episode_count"] = jnp.sum(done_mask)
-                loss_info["terminal/success_count"] = jnp.sum(success_mask)
+                episode_count = jnp.sum(done_mask)
+                success_count = jnp.sum(success_mask)
+                loss_info["terminal/episode_count"] = episode_count
+                loss_info["terminal/success_count"] = success_count
+
+                # The legacy terminal counts above are per-device because the
+                # host logger unreplicates the first pmap result. Keep them for
+                # dashboard compatibility, but expose explicit global counts
+                # and a bounded online success rate for the complete rollout.
+                completed_episodes = jax.lax.psum(episode_count, "devices")
+                successful_episodes = jax.lax.psum(success_count, "devices")
+                loss_info["train/completed_episodes"] = completed_episodes
+                loss_info["train/successful_episodes"] = successful_episodes
+                loss_info["train/episode_success_rate"] = eval_ppo.episode_success_rate(
+                    successful_episodes,
+                    completed_episodes,
+                )
+                last_step_terminations = jax.lax.psum(
+                    jnp.sum(done_mask[-1]),
+                    "devices",
+                )
+                loss_info["progress/last_step_termination_fraction"] = (
+                    last_step_terminations
+                    / (config.num_devices * config.num_envs_per_device)
+                )
                 terminal_fields = {
                     "dig_completion_edge": transitions.dig_completion_edge,
                     "dig_completion_inner": transitions.dig_completion_inner,
@@ -1455,8 +1478,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     
                     # Add environment metrics (without separate wandb.log call)
                     try:
-                        completion_rate = safe_jax_to_python(jnp.mean(timestep.done))
-                        log_dict["progress/episode_completion_rate"] = completion_rate
+                        last_step_termination_fraction = safe_jax_to_python(
+                            loss_info_single[
+                                "progress/last_step_termination_fraction"
+                            ]
+                        )
+                        # Legacy name retained for existing W&B dashboards. It
+                        # is the fraction terminal on the final rollout step,
+                        # including timeouts, not an episode success rate.
+                        log_dict["progress/episode_completion_rate"] = (
+                            last_step_termination_fraction
+                        )
                     except Exception:
                         pass
 
@@ -1591,6 +1623,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         jnp.zeros_like(eval_stats.positive_terminations_steps)
                     )
                     total_eval_envs = config.num_devices * config.num_envs_per_device
+                    successful_episodes_per_env = (
+                        eval_stats.positive_terminations / total_eval_envs
+                    )
+                    completed_episodes_per_env = (
+                        eval_stats.terminations / total_eval_envs
+                    )
                     loss_info_single.update(
                         {
                             "eval/rewards": eval_stats.reward / n,
@@ -1605,10 +1643,32 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
                             "eval/DO": eval_stats.action_6 / n,
                             "eval/DO_NOTHING %": eval_stats.action_7 / n,
-                            "eval/positive_terminations": eval_stats.positive_terminations
-                            / total_eval_envs,
-                            "eval/total_terminations": eval_stats.terminations
-                            / total_eval_envs,
+                            # Legacy names are episodes per initial eval env,
+                            # so auto-reset makes them intentionally unbounded.
+                            "eval/positive_terminations": successful_episodes_per_env,
+                            "eval/total_terminations": completed_episodes_per_env,
+                            "eval/successful_episodes_per_env": successful_episodes_per_env,
+                            "eval/completed_episodes_per_env": completed_episodes_per_env,
+                            "eval/successful_episodes": eval_stats.positive_terminations,
+                            "eval/completed_episodes": eval_stats.terminations,
+                            "eval/completed_episode_success_rate": eval_ppo.episode_success_rate(
+                                eval_stats.positive_terminations,
+                                eval_stats.terminations,
+                            ),
+                            "eval/initial_episode_successes": (
+                                eval_stats.initial_episode_successes
+                            ),
+                            "eval/initial_episode_terminations": (
+                                eval_stats.initial_episode_terminations
+                            ),
+                            "eval/success_within_horizon_rate": (
+                                eval_stats.initial_episode_successes
+                                / total_eval_envs
+                            ),
+                            "eval/initial_episode_completion_rate": (
+                                eval_stats.initial_episode_terminations
+                                / total_eval_envs
+                            ),
                             "eval/avg_positive_episode_length": avg_positive_episode_length
                         }
                     )
