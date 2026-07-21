@@ -225,3 +225,20 @@ lands on scratch — this was the exact point attempt 1 died).
   948c788 + 3-update CPU training smoke with the full E4 flag set (bf16, critic 512,256,
   no value clip, flat shuffle) including per-update + FINAL checkpoint saves and a
   foreign-entrypoint reload of the saved pkl.
+
+## E5 + E6 — harder maps & step efficiency (submitted 2026-07-22 ~00:20 CEST)
+
+Both kickstart from the E3 FINAL checkpoint (init AND teacher =
+`snapshots/spatial-v3-3a21cd6/.../terra-sv3-E3-kickstart-med-euler-2026-07-20-20-45-27_FINAL.pkl`),
+submitted with `--dependency=afterok:7886071` so they auto-start when E3 completes.
+Snapshot `spatial-v3-c57a4d9` (adds solo_excavator_short300 preset). KL anneal 1000,
+ent 0.02→0.005/10k, medium se + bf16 + critic 512,256 + algo fixes, 20k updates, 4×4090.
+
+- **E5** Slurm **8063942** — `--config solo_excavator_rectangles_dumpzone`
+  (foundations_rectangles_real_dumpzone, 600-step horizon): cross-task transfer to
+  dump-zone maps with the simple-maps teacher KL-anchoring the start.
+- **E6** Slurm **8063944** — `--config solo_excavator_short300` (same foundations maps as
+  E1-E4, horizon 450→300): direct pressure on time-to-completion; primary added metric =
+  successful-episode length (deployability).
+- Fallback if E3 ends non-zero (DependencyNeverSatisfied): repoint STUDENT_INIT/TEACHER to
+  the periodic `...-20-45-27.pkl` and resubmit.
