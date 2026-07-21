@@ -2,7 +2,8 @@
 
 - Local canonical: `docs/research/terra_excavation_policy/` (terra-baselines,
   branch `agent/spatial-v3-improvements`, worktree `terra-baselines_improvements`)
-- Notion mirror: Terra Excavation Policy topic under the 🔬 Research hub
+- Notion mirror: https://app.notion.com/p/3a456453c75781718406cbaff40335e1
+  (research.md `3a456453c757819384b3ef49367e64dc`, notes.md `3a456453c7578178ba10c491e3d9e6f7`)
 - Detailed docs: `docs/IMPROVEMENTS_SPATIAL_V3_2026-07-20.md` (spec),
   `docs/EXPERIMENTS_SPATIAL_V3_RUNS.md` (launch ledger)
 
