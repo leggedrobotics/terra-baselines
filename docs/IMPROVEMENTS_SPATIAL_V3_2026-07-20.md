@@ -348,3 +348,75 @@ counts base/medium; (4) bf16 finite fwd+bwd, f32 output; (5) v3/v4 param trees u
 ## E7 (run after review): grow E3 final → v5 medium (`grow_checkpoint.py --map_encoder
 resnet_spatial_8x8_se_sa_xattn --model_size medium`), kickstart from E3 raw final,
 E4′ flags otherwise. E7 vs E4′ isolates the self-attention increment at the ceiling.
+
+---
+
+# Addendum 2026-07-22b — F15: 128×128 resolution scaling (E8 pilot)
+
+Goal: same physical game at half the tile size (equivalence, not difficulty). Deployability
+motivation: finer grid ≈ real elevation-map resolution. Design rules are FINAL; the
+implementing agent enumerates the concrete fields and reports the resulting table.
+
+## Equivalence rules (env side — reachable via env_config._replace from terra-baselines;
+terra repo stays read-only unless a field is provably hardcoded, in which case STOP and report)
+
+- ×2 every tile-denominated agent geometry: agent.width, agent.height, move_tiles, dig
+  workspace/cone radii — one action covers the same METERS.
+- ×4 every tile-count volume/capacity quantity: truck_capacity, skidsteer_capacity,
+  loaded_max (config), workspace capacity constants if any.
+- dig_depth stays 1 (depth resolution unchanged; only lateral resolution doubles).
+- Rewards: per-tile dig/dump rewards now fire on ~4× tiles per action → scale the reward
+  normalizer ×4 (70 → 280) as the single-knob compensation; add config override
+  `--reward_normalizer` to make this settable without terra edits (env_config.rewards is a
+  NamedTuple — _replace(normalizer=...) from the baselines side).
+- max_steps_in_episode stays 450 (equivalence test: episode step counts should match 64² runs).
+- angles_cabin/base, local-map layout: untouched (resolution-independent).
+- New preset `solo_excavator_128` (foundations_128 maps, max_steps 450) + config plumbing
+  for the agent-geometry overrides (fields on MixedAgentTrainConfig applied via _replace,
+  validated: print the full scaled table at startup).
+
+## Dataset (separate agent)
+
+- Find the generator that produced the `foundations` family (terra/terra/env_generation/),
+  produce `foundations_128`: 600 train maps at 128×128 with all PHYSICAL parameters scaled
+  ×2 in tiles (foundation extents, margins, borders) so the map content is the same sites
+  at finer resolution; include every sidecar the loader needs (images/occupancy/dumpability/
+  metadata/distance as in the 64 dataset). Verify: img_*.npy shapes (128,128); visual
+  spot-check saved as PNGs; loader smoke (init_maps_buffer DATASET_PATH=... DATASET_SIZE=5).
+- Local output: /home/lorenzo/moleworks/terra_data/train_128/foundations_128. Upload to
+  Euler at /cluster/scratch/lterenzi/codex_terra_edge_runs/datasets/train_128/ (scratch =
+  regenerable artifact per storage contract; note ~15-day purge).
+
+## Model + trainer (code agent)
+
+- CLI overrides `--resnet_stage_channels "16,32,48,64,64"` and `--resnet_blocks_per_stage
+  "1,1,2,2,2"` (comma lists → existing config fields; model_size presets remain defaults
+  when unset). The 5th stride-2 stage keeps the readout at 8×8 for 128 inputs; SAME channel
+  count as stage 4 → flatten/readout/head shapes unchanged → those params copy exactly on
+  grow. Add both fields to _validate_checkpoint_architecture (None-aware).
+- grow_checkpoint: (a) support the added STAGE (stage-aware remap already maps by (stage,
+  block); a target stage beyond the source's stage count = all-added → fresh init; its
+  stride-2 entry cannot be identity — document); (b) positional-table interpolation: when
+  token counts differ (64→256), bilinearly interpolate the source table on its 2D grid
+  (8×8→16×16... NOTE: with the 5th stage the grid stays 8×8/64 tokens — interpolation only
+  needed if stages are NOT extended; implement it anyway, gated on shape mismatch).
+- Teacher obs-downsampling for cross-resolution kickstart: `--teacher_obs_downsample N`
+  (default 1 = off). When 2: in the teacher forward path ONLY, transform the obs — global
+  map channels [12..15,18..20] stride-2 nearest subsample (in-distribution discrete values,
+  no fractional mask values), agent pos_x/pos_y integer-divided by 2 in agent_states,
+  agent_width/height halved. Local maps and everything else unchanged. Teacher model is
+  built from ITS train_config (64² world) as today. Hard-fail if downsample != 1 while
+  teacher maps already match student size.
+- Tests: stage-override parsing + validation; grow 4→5-stage exact-copy of flatten/readout/
+  heads (max abs diff 0 on those subtrees); pos-table interpolation shape + corner-value
+  sanity; teacher-downsample transform unit test (crafted 4×4→2×2 maps, pos halving);
+  full-policy init at 128 input with 5 stages (obs built at 128 edge length).
+
+## E8 pilot (after review + dataset ready)
+
+Grow E3 final → 5-stage medium (encoder per best available arm: v3-se now; re-grow from
+E4'/E7 winner later), kickstart with `--teacher_obs_downsample 2`, teacher = E3 raw final.
+4×4090, **512 envs/device**, num_steps 32, num_minibatches 32, bf16, critic 512,256,
+algo fixes, ent 0.02→0.005 over 10k, KL anneal 1000, **10k updates**, `--config
+solo_excavator_128`, `--reward_normalizer 280`. MANDATORY pre-launch memory smoke (1 update,
+W&B off) before production; expect ~11-13k steps/s and validate ep_len ≈ 55 (equivalence).
