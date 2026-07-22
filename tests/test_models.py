@@ -731,5 +731,263 @@ class SpatialV4XAttnEncoderTest(unittest.TestCase):
         self.assertNotEqual(base["mha_query_kernel"], medium["mha_query_kernel"])
 
 
+class SpatialV5SelfAttnEncoderTest(unittest.TestCase):
+    """F14 token self-attention mixer encoder (resnet_spatial_8x8_se_sa_xattn)."""
+
+    AGENT_EMBED_DIM = 112  # AgentStateNet output width (32+32+32+16).
+
+    # token_mixer_0's attention OUTPUT PROJECTION kernel (zero-initialized so the
+    # block is the identity at init; perturbing it activates token mixing).
+    ATTN_OUT_PROJ = "['params']['cnn']['token_mixer_0']['Dense_0']['kernel']"
+
+    def _maps_net(self, encoder, **overrides):
+        return MapsNet(map_min_max=(-1, 1), encoder_type=encoder, **overrides)
+
+    def _agent_embedding(self, batch=1, fill=1.0):
+        return jnp.full((batch, self.AGENT_EMBED_DIM), fill, dtype=jnp.float32)
+
+    @staticmethod
+    def _dig_maps(cell):
+        """64x64 obs maps with a single remaining-dig cell at ``cell``."""
+        action = np.zeros((64, 64), np.float32)
+        target = np.zeros((64, 64), np.float32)
+        row, col = cell
+        target[row, col] = -1.0  # must-dig
+        action[row, col] = 0.0  # still above target -> remaining_dig
+        maps = [jnp.zeros((1, 64, 64), dtype=jnp.float32) for _ in range(7)]
+        maps[2] = jnp.asarray(action)[None]
+        maps[3] = jnp.asarray(target)[None]
+        return maps
+
+    @staticmethod
+    def _copy_overlapping(dst_params, src_params):
+        """Return ``dst_params`` with every leaf overwritten by the same-path
+        leaf from ``src_params`` (dst paths must be a subset of src paths)."""
+        src = {
+            jax.tree_util.keystr(path): leaf
+            for path, leaf in jax.tree_util.tree_flatten_with_path(src_params)[0]
+        }
+        return jax.tree_util.tree_map_with_path(
+            lambda path, _: src[jax.tree_util.keystr(path)], dst_params
+        )
+
+    # (1) Identity at init: copy the overlapping (non-mixer) subtree from v5 into
+    # v4; both forwards must match EXACTLY, proving the zero-init mixer blocks are
+    # the identity function at init.
+    def test_identity_at_init_matches_v4(self):
+        for size, kw in (
+            ("base", {}),
+            (
+                "medium",
+                dict(
+                    resnet_dense_layers=(192, 160),
+                    resnet_attn_qkv=96,
+                    resnet_attn_out=160,
+                    resnet_stage_channels=(24, 48, 64, 96),
+                    resnet_blocks_per_stage=(1, 2, 2, 2),
+                ),
+            ),
+        ):
+            v4 = self._maps_net("resnet_spatial_v4", **kw)
+            v5 = self._maps_net("resnet_spatial_v5", **kw)
+            maps = self._dig_maps((8, 8))
+            agent_embedding = self._agent_embedding()
+            v5_params = v5.init(jax.random.PRNGKey(0), maps, agent_embedding)
+            v4_params = v4.init(jax.random.PRNGKey(0), maps, agent_embedding)
+
+            # v4's param paths must all exist in v5 (v5 only adds mixer leaves).
+            v4_paths = set(_param_paths(v4_params))
+            v5_paths = set(_param_paths(v5_params))
+            self.assertTrue(v4_paths.issubset(v5_paths), size)
+            self.assertTrue(
+                any("token_mixer" in p for p in v5_paths - v4_paths), size
+            )
+
+            v4_from_v5 = self._copy_overlapping(v4_params, v5_params)
+            out_v4 = v4.apply(v4_from_v5, maps, agent_embedding)
+            out_v5 = v5.apply(v5_params, maps, agent_embedding)
+            diff = float(jnp.max(jnp.abs(out_v4 - out_v5)))
+            self.assertEqual(diff, 0.0, f"{size} identity max abs diff={diff}")
+
+    # (1b) Identity at init through the FULL policy net: also proves the v5
+    # agent-embedding pass-through in SimplifiedCoupledCategoricalNet matches
+    # v4's exactly when the mixer is the identity.
+    def test_identity_at_init_full_model(self):
+        env = _dummy_env()
+        model4, params4 = get_model_ready(
+            jax.random.PRNGKey(0), _full_model_config("resnet_spatial_v4"), env
+        )
+        model5, params5 = get_model_ready(
+            jax.random.PRNGKey(1), _full_model_config("resnet_spatial_v5"), env
+        )
+        params4_shared = self._copy_overlapping(params4, params5)
+
+        obs = _real_obs(3, env)
+        keys = jax.random.split(jax.random.PRNGKey(7), 3)
+        edge = env.batch_cfg.maps_dims.maps_edge_length
+        # Agent-state values must stay valid indices for every embedding table
+        # (agent_type only has 3 rows), so keep them in [0, 2].
+        obs[0] = jax.random.randint(keys[0], obs[0].shape, 0, 3).astype(
+            jnp.float32
+        )
+        obs[14] = jax.random.normal(keys[1], (3, edge, edge))  # action_map
+        obs[15] = jax.random.normal(keys[2], (3, edge, edge))  # target_map
+
+        value4, logits4 = model4.apply(params4_shared, obs)
+        value5, logits5 = model5.apply(params5, obs)
+        self.assertEqual(float(jnp.max(jnp.abs(value4 - value5))), 0.0)
+        self.assertEqual(float(jnp.max(jnp.abs(logits4 - logits5))), 0.0)
+
+    # (2) Token mixing propagates: with the zero-init intact the v5 encoder equals
+    # v4 exactly; after perturbing token_mixer_0's attention output projection,
+    # moving a remaining-dig cell has a DIFFERENT effect on the output (the mixer
+    # now spreads that cell's features across tokens).
+    def test_token_mixing_propagates_after_perturbation(self):
+        v4 = self._maps_net("resnet_spatial_v4")
+        v5 = self._maps_net("resnet_spatial_v5")
+        agent_embedding = self._agent_embedding()
+        maps_a = self._dig_maps((4, 4))
+        maps_b = self._dig_maps((60, 60))
+
+        v5_params = v5.init(jax.random.PRNGKey(0), maps_a, agent_embedding)
+        v4_params = self._copy_overlapping(
+            v4.init(jax.random.PRNGKey(0), maps_a, agent_embedding), v5_params
+        )
+
+        # Zero-init intact: v5 is byte-identical to v4 on both maps.
+        for maps in (maps_a, maps_b):
+            self.assertEqual(
+                float(
+                    jnp.max(
+                        jnp.abs(
+                            v5.apply(v5_params, maps, agent_embedding)
+                            - v4.apply(v4_params, maps, agent_embedding)
+                        )
+                    )
+                ),
+                0.0,
+            )
+
+        intact_delta = v5.apply(v5_params, maps_a, agent_embedding) - v5.apply(
+            v5_params, maps_b, agent_embedding
+        )
+
+        # Perturb ONLY the attention output projection of the first mixer block.
+        def perturb(path, leaf):
+            if jax.tree_util.keystr(path) == self.ATTN_OUT_PROJ:
+                return leaf + 0.3 * jax.random.normal(
+                    jax.random.PRNGKey(7), leaf.shape, leaf.dtype
+                )
+            return leaf
+
+        perturbed = jax.tree_util.tree_map_with_path(perturb, v5_params)
+
+        # The perturbation activates the mixer (the output changes).
+        activated = float(
+            jnp.max(
+                jnp.abs(
+                    v5.apply(perturbed, maps_a, agent_embedding)
+                    - v5.apply(v5_params, maps_a, agent_embedding)
+                )
+            )
+        )
+        self.assertGreater(activated, 1e-3, f"mixer not activated: {activated}")
+
+        # Token mixing propagates: moving the cell now affects the output
+        # DIFFERENTLY than under the identity (v4-equivalent) mixer.
+        perturbed_delta = v5.apply(perturbed, maps_a, agent_embedding) - v5.apply(
+            perturbed, maps_b, agent_embedding
+        )
+        propagation = float(jnp.max(jnp.abs(perturbed_delta - intact_delta)))
+        self.assertGreater(
+            propagation, 1e-3, f"token mixing did not propagate: {propagation}"
+        )
+
+    # (3) Param counts for v5 base and medium (printed + recorded).
+    # Recorded from this change: v5 = v4 tree + 2 identity-init mixer blocks
+    # (36 leaves: 2xLN, MHA q/k/v/out, zero out-projection, MLP per block).
+    EXPECTED_V5 = {"base": (1_163_997, 170), "medium": (2_395_015, 180)}
+
+    def test_param_counts_base_and_medium(self):
+        env = _dummy_env()
+        for size, (v5_expected, v5_leaves) in self.EXPECTED_V5.items():
+            _, v4_params = get_model_ready(
+                jax.random.PRNGKey(0),
+                _full_model_config("resnet_spatial_v4", size),
+                env,
+            )
+            _, v5_params = get_model_ready(
+                jax.random.PRNGKey(0),
+                _full_model_config("resnet_spatial_v5", size),
+                env,
+            )
+            v4_count = sum(x.size for x in jax.tree.leaves(v4_params))
+            v5_count = sum(x.size for x in jax.tree.leaves(v5_params))
+            print(
+                f"[F14] {size}: v4={v4_count:,} "
+                f"({len(jax.tree.leaves(v4_params))} leaves)  "
+                f"v5={v5_count:,} ({len(jax.tree.leaves(v5_params))} leaves)"
+            )
+            # The mixer only adds parameters (it never removes readout leaves).
+            self.assertGreater(v5_count, v4_count, size)
+            self.assertEqual(v5_count, v5_expected, size)
+            self.assertEqual(len(jax.tree.leaves(v5_params)), v5_leaves, size)
+
+    # (4) bf16 v5: f32 output dtype, finite forward and grads, f32 params.
+    def test_v5_bf16_output_is_f32_with_finite_grads(self):
+        maps = [jnp.zeros((2, 64, 64), dtype=jnp.float32) for _ in range(7)]
+        maps[2] = jax.random.normal(jax.random.PRNGKey(1), (2, 64, 64))
+        maps[3] = jax.random.normal(jax.random.PRNGKey(2), (2, 64, 64))
+        agent_embedding = jax.random.normal(
+            jax.random.PRNGKey(3), (2, self.AGENT_EMBED_DIM)
+        )
+        enc = self._maps_net("resnet_spatial_v5", encoder_compute_dtype=jnp.bfloat16)
+        params = enc.init(jax.random.PRNGKey(0), maps, agent_embedding)
+        self.assertTrue(
+            all(leaf.dtype == jnp.float32 for leaf in jax.tree.leaves(params))
+        )
+
+        out = enc.apply(params, maps, agent_embedding)
+        self.assertEqual(out.dtype, jnp.float32)
+        self.assertTrue(bool(jnp.all(jnp.isfinite(out))))
+
+        loss, grads = jax.value_and_grad(
+            lambda variables: jnp.mean(
+                enc.apply(variables, maps, agent_embedding).astype(jnp.float32) ** 2
+            )
+        )(params)
+        self.assertTrue(bool(jnp.isfinite(loss)))
+        self.assertTrue(
+            all(bool(jnp.all(jnp.isfinite(x))) for x in jax.tree.leaves(grads))
+        )
+
+    # (5) v3 and v4 param trees are unchanged (structure + shapes) by the v5 code.
+    def test_v3_and_v4_param_trees_unchanged(self):
+        # Recorded from the pre-F14 code path (full SimplifiedCoupledCategoricalNet).
+        expected = {
+            ("resnet_spatial_v3", "base"): (1_002_781, 116),
+            ("resnet_spatial_v3", "medium"): (2_069_255, 126),
+            ("resnet_spatial_v4", "base"): (1_088_733, 134),
+            ("resnet_spatial_v4", "medium"): (2_226_823, 144),
+        }
+        for (encoder, size), (count, leaves) in expected.items():
+            _, params = get_model_ready(
+                jax.random.PRNGKey(0),
+                _full_model_config(encoder, size),
+                _dummy_env(),
+            )
+            self.assertEqual(
+                sum(x.size for x in jax.tree.leaves(params)),
+                count,
+                f"{encoder}/{size}",
+            )
+            self.assertEqual(
+                len(jax.tree.leaves(params)), leaves, f"{encoder}/{size}"
+            )
+            # No token-mixer params leaked into the v3/v4 trees.
+            mixer = [p for p in _param_paths(params) if "token_mixer" in p]
+            self.assertEqual(mixer, [], f"{encoder}/{size}")
+
+
 if __name__ == "__main__":
     unittest.main()

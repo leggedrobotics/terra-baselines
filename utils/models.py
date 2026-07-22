@@ -24,6 +24,12 @@ MAP_ENCODER_ALIASES = {
     "resnet_spatial_8x8_se_xattn": "resnet_spatial_8x8_se_xattn",
     # Version-style alias kept for compatibility; resolves to the canonical name.
     "resnet_spatial_v4": "resnet_spatial_8x8_se_xattn",
+    # Behavior-based canonical name: the _se_xattn encoder plus a token
+    # self-attention mixing stage over the 8x8 grid (F14). Identity-initialized
+    # so it is function-preserving when grown from a v3/v4 checkpoint.
+    "resnet_spatial_8x8_se_sa_xattn": "resnet_spatial_8x8_se_sa_xattn",
+    # Version-style alias kept for compatibility; resolves to the canonical name.
+    "resnet_spatial_v5": "resnet_spatial_8x8_se_sa_xattn",
 }
 
 
@@ -535,6 +541,69 @@ class GlobalPoolMapResNet(nn.Module):
         return nn.Dense(features=128)(x)
 
 
+class _TokenSelfAttentionBlock(nn.Module):
+    """Pre-norm residual self-attention block over the 8x8 map tokens (F14).
+
+    ``x = x + Attn(LN(x))`` then ``x = x + MLP(LN(x))``. Both residual
+    contributions are exactly zero at init, so the block is the identity
+    function at init and the mixing stage is function-preserving when grown from
+    a v3/v4 checkpoint.
+
+    Zero-init detail: flax 0.8.2's ``MultiHeadDotProductAttention`` shares one
+    ``kernel_init`` across its q/k/v/out ``DenseGeneral`` layers (there is no
+    ``out_kernel_init``), and ``DenseGeneral`` flattens every kernel to 2D
+    before calling the initializer, so the output projection cannot be zeroed in
+    isolation inside the MHA. We therefore keep the attention fully live and use
+    an explicit zero-initialized ``Dense`` as the OUTPUT PROJECTION: at init it
+    forces the whole attention residual to exactly zero (identity), while the
+    live q/k/v/value path means that once this output kernel is trained or
+    perturbed, token mixing propagates. The MLP's second ``Dense`` kernel is
+    likewise zero-initialized (biases are zero-init by default). All submodules
+    run in the encoder compute dtype with float32 params (bf16 path per F3).
+    """
+
+    num_heads: int
+    qkv_features: int
+    compute_dtype: Any = jnp.float32
+
+    @nn.compact
+    def __call__(self, x):
+        channels = x.shape[-1]
+
+        h = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
+        attn = nn.MultiHeadDotProductAttention(
+            num_heads=self.num_heads,
+            qkv_features=self.qkv_features,
+            out_features=channels,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(h)
+        # Zero-initialized output projection -> attention residual is 0 at init.
+        attn = nn.Dense(
+            features=channels,
+            kernel_init=nn.initializers.zeros,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(attn)
+        x = x + attn
+
+        h = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
+        h = nn.Dense(
+            features=2 * channels,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(h)
+        h = nn.gelu(h)
+        h = nn.Dense(
+            features=channels,
+            kernel_init=nn.initializers.zeros,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(h)
+        x = x + h
+        return x
+
+
 class Spatial8x8MapResNet(nn.Module):
     """Residual map encoder with a flattened 8x8 spatial readout.
 
@@ -543,6 +612,14 @@ class Spatial8x8MapResNet(nn.Module):
     grid as 64 tokens. The flatten path is left byte-identical to the non-xattn
     encoder; the attention branch is concatenated in only before the final dense
     projection so the encoder output dim (``dense_layers[-1]``) is unchanged.
+
+    When ``use_token_mixer`` is set (F14, requires ``use_xattn``) the 8x8xC grid
+    is viewed as 64 tokens, the learned positional table is added ONCE here (the
+    cross-attention readout then reuses the mixed tokens WITHOUT re-adding
+    position), and ``mixer_blocks`` identity-initialized pre-norm self-attention
+    blocks let the tokens interact before BOTH readouts consume them. The mixer
+    is the identity at init, so v4 param trees/numerics are unchanged when it is
+    off and warm-starting from v3/v4 checkpoints is function-preserving.
     """
 
     stage_channels: Sequence[int] = (16, 32, 48, 64)
@@ -554,6 +631,8 @@ class Spatial8x8MapResNet(nn.Module):
     attn_qkv: int = 64
     attn_out: int = 128
     attn_num_heads: int = 4
+    use_token_mixer: bool = False
+    mixer_blocks: int = 2
 
     @nn.compact
     def __call__(self, x, agent_embedding=None):
@@ -582,9 +661,38 @@ class Spatial8x8MapResNet(nn.Module):
                     compute_dtype=self.compute_dtype,
                 )(x)
 
-        # Flatten readout (unchanged from the non-xattn encoder). Keep the final
-        # 8x8xC grid around for the optional cross-attention branch.
+        # Keep the final 8x8xC grid around for the optional readouts/mixer.
         feature_grid = x
+
+        # F14 token self-attention mixer. View the grid as 64 tokens, add the
+        # learned positional table ONCE here, run identity-initialized pre-norm
+        # self-attention blocks so the tokens interact, then reshape back so BOTH
+        # readouts consume the mixed grid. The cross-attention readout must not
+        # re-add position in this mode (it is already applied here). At init the
+        # blocks contribute exactly zero, so the mixed grid equals ``feature_grid``
+        # (positional table is zero-init) and the encoder matches the non-mixer
+        # (v4) path bit-for-bit.
+        if self.use_token_mixer:
+            batch = feature_grid.shape[0]
+            channels = feature_grid.shape[-1]
+            tokens = feature_grid.reshape((batch, -1, channels))
+            pos_embed = self.param(
+                "attn_pos_embed",
+                nn.initializers.zeros,
+                (tokens.shape[1], channels),
+                jnp.float32,
+            )
+            tokens = tokens + pos_embed.astype(self.compute_dtype)
+            for i in range(self.mixer_blocks):
+                tokens = _TokenSelfAttentionBlock(
+                    num_heads=self.attn_num_heads,
+                    qkv_features=self.attn_qkv,
+                    compute_dtype=self.compute_dtype,
+                    name=f"token_mixer_{i}",
+                )(tokens)
+            feature_grid = tokens.reshape(feature_grid.shape)
+
+        # Flatten readout (unchanged from the non-xattn encoder).
         h = feature_grid.reshape((feature_grid.shape[0], -1))
         for features in self.dense_layers[:-1]:
             h = nn.relu(
@@ -597,7 +705,9 @@ class Spatial8x8MapResNet(nn.Module):
 
         if self.use_xattn:
             attn_branch = self._cross_attention_readout(
-                feature_grid, agent_embedding
+                feature_grid,
+                agent_embedding,
+                add_pos_embed=not self.use_token_mixer,
             )
             h = jnp.concatenate((h, attn_branch), axis=-1)
 
@@ -607,28 +717,36 @@ class Spatial8x8MapResNet(nn.Module):
             param_dtype=jnp.float32,
         )(h)
 
-    def _cross_attention_readout(self, feature_grid, agent_embedding):
+    def _cross_attention_readout(self, feature_grid, agent_embedding, add_pos_embed=True):
         """Agent-conditioned cross-attention over the 8x8 feature grid (F13).
 
         Tokens are the 64 grid cells (dim C) plus a learned positional table.
         Five queries attend over them: one projected from the active agent's
         embedding and four learned latent queries. All submodules run in the
         encoder compute dtype with float32 params (bf16 path per F3).
+
+        ``add_pos_embed`` adds the learned positional table here (v4). With the
+        F14 token mixer the table is applied once before the mixer instead, so
+        the readout is called with ``add_pos_embed=False`` and simply reuses the
+        already-positioned, mixed tokens (the ``attn_pos_embed`` param keeps the
+        same name/shape either way, so v4 checkpoints stay valid).
         """
         compute_dtype = self.compute_dtype
         batch = feature_grid.shape[0]
         channels = feature_grid.shape[-1]
 
-        # Tokens: [B, 64, C] from the 8x8 grid + learned positional embedding.
+        # Tokens: [B, 64, C] from the 8x8 grid (+ learned positional embedding
+        # unless it was already applied before the token mixer).
         tokens = feature_grid.reshape((batch, -1, channels))
         num_tokens = tokens.shape[1]
-        pos_embed = self.param(
-            "attn_pos_embed",
-            nn.initializers.zeros,
-            (num_tokens, channels),
-            jnp.float32,
-        )
-        tokens = tokens + pos_embed.astype(compute_dtype)
+        if add_pos_embed:
+            pos_embed = self.param(
+                "attn_pos_embed",
+                nn.initializers.zeros,
+                (num_tokens, channels),
+                jnp.float32,
+            )
+            tokens = tokens + pos_embed.astype(compute_dtype)
         tokens = nn.LayerNorm(dtype=compute_dtype, param_dtype=jnp.float32)(tokens)
 
         # Queries: active-agent projection + 4 learned latent vectors -> [B, 5, Q].
@@ -730,20 +848,31 @@ class MapsNet(nn.Module):
             "resnet_spatial_8x8",
             "resnet_spatial_8x8_se",
             "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
         ):
             use_se = encoder_type in (
                 "resnet_spatial_8x8_se",
                 "resnet_spatial_8x8_se_xattn",
+                "resnet_spatial_8x8_se_sa_xattn",
             )
+            # Both the cross-attention (v4) and self-attention+cross-attention
+            # (v5) encoders use the cross-attention readout; only v5 adds the
+            # token self-attention mixer before it.
+            use_xattn = encoder_type in (
+                "resnet_spatial_8x8_se_xattn",
+                "resnet_spatial_8x8_se_sa_xattn",
+            )
+            use_token_mixer = encoder_type == "resnet_spatial_8x8_se_sa_xattn"
             self.cnn = Spatial8x8MapResNet(
                 stage_channels=self.resnet_stage_channels,
                 blocks_per_stage=self.resnet_blocks_per_stage,
                 dense_layers=self.resnet_dense_layers,
                 use_se=use_se,
                 compute_dtype=self.encoder_compute_dtype,
-                use_xattn=(encoder_type == "resnet_spatial_8x8_se_xattn"),
+                use_xattn=use_xattn,
                 attn_qkv=self.resnet_attn_qkv,
                 attn_out=self.resnet_attn_out,
+                use_token_mixer=use_token_mixer,
             )
             return
         raise AssertionError(f"Unhandled map encoder: {encoder_type}")
@@ -766,12 +895,18 @@ class MapsNet(nn.Module):
             return x.reshape((-1,) + x.shape[-2:])
 
         encoder_type = canonical_map_encoder(self.encoder_type)
-        is_spatial_xattn = encoder_type == "resnet_spatial_8x8_se_xattn"
-        # The _se and _se_xattn encoders share the 11-channel derived-input
-        # assembly; only the readout differs.
+        # The cross-attention readout (v4 and v5) conditions on the active-agent
+        # embedding, so both require it to be passed through.
+        is_spatial_xattn = encoder_type in (
+            "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
+        )
+        # The _se, _se_xattn and _se_sa_xattn encoders share the 11-channel
+        # derived-input assembly; only the readout/mixer differs.
         is_spatial_se = encoder_type in (
             "resnet_spatial_8x8_se",
             "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
         )
 
         traversability_map = as_map_batch(obs[0])
@@ -806,6 +941,7 @@ class MapsNet(nn.Module):
             "resnet_spatial_8x8",
             "resnet_spatial_8x8_se",
             "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
         ):
             action_map = normalize(
                 action_map, self.map_min_max[0], self.map_min_max[1]
@@ -845,8 +981,8 @@ class MapsNet(nn.Module):
         if is_spatial_xattn:
             if agent_embedding is None:
                 raise ValueError(
-                    "map_encoder='resnet_spatial_8x8_se_xattn' requires the "
-                    "active-agent embedding, but MapsNet.__call__ was given "
+                    f"map_encoder={encoder_type!r} requires the active-agent "
+                    "embedding, but MapsNet.__call__ was given "
                     "agent_embedding=None."
                 )
             x = self.cnn(x, agent_embedding)
@@ -1073,11 +1209,15 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 obs[18],  # dumpability_mask
                 obs[19],  # interaction_mask
             ]
-        # The cross-attention readout (F13) conditions on the active agent's
-        # embedding (index 0, obs are acting-agent-first). Pass it only for that
-        # encoder so every other encoder path stays byte-identical (None arg).
+        # The cross-attention readout (F13/F14) conditions on the active agent's
+        # embedding (index 0, obs are acting-agent-first). Pass it only for the
+        # encoders that consume it so every other encoder path stays
+        # byte-identical (None arg).
         maps_agent_embedding = None
-        if canonical_map_encoder(self.map_encoder) == "resnet_spatial_8x8_se_xattn":
+        if canonical_map_encoder(self.map_encoder) in (
+            "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
+        ):
             maps_agent_embedding = x_agents[:, 0, :]
         x_maps = self.maps_net(map_obs, agent_embedding=maps_agent_embedding)
         x_actions = self.actions_net(obs)
