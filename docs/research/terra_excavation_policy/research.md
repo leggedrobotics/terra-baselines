@@ -52,6 +52,11 @@ coast-at-80% attractor identified 2026-07-17.
 
 ## Open directions
 
+0. **Multi-task foundations + trenches (E8)**: one policy digging both map families.
+   Feasibility verified 2026-07-22: trench maps are 64×64 with identical value semantics
+   and depth-1 targets — same reward stream, only target geometry differs (unlike the
+   dumpzone family, where completion semantics change). E8 = E3 warm-start + light teacher
+   anchor on a foundations→double→double_diagonal curriculum (mixed after graduation).
 1. **E5 — harder maps via cross-task kickstart**: student on
    `foundations_rectangles_real_dumpzone` (2-level curriculum preset exists) initialized
    from and KL-anchored to the E3 checkpoint; no fresh teacher training needed. Then

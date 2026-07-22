@@ -309,3 +309,20 @@ solo_excavator_short300:
   maps:
     - path: foundations
       max_steps: 300
+
+
+solo_excavator_multitask_trench:
+  description: Foundations + trench families jointly (multi-task E8; curriculum then mixed)
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: foundations
+      max_steps: 450
+    - path: trenches/double
+      max_steps: 450
+    - path: trenches/double_diagonal
+      max_steps: 450
