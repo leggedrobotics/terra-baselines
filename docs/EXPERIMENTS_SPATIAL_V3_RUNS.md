@@ -290,3 +290,13 @@ consider a train_mixed flag `--warm_start_from` that does this implicitly.
   different completion criterion; teacher KL anchors the motor skills while the task is
   relearned. Judge at 3-5k updates; if still ~0, consider the 2-stage curriculum preset
   (ring → dumpzone) instead of cold dumpzone.
+
+## E5 stopped early (2026-07-22, user decision — save compute)
+
+Cancelled 8108911 at 850/20000 updates: zero completions AND near-zero dense reward
+throughout (existence-penalty level) — the transferred ring-digging policy never found the
+reward stream on dumpzone maps, and the signal was flat well past the KL release (1000-update
+anneal nearly done, no inflection). Verdict recorded as: **naive cross-task kickstart
+(teacher + init only) does not bootstrap a new task family**; the E5b design (2-stage
+curriculum ring→dumpzone, higher entropy start ~0.10, dump-bonus boost) is the canonical
+next attempt when dumpzone becomes a priority again. GPUs freed for E4'/E7.
