@@ -275,3 +275,18 @@ STUDENT_INIT; teacher stays the raw final. Smokes passed on attempt 4:
 Cumulative E5/E6 lessons: (1) verify every substituted sbatch path RESOLVES;
 (2) raw finished-run checkpoints need metadata stripping before warm-start reuse —
 consider a train_mixed flag `--warm_start_from` that does this implicitly.
+
+## E4 final + early E5/E6 (2026-07-22 ~09:30 CEST)
+
+- **E4 FINAL (k8vnwp5u): 2.586 / 0.121, swhr 0.993, ep_len 63.0.** From-scratch ladder:
+  E2 se 2.33 < E4 xattn 2.59 < teacher 2.81 < E1 2.83 < E3 3.05. The attention readout
+  beats SE-only by +11% at matched from-scratch conditions — genuine architecture win;
+  still trails warm-started runs → E4' (xattn kickstarted from E3) is the definitive test.
+- **E6 @~1.5k: 3.07/0.143, ep_len 55.2** — warm start held perfectly under the 300-step
+  horizon; already at E3-final level. CAVEAT: episodes are ~55 steps, so a 300-step horizon
+  barely binds — E6 is effectively "E3 continued + slack horizon". For real time-pressure,
+  consider E6b at horizon ~120 or an explicit early-finish bonus.
+- **E5 @early: 0.00 pos_term, reward −0.006** — expected: dumpzone relocation is a
+  different completion criterion; teacher KL anchors the motor skills while the task is
+  relearned. Judge at 3-5k updates; if still ~0, consider the 2-stage curriculum preset
+  (ring → dumpzone) instead of cold dumpzone.
