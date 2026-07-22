@@ -263,3 +263,15 @@ Fixed the paths (verified resolving to the real E3 final), resubmitted:
 **E5 = 8107668, E6 = 8107669** (held 8105959 cancelled — Slurm snapshots scripts at submit
 time, so releasing it would have run the broken copy). Lesson for derived sbatches: verify
 every substituted path RESOLVES (test -f on the expanded value), not just that pins match.
+
+## E5/E6 attempt 4 — IN PRODUCTION (2026-07-22 ~08:30 CEST)
+
+Third failure root cause: raw E3 FINAL carries exact-resume metadata (next_update=20000,
+optimizer_state) → --resume_from rejected continuing a completed run. Fix: stripped
+warm-start copy `..._FINAL_warmstart.pkl` (model/train_config/env_config only) as
+STUDENT_INIT; teacher stays the raw final. Smokes passed on attempt 4:
+- **E5 = 8108911**, W&B **gud7cbwg** (dumpzone transfer)
+- **E6 = 8108912**, W&B **3y60iiwn** (300-step horizon)
+Cumulative E5/E6 lessons: (1) verify every substituted sbatch path RESOLVES;
+(2) raw finished-run checkpoints need metadata stripping before warm-start reuse —
+consider a train_mixed flag `--warm_start_from` that does this implicitly.
