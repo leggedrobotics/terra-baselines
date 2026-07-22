@@ -300,3 +300,16 @@ anneal nearly done, no inflection). Verdict recorded as: **naive cross-task kick
 (teacher + init only) does not bootstrap a new task family**; the E5b design (2-stage
 curriculum ring→dumpzone, higher entropy start ~0.10, dump-bonus boost) is the canonical
 next attempt when dumpzone becomes a priority again. GPUs freed for E4'/E7.
+
+## E7 + E8 launched (2026-07-22 afternoon)
+
+- **E7 = 8128309** (`terra-sv5-E7-saxattn-ks`): v5 encoder (identity-init token self-attn ×2
+  + cross-attn readout, commit a271c9d — identity at init exactly 0.0), grown from E3 final
+  (2.44M → 2.77M params), kickstarted. E7 vs E4' isolates the self-attention increment.
+- **E8 = 8128315** (`terra-sv3-E8-multitask-ks`): multi-task foundations + trenches/double +
+  trenches/double_diagonal (all 64×64, same value semantics, depth-1 targets — verified),
+  E3 warm-start (same arch), light teacher (kl 0.5, anneal 500). Tests whether one policy
+  digs both families; unlike E5, the dense dig-reward stream exists on trenches from step 1.
+- Snapshot `spatial-v5-bbacfde` (remote gate: test_models 37/37 OK). All checkpoint paths
+  and sha pins verified resolving before submission.
+Fleet: E6 (running), E4' 8123147 (pending), E7, E8 (pending). E5 cancelled earlier.
