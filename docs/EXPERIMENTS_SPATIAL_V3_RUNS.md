@@ -313,3 +313,17 @@ next attempt when dumpzone becomes a priority again. GPUs freed for E4'/E7.
 - Snapshot `spatial-v5-bbacfde` (remote gate: test_models 37/37 OK). All checkpoint paths
   and sha pins verified resolving before submission.
 Fleet: E6 (running), E4' 8123147 (pending), E7, E8 (pending). E5 cancelled earlier.
+
+## v5 landed + E7 submitted + dataset ready (2026-07-22 ~10:45 CEST)
+
+- v5 `resnet_spatial_8x8_se_sa_xattn` committed (a271c9d): identity-init token mixer
+  (2 pre-norm blocks over 64 tokens), exact identity at init (0.0 diff vs v4), 68 tests
+  green. Flax MHA lacks out-kernel init → explicit zeros Dense projection (documented).
+- **E7 = Slurm 8128390**: E3 grown → v5 medium (2.767M incl. wide critic; grow validated),
+  kickstart from E3, E4p flags otherwise. Snapshot spatial-v5-a271c9d. E7 vs E4p isolates
+  the self-attention increment at the ceiling.
+- foundations_128 dataset v2 verified + uploaded (correct `foundations` source family —
+  v1 had scaled the wrong family; caught via E6's W&B curriculum "Level 0: foundations").
+  Structural proof: 2x2-block-downsample of every 128 map equals its 64 source exactly.
+- F15 code agent implementing (env equivalence overrides, stage growth, teacher obs
+  downsample). E8 gate: F15 review + memory smoke.
