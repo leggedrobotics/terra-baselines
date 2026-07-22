@@ -13,7 +13,12 @@ from flax.training.train_state import TrainState
 
 from terra.actions import TrackedAction
 from terra.config import BatchConfig, EnvConfig, MapsDimsConfig, RewardsType
-from train import Transition as BaseTransition, TrainConfig, ppo_update_networks
+from train import (
+    Transition as BaseTransition,
+    TrainConfig,
+    ppo_update_networks,
+    downsample_teacher_obs,
+)
 from train_mixed import (
     MixedAgentTrainConfig,
     kickstart_coef_schedule,
@@ -47,7 +52,7 @@ def _model_config(num_prev_actions=5, map_edge=64):
     )
 
 
-def _ppo_config(use_value_clip=True, flat_minibatch_shuffle=False):
+def _ppo_config(use_value_clip=True, flat_minibatch_shuffle=False, teacher_obs_downsample=1):
     return _PPOConfig(
         clip_eps=0.2,
         vf_coef=2.0,
@@ -55,6 +60,7 @@ def _ppo_config(use_value_clip=True, flat_minibatch_shuffle=False):
         clip_action_maps=True,
         use_value_clip=use_value_clip,
         flat_minibatch_shuffle=flat_minibatch_shuffle,
+        teacher_obs_downsample=teacher_obs_downsample,
     )
 
 
@@ -542,6 +548,222 @@ class KickstartLossTermsTest(unittest.TestCase):
         )
         self.assertTrue(bool(jnp.isfinite(info["kickstart/kl"])))
         self.assertGreater(float(info["kickstart/kl"]), 0.0)
+
+
+class ResolutionScalingConfigTest(unittest.TestCase):
+    """F15: resolution-scaling config plumbing and checkpoint arch validation."""
+
+    def _base_kwargs(self, **extra):
+        kwargs = dict(
+            name="test",
+            num_devices=1,
+            num_envs_per_device=8,
+            num_steps=4,
+            num_minibatches=2,
+            total_timesteps=32,
+        )
+        kwargs.update(extra)
+        return kwargs
+
+    def test_loaded_max_override_folds_into_loaded_max(self):
+        config = MixedAgentTrainConfig(**self._base_kwargs(loaded_max_override=400))
+        self.assertEqual(config.loaded_max, 400)
+        # Default (no override) keeps the historical value.
+        default = MixedAgentTrainConfig(**self._base_kwargs())
+        self.assertEqual(default.loaded_max, 100)
+
+    def test_teacher_downsample_requires_teacher(self):
+        with self.assertRaisesRegex(ValueError, "teacher_obs_downsample"):
+            MixedAgentTrainConfig(**self._base_kwargs(teacher_obs_downsample=2))
+        with self.assertRaises(ValueError):
+            MixedAgentTrainConfig(**self._base_kwargs(teacher_obs_downsample=0))
+        # Valid together with a teacher.
+        config = MixedAgentTrainConfig(
+            **self._base_kwargs(
+                teacher_obs_downsample=2, teacher_checkpoint="/tmp/does-not-exist.pkl"
+            )
+        )
+        self.assertEqual(config.teacher_obs_downsample, 2)
+
+    def test_stage_overrides_stored_as_tuples(self):
+        config = MixedAgentTrainConfig(
+            **self._base_kwargs(
+                resnet_stage_channels=(16, 32, 48, 64, 64),
+                resnet_blocks_per_stage=(1, 1, 2, 2, 2),
+            )
+        )
+        self.assertEqual(config.resnet_stage_channels, (16, 32, 48, 64, 64))
+        self.assertEqual(config.resnet_blocks_per_stage, (1, 1, 2, 2, 2))
+
+    def test_arch_validation_flags_stage_override_mismatch(self):
+        # Checkpoint trained with the default preset (no stage override) vs a
+        # 5-stage current config: must be flagged.
+        checkpoint = {"train_config": {"map_encoder": "resnet_spatial_8x8"}}
+        current = SimpleNamespace(
+            map_encoder="resnet_spatial_8x8",
+            model_core="mlp",
+            model_size="base",
+            critic_hidden_dims=None,
+            resnet_stage_channels=(16, 32, 48, 64, 64),
+            resnet_blocks_per_stage=(1, 1, 2, 2, 2),
+        )
+        with self.assertRaisesRegex(ValueError, "resnet_stage_channels"):
+            _validate_checkpoint_architecture(checkpoint, current)
+
+    def test_arch_validation_matches_equal_stage_overrides(self):
+        # List vs tuple must read as equal; matching stage specs pass.
+        checkpoint = {
+            "train_config": {
+                "map_encoder": "resnet_spatial_8x8",
+                "resnet_stage_channels": [16, 32, 48, 64, 64],
+                "resnet_blocks_per_stage": [1, 1, 2, 2, 2],
+            }
+        }
+        current = SimpleNamespace(
+            map_encoder="resnet_spatial_8x8",
+            model_core="mlp",
+            model_size="base",
+            critic_hidden_dims=None,
+            resnet_stage_channels=(16, 32, 48, 64, 64),
+            resnet_blocks_per_stage=(1, 1, 2, 2, 2),
+        )
+        _validate_checkpoint_architecture(checkpoint, current)
+
+    def test_five_stage_override_builds_128_policy(self):
+        # Parsing -> model: the config tuples drive get_model_ready to build a
+        # 5-stage trunk that keeps a 128x128 input at an 8x8 readout.
+        env = SimpleNamespace(
+            batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=128))
+        )
+        config = _PPOConfig(
+            clip_action_maps=False,
+            loaded_max=6,
+            local_map_normalization_bounds=(-1, 1),
+            map_encoder="resnet_spatial_8x8",
+            maps_net_normalization_bounds=(-1, 1),
+            model_core="mlp",
+            model_size="base",
+            num_prev_actions=5,
+            resnet_stage_channels=(16, 32, 48, 64, 64),
+            resnet_blocks_per_stage=(1, 1, 2, 2, 2),
+        )
+        model, params = get_model_ready(jax.random.PRNGKey(0), config, env)
+        # The flatten readout Dense reads 8*8*64 rows -> the 5th stage kept 8x8.
+        dense_kernels = [
+            leaf for leaf in jax.tree_util.tree_leaves(params)
+            if getattr(leaf, "ndim", 0) == 2
+        ]
+        self.assertTrue(any(k.shape[0] == 8 * 8 * 64 for k in dense_kernels))
+
+
+class TeacherObsDownsampleTest(unittest.TestCase):
+    """F15: the teacher-forward-only obs subsample transform."""
+
+    def _crafted_obs(self):
+        # 4x4 global maps with distinct values so subsampling is verifiable.
+        base = jnp.arange(16, dtype=jnp.float32).reshape(1, 4, 4)
+        obs = [None] * 22
+        agent_states = jnp.zeros((1, 4, 8), dtype=jnp.float32)
+        agent_states = agent_states.at[0, 0, 0].set(6.0)  # pos_x
+        agent_states = agent_states.at[0, 0, 1].set(3.0)  # pos_y
+        agent_states = agent_states.at[0, 0, 2].set(9.0)  # angle_base (untouched)
+        obs[0] = agent_states
+        for i in range(1, 22):
+            obs[i] = jnp.zeros((1,), dtype=jnp.float32)
+        for idx in (12, 13, 14, 15, 18, 19, 20):
+            obs[idx] = base
+        obs[16] = jnp.array([10], dtype=jnp.int32)
+        obs[17] = jnp.array([18], dtype=jnp.int32)
+        return obs
+
+    def test_downsample_two_subsamples_maps_and_halves_positions(self):
+        obs = self._crafted_obs()
+        out = downsample_teacher_obs(obs, 2)
+        expected_map = np.array([[[0, 2], [8, 10]]], dtype=np.float32)
+        for idx in (12, 13, 14, 15, 18, 19, 20):
+            np.testing.assert_array_equal(np.asarray(out[idx]), expected_map)
+        # pos_x/pos_y integer-divided by 2 -> [3, 1].
+        np.testing.assert_array_equal(
+            np.asarray(out[0][0, 0, 0:2]), np.array([3.0, 1.0], dtype=np.float32)
+        )
+        # angle_base untouched.
+        self.assertEqual(float(out[0][0, 0, 2]), 9.0)
+        # agent width/height halved.
+        self.assertEqual(int(out[16][0]), 5)
+        self.assertEqual(int(out[17][0]), 9)
+
+    def test_downsample_one_is_identity(self):
+        obs = self._crafted_obs()
+        self.assertIs(downsample_teacher_obs(obs, 1), obs)
+
+    def test_downsampled_teacher_matches_native_64_forward(self):
+        # A 64-world teacher applied to a 128-world obs (downsampled x2) must give
+        # the SAME output as applying it to the equivalent native-64 obs.
+        env64 = SimpleNamespace(
+            batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
+        )
+        teacher, params = get_model_ready(
+            jax.random.PRNGKey(0), _model_config(5, 64), env64
+        )
+        # Build a native-64 obs and its 128 "up-sampled" counterpart (repeat each
+        # map cell 2x2, positions/dims x2) so downsample x2 recovers the 64 obs.
+        rng = jax.random.PRNGKey(1)
+        native = _real_obs_like(env64, rng)
+        upsampled = _upsample_obs(native, 2)
+        from utils.utils_ppo import policy
+
+        v_native, pi_native = policy(teacher.apply, params, native)
+        down = downsample_teacher_obs(upsampled, 2)
+        v_down, pi_down = policy(teacher.apply, params, down)
+        np.testing.assert_allclose(
+            np.asarray(v_native), np.asarray(v_down), atol=1e-5
+        )
+        np.testing.assert_allclose(
+            np.asarray(pi_native.logits_parameter()),
+            np.asarray(pi_down.logits_parameter()),
+            atol=1e-5,
+        )
+
+
+def _real_obs_like(env, rng):
+    """A single-batch model-input obs with random in-range global maps."""
+    edge = env.batch_cfg.maps_dims.maps_edge_length
+    angles = env.batch_cfg.agent.angles_cabin
+    num_state_obs = env.batch_cfg.agent.num_state_obs
+    max_agents = 4
+    keys = jax.random.split(rng, 8)
+    agent_states = jnp.zeros((1, max_agents, num_state_obs), dtype=jnp.float32)
+    # Even positions so //2 then the 64-world embedding stays exact under x2.
+    agent_states = agent_states.at[0, 0, 0].set(4.0).at[0, 0, 1].set(6.0)
+    obs = [agent_states]
+    obs.append(jnp.zeros((1, max_agents), dtype=jnp.int8).at[:, 0].set(1))
+    obs.append(jnp.ones((1,), dtype=jnp.int32))
+    obs += [jnp.zeros((1, angles), dtype=jnp.float32) for _ in range(9)]
+    obs += [
+        jax.random.randint(keys[i], (1, edge, edge), 0, 3).astype(jnp.float32)
+        for i in range(4)
+    ]
+    obs += [jnp.array([9], dtype=jnp.int32), jnp.array([5], dtype=jnp.int32)]
+    obs += [
+        jax.random.randint(keys[4 + i], (1, edge, edge), 0, 2).astype(jnp.float32)
+        for i in range(3)
+    ]
+    obs += [jnp.zeros((1, 5), dtype=jnp.int32)]
+    return obs
+
+
+def _upsample_obs(obs, factor):
+    """Inverse of the teacher downsample: tile maps factor x factor, scale dims."""
+    s = factor
+    up = list(obs)
+    for idx in (12, 13, 14, 15, 18, 19, 20):
+        up[idx] = jnp.repeat(jnp.repeat(obs[idx], s, axis=-1), s, axis=-2)
+    agent_states = obs[0]
+    scaled_pos = agent_states[..., 0:2] * s
+    up[0] = agent_states.at[..., 0:2].set(scaled_pos)
+    up[16] = obs[16] * s
+    up[17] = obs[17] * s
+    return up
 
 
 class RegisterCheckpointConfigClassesTest(unittest.TestCase):

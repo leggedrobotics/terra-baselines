@@ -27,6 +27,18 @@ solo_excavator:
     - path: foundations
       max_steps: 450
 
+solo_excavator_128:
+  description: Single excavator on 128x128 foundations (F15 resolution scaling, E8 pilot)
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: foundations_128
+      max_steps: 450
+
 solo_excavator_rectangles:
   description: Single excavator agent with tracked movement on rectangle maps
   agent_types: [0]

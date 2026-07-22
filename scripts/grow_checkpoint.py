@@ -70,8 +70,9 @@ def build_target_config(source_train_config, overrides):
     """Build a get_model_ready-compatible config for the grown architecture.
 
     ``overrides`` may set map_encoder / model_size / model_core /
-    critic_hidden_dims / encoder_compute_dtype; anything left ``None`` inherits
-    the source checkpoint value.
+    critic_hidden_dims / encoder_compute_dtype / resnet_stage_channels /
+    resnet_blocks_per_stage; anything left ``None`` inherits the source
+    checkpoint value.
     """
     target = _DictConfig(
         clip_action_maps=_config_option(source_train_config, "clip_action_maps", True),
@@ -90,6 +91,14 @@ def build_target_config(source_train_config, overrides):
             source_train_config, "encoder_compute_dtype", "float32"
         ),
         critic_hidden_dims=_config_option(source_train_config, "critic_hidden_dims", None),
+        # F15: spatial-ResNet stage overrides. None inherits the source (which
+        # itself falls back to the model_size preset inside get_model_ready).
+        resnet_stage_channels=_config_option(
+            source_train_config, "resnet_stage_channels", None
+        ),
+        resnet_blocks_per_stage=_config_option(
+            source_train_config, "resnet_blocks_per_stage", None
+        ),
     )
     for key, value in overrides.items():
         if value is not None:
@@ -191,23 +200,80 @@ def _is_flatten_readout_dense(key: str) -> bool:
     )
 
 
+def _block_seq(key: str):
+    """Sequential ResidualMapBlock index in ``key``, or None for non-block leaves."""
+    match = _BLOCK_TOKEN.search(key)
+    return int(match.group(1)) if match is not None else None
+
+
+def _is_attn_pos_embed(key: str) -> bool:
+    """True for the cross-attention / token-mixer learned positional table.
+
+    Named ``attn_pos_embed`` (shape ``(num_tokens, C)``) in the v4/v5 encoders.
+    When the token count differs between source and target it is bilinearly
+    interpolated on its 2D grid rather than sliced.
+    """
+    return key.rstrip("]'").endswith("attn_pos_embed")
+
+
+def _interp_pos_embed(source_leaf, target_leaf):
+    """Bilinearly interpolate a positional table across differing token counts.
+
+    Reshape the source ``(T_s, C_s)`` table to its square grid
+    ``(g_s, g_s, C_s)``, ``jax.image.resize`` (bilinear) to the target grid
+    ``(g_t, g_t, C_s)``, and flatten back to ``(T_t, C_s)``. When the channel
+    count also grows, place the interpolated table in the leading channel slice
+    of the 0.1-scaled fresh target (combining the slice rule), matching how
+    channel growth is handled elsewhere. The tables are square by construction
+    (8x8 -> 64 tokens); non-square token counts are rejected.
+    """
+    tokens_src, c_src = source_leaf.shape
+    tokens_tgt, c_tgt = target_leaf.shape
+    g_src = int(round(tokens_src ** 0.5))
+    g_tgt = int(round(tokens_tgt ** 0.5))
+    if g_src * g_src != tokens_src:
+        raise ValueError(f"attn_pos_embed source token count {tokens_src} is not square")
+    if g_tgt * g_tgt != tokens_tgt:
+        raise ValueError(f"attn_pos_embed target token count {tokens_tgt} is not square")
+    src_grid = jnp.asarray(source_leaf, dtype=target_leaf.dtype).reshape(
+        g_src, g_src, c_src
+    )
+    resized = jax.image.resize(src_grid, (g_tgt, g_tgt, c_src), method="bilinear")
+    resized = resized.reshape(tokens_tgt, c_src)
+    if c_src == c_tgt:
+        return resized
+    grown = 0.1 * target_leaf
+    return grown.at[:, :c_src].set(resized)
+
+
 def _sequential_block_remap(source_blocks_per_stage, target_blocks_per_stage):
     """Map source ResidualMapBlock sequential indices onto the target's.
 
     Flax auto-names blocks sequentially across ALL stages in
     ``Spatial8x8MapResNet.__call__``, so the sequential index of (stage, block)
     is ``sum(blocks_per_stage[:stage]) + block``. Growing depth in a non-final
-    stage shifts every later index. Returns ``(remap, added)`` where
-    ``remap[src_seq] = tgt_seq`` for blocks present in both and ``added`` is the
-    set of newly introduced target sequential indices.
+    stage shifts every later index; adding a whole stage (target has MORE stages
+    than the source, e.g. the 4->5 stage 128x128 grow) appends entirely new
+    stages after the existing ones. Handling unequal stage counts is what keeps
+    the shared leading stages mapped one-to-one (``src_count`` is 0 for the
+    appended stages, so their target blocks are all new and never collide with a
+    remapped source block).
+
+    Returns ``(remap, added_depth, added_stage)`` where ``remap[src_seq] =
+    tgt_seq`` for blocks present in both, ``added_depth`` is the set of new target
+    sequential indices in a stage that ALSO exists in the source (added depth ->
+    stride-1 same-channel blocks that can be zero-init identities), and
+    ``added_stage`` is the set of new target sequential indices in a stage BEYOND
+    the source's stage count (its first block is stride-2, so it cannot be an
+    identity -> the whole stage is fresh-init).
     """
     remap = {}
-    added = set()
+    added_depth = set()
+    added_stage = set()
+    num_source_stages = len(source_blocks_per_stage)
     for stage in range(len(target_blocks_per_stage)):
         src_count = (
-            source_blocks_per_stage[stage]
-            if stage < len(source_blocks_per_stage)
-            else 0
+            source_blocks_per_stage[stage] if stage < num_source_stages else 0
         )
         src_base = sum(source_blocks_per_stage[:stage])
         tgt_base = sum(target_blocks_per_stage[:stage])
@@ -215,9 +281,11 @@ def _sequential_block_remap(source_blocks_per_stage, target_blocks_per_stage):
             tgt_seq = tgt_base + block
             if block < src_count:
                 remap[src_base + block] = tgt_seq
+            elif stage >= num_source_stages:
+                added_stage.add(tgt_seq)
             else:
-                added.add(tgt_seq)
-    return remap, added
+                added_depth.add(tgt_seq)
+    return remap, added_depth, added_stage
 
 
 def _remap_source_leaves(source_leaves, block_remap):
@@ -344,8 +412,12 @@ def grow_params(
 
     # F1a: stage-aware block relabeling, applied BEFORE any shape matching so a
     # non-final-stage depth increase does not slice mismatched blocks together.
+    # F15: added_stage holds the sequential indices of blocks in target stages
+    # BEYOND the source's stage count (the appended 5th stage of the 128x128
+    # grow). Those blocks are fresh-init (their stride-2 entry is not identity).
+    added_stage_blocks = set()
     if source_blocks_per_stage is not None and target_blocks_per_stage is not None:
-        block_remap, _added = _sequential_block_remap(
+        block_remap, _added_depth, added_stage_blocks = _sequential_block_remap(
             source_blocks_per_stage, target_blocks_per_stage
         )
         source_leaves = _remap_source_leaves(source_leaves, block_remap)
@@ -364,6 +436,12 @@ def grow_params(
             if source_leaf.shape == target_leaf.shape:
                 category = "copied"
                 grown = jnp.asarray(source_leaf, dtype=target_leaf.dtype)
+            elif _is_attn_pos_embed(key) and source_leaf.shape[0] != target_leaf.shape[0]:
+                # Token count changed (e.g. 64 -> 256): bilinearly interpolate
+                # the positional table on its 2D grid (F15), slice-copying any
+                # channel growth.
+                category = "pos-interp"
+                grown = _interp_pos_embed(source_leaf, target_leaf)
             elif (
                 c_src is not None
                 and c_tgt is not None
@@ -384,6 +462,11 @@ def grow_params(
                 # Incompatible ranks/shrinking dims: fall back to fresh init.
                 category = "fresh"
                 grown = target_leaf
+        elif _block_seq(key) in added_stage_blocks:
+            # F15: an entire appended stage. Its first block downsamples (stride
+            # 2), so no zero-init makes it an identity -> fresh-init the stage.
+            category = "added-stage"
+            grown = target_leaf
         elif _is_added_block_second_conv(key):
             category = "zero-init"
             grown = jnp.zeros_like(target_leaf)
@@ -418,7 +501,15 @@ def print_report(
 ):
     """Print the per-leaf growth report and parameter counts."""
     print("\nPer-leaf growth report:")
-    counts = {"copied": 0, "sliced": 0, "dense-embed": 0, "zero-init": 0, "fresh": 0}
+    counts = {
+        "copied": 0,
+        "sliced": 0,
+        "dense-embed": 0,
+        "pos-interp": 0,
+        "zero-init": 0,
+        "added-stage": 0,
+        "fresh": 0,
+    }
     for entry in report:
         counts[entry["category"]] += 1
         print(
@@ -435,7 +526,7 @@ def print_report(
         source_blocks_per_stage = source_stage_spec[0]
         target_blocks_per_stage = target_stage_spec[0]
         if source_blocks_per_stage is not None and target_blocks_per_stage is not None:
-            block_remap, _ = _sequential_block_remap(
+            block_remap, _added_depth, _added_stage = _sequential_block_remap(
                 source_blocks_per_stage, target_blocks_per_stage
             )
             effective_source = _remap_source_leaves(effective_source, block_remap)
@@ -471,6 +562,11 @@ def _update_out_train_config(source_train_config, target_config):
         "model_core": target_config["model_core"],
         "encoder_compute_dtype": target_config["encoder_compute_dtype"],
         "critic_hidden_dims": target_config["critic_hidden_dims"],
+        # F15: persist the stage overrides so --resume_from / --teacher_checkpoint
+        # rebuild the grown (5-stage) trunk and _validate_checkpoint_architecture
+        # matches.
+        "resnet_stage_channels": target_config["resnet_stage_channels"],
+        "resnet_blocks_per_stage": target_config["resnet_blocks_per_stage"],
     }
     if source_train_config is None:
         return _DictConfig(**target_config)
@@ -515,10 +611,29 @@ def main():
         help="Target encoder compute dtype (default: keep source).",
     )
     parser.add_argument(
+        "--resnet_stage_channels",
+        default=None,
+        help=(
+            "Comma-separated target spatial-ResNet stage channels, e.g. "
+            "'16,32,48,64,64' for the 4->5 stage 128x128 grow (default: keep source)."
+        ),
+    )
+    parser.add_argument(
+        "--resnet_blocks_per_stage",
+        default=None,
+        help=(
+            "Comma-separated target spatial-ResNet blocks per stage, e.g. "
+            "'1,1,2,2,2' (default: keep source)."
+        ),
+    )
+    parser.add_argument(
         "--maps_edge_length",
         type=int,
         default=64,
-        help="Map edge length used to build the model (must match training).",
+        help=(
+            "Map edge length used to build the TARGET model. With a 5-stage "
+            "override this is the finer grid (e.g. 128); the readout stays 8x8."
+        ),
     )
     args = parser.parse_args()
 
@@ -537,6 +652,8 @@ def main():
         "model_core": args.model_core,
         "critic_hidden_dims": _parse_critic_hidden_dims(args.critic_hidden_dims),
         "encoder_compute_dtype": args.encoder_compute_dtype,
+        "resnet_stage_channels": _parse_critic_hidden_dims(args.resnet_stage_channels),
+        "resnet_blocks_per_stage": _parse_critic_hidden_dims(args.resnet_blocks_per_stage),
     }
     target_config = build_target_config(source_train_config, overrides)
 
@@ -547,22 +664,13 @@ def main():
     env = _dummy_env(args.maps_edge_length, action_type)
     _, target_params = get_model_ready(jax.random.PRNGKey(0), target_config, env)
 
-    # F1: derive the spatial stage layout from the source/target model_size
-    # presets so ResidualMapBlock relabeling and the flatten-Dense embed are
-    # correct across non-final-stage depth growth and channel growth.
-    source_map_encoder = canonical_map_encoder(
-        _config_option(source_train_config, "map_encoder", "atari")
-    )
-    source_stage_spec = (
-        _resnet_stage_spec(_config_option(source_train_config, "model_size", "base"))
-        if source_map_encoder in _SPATIAL_ENCODERS
-        else None
-    )
-    target_stage_spec = (
-        _resnet_stage_spec(target_config["model_size"])
-        if target_config["map_encoder"] in _SPATIAL_ENCODERS
-        else None
-    )
+    # F1/F15: derive the spatial stage layout from the actual param trees so
+    # ResidualMapBlock relabeling and the flatten-Dense embed are correct across
+    # non-final-stage depth growth, channel growth, AND added stages (the 4->5
+    # stage 128x128 grow via --resnet_stage_channels). Param-derivation returns
+    # (None, None) for the atari/global-pool encoders, disabling both remaps.
+    source_stage_spec = _derive_stage_spec_from_params(source_params)
+    target_stage_spec = _derive_stage_spec_from_params(target_params)
 
     grown_params, report = grow_params(
         source_params, target_params, source_stage_spec, target_stage_spec

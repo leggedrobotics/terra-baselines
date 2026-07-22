@@ -16,6 +16,8 @@ from scripts.grow_checkpoint import (
     _leaf_map,
     _param_count,
     _update_out_train_config,
+    _interp_pos_embed,
+    _sequential_block_remap,
 )
 
 
@@ -37,9 +39,9 @@ def _full_model_config(map_encoder, model_size="base", **extra):
     )
 
 
-def _dummy_env():
+def _dummy_env(maps_edge_length=64):
     return SimpleNamespace(
-        batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
+        batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=maps_edge_length))
     )
 
 
@@ -274,6 +276,125 @@ class GrowFullModelTest(unittest.TestCase):
                 jax.tree_util.tree_structure(reloaded["model"]),
                 jax.tree_util.tree_structure(rebuilt_params),
             )
+
+
+class AddedStageGrowthTest(unittest.TestCase):
+    """F15: 4-stage -> 5-stage growth for 128x128 resolution scaling."""
+
+    def test_sequential_block_remap_appends_stage_without_shifting_existing(self):
+        # 4 stages (1,1,2,2) -> 5 stages (1,1,2,2,2). The shared leading stages
+        # must map one-to-one; only the appended stage's blocks are new.
+        remap, added_depth, added_stage = _sequential_block_remap(
+            (1, 1, 2, 2), (1, 1, 2, 2, 2)
+        )
+        self.assertEqual(remap, {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5})
+        self.assertEqual(added_depth, set())
+        self.assertEqual(added_stage, {6, 7})
+
+    def test_grow_4stage_to_5stage_copies_flatten_readout_heads_exactly(self):
+        # Source: 4-stage base encoder at 64. Target: 5-stage encoder at 128 with
+        # the SAME final channel count (64) -> the 8x8x64 readout, flatten Dense,
+        # and all downstream heads keep their shapes and must copy EXACTLY.
+        source_config = _full_model_config("resnet_spatial_8x8", "base")
+        target_config = _full_model_config(
+            "resnet_spatial_8x8",
+            "base",
+            resnet_stage_channels=(16, 32, 48, 64, 64),
+            resnet_blocks_per_stage=(1, 1, 2, 2, 2),
+        )
+        _, source_params = get_model_ready(
+            jax.random.PRNGKey(0), source_config, _dummy_env(64)
+        )
+        _, target_params = get_model_ready(
+            jax.random.PRNGKey(1), target_config, _dummy_env(128)
+        )
+
+        grown_params, report = grow_params(source_params, target_params)
+
+        # Structure follows the (larger) target exactly.
+        self.assertEqual(
+            jax.tree_util.tree_structure(grown_params),
+            jax.tree_util.tree_structure(target_params),
+        )
+
+        source_leaves = _leaf_map(source_params)
+        grown_leaves = _leaf_map(grown_params)
+
+        # The flatten Dense, the readout Dense, and the policy/value heads must
+        # be EXACT copies (max abs diff 0 on those subtrees).
+        def _is_readout_or_head(key):
+            in_maps = "maps_net" in key
+            is_flatten = in_maps and "Dense_0" in key
+            is_readout = in_maps and "Dense_1" in key
+            is_head = "mlp_pi" in key or "mlp_v" in key
+            return is_flatten or is_readout or is_head
+
+        exact_keys = [k for k in grown_leaves if _is_readout_or_head(k)]
+        self.assertGreater(len(exact_keys), 0)
+        for key in exact_keys:
+            self.assertIn(key, source_leaves, key)
+            self.assertEqual(
+                float(jnp.max(jnp.abs(grown_leaves[key] - source_leaves[key]))),
+                0.0,
+                key,
+            )
+
+        # Every shape-matched leaf is a verbatim copy (no silent perturbation).
+        for entry in report:
+            if entry["category"] == "copied":
+                np.testing.assert_array_equal(
+                    np.asarray(grown_leaves[entry["key"]]),
+                    np.asarray(source_leaves[entry["key"]]),
+                )
+
+        # The appended 5th stage (blocks 6 and 7) is fresh-init "added-stage".
+        added_stage = [e for e in report if e["category"] == "added-stage"]
+        self.assertGreater(len(added_stage), 0)
+        for entry in added_stage:
+            self.assertIn("ResidualMapBlock", entry["key"])
+            seq = int(entry["key"].split("ResidualMapBlock_")[1].split("'")[0])
+            self.assertIn(seq, (6, 7))
+        # No spurious zero-init (that is for added DEPTH inside an existing stage).
+        self.assertEqual([e for e in report if e["category"] == "zero-init"], [])
+
+
+class PosEmbedInterpolationTest(unittest.TestCase):
+    """F15: positional-table bilinear interpolation across token counts."""
+
+    def test_interp_shapes_and_corner_values(self):
+        # 8x8 (64 tokens, C=8) -> 16x16 (256 tokens). Corner tokens are preserved
+        # by bilinear resize (align_corners-style at the grid extremes).
+        c = 8
+        src = jnp.arange(64 * c, dtype=jnp.float32).reshape(64, c)
+        tgt = jnp.zeros((256, c), dtype=jnp.float32)
+        out = _interp_pos_embed(src, tgt)
+        self.assertEqual(out.shape, (256, c))
+        src_grid = np.asarray(src).reshape(8, 8, c)
+        out_grid = np.asarray(out).reshape(16, 16, c)
+        np.testing.assert_allclose(out_grid[0, 0], src_grid[0, 0], atol=1e-4)
+        np.testing.assert_allclose(out_grid[-1, -1], src_grid[-1, -1], atol=1e-4)
+        # Interpolated interior stays within the source value range.
+        self.assertGreaterEqual(float(out_grid.min()), float(src_grid.min()) - 1e-3)
+        self.assertLessEqual(float(out_grid.max()), float(src_grid.max()) + 1e-3)
+
+    def test_interp_with_channel_growth_slices_channels(self):
+        # Token count 64 -> 256 AND channels 8 -> 12: interpolate spatially, then
+        # slice-copy the interpolated table into the leading channels of the
+        # zero-init target (extra channels stay at the fresh init).
+        src = jnp.arange(64 * 8, dtype=jnp.float32).reshape(64, 8)
+        tgt = jnp.zeros((256, 12), dtype=jnp.float32)
+        out = _interp_pos_embed(src, tgt)
+        self.assertEqual(out.shape, (256, 12))
+        self.assertTrue(bool(jnp.all(out[:, 8:] == 0)))
+
+    def test_pos_interp_category_via_grow_params(self):
+        # A synthetic param tree with only a mismatched attn_pos_embed leaf goes
+        # through the "pos-interp" branch of grow_params.
+        source = {"params": {"attn_pos_embed": jnp.ones((64, 8), dtype=jnp.float32)}}
+        target = {"params": {"attn_pos_embed": jnp.zeros((256, 8), dtype=jnp.float32)}}
+        grown, report = grow_params(source, target)
+        self.assertEqual(grown["params"]["attn_pos_embed"].shape, (256, 8))
+        self.assertEqual([e["category"] for e in report], ["pos-interp"])
 
 
 if __name__ == "__main__":

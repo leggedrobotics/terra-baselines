@@ -225,6 +225,32 @@ def _checkpoint_config_value(checkpoint, field_name: str, default):
     return getattr(saved_config, field_name, default)
 
 
+def _teacher_maps_edge_length(checkpoint):
+    """Best-effort read of a teacher checkpoint's native map edge length (F15).
+
+    Checkpoints store the reset-time env_config, whose ``maps.edge_length_px`` is
+    set by ``TerraEnvBatch.update_env_cfgs`` from the loaded maps (e.g. 64).
+    Returns an int, or None when the checkpoint carries no usable env_config so
+    the caller can document the assumption instead of silently guessing.
+    """
+    env_config = checkpoint.get("env_config")
+    if env_config is None:
+        return None
+    maps = getattr(env_config, "maps", None)
+    if maps is None and isinstance(env_config, dict):
+        maps = env_config.get("maps")
+    edge = getattr(maps, "edge_length_px", None)
+    if edge is None and isinstance(maps, dict):
+        edge = maps.get("edge_length_px")
+    if edge is None:
+        return None
+    try:
+        edge = int(np.asarray(edge).reshape(-1)[0])
+    except (TypeError, ValueError, IndexError):
+        return None
+    return edge if edge > 0 else None
+
+
 def _validate_checkpoint_architecture(checkpoint, config) -> None:
     """Fail before model initialization when checkpoint/model shapes cannot match."""
     defaults = {
@@ -232,7 +258,16 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "model_core": "mlp",
         "model_size": "base",
         "critic_hidden_dims": None,
+        # F15: spatial-ResNet stage overrides. None (use the model_size preset)
+        # vs an explicit tuple are different trunks, so they must match too.
+        "resnet_stage_channels": None,
+        "resnet_blocks_per_stage": None,
     }
+    tuple_fields = (
+        "critic_hidden_dims",
+        "resnet_stage_channels",
+        "resnet_blocks_per_stage",
+    )
     mismatches = []
     for field_name, default in defaults.items():
         saved = _checkpoint_config_value(checkpoint, field_name, default)
@@ -240,10 +275,10 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         if field_name == "map_encoder":
             saved = canonical_map_encoder(saved)
             current = canonical_map_encoder(current)
-        elif field_name == "critic_hidden_dims":
+        elif field_name in tuple_fields:
             # None (use the model_size preset) vs an explicit override are
-            # different value-head shapes; compare as tuples so (512, 256) and
-            # [512, 256] read as equal.
+            # different shapes; compare as tuples so (16, 32) and [16, 32] read
+            # as equal, while None stays distinct from any tuple.
             saved = tuple(saved) if saved is not None else None
             current = tuple(current) if current is not None else None
         if saved != current:
@@ -252,8 +287,9 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         raise ValueError(
             "Checkpoint architecture does not match the requested model: "
             + "; ".join(mismatches)
-            + ". Pass matching --map_encoder, --model_core, --model_size, and "
-            "--critic_hidden_dims values."
+            + ". Pass matching --map_encoder, --model_core, --model_size, "
+            "--critic_hidden_dims, --resnet_stage_channels, and "
+            "--resnet_blocks_per_stage values."
         )
 
 
@@ -593,9 +629,45 @@ class MixedAgentTrainConfig:
     kickstart_value_anneal_updates: int = 500
     kickstart_lr_warmup_updates: int = 100
 
+    # F15: 128x128 resolution scaling. All default None/1 = no change (the
+    # default env/model/teacher paths stay bit-identical). Tile-denominated
+    # agent geometry (move_tiles, dig_radius_tiles) and the tile-count capacity /
+    # reward-normalizer quantities are applied via env_config._replace at
+    # env-config creation; loaded_max_override rescales the model-side loaded
+    # normalizer. agent.width/height are NOT exposed: the terra env recomputes
+    # them in update_env_cfgs from ExcavatorDims meters / tile_size on every
+    # reset, so they auto-scale with maps_edge_length and any config override
+    # would be silently clobbered (see F15 report).
+    agent_move_tiles: int | None = None
+    dig_radius_tiles: int | None = None
+    reward_normalizer: float | None = None
+    loaded_max_override: int | None = None
+    # Spatial ResNet stage overrides (F15). Comma lists parsed to tuples on the
+    # CLI; None keeps the model_size preset (or the module default for "base").
+    resnet_stage_channels: tuple | None = None
+    resnet_blocks_per_stage: tuple | None = None
+    # Teacher obs-downsampling for cross-resolution kickstart (F15). 1 = off;
+    # 2 subsamples the teacher's obs to its native (half-resolution) world.
+    teacher_obs_downsample: int = 1
+
 
     def __post_init__(self):
         self.map_encoder = canonical_map_encoder(self.map_encoder)
+        # F15: loaded_max_override rescales the model-side loaded normalizer
+        # (tile-count quantity, ~x4 at 128). Fold it into loaded_max so
+        # get_model_ready and the teacher preprocessing check read one value.
+        if self.loaded_max_override is not None:
+            self.loaded_max = int(self.loaded_max_override)
+        # F15: teacher obs-downsampling is only meaningful with a teacher.
+        if self.teacher_obs_downsample < 1:
+            raise ValueError(
+                f"teacher_obs_downsample must be >= 1, got {self.teacher_obs_downsample}"
+            )
+        if self.teacher_obs_downsample != 1 and self.teacher_checkpoint is None:
+            raise ValueError(
+                "--teacher_obs_downsample is only valid together with "
+                "--teacher_checkpoint (cross-resolution kickstart)."
+            )
         self.num_devices = (
             jax.local_device_count() if self.num_devices == 0 else self.num_devices
         )
@@ -660,9 +732,13 @@ def create_mixed_agent_env_config(
     skidsteer_capacity=None,
     truck_road_restricted=None,
     enforce_foundation_border_alignment=None,
+    # F15: resolution-scaling overrides (all None = no change)
+    agent_move_tiles=None,
+    dig_radius_tiles=None,
+    reward_normalizer=None,
 ):
     """Create environment configuration optimized for mixed agent training
-    
+
     Args:
         agent_types: Tuple of agent type IDs (0=excavator, 1=truck, 2=skidsteer)
         action_types: Tuple of action type IDs (0=tracked, 1=wheeled)
@@ -674,8 +750,11 @@ def create_mixed_agent_env_config(
         skidsteer_capacity: Override for skidsteer capacity
         truck_road_restricted: Whether trucks are restricted to roads
         enforce_foundation_border_alignment: Whether foundation border alignment is enforced
+        agent_move_tiles: F15 override for agent.move_tiles (tiles/move action)
+        dig_radius_tiles: F15 override for agent.dig_radius_tiles (workspace/cone reach)
+        reward_normalizer: F15 override for rewards.normalizer (per-tile reward scaling)
     """
-    
+
     # Use the existing dense rewards from config
     env_config = EnvConfig()  # This automatically uses Rewards.dense() which includes all our rewards
     
@@ -706,8 +785,71 @@ def create_mixed_agent_env_config(
         env_config = env_config._replace(
             enforce_foundation_border_alignment=enforce_foundation_border_alignment
         )
-    
+
+    # F15: tile-denominated agent geometry. These survive update_env_cfgs (which
+    # only recomputes width/height/tile_size), so the _replace here is the
+    # authoritative override. agent.width/height are intentionally NOT settable
+    # here: update_env_cfgs derives them from ExcavatorDims meters / tile_size on
+    # every reset, so they already double when maps_edge_length doubles.
+    if agent_move_tiles is not None or dig_radius_tiles is not None:
+        agent_cfg = env_config.agent
+        if agent_move_tiles is not None:
+            agent_cfg = agent_cfg._replace(move_tiles=int(agent_move_tiles))
+        if dig_radius_tiles is not None:
+            agent_cfg = agent_cfg._replace(dig_radius_tiles=int(dig_radius_tiles))
+        env_config = env_config._replace(agent=agent_cfg)
+
+    # F15: per-tile reward normalizer (env_config.rewards is a NamedTuple).
+    if reward_normalizer is not None:
+        env_config = env_config._replace(
+            rewards=env_config.rewards._replace(normalizer=float(reward_normalizer))
+        )
+
     return env_config
+
+
+def _print_resolution_scaling_table(config) -> None:
+    """Print an old->new table of every F15 resolution-scaling override.
+
+    Only emitted when at least one override is set; the default (all None) path
+    prints nothing and is bit-identical to pre-F15 behavior. Reports the
+    effective scaled fields so a 128x128 run's equivalence assumptions are
+    auditable from the logs.
+    """
+    env_defaults = EnvConfig()
+    candidates = []
+    if config.agent_move_tiles is not None:
+        candidates.append(("agent.move_tiles", env_defaults.agent.move_tiles, config.agent_move_tiles))
+    if config.dig_radius_tiles is not None:
+        candidates.append(
+            ("agent.dig_radius_tiles", env_defaults.agent.dig_radius_tiles, config.dig_radius_tiles)
+        )
+    if config.truck_capacity is not None:
+        candidates.append(("truck_capacity", env_defaults.truck_capacity, config.truck_capacity))
+    if config.skidsteer_capacity is not None:
+        candidates.append(
+            ("skidsteer_capacity", env_defaults.skidsteer_capacity, config.skidsteer_capacity)
+        )
+    if config.loaded_max_override is not None:
+        candidates.append(("loaded_max", MixedAgentTrainConfig.loaded_max, config.loaded_max))
+    if config.reward_normalizer is not None:
+        candidates.append(
+            ("rewards.normalizer", env_defaults.rewards.normalizer, config.reward_normalizer)
+        )
+    # Only genuine changes are a "scaling"; a truck preset with the default
+    # capacity (52 -> 52) is not.
+    rows = [(name, old, new) for name, old, new in candidates if old != new]
+    if not rows:
+        return
+    print("\n📐 F15 resolution scaling (old -> new):", flush=True)
+    print(f"   {'field':24s} {'old':>12s} -> {'new':>12s}", flush=True)
+    for name, old, new in rows:
+        print(f"   {name:24s} {str(old):>12s} -> {str(new):>12s}", flush=True)
+    print(
+        "   note: agent.width/height auto-scale in the env (update_env_cfgs "
+        "derives them from tile_size); not overridable here.",
+        flush=True,
+    )
 
 
 class ConfigurableAgentManager:
@@ -841,7 +983,12 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                 skidsteer_capacity=config.skidsteer_capacity,
                 truck_road_restricted=config.truck_road_restricted,
                 enforce_foundation_border_alignment=config.enforce_foundation_border_alignment,
+                # F15 resolution-scaling overrides
+                agent_move_tiles=config.agent_move_tiles,
+                dig_radius_tiles=config.dig_radius_tiles,
+                reward_normalizer=config.reward_normalizer,
             )
+            _print_resolution_scaling_table(config)
             # Verbose training configuration summary
             type_names = {0: "Excavator", 1: "Truck", 2: "SkidSteer"}
             print("🧩 Agent Types (effective):", agent_types)
@@ -1237,6 +1384,46 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         teacher_model, _ = get_model_ready(rng_teacher, teacher_train_config, env)
         teacher_apply_fn = teacher_model.apply
         teacher_params = teacher_ckpt["model"]
+
+        # F15: cross-resolution kickstart. The teacher model is built from ITS
+        # own train_config (its native world), but its FORWARD runs on the
+        # student's obs subsampled by teacher_obs_downsample. Validate that the
+        # teacher's native edge length times the factor equals the student env's
+        # edge length, so the downsampled obs land exactly in-distribution. This
+        # also rejects downsample != 1 when the teacher already matches the
+        # student resolution (teacher_edge * N would then exceed student_edge).
+        downsample = int(config.teacher_obs_downsample)
+        student_edge = int(env.batch_cfg.maps_dims.maps_edge_length)
+        teacher_edge = _teacher_maps_edge_length(teacher_ckpt)
+        if downsample != 1:
+            if teacher_edge is None:
+                raise ValueError(
+                    "--teacher_obs_downsample requires the teacher checkpoint's "
+                    "map edge length, but its env_config has no usable "
+                    "maps.edge_length_px. Re-save the teacher with its env_config."
+                )
+            if teacher_edge * downsample != student_edge:
+                raise ValueError(
+                    "Teacher obs-downsampling mismatch: teacher maps_edge_length="
+                    f"{teacher_edge} * downsample={downsample} != student "
+                    f"maps_edge_length={student_edge}. The subsampled teacher obs "
+                    "would be out of distribution."
+                )
+            print(
+                f"🔻 Teacher obs-downsampling x{downsample}: student edge "
+                f"{student_edge} -> teacher edge {teacher_edge}.",
+                flush=True,
+            )
+        elif teacher_edge is not None and teacher_edge != student_edge:
+            # Same-resolution kickstart (downsample==1) but the teacher was
+            # trained at a different edge length: the teacher forward would see
+            # OOD obs. Point at --teacher_obs_downsample instead of failing late.
+            raise ValueError(
+                f"Teacher maps_edge_length={teacher_edge} != student "
+                f"maps_edge_length={student_edge} with --teacher_obs_downsample=1. "
+                "Set --teacher_obs_downsample to student_edge/teacher_edge for "
+                "cross-resolution kickstart."
+            )
         print(
             "🎓 Kickstart teacher loaded from "
             f"{config.teacher_checkpoint} "
@@ -2187,6 +2374,73 @@ if __name__ == "__main__":
             "only when --teacher_checkpoint is set."
         ),
     )
+    # F15: 128x128 resolution scaling. All default None/1 = no change.
+    parser.add_argument(
+        "--agent_move_tiles",
+        type=int,
+        default=None,
+        help="Override agent.move_tiles (tiles of progress per move; x2 at 128).",
+    )
+    parser.add_argument(
+        "--dig_radius_tiles",
+        type=int,
+        default=None,
+        help="Override agent.dig_radius_tiles (workspace/cone reach; x2 at 128).",
+    )
+    parser.add_argument(
+        "--truck_capacity",
+        type=int,
+        default=None,
+        help="Override truck_capacity (tile-count volume; x4 at 128). Overrides --config.",
+    )
+    parser.add_argument(
+        "--skidsteer_capacity",
+        type=int,
+        default=None,
+        help="Override skidsteer_capacity (tile-count volume; x4 at 128). Overrides --config.",
+    )
+    parser.add_argument(
+        "--loaded_max_override",
+        type=int,
+        default=None,
+        help="Override loaded_max, the model-side loaded normalizer (x4 at 128).",
+    )
+    parser.add_argument(
+        "--reward_normalizer",
+        type=float,
+        default=None,
+        help="Override rewards.normalizer (per-tile reward scaling; 70->280 at 128).",
+    )
+    parser.add_argument(
+        "--resnet_stage_channels",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated spatial-ResNet stage channels, e.g. '16,32,48,64,64'. "
+            "Overrides the model_size preset. A 5th stride-2 stage keeps 128 inputs "
+            "at an 8x8 readout. Omit to keep the preset."
+        ),
+    )
+    parser.add_argument(
+        "--resnet_blocks_per_stage",
+        type=str,
+        default=None,
+        help=(
+            "Comma-separated spatial-ResNet blocks per stage, e.g. '1,1,2,2,2'. "
+            "Overrides the model_size preset. Omit to keep the preset."
+        ),
+    )
+    parser.add_argument(
+        "--teacher_obs_downsample",
+        type=int,
+        default=1,
+        help=(
+            "Downsample factor for the teacher forward path only (cross-resolution "
+            "kickstart). 1 = off. 2 subsamples global maps and halves agent "
+            "positions/dims so a 64-world teacher sees a 128-world student's obs. "
+            "Only valid with --teacher_checkpoint."
+        ),
+    )
     parser.add_argument(
         "--agent_types", type=str, default=None,   # 0=excavator, 1=truck, 2=skidsteer
         help="Override agent types with a Python tuple, e.g. '(2,0,2,0)'. Overrides --config."
@@ -2421,6 +2675,12 @@ if __name__ == "__main__":
         excavator_relocate_dug_dirt_mult = args.excavator_relocate_dug_dirt_mult
     if args.transport_relocate_mult is not None:
         transport_relocate_mult = args.transport_relocate_mult
+
+    # F15: CLI capacity overrides take precedence over the preset values.
+    if args.truck_capacity is not None:
+        truck_capacity = args.truck_capacity
+    if args.skidsteer_capacity is not None:
+        skidsteer_capacity = args.skidsteer_capacity
     
     # Use default agent types if nothing was set
     if agent_types_override is None:
@@ -2438,21 +2698,44 @@ if __name__ == "__main__":
             )
     
     # Parse critic-head width override from a comma-separated string.
-    critic_hidden_dims = None
-    if args.critic_hidden_dims is not None:
+    def _parse_int_tuple(raw, flag_name, example):
+        if raw is None:
+            return None
         try:
-            critic_hidden_dims = tuple(
-                int(token.strip())
-                for token in args.critic_hidden_dims.split(",")
-                if token.strip()
+            parsed = tuple(
+                int(token.strip()) for token in raw.split(",") if token.strip()
             )
-            if not critic_hidden_dims:
-                raise ValueError("no dimensions parsed")
+            if not parsed:
+                raise ValueError("no values parsed")
+            return parsed
         except ValueError as e:
             raise ValueError(
-                f"Failed to parse --critic_hidden_dims '{args.critic_hidden_dims}': {e}. "
-                "Use a comma-separated list like '512,256'."
+                f"Failed to parse {flag_name} '{raw}': {e}. "
+                f"Use a comma-separated list like '{example}'."
             )
+
+    critic_hidden_dims = _parse_int_tuple(
+        args.critic_hidden_dims, "--critic_hidden_dims", "512,256"
+    )
+    # F15: spatial-ResNet stage overrides (comma lists -> tuples).
+    resnet_stage_channels = _parse_int_tuple(
+        args.resnet_stage_channels, "--resnet_stage_channels", "16,32,48,64,64"
+    )
+    resnet_blocks_per_stage = _parse_int_tuple(
+        args.resnet_blocks_per_stage, "--resnet_blocks_per_stage", "1,1,2,2,2"
+    )
+    if (resnet_stage_channels is None) != (resnet_blocks_per_stage is None):
+        raise ValueError(
+            "Set both --resnet_stage_channels and --resnet_blocks_per_stage, or neither."
+        )
+    if (
+        resnet_stage_channels is not None
+        and len(resnet_stage_channels) != len(resnet_blocks_per_stage)
+    ):
+        raise ValueError(
+            "--resnet_stage_channels and --resnet_blocks_per_stage must have equal "
+            f"length (got {len(resnet_stage_channels)} vs {len(resnet_blocks_per_stage)})."
+        )
 
     name = f"{args.name}-{args.machine}-{DT}"
 
@@ -2505,6 +2788,15 @@ if __name__ == "__main__":
         kickstart_value_coef=args.kickstart_value_coef,
         kickstart_value_anneal_updates=args.kickstart_value_anneal_updates,
         kickstart_lr_warmup_updates=args.kickstart_lr_warmup_updates,
+        # F15 resolution scaling (truck_capacity/skidsteer_capacity already
+        # passed above; CLI precedence applied when parsing the preset).
+        agent_move_tiles=args.agent_move_tiles,
+        dig_radius_tiles=args.dig_radius_tiles,
+        loaded_max_override=args.loaded_max_override,
+        reward_normalizer=args.reward_normalizer,
+        resnet_stage_channels=resnet_stage_channels,
+        resnet_blocks_per_stage=resnet_blocks_per_stage,
+        teacher_obs_downsample=args.teacher_obs_downsample,
     )
 
     train_mixed_agents(config)

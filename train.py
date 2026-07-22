@@ -171,6 +171,47 @@ def calculate_gae(
     return advantages, advantages + transitions.value
 
 
+# F15: model-input list indices of the global (H, W) maps that must be spatially
+# subsampled to map a 128-world obs onto a 64-world teacher (obs_to_model_input
+# layout: traversability, reachability, action, target, padding, dumpability,
+# interaction). Local maps (indices 3-11) are resolution-independent 1D
+# per-angle summaries and are left untouched.
+_TEACHER_DOWNSAMPLE_MAP_INDICES = (12, 13, 14, 15, 18, 19, 20)
+
+
+def downsample_teacher_obs(obs, downsample):
+    """Subsample a model-input obs list to a coarser-resolution teacher view (F15).
+
+    Applied ONLY in the teacher forward path of the kickstart branch so a
+    lower-resolution teacher (trained in a 64x64 world) sees in-distribution
+    inputs while the student trains on a finer (128x128) env. The transform:
+
+    * global map channels (``_TEACHER_DOWNSAMPLE_MAP_INDICES``) are
+      stride-``downsample`` nearest subsampled (``x[..., ::s, ::s]``); their
+      values are discrete/in-distribution so no fractional mask values appear;
+    * ``agent_states`` pos_x/pos_y (feature indices 0, 1) are integer-divided by
+      ``downsample`` (they index the teacher's smaller position embedding table);
+    * the agent width/height scalars (indices 16, 17) are integer-divided by
+      ``downsample``.
+
+    Everything else (local maps, prev_actions, agent angles/loaded/type) is
+    unchanged. ``downsample == 1`` returns ``obs`` unchanged, keeping the default
+    same-resolution kickstart path bit-identical.
+    """
+    if downsample == 1:
+        return obs
+    s = downsample
+    obs = list(obs)
+    for idx in _TEACHER_DOWNSAMPLE_MAP_INDICES:
+        obs[idx] = obs[idx][..., ::s, ::s]
+    agent_states = obs[0]
+    scaled_pos = (agent_states[..., 0:2] // s).astype(agent_states.dtype)
+    obs[0] = agent_states.at[..., 0:2].set(scaled_pos)
+    obs[16] = obs[16] // s
+    obs[17] = obs[17] // s
+    return obs
+
+
 def ppo_update_networks(
     train_state: TrainState,
     transitions: Transition,
@@ -195,6 +236,10 @@ def ppo_update_networks(
     # into a single sample axis, so the obs/prev-action reshape that merges the
     # leading two axes must be skipped for those layouts.
     flat_minibatch_shuffle = getattr(config, "flat_minibatch_shuffle", False)
+    # F15: teacher obs-downsampling factor for cross-resolution kickstart. 1 =
+    # off (teacher sees the student obs unchanged, historical behavior). This is
+    # a Python-static int, so the transform is traced/specialized at compile.
+    teacher_obs_downsample = int(getattr(config, "teacher_obs_downsample", 1))
 
     # NORMALIZE ADVANTAGES
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
@@ -236,8 +281,11 @@ def ppo_update_networks(
             # None` check stays Python-static (teacher params are captured by the
             # pmapped closure); only this inner branch is data-dependent.
             def _compute_kickstart(_):
+                # F15: subsample the obs to the teacher's native resolution in
+                # the teacher forward path ONLY (downsample==1 -> obs unchanged).
+                teacher_obs = downsample_teacher_obs(obs, teacher_obs_downsample)
                 teacher_value, teacher_dist = policy(
-                    teacher_apply_fn, teacher_params, obs
+                    teacher_apply_fn, teacher_params, teacher_obs
                 )
                 teacher_value = jax.lax.stop_gradient(teacher_value[:, 0])
                 teacher_logits = jax.lax.stop_gradient(

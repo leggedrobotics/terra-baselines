@@ -139,6 +139,25 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         model_kwargs["hidden_dim_v"] = tuple(int(f) for f in critic_hidden_dims) + (1,)
         print(f"critic_hidden_dims override -> hidden_dim_v = {model_kwargs['hidden_dim_v']}")
 
+    # Optional spatial-ResNet stage overrides (F15). When set they replace the
+    # model_size preset's stage layout (or the module default for "base"), e.g.
+    # a 5-stage (16,32,48,64,64)/(1,1,2,2,2) config keeps 128x128 inputs at an
+    # 8x8 readout. None keeps the preset -> default runs stay bit-identical.
+    resnet_stage_channels = _config_option(config, "resnet_stage_channels", None)
+    if resnet_stage_channels is not None:
+        model_kwargs["resnet_stage_channels"] = tuple(int(f) for f in resnet_stage_channels)
+        print(
+            f"resnet_stage_channels override -> {model_kwargs['resnet_stage_channels']}"
+        )
+    resnet_blocks_per_stage = _config_option(config, "resnet_blocks_per_stage", None)
+    if resnet_blocks_per_stage is not None:
+        model_kwargs["resnet_blocks_per_stage"] = tuple(
+            int(f) for f in resnet_blocks_per_stage
+        )
+        print(
+            f"resnet_blocks_per_stage override -> {model_kwargs['resnet_blocks_per_stage']}"
+        )
+
     # Encoder mixed-precision compute dtype (F3). Default float32 keeps the
     # existing param tree and numerics identical.
     encoder_compute_dtype_name = _config_option(config, "encoder_compute_dtype", "float32")

@@ -989,5 +989,60 @@ class SpatialV5SelfAttnEncoderTest(unittest.TestCase):
             self.assertEqual(mixer, [], f"{encoder}/{size}")
 
 
+class ResolutionScaling128Test(unittest.TestCase):
+    """F15: 5-stage spatial-ResNet override + full-policy init at 128x128."""
+
+    def _env128(self):
+        return SimpleNamespace(
+            batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=128))
+        )
+
+    def test_stage_override_reaches_encoder(self):
+        config = _full_model_config(
+            "resnet_spatial_8x8",
+            "base",
+            resnet_stage_channels=(16, 32, 48, 64, 64),
+            resnet_blocks_per_stage=(1, 1, 2, 2, 2),
+        )
+        model, _ = get_model_ready(jax.random.PRNGKey(0), config, self._env128())
+        self.assertEqual(model.resnet_stage_channels, (16, 32, 48, 64, 64))
+        self.assertEqual(model.resnet_blocks_per_stage, (1, 1, 2, 2, 2))
+
+    def test_full_policy_init_and_forward_at_128_with_five_stages(self):
+        env = self._env128()
+        config = _full_model_config(
+            "resnet_spatial_8x8",
+            "base",
+            resnet_stage_channels=(16, 32, 48, 64, 64),
+            resnet_blocks_per_stage=(1, 1, 2, 2, 2),
+        )
+        model, params = get_model_ready(jax.random.PRNGKey(0), config, env)
+
+        # The dummy obs the model was built on is 128-edged (shape-driven).
+        obs = _real_obs(2, env, num_prev_actions=5)
+        self.assertEqual(obs[12].shape, (2, 128, 128))
+        value, logits = model.apply(params, obs)
+        self.assertEqual(value.shape[0], 2)
+        self.assertEqual(logits.shape[0], 2)
+        self.assertTrue(bool(jnp.all(jnp.isfinite(value))))
+        self.assertTrue(bool(jnp.all(jnp.isfinite(logits))))
+
+    def test_fifth_stage_keeps_8x8_readout_at_128(self):
+        # 128 input + 5 stride-2 stages -> 8x8 grid; same final channel count as
+        # the 4-stage 64 encoder, so the flatten Dense reads the SAME 8*8*64 rows.
+        env = self._env128()
+        config = _full_model_config(
+            "resnet_spatial_8x8",
+            "base",
+            resnet_stage_channels=(16, 32, 48, 64, 64),
+            resnet_blocks_per_stage=(1, 1, 2, 2, 2),
+        )
+        _, params = get_model_ready(jax.random.PRNGKey(0), config, env)
+        dense_kernels = [
+            leaf for leaf in jax.tree.leaves(params) if getattr(leaf, "ndim", 0) == 2
+        ]
+        self.assertTrue(any(k.shape[0] == 8 * 8 * 64 for k in dense_kernels))
+
+
 if __name__ == "__main__":
     unittest.main()
