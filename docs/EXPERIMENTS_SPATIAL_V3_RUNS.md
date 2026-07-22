@@ -252,3 +252,14 @@ ent 0.02→0.005/10k, medium se + bf16 + critic 512,256 + algo fixes, 20k update
   dependency released them seconds after E3 wrote its FINAL through the scratch symlink and
   `test -f` on a fresh node missed it. Fixed with a 5×20s retry guard + corrected job names;
   resubmitted as **E5 8105958, E6 8105959** (no dependency needed; checkpoint verified).
+
+## E5/E6 correction (2026-07-22 ~07:40 CEST)
+
+The NFS-race diagnosis for the first E5/E6 failure was WRONG. Real root cause (xtrace probe
+8107155): the sbatch-derivation sed `s|terra-sv3-E3-kickstart-med|<new name>|g` also rewrote
+the E3 checkpoint FILENAME inside TEACHER_CKPT/STUDENT_INIT, so the gate tested a
+nonexistent `terra-sv3-E5-dumpzone-ks-euler-..._FINAL.pkl`. Both attempts failed on that.
+Fixed the paths (verified resolving to the real E3 final), resubmitted:
+**E5 = 8107668, E6 = 8107669** (held 8105959 cancelled — Slurm snapshots scripts at submit
+time, so releasing it would have run the broken copy). Lesson for derived sbatches: verify
+every substituted path RESOLVES (test -f on the expanded value), not just that pins match.
