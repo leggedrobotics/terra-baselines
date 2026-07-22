@@ -327,3 +327,21 @@ Fleet: E6 (running), E4' 8123147 (pending), E7, E8 (pending). E5 cancelled earli
   Structural proof: 2x2-block-downsample of every 128 map equals its 64 source exactly.
 - F15 code agent implementing (env equivalence overrides, stage growth, teacher obs
   downsample). E8 gate: F15 review + memory smoke.
+
+## E9 — 128×128 resolution pilot SUBMITTED (2026-07-22 ~12:30 CEST)
+
+- **Slurm 8131923**, snapshot `res128-585a29a`, sbatch `terra_sv3_E9_res128_ks_4gpu_20260722.sbatch`.
+- Student: E3 grown to 5-stage medium se @128 (`grown_medium_se_5stage_128.pkl`, 2,793,655
+  params; first grow attempt at 1.9M was missing `--maps_edge_length 128` — wrong flatten
+  grid; caught by param-count check, regrown correctly: 23 added-stage leaves, embeddings
+  sliced 64→128 rows, flatten/readout/heads copied exactly).
+- Teacher: E3 raw final with `--teacher_obs_downsample 2` (F15). Known pilot caveat: the
+  transform does not rescale the `loaded` feature (teacher sees ~4× its trained load range
+  while student carries); fast-follow = integer-divide loaded by 4 if kickstart looks weak
+  during hauling.
+- Equivalence knobs: `--config solo_excavator_128` (foundations_128, max_steps 450),
+  `--agent_move_tiles 10 --dig_radius_tiles 10`, `--reward_normalizer 280`, footprint
+  auto-scales (meters/tile_size: 5×9 → 11×19). 512 envs/device (memory), 10k updates
+  (655.4M steps). In-job full-shape smoke doubles as the memory gate.
+- Equivalence checks to read off the run: episode step counts ≈ 64² runs (~55 for
+  successes); reward magnitudes comparable after normalizer 280.
