@@ -846,6 +846,17 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     )
     
     print(f"Mixed Agent Environment - Tile size shape: {env_params.tile_size.shape}", flush=True)
+    tile_size_m = float(jnp.ravel(env_params.tile_size)[0])
+    excavator_width_cells = int(jnp.ravel(env_params.agent.width)[0])
+    excavator_height_cells = int(jnp.ravel(env_params.agent.height)[0])
+    print(
+        "Mixed Agent Environment - Resolved geometry: "
+        f"tile_size={tile_size_m:.6f} m/tile, "
+        f"excavator_footprint={excavator_width_cells}x{excavator_height_cells} cells "
+        f"({excavator_width_cells * tile_size_m:.3f}x"
+        f"{excavator_height_cells * tile_size_m:.3f} m)",
+        flush=True,
+    )
 
     rng = jax.random.PRNGKey(config.seed)
     rng, _rng = jax.random.split(rng)
