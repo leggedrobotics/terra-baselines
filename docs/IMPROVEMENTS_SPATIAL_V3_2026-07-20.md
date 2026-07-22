@@ -307,3 +307,44 @@ E2's exact flags with the v4 encoder: `--map_encoder resnet_spatial_8x8_se_xattn
 --encoder_compute_dtype bfloat16 --critic_hidden_dims 512,256 --no_value_clip
 --flat_minibatch_shuffle`, ent 0.15→0.005 over 19000, 20k updates, 4×4090. E4 vs E2
 isolates the readout. Snapshot tag `spatial-v4-<sha>`; E1/E2/E3 keep reading the v3 snapshot.
+
+---
+
+# Addendum 2026-07-22 — F14: token self-attention mixer (encoder v5)
+
+Motivation: the cross-attention readout SELECTS task-relevant cells but tokens never
+interact — it cannot compute relations BETWEEN map regions (pile↔dump-zone matching,
+routing across work sites). One or two self-attention blocks over the 64 tokens add that,
+and an identity initialization makes the upgrade exactly function-preserving, so it
+composes with the warm-start playbook (grow from E3/E4-line checkpoints + kickstart).
+
+## F14 — `resnet_spatial_8x8_se_sa_xattn` (canonical; alias `resnet_spatial_v5`)
+
+Identical to v4 (`resnet_spatial_8x8_se_xattn`) plus a token-mixing stage. Decisions final:
+
+- After the conv trunk produces the 8×8×C grid: view as 64 tokens, add the learned
+  positional table ONCE here (the cross-attention readout then reuses the mixed tokens
+  WITHOUT re-adding position; refactor the v4 pos-table location accordingly — v4's own
+  param tree must remain unchanged when v5 is not selected).
+- **2 pre-norm residual self-attention blocks** over the tokens:
+  `x = x + Attn(LN(x))` then `x = x + MLP(LN(x))`; Attn = MultiHeadDotProductAttention,
+  4 heads, qkv_features = resnet_attn_qkv, out_features = C with the output projection
+  kernel **zeros-initialized**; MLP = Dense(2C) → gelu → Dense(C) with the second Dense
+  kernel **zeros-initialized**. Both residual contributions are exactly zero at init →
+  the whole stage is the identity function at init (function-preserving growth from
+  v3/v4 checkpoints; fresh init in grow_checkpoint automatically inherits the zero init).
+- Mixed tokens reshape back to 8×8×C and feed BOTH readouts (flatten and cross-attention),
+  which are byte-identical to v4's.
+- bf16: blocks run in encoder compute dtype, f32 params, as everywhere.
+- Presets: 2 blocks at every model_size; qkv follows the existing resnet_attn_qkv values.
+
+Tests (extend tests/test_models.py): (1) identity at init — a freshly initialized v5
+forward equals the v4 forward computed from the SAME shared parameter values (construct by
+copying the overlapping subtree), max abs diff 0; (2) after perturbing one block's output
+projection, moving a remaining-dig cell at one map corner changes the attended output for
+queries whose attention lands elsewhere (token mixing actually propagates); (3) param
+counts base/medium; (4) bf16 finite fwd+bwd, f32 output; (5) v3/v4 param trees unchanged.
+
+## E7 (run after review): grow E3 final → v5 medium (`grow_checkpoint.py --map_encoder
+resnet_spatial_8x8_se_sa_xattn --model_size medium`), kickstart from E3 raw final,
+E4′ flags otherwise. E7 vs E4′ isolates the self-attention increment at the ceiling.
