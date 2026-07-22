@@ -7,15 +7,15 @@
 - Detailed docs: `docs/IMPROVEMENTS_SPATIAL_V3_2026-07-20.md` (spec),
   `docs/EXPERIMENTS_SPATIAL_V3_RUNS.md` (launch ledger)
 
-## Status (2026-07-21)
+## Status (2026-07-22)
 
-E3 kickstart-medium is the best Terra policy to date: **2.99 pos_term / 0.139 reward /
-swhr 1.000 at 15.4k/20k updates** — surpassed its teacher's final (2.81/0.131) at ~30% of
-budget. E1 (algo fixes on v2 encoder) caught the teacher at 18.4k (2.80/0.130) with the
-floor phase remaining. E2 (same stack as E3 but from scratch) finaled BELOW teacher
-(2.33/0.108) → kickstart-not-from-scratch is now the data-backed playbook. E4 (xattn from
-scratch) recovered from an early flatline to 1.15 @11.9k; verdict deferred to a kickstarted
-rerun. E1 final ~2h, E3 ~6h, E4 ~7h from 22:45 CEST 2026-07-20+1.
+FINALS: **E3 3.054 / 0.142 (swhr 0.997, ep_len 55.2) — best Terra policy to date, +8.7%
+over teacher and fastest episodes.** E1 2.833/0.132 beats teacher on its own encoder →
+PPO fixes confirmed net-positive. E2 (from scratch) had finaled below teacher (2.33/0.108).
+E4 (xattn from scratch) recovered to 2.50 @~17k, already above E2's final — weak positive
+for the attention readout; final pending. E5 (dumpzone transfer, Slurm 8105958) and E6
+(300-step horizon efficiency, 8105959) launched, both kickstarted from the E3 final
+(first attempt lost to an NFS attr-cache race at the gate; retry guard added).
 
 ## Leg log
 
@@ -27,16 +27,14 @@ rerun. E1 final ~2h, E3 ~6h, E4 ~7h from 22:45 CEST 2026-07-20+1.
 | 2026-07-20 | E1–E3 launched (Euler 4×4090, 20k updates each) | incidents: home-quota kill (E1a), pickle identity (E3a) — both fixed same day |
 | 2026-07-20 | F13 xattn encoder + E4 launched | cross-attention readout; probes pass; bf16 1.93× kept |
 | 2026-07-21 | E2 final 2.33/0.108; E3 passes teacher at 5.9k updates | from-scratch drag confirmed; kickstart validated |
+| 2026-07-22 | E1/E3 finals; E5+E6 launched from E3 ckpt | E3 3.05/0.142 record; E1 2.83/0.132 > teacher; NFS gate race fixed |
 
 ## Open items / next actions
 
-1. Collect E1/E3/E4 finals; write comparison section into research.md.
-2. E5: dumpzone-curriculum kickstart from E3 final (`solo_excavator_rectangles_dumpzone`
-   preset; teacher+init = E3 checkpoint; sbatch ready to derive from E3's).
-3. E6 step-efficiency: shorter horizon (max_steps 300) kickstart; add successful-episode
-   length to the primary metric set.
-4. E4′: xattn kickstarted from E3 (grow medium-se → medium-se-xattn).
-5. Later: timeout bootstrap port, invalid-action masking, Muon-on-trunk A/B.
+1. Collect E4 final; then E4′ decision (xattn kickstarted from E3 if E4 < E1).
+2. Watch E5 (dumpzone) / E6 (short300) — compare E6 ep_len vs E3's 55.2 baseline.
+3. Later: relocations_harder + trenches ladder, timeout bootstrap port, invalid-action
+   masking, Muon-on-trunk A/B.
 
 ## Decisions & gotchas
 
