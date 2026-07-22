@@ -242,3 +242,13 @@ ent 0.02→0.005/10k, medium se + bf16 + critic 512,256 + algo fixes, 20k update
   successful-episode length (deployability).
 - Fallback if E3 ends non-zero (DependencyNeverSatisfied): repoint STUDENT_INIT/TEACHER to
   the periodic `...-20-45-27.pkl` and resubmit.
+
+## Finals + E5/E6 resubmission (2026-07-22 morning)
+
+- **E1 FINAL (3buorfp3): 2.833 / 0.132, swhr 0.997, ep_len 59.2** — beats teacher 2.810/0.131.
+- **E3 FINAL (j0bs2fkl): 3.054 / 0.142, swhr 0.997, ep_len 55.2** — best policy to date.
+- E4 @~17k: 2.496 / 0.117 (recovered; already above E2's from-scratch final).
+- E5/E6 first attempt (8063942/8063944) FAILED at the gate: NFS attribute-cache race —
+  dependency released them seconds after E3 wrote its FINAL through the scratch symlink and
+  `test -f` on a fresh node missed it. Fixed with a 5×20s retry guard + corrected job names;
+  resubmitted as **E5 8105958, E6 8105959** (no dependency needed; checkpoint verified).

@@ -1,6 +1,6 @@
 # Terra Excavation Policy
 
-Status: kickstart distillation validated 2026-07-21 — medium student (E3) surpassed its
+Status: E1/E3 finals 2026-07-22 — E3 (kickstart medium) 3.05/0.142 is the best Terra policy to date (+8.7% over teacher), E1 confirms the PPO fixes; E5 (dumpzone transfer) + E6 (300-step efficiency) launched from the E3 checkpoint. Previously: kickstart validated 2026-07-21 — medium student (E3) surpassed its
 teacher's final performance at 30% of its training budget and holds a perfect
 success-within-horizon rate; spatial-encoder family confirmed over Atari-CNN per-sample.
 
@@ -41,9 +41,9 @@ map distributions without retraining from scratch.
 | nnsksyva | atari base, 10k updates | 2.02 / 0.095 | control; 113k steps/s |
 | pqtmfmqy | spatial_8x8 base, 10k | 2.81 / 0.131 | +39% per-sample vs atari at 3.9× wall-clock; the E3 teacher |
 | E2 nr032qs7 | se+bf16+critic512 from scratch, 20k | 2.33 / 0.108 | below teacher — from-scratch drag of the heavier bundle |
-| E1 3buorfp3 | spatial_8x8 + algo fixes, 20k | 2.80/0.130 @18.4k, rising | fixes ≥ neutral; matched-entropy tracks teacher slightly ahead |
-| **E3 j0bs2fkl** | **medium se, grown init + kickstart from pqtmfmqy, 20k** | **2.99 / 0.139 @15.4k, swhr 1.000, rising** | **surpassed teacher final at ~30% budget; best policy to date** |
-| E4 k8vnwp5u | se_xattn from scratch, 20k | 1.15 @11.9k, recovering | slow-early like E2; honest xattn verdict needs a kickstarted rerun |
+| E1 3buorfp3 | spatial_8x8 + algo fixes, 20k | 2.83 / 0.132 (final) | beats teacher on its own encoder — algo fixes confirmed net-positive |
+| **E3 j0bs2fkl** | **medium se, grown init + kickstart from pqtmfmqy, 20k** | **3.05 / 0.142 (final), swhr 0.997, ep_len 55.2** | **best policy to date: +8.7% over teacher; also fastest episodes (55 vs E1 59 steps)** |
+| E4 k8vnwp5u | se_xattn from scratch, 20k | 2.50 / 0.117 @~17k, rising | recovered strongly; already above E2's from-scratch final (2.33) — weak positive for xattn |
 
 Supporting measurements: bf16 encoder ≈ 2× fwd+bwd (43k vs 28.8k steps/s in production);
 pmap data-parallel scaling ~95% (1-GPU probe 11.4k vs 10.8k/GPU on 4); update loop is ~86%
