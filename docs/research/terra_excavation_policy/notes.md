@@ -5,7 +5,8 @@
 - Notion mirror: https://app.notion.com/p/3a456453c75781718406cbaff40335e1
   (research.md `3a456453c757819384b3ef49367e64dc`, notes.md `3a456453c7578178ba10c491e3d9e6f7`)
 - Detailed docs: `docs/IMPROVEMENTS_SPATIAL_V3_2026-07-20.md` (spec),
-  `docs/EXPERIMENTS_SPATIAL_V3_RUNS.md` (launch ledger)
+  `docs/EXPERIMENTS_SPATIAL_V3_RUNS.md` (incident trail),
+  `docs/EXPERIMENTS_RUNNING.md` (live fleet), `docs/EXPERIMENTS_LOG.md` (completed runs)
 
 ## Status (2026-07-22)
 
@@ -16,6 +17,15 @@ E4 (xattn from scratch) recovered to 2.50 @~17k, already above E2's final — we
 for the attention readout; final pending. E5 (dumpzone transfer, Slurm 8105958) and E6
 (300-step horizon efficiency, 8105959) launched, both kickstarted from the E3 final
 (first attempt lost to an NFS attr-cache race at the gate; retry guard added).
+
+UPDATE (2026-07-22 midday): E4 finaled 2.586/0.121 — xattn beats SE from scratch +11%,
+still below warm-started runs. E5 CANCELLED @850 (flat zero reward → naive cross-task
+kickstart doesn't bootstrap a new task family; E5b curriculum design shelved). Fleet now:
+E6 (running, ~3.08), E4′ = grown E3→v4 kickstart (running, W&B hafipl4q), E7 = v5
+identity-init token self-attention (8128309, pending; duplicate 8128390 from the parallel
+session cancelled), E8 = multitask foundations+trenches (8128315, pending; trench maps
+verified 64×64 same semantics). v5 landed (a271c9d): exact identity at init. NAMING: the
+128×128-resolution run (F15, parallel session) takes E9.
 
 ## Leg log
 
@@ -28,6 +38,7 @@ for the attention readout; final pending. E5 (dumpzone transfer, Slurm 8105958) 
 | 2026-07-20 | F13 xattn encoder + E4 launched | cross-attention readout; probes pass; bf16 1.93× kept |
 | 2026-07-21 | E2 final 2.33/0.108; E3 passes teacher at 5.9k updates | from-scratch drag confirmed; kickstart validated |
 | 2026-07-22 | E1/E3 finals; E5+E6 launched from E3 ckpt | E3 3.05/0.142 record; E1 2.83/0.132 > teacher; NFS gate race fixed |
+| 2026-07-22 | E4 final; E5 stopped; E4′/E7/E8 launched; v5 landed | xattn +11% from scratch; cross-task transfer needs curriculum; identity-init mixer exact 0.0 |
 
 ## Open items / next actions
 
