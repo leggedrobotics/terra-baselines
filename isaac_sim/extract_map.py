@@ -269,12 +269,30 @@ def _schema_v2_waypoints_and_metadata(plan: list[dict[str, Any]]) -> tuple[list[
     return waypoints, metadata
 
 
-def _plan_to_schema_v2(plan: list[dict[str, Any]], map_path: Path) -> dict[str, Any]:
+def _plan_to_schema_v2(
+    plan: list[dict[str, Any]], map_path: Path, env_cfgs: Any | None
+) -> dict[str, Any]:
     waypoints, metadata = _schema_v2_waypoints_and_metadata(plan)
+    alignment = _load_plan_alignment(map_path)
+    if env_cfgs is not None:
+        tile_size = _scalar_float(
+            getattr(env_cfgs, "tile_size", None), alignment["meters_per_tile"]
+        )
+        alignment["meters_per_tile"] = tile_size
+        # Recompute origin from the real in-use map resolution so alignment stays centered.
+        try:
+            map_shape = np.load(map_path / "images" / "img_1.npy").shape[:2]
+            rows, cols = map_shape
+            alignment["origin_map_xy_m"] = [
+                -cols * tile_size / 2.0,
+                -rows * tile_size / 2.0,
+            ]
+        except Exception:
+            pass
     return {
         "schema_version": 2,
         "source_map_frame_id": "map",
-        "alignment": _load_plan_alignment(map_path),
+        "alignment": alignment,
         "metadata": metadata,
         "waypoints": waypoints,
     }
@@ -2509,7 +2527,7 @@ def main():
     else:
         json_path = output_path.parent / f"{output_path.name}.json"
 
-    plan_json = _plan_to_schema_v2(plan, Path(args.map_path))
+    plan_json = _plan_to_schema_v2(plan, Path(args.map_path), env_cfgs)
     schema_metadata = plan_json.get("metadata", {})
     unpaired_loads = schema_metadata.get("unpaired_load_waypoints", [])
     unpaired_unloads = schema_metadata.get("unpaired_unload_waypoints", [])

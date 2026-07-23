@@ -38,7 +38,7 @@ solo_excavator_rectangles:
     excavator_relocate_dug_dirt_mult: 1.5
   maps:
     - path: foundations_rectangles_real_ring
-      max_steps: 450
+      max_steps: 500
 
 solo_excavator_rectangles_dumpzone:
   description: Single excavator agent with tracked movement on rectangle maps
@@ -261,6 +261,32 @@ trench_dumpzone:
       max_steps: 800
       apply_trench_rewards: true
 
+
+trench_complete_excavator:
+  description: Excavator trench generalized
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 10
+    decrease_level_threshold: 100
+    last_level_type: none
+  maps:
+    - path: trenches/single
+      max_steps: 500
+      apply_trench_rewards: true
+    - path: trenches/double
+      max_steps: 500
+      apply_trench_rewards: true
+    - path: trenches/triple
+      max_steps: 500
+      apply_trench_rewards: true
+    - path: trenches/triple_diagonal
+      max_steps: 500
+      apply_trench_rewards: true
 
 full_excavator:
   description: Excavator generalized
