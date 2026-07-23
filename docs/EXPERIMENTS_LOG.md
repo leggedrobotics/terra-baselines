@@ -14,11 +14,22 @@ eval/avg_positive_episode_length. Full incident trail:
 | 07-22 | E3 | j0bs2fkl | medium se, grown init + kickstart from pqtmfmqy, 20k | **3.054 / 0.142, swhr 0.997, ep_len 55.2** | **best policy to date (+8.7%); kickstart playbook validated — surpassed teacher at 30% budget** |
 | 07-22 | E4 | k8vnwp5u | se_xattn FROM SCRATCH, 20k | 2.586 / 0.121, swhr 0.993, ep_len 63.0 | xattn beats SE from scratch +11% (2.59 vs 2.33) — real architecture win; still below warm-started runs |
 | 07-22 | E5 | gud7cbwg | dumpzone transfer (E3 warm-start + teacher), CANCELLED @850/20k | 0.000 / −0.005 | naive cross-task kickstart does NOT bootstrap a new task family (no reward stream found); E5b = 2-stage curriculum + higher entropy when dumpzone becomes priority |
+| 07-22 | E9 | — | 128×128 pilot, 5-stage medium SE, teacher_obs_downsample=2 | FAILED in smoke | teacher module was built with the student 128 env, causing 128-row position embeddings for a 64-row teacher checkpoint; fixed locally with regression + real-checkpoint CPU smoke before relaunch |
+| 07-22 | E9b | — | fixed 128×128 pilot relaunch, same 512 env/GPU memory shape | FAILED in smoke | teacher-env fix worked, but 128×128 PPO update OOMed (`RESOURCE_EXHAUSTED`, temp 10.70 GiB plus 11.49 GB allocation attempt); next gate should try `num_minibatches=64` |
+| 07-23 | E9c | 0ixsswn4 | fixed 128×128 pilot relaunch, same 512 env/GPU with `num_minibatches=64` | CANCELLED @~1.4k; all-NaN from smoke update 0 | memory-fit shape worked, but smoke gate missed NaN loss/params: smoke FINAL and production checkpoint both had all model params NaN; forward-only behavior was a symptom, not ordinary learning failure |
+| 07-23 | E9d | — | E9c plus embedding clamp, local-map `IntMap`, local-map area scale 4, loaded/downsample fix, finite guard | SUBMITTED 8323457 | exact local full-shape 1-update gate passed finite before Slurm submit; job pending priority |
 
 Cross-run findings:
 - Warm-start (grow + kickstart) >> from-scratch for introducing architecture/capacity
   changes (E3 vs E2; E4' line continues this).
 - bf16 encoder compute: +50% production throughput (43k vs 28.8k steps/s), numerics clean.
+- Finite-loss/param checks are now mandatory for smoke gates: E9c completed update 0 and
+  entered production despite all-NaN model params/loss scalars. The E9d script keeps
+  `--fail_on_nonfinite` through smoke and production.
+- Attention follow-up launched as E10 (pending at submission): `--attention_compute_dtype
+  float32` isolates attention-softmax precision inside a bf16 trunk;
+  `--token_mixer_residual_init_scale 0.001` wakes v5 mixer gradients without changing the
+  default identity-at-init contract.
 - pmap scaling ~95% (single-GPU probe 11.4k vs 10.8k/GPU ×4).
 - Entropy-schedule stretch makes mid-run comparisons vs 9.5k-schedule runs invalid —
   compare finals or matched entropy phase only.

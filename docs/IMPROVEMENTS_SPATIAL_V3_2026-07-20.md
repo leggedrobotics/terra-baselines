@@ -404,9 +404,10 @@ terra repo stays read-only unless a field is provably hardcoded, in which case S
   (default 1 = off). When 2: in the teacher forward path ONLY, transform the obs — global
   map channels [12..15,18..20] stride-2 nearest subsample (in-distribution discrete values,
   no fractional mask values), agent pos_x/pos_y integer-divided by 2 in agent_states,
-  agent_width/height halved. Local maps and everything else unchanged. Teacher model is
-  built from ITS train_config (64² world) as today. Hard-fail if downsample != 1 while
-  teacher maps already match student size.
+  loaded dirt divided by 4, agent_width/height halved. Local maps are resolution-independent
+  1D workspace summaries, but must be model-side scaled by `--local_map_area_scale 4` for
+  128² equivalence. Teacher model is built from ITS train_config (64² world) as today.
+  Hard-fail if downsample != 1 while teacher maps already match student size.
 - Tests: stage-override parsing + validation; grow 4→5-stage exact-copy of flatten/readout/
   heads (max abs diff 0 on those subtrees); pos-table interpolation shape + corner-value
   sanity; teacher-downsample transform unit test (crafted 4×4→2×2 maps, pos halving);
@@ -420,3 +421,102 @@ E4'/E7 winner later), kickstart with `--teacher_obs_downsample 2`, teacher = E3 
 algo fixes, ent 0.02→0.005 over 10k, KL anneal 1000, **10k updates**, `--config
 solo_excavator_128`, `--reward_normalizer 280`. MANDATORY pre-launch memory smoke (1 update,
 W&B off) before production; expect ~11-13k steps/s and validate ep_len ≈ 55 (equivalence).
+
+## Addendum 2026-07-23 — E9 128² numerical hardening
+
+E9c showed why the local gate must be the exact per-GPU production shape: a weak smoke
+allowed an all-NaN first update into production. Required hardening now implemented:
+
+- Local-map workspace sums use `IntMap` instead of `IntLowDim`; 128-equivalent local sums
+  can exceed `int8` range.
+- `AgentStateNet` clips discrete indices before `nn.Embed`; Flax returns NaNs for high
+  out-of-range indices, and exact-edge positions appear in 128²/teacher-downsample states.
+- Smoke/production use `--fail_on_nonfinite` with named rollout, GAE, logits, entropy,
+  teacher, gradient, parameter, and optimizer-state diagnostics.
+- E9d was only submitted after an exact 1-GPU, 512-env/GPU, mb64, bf16, one-update local
+  gate saved a finite checkpoint.
+
+---
+
+# Addendum 2026-07-22c — F16: attention hardening + probe utilities
+
+Motivation: E4 from scratch eventually beat the SE-only control, but the first attention
+arms ran with the same `encoder_compute_dtype=bfloat16` bundle that hurt early learning in
+E2. E7 also tested an exactly identity-initialized token mixer: good for function-preserving
+growth, but at step 0 it blocks gradients into the MHA/MLP inner params until the residual
+output projections move away from zero. F16 adds gated knobs to test those hypotheses without
+changing existing E4'/E7 semantics.
+
+## F16a — f32 attention inside bf16 encoders
+
+New config/CLI:
+
+- `--attention_compute_dtype {encoder,float32,bfloat16}`, default `encoder`.
+
+Semantics:
+
+- `encoder` preserves the current behavior exactly: v4/v5 attention submodules use
+  `encoder_compute_dtype`.
+- `float32` runs the v4/v5 cross-attention readout and v5 token mixer in f32 while the
+  spatial-ResNet conv trunk can still use `--encoder_compute_dtype bfloat16`.
+- Params remain float32; only submodule compute dtype changes. The param tree and shapes are
+  unchanged, so checkpoint loading/resume compatibility is preserved.
+- Non-default values hard-fail unless `map_encoder` is v4/v5 (`resnet_spatial_8x8_se_xattn`
+  or `resnet_spatial_8x8_se_sa_xattn`) to avoid silent no-op experiment flags.
+
+Target ablation:
+
+- Run the E4' recipe with `--encoder_compute_dtype bfloat16 --attention_compute_dtype float32`.
+  If this closes the gap to E6/E3 while retaining bf16 trunk throughput, attention-softmax
+  precision was the likely drag. If not, the issue is not just attention numerics.
+
+## F16b — epsilon-init v5 mixer residual projections
+
+New config/CLI:
+
+- `--token_mixer_residual_init_scale FLOAT`, default `0.0`.
+
+Semantics:
+
+- `0.0` preserves the F14 contract: the v5 mixer is exactly identity at init, existing param
+  counts and leaves stay unchanged, and grown checkpoints remain function-preserving.
+- A small positive value (candidate `1e-3` to `1e-2`) replaces the zero initializers on the
+  token-mixer attention output projection and MLP second projection with
+  `scale * lecun_normal`. The mixer is no longer exactly identity, but the perturbation is
+  small and gradients reach the inner MHA/MLP params immediately.
+- Nonzero values hard-fail unless the encoder is v5, again to avoid silent no-ops.
+
+Target ablation:
+
+- E7b: v5 kickstart from E3/E4' checkpoint, `--attention_compute_dtype float32`, and
+  `--token_mixer_residual_init_scale 0.001` (or a 1-GPU screen at `0.001` vs `0.01`). Compare
+  against E4' and E7 at matched updates and final eval.
+
+## F16c — checkpoint attention ablation helper
+
+New script:
+
+```bash
+python scripts/analysis/ablate_attention_checkpoint.py ckpt.pkl xattn_off.pkl --mode xattn
+python scripts/analysis/ablate_attention_checkpoint.py ckpt.pkl mixer_off.pkl --mode token_mixer
+python scripts/analysis/ablate_attention_checkpoint.py ckpt.pkl dry.pkl --mode all_attention --dry_run
+```
+
+Modes:
+
+- `xattn`: zeros the direct cross-attention branch leaves (`attn_pos_embed`,
+  `attn_latent_queries`, direct xattn MHA, agent-query Dense, branch-projection Dense) while
+  leaving the final fusion Dense intact.
+- `token_mixer`: zeros v5 token-mixer block leaves, which makes the trained mixer blocks act
+  as identity while preserving the shared xattn readout and positional table.
+- `all_attention`: both modes.
+- `--pattern SUBSTRING` can target exact `jax.tree_util.keystr` paths after a `--dry_run`.
+
+Use this only for evaluation/rollout probes; it is not a training initialization path.
+
+## F16 launch discipline
+
+Any new attention variant must run a quiet local first-update smoke before Slurm submission:
+W&B disabled, tiny env count, same model/checkpoint/teacher flags, and evidence that update 1
+completed and checkpoint save/reload works. E9's teacher-env failure is the concrete reason:
+shape-compatible model init is not a sufficient gate for trainer changes.

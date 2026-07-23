@@ -23,6 +23,8 @@ Usage:
     python scripts/grow_checkpoint.py --src ckpt.pkl \
         --map_encoder resnet_spatial_v3 --model_size medium \
         [--critic_hidden_dims 512,256] [--encoder_compute_dtype bfloat16] \
+        [--attention_compute_dtype float32] \
+        [--token_mixer_residual_init_scale 0.001] \
         [--maps_edge_length 64] --out grown.pkl
 """
 
@@ -70,7 +72,8 @@ def build_target_config(source_train_config, overrides):
     """Build a get_model_ready-compatible config for the grown architecture.
 
     ``overrides`` may set map_encoder / model_size / model_core /
-    critic_hidden_dims / encoder_compute_dtype / resnet_stage_channels /
+    critic_hidden_dims / encoder_compute_dtype / attention_compute_dtype /
+    token_mixer_residual_init_scale / resnet_stage_channels /
     resnet_blocks_per_stage; anything left ``None`` inherits the source
     checkpoint value.
     """
@@ -89,6 +92,12 @@ def build_target_config(source_train_config, overrides):
         map_encoder=_config_option(source_train_config, "map_encoder", "atari"),
         encoder_compute_dtype=_config_option(
             source_train_config, "encoder_compute_dtype", "float32"
+        ),
+        attention_compute_dtype=_config_option(
+            source_train_config, "attention_compute_dtype", "encoder"
+        ),
+        token_mixer_residual_init_scale=_config_option(
+            source_train_config, "token_mixer_residual_init_scale", 0.0
         ),
         critic_hidden_dims=_config_option(source_train_config, "critic_hidden_dims", None),
         # F15: spatial-ResNet stage overrides. None inherits the source (which
@@ -561,6 +570,10 @@ def _update_out_train_config(source_train_config, target_config):
         "model_size": target_config["model_size"],
         "model_core": target_config["model_core"],
         "encoder_compute_dtype": target_config["encoder_compute_dtype"],
+        "attention_compute_dtype": target_config["attention_compute_dtype"],
+        "token_mixer_residual_init_scale": target_config[
+            "token_mixer_residual_init_scale"
+        ],
         "critic_hidden_dims": target_config["critic_hidden_dims"],
         # F15: persist the stage overrides so --resume_from / --teacher_checkpoint
         # rebuild the grown (5-stage) trunk and _validate_checkpoint_architecture
@@ -611,6 +624,25 @@ def main():
         help="Target encoder compute dtype (default: keep source).",
     )
     parser.add_argument(
+        "--attention_compute_dtype",
+        default=None,
+        choices=["encoder", "float32", "bfloat16"],
+        help=(
+            "Target v4/v5 attention compute dtype (default: keep source, "
+            "usually 'encoder')."
+        ),
+    )
+    parser.add_argument(
+        "--token_mixer_residual_init_scale",
+        type=float,
+        default=None,
+        help=(
+            "Target v5 token-mixer residual init scale. Set a small value "
+            "such as 0.001 to make newly grown mixer residual projections "
+            "nonzero."
+        ),
+    )
+    parser.add_argument(
         "--resnet_stage_channels",
         default=None,
         help=(
@@ -652,6 +684,8 @@ def main():
         "model_core": args.model_core,
         "critic_hidden_dims": _parse_critic_hidden_dims(args.critic_hidden_dims),
         "encoder_compute_dtype": args.encoder_compute_dtype,
+        "attention_compute_dtype": args.attention_compute_dtype,
+        "token_mixer_residual_init_scale": args.token_mixer_residual_init_scale,
         "resnet_stage_channels": _parse_critic_hidden_dims(args.resnet_stage_channels),
         "resnet_blocks_per_stage": _parse_critic_hidden_dims(args.resnet_blocks_per_stage),
     }

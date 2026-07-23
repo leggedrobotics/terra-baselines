@@ -663,6 +663,27 @@ class SpatialV4XAttnEncoderTest(unittest.TestCase):
         diff = float(jnp.max(jnp.abs(out_empty - out_loaded)))
         self.assertGreater(diff, 1e-3, f"agent-conditioning diff={diff}")
 
+    def test_agent_state_net_clips_embedding_indices(self):
+        asn = AgentStateNet(
+            num_embeddings=64,
+            loaded_max=400,
+            agent_types_max=2,
+            mlp_use_layernorm=False,
+        )
+        # [pos_x, pos_y, angle_base, angle_cabin, wheel_angle, loaded, type, lift]
+        # pos_x=64 is the 128->64 downsampled edge case that made Flax Embed
+        # emit NaNs; negative/inactive sentinels should also be harmless.
+        agent_obs = jnp.array(
+            [
+                [64.0, 128.0, 999.0, -1.0, 0.0, 400.0, 5.0, 0.0],
+                [-1.0, -2.0, -3.0, 2.0, 0.0, 0.0, -1.0, 0.0],
+            ]
+        )
+        params = asn.init(jax.random.PRNGKey(6), agent_obs)
+        out = asn.apply(params, agent_obs)
+        self.assertEqual(out.shape, (2, self.AGENT_EMBED_DIM))
+        self.assertTrue(bool(jnp.all(jnp.isfinite(out))))
+
     # (5) xattn selected without an agent embedding hard-fails.
     def test_xattn_requires_agent_embedding(self):
         enc = self._v4_maps_net()
@@ -697,6 +718,46 @@ class SpatialV4XAttnEncoderTest(unittest.TestCase):
         self.assertTrue(
             all(bool(jnp.all(jnp.isfinite(x))) for x in jax.tree.leaves(grads))
         )
+
+    def test_v4_f32_attention_override_keeps_param_tree_and_is_finite(self):
+        maps = [jnp.zeros((2, 64, 64), dtype=jnp.float32) for _ in range(7)]
+        maps[2] = jax.random.normal(jax.random.PRNGKey(11), (2, 64, 64))
+        maps[3] = jax.random.normal(jax.random.PRNGKey(12), (2, 64, 64))
+        agent_embedding = jax.random.normal(
+            jax.random.PRNGKey(13), (2, self.AGENT_EMBED_DIM)
+        )
+        baseline = self._v4_maps_net(encoder_compute_dtype=jnp.bfloat16)
+        override = self._v4_maps_net(
+            encoder_compute_dtype=jnp.bfloat16,
+            attention_compute_dtype=jnp.float32,
+        )
+        baseline_params = baseline.init(jax.random.PRNGKey(0), maps, agent_embedding)
+        override_params = override.init(jax.random.PRNGKey(0), maps, agent_embedding)
+
+        self.assertEqual(
+            jax.tree_util.tree_structure(baseline_params),
+            jax.tree_util.tree_structure(override_params),
+        )
+        self.assertEqual(
+            [leaf.shape for leaf in jax.tree.leaves(baseline_params)],
+            [leaf.shape for leaf in jax.tree.leaves(override_params)],
+        )
+
+        out = override.apply(override_params, maps, agent_embedding)
+        self.assertEqual(out.dtype, jnp.float32)
+        self.assertTrue(bool(jnp.all(jnp.isfinite(out))))
+
+        model, _ = get_model_ready(
+            jax.random.PRNGKey(0),
+            _full_model_config(
+                "resnet_spatial_v4",
+                encoder_compute_dtype="bfloat16",
+                attention_compute_dtype="float32",
+            ),
+            _dummy_env(),
+        )
+        self.assertEqual(model.encoder_compute_dtype, jnp.bfloat16)
+        self.assertEqual(model.attention_compute_dtype, jnp.float32)
 
     # (7) model_size medium changes the attention param shapes.
     def test_medium_changes_attention_param_shapes(self):
@@ -960,6 +1021,47 @@ class SpatialV5SelfAttnEncoderTest(unittest.TestCase):
         self.assertTrue(
             all(bool(jnp.all(jnp.isfinite(x))) for x in jax.tree.leaves(grads))
         )
+
+    def test_v5_epsilon_mixer_init_breaks_identity_and_opens_inner_grads(self):
+        maps = [jnp.zeros((2, 64, 64), dtype=jnp.float32) for _ in range(7)]
+        maps[2] = jax.random.normal(jax.random.PRNGKey(21), (2, 64, 64))
+        maps[3] = jax.random.normal(jax.random.PRNGKey(22), (2, 64, 64))
+        agent_embedding = jax.random.normal(
+            jax.random.PRNGKey(23), (2, self.AGENT_EMBED_DIM)
+        )
+        v4 = self._maps_net("resnet_spatial_v4")
+        v5 = self._maps_net(
+            "resnet_spatial_v5",
+            token_mixer_residual_init_scale=1e-2,
+        )
+        v5_params = v5.init(jax.random.PRNGKey(0), maps, agent_embedding)
+        v4_params = self._copy_overlapping(
+            v4.init(jax.random.PRNGKey(0), maps, agent_embedding), v5_params
+        )
+
+        out_v4 = v4.apply(v4_params, maps, agent_embedding)
+        out_v5 = v5.apply(v5_params, maps, agent_embedding)
+        diff = float(jnp.max(jnp.abs(out_v5 - out_v4)))
+        self.assertGreater(diff, 1e-6, f"epsilon mixer still identity: {diff}")
+
+        loss, grads = jax.value_and_grad(
+            lambda variables: jnp.mean(v5.apply(variables, maps, agent_embedding) ** 2)
+        )(v5_params)
+        self.assertTrue(bool(jnp.isfinite(loss)))
+
+        query_kernel_grad = None
+        for path, leaf in jax.tree_util.tree_flatten_with_path(grads)[0]:
+            key = jax.tree_util.keystr(path)
+            if (
+                "token_mixer_0" in key
+                and "MultiHeadDotProductAttention_0" in key
+                and "query" in key
+                and key.endswith("['kernel']")
+            ):
+                query_kernel_grad = leaf
+                break
+        self.assertIsNotNone(query_kernel_grad)
+        self.assertGreater(float(jnp.linalg.norm(query_kernel_grad)), 0.0)
 
     # (5) v3 and v4 param trees are unchanged (structure + shapes) by the v5 code.
     def test_v3_and_v4_param_trees_unchanged(self):

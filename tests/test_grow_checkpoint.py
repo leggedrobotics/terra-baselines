@@ -277,6 +277,45 @@ class GrowFullModelTest(unittest.TestCase):
                 jax.tree_util.tree_structure(rebuilt_params),
             )
 
+    def test_f16_v5_grow_persists_f32_attention_and_epsilon_mixer(self):
+        src_config = _full_model_config("resnet_spatial_v3", "medium")
+        _, source_params = get_model_ready(
+            jax.random.PRNGKey(0), src_config, _dummy_env()
+        )
+        overrides = {
+            "map_encoder": "resnet_spatial_v5",
+            "model_size": "medium",
+            "model_core": None,
+            "critic_hidden_dims": (512, 256),
+            "encoder_compute_dtype": "bfloat16",
+            "attention_compute_dtype": "float32",
+            "token_mixer_residual_init_scale": 1e-3,
+        }
+        target_config = build_target_config(src_config, overrides)
+        _, target_params = get_model_ready(
+            jax.random.PRNGKey(1), target_config, _dummy_env()
+        )
+        grown_params, _ = grow_params(source_params, target_params)
+        grown_leaves = _leaf_map(grown_params)
+        mixer_kernel = grown_leaves[
+            "['params']['maps_net']['cnn']['token_mixer_0']['Dense_0']['kernel']"
+        ]
+        self.assertGreater(float(jnp.linalg.norm(mixer_kernel)), 0.0)
+
+        out_config = _update_out_train_config(dict(src_config), target_config)
+        self.assertEqual(out_config["map_encoder"], "resnet_spatial_8x8_se_sa_xattn")
+        self.assertEqual(out_config["attention_compute_dtype"], "float32")
+        self.assertEqual(out_config["token_mixer_residual_init_scale"], 1e-3)
+
+        rebuild_config = build_target_config(out_config, {})
+        _, rebuilt_params = get_model_ready(
+            jax.random.PRNGKey(2), rebuild_config, _dummy_env()
+        )
+        self.assertEqual(
+            jax.tree_util.tree_structure(grown_params),
+            jax.tree_util.tree_structure(rebuilt_params),
+        )
+
 
 class AddedStageGrowthTest(unittest.TestCase):
     """F15: 4-stage -> 5-stage growth for 128x128 resolution scaling."""

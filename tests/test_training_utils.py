@@ -21,6 +21,8 @@ from train import (
 )
 from train_mixed import (
     MixedAgentTrainConfig,
+    _assert_finite_loss_info,
+    _assert_finite_tree,
     kickstart_coef_schedule,
     _backfill_terminal_rewards,
     _strip_checkpoint_env_axis,
@@ -28,9 +30,11 @@ from train_mixed import (
     _validate_checkpoint_architecture,
     _validate_checkpoint_history_width,
     _validate_resume_update,
+    _teacher_model_env_from_checkpoint,
 )
 from utils.helpers import checkpoint_batch_config, replicate_checkpoint_env_config
 from utils.models import get_model_ready
+from utils.utils_ppo import obs_to_model_input
 
 
 class _PPOConfig(dict):
@@ -475,6 +479,53 @@ class FlatMinibatchShuffleTest(unittest.TestCase):
         self.assertEqual(n_samples % num_minibatches, 0)
 
 
+class LocalMapAreaScaleTest(unittest.TestCase):
+    def test_obs_to_model_input_scales_all_local_workspace_sums(self):
+        env = SimpleNamespace(
+            batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
+        )
+        transition = _make_transition((2,), env, 5, old_value=0.0)
+        obs = dict(transition.obs)
+        local_keys = (
+            "local_map_action_neg",
+            "local_map_action_pos",
+            "local_map_target_neg",
+            "local_map_target_pos",
+            "local_map_dumpability",
+            "local_map_obstacles",
+            "local_map_border_workspace",
+            "local_map_edge_alignment_error",
+            "local_map_border_diggable",
+        )
+        for offset, key in enumerate(local_keys):
+            obs[key] = jnp.full((2, env.batch_cfg.agent.angles_cabin), 40 + offset)
+
+        cfg = SimpleNamespace(clip_action_maps=False, local_map_area_scale=4.0)
+        model_obs = obs_to_model_input(obs, transition.prev_actions, cfg)
+
+        for list_idx, key in enumerate(local_keys, start=3):
+            expected = obs[key].astype(jnp.float32) / 4.0
+            np.testing.assert_allclose(np.asarray(model_obs[list_idx]), np.asarray(expected))
+
+    def test_default_local_map_area_scale_is_identity(self):
+        env = SimpleNamespace(
+            batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
+        )
+        transition = _make_transition((1,), env, 5, old_value=0.0)
+        obs = dict(transition.obs)
+        obs["local_map_dumpability"] = jnp.full(
+            (1, env.batch_cfg.agent.angles_cabin), 123
+        )
+
+        cfg = SimpleNamespace(clip_action_maps=False)
+        model_obs = obs_to_model_input(obs, transition.prev_actions, cfg)
+
+        np.testing.assert_array_equal(
+            np.asarray(model_obs[7]),
+            np.asarray(obs["local_map_dumpability"]),
+        )
+
+
 class KickstartScheduleTest(unittest.TestCase):
     def test_cosine_anneals_to_zero_and_clamps(self):
         self.assertEqual(kickstart_coef_schedule(0, 1.0, 100), 1.0)
@@ -572,6 +623,14 @@ class ResolutionScalingConfigTest(unittest.TestCase):
         default = MixedAgentTrainConfig(**self._base_kwargs())
         self.assertEqual(default.loaded_max, 100)
 
+    def test_local_map_area_scale_validated(self):
+        config = MixedAgentTrainConfig(
+            **self._base_kwargs(local_map_area_scale=4.0)
+        )
+        self.assertEqual(config.local_map_area_scale, 4.0)
+        with self.assertRaisesRegex(ValueError, "local_map_area_scale"):
+            MixedAgentTrainConfig(**self._base_kwargs(local_map_area_scale=0.0))
+
     def test_teacher_downsample_requires_teacher(self):
         with self.assertRaisesRegex(ValueError, "teacher_obs_downsample"):
             MixedAgentTrainConfig(**self._base_kwargs(teacher_obs_downsample=2))
@@ -656,6 +715,56 @@ class ResolutionScalingConfigTest(unittest.TestCase):
         self.assertTrue(any(k.shape[0] == 8 * 8 * 64 for k in dense_kernels))
 
 
+class AttentionConfigTest(unittest.TestCase):
+    """F16: attention hardening knobs must fail fast on no-op configs."""
+
+    def _base_kwargs(self, **extra):
+        kwargs = dict(
+            name="test",
+            num_devices=1,
+            num_envs_per_device=8,
+            num_steps=4,
+            num_minibatches=2,
+            total_timesteps=32,
+        )
+        kwargs.update(extra)
+        return kwargs
+
+    def test_attention_dtype_override_requires_attention_encoder(self):
+        with self.assertRaisesRegex(ValueError, "attention_compute_dtype"):
+            MixedAgentTrainConfig(
+                **self._base_kwargs(
+                    map_encoder="resnet_spatial_v3",
+                    attention_compute_dtype="float32",
+                )
+            )
+        config = MixedAgentTrainConfig(
+            **self._base_kwargs(
+                map_encoder="resnet_spatial_v4",
+                attention_compute_dtype="float32",
+            )
+        )
+        self.assertEqual(config.map_encoder, "resnet_spatial_8x8_se_xattn")
+        self.assertEqual(config.attention_compute_dtype, "float32")
+
+    def test_token_mixer_epsilon_init_requires_v5(self):
+        with self.assertRaisesRegex(ValueError, "token_mixer_residual_init_scale"):
+            MixedAgentTrainConfig(
+                **self._base_kwargs(
+                    map_encoder="resnet_spatial_v4",
+                    token_mixer_residual_init_scale=1e-3,
+                )
+            )
+        config = MixedAgentTrainConfig(
+            **self._base_kwargs(
+                map_encoder="resnet_spatial_v5",
+                token_mixer_residual_init_scale=1e-3,
+            )
+        )
+        self.assertEqual(config.map_encoder, "resnet_spatial_8x8_se_sa_xattn")
+        self.assertEqual(config.token_mixer_residual_init_scale, 1e-3)
+
+
 class TeacherObsDownsampleTest(unittest.TestCase):
     """F15: the teacher-forward-only obs subsample transform."""
 
@@ -667,6 +776,7 @@ class TeacherObsDownsampleTest(unittest.TestCase):
         agent_states = agent_states.at[0, 0, 0].set(6.0)  # pos_x
         agent_states = agent_states.at[0, 0, 1].set(3.0)  # pos_y
         agent_states = agent_states.at[0, 0, 2].set(9.0)  # angle_base (untouched)
+        agent_states = agent_states.at[0, 0, 5].set(20.0)  # loaded dirt
         obs[0] = agent_states
         for i in range(1, 22):
             obs[i] = jnp.zeros((1,), dtype=jnp.float32)
@@ -688,6 +798,8 @@ class TeacherObsDownsampleTest(unittest.TestCase):
         )
         # angle_base untouched.
         self.assertEqual(float(out[0][0, 0, 2]), 9.0)
+        # loaded is a tile-count/area quantity, so x2 resolution -> /4 for teacher.
+        self.assertEqual(float(out[0][0, 0, 5]), 5.0)
         # agent width/height halved.
         self.assertEqual(int(out[16][0]), 5)
         self.assertEqual(int(out[17][0]), 9)
@@ -724,6 +836,45 @@ class TeacherObsDownsampleTest(unittest.TestCase):
             atol=1e-5,
         )
 
+    def test_checkpoint_teacher_model_uses_native_embedding_width(self):
+        # Regression for E9: the 64-world teacher must be instantiated with 64
+        # position-embedding rows even when the student rollout env is 128.
+        env64 = SimpleNamespace(
+            batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
+        )
+        env128 = SimpleNamespace(
+            batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=128))
+        )
+        teacher_config = _model_config(5, 64)
+        teacher_model, teacher_params = get_model_ready(
+            jax.random.PRNGKey(0), teacher_config, env64
+        )
+        env_config = EnvConfig()
+        checkpoint = {
+            "env_config": env_config._replace(
+                maps=env_config.maps._replace(edge_length_px=64)
+            )
+        }
+
+        rebuilt_env = _teacher_model_env_from_checkpoint(checkpoint, env128)
+        rebuilt_teacher, _ = get_model_ready(
+            jax.random.PRNGKey(1), teacher_config, rebuilt_env
+        )
+        native = _real_obs_like(env64, jax.random.PRNGKey(2))
+        downsampled = downsample_teacher_obs(_upsample_obs(native, 2), 2)
+
+        from utils.utils_ppo import policy
+
+        value_ref, dist_ref = policy(teacher_model.apply, teacher_params, native)
+        value_rebuilt, dist_rebuilt = policy(
+            rebuilt_teacher.apply, teacher_params, downsampled
+        )
+        np.testing.assert_allclose(np.asarray(value_ref), np.asarray(value_rebuilt))
+        np.testing.assert_allclose(
+            np.asarray(dist_ref.logits_parameter()),
+            np.asarray(dist_rebuilt.logits_parameter()),
+        )
+
 
 def _real_obs_like(env, rng):
     """A single-batch model-input obs with random in-range global maps."""
@@ -735,6 +886,7 @@ def _real_obs_like(env, rng):
     agent_states = jnp.zeros((1, max_agents, num_state_obs), dtype=jnp.float32)
     # Even positions so //2 then the 64-world embedding stays exact under x2.
     agent_states = agent_states.at[0, 0, 0].set(4.0).at[0, 0, 1].set(6.0)
+    agent_states = agent_states.at[0, 0, 5].set(4.0)
     obs = [agent_states]
     obs.append(jnp.zeros((1, max_agents), dtype=jnp.int8).at[:, 0].set(1))
     obs.append(jnp.ones((1,), dtype=jnp.int32))
@@ -760,10 +912,48 @@ def _upsample_obs(obs, factor):
         up[idx] = jnp.repeat(jnp.repeat(obs[idx], s, axis=-1), s, axis=-2)
     agent_states = obs[0]
     scaled_pos = agent_states[..., 0:2] * s
+    scaled_loaded = agent_states[..., 5:6] * (s * s)
     up[0] = agent_states.at[..., 0:2].set(scaled_pos)
+    up[0] = up[0].at[..., 5:6].set(scaled_loaded)
     up[16] = obs[16] * s
     up[17] = obs[17] * s
     return up
+
+
+class FiniteGateTest(unittest.TestCase):
+    def test_finite_loss_info_accepts_finite_scalars(self):
+        _assert_finite_loss_info(
+            {
+                "total_loss": jnp.array(1.0),
+                "value_loss": jnp.array(2.0),
+                "actor_loss": jnp.array(0.1),
+                "entropy": jnp.array(0.5),
+                "kickstart/kl": jnp.array(0.2),
+                "kickstart/value_mse": jnp.array(3.0),
+                "diagnostics/grad_global_norm": jnp.array(0.4),
+                "diagnostics/grads_all_finite": jnp.array(1.0),
+                "diagnostics/params_all_finite": jnp.array(1.0),
+            },
+            update_index=0,
+        )
+
+    def test_finite_loss_info_rejects_nan_and_false_param_flag(self):
+        with self.assertRaisesRegex(FloatingPointError, "Non-finite PPO update"):
+            _assert_finite_loss_info(
+                {
+                    "total_loss": jnp.array(jnp.nan),
+                    "value_loss": jnp.array(2.0),
+                    "actor_loss": jnp.array(0.1),
+                    "entropy": jnp.array(0.5),
+                    "diagnostics/grads_all_finite": jnp.array(1.0),
+                    "diagnostics/params_all_finite": jnp.array(0.0),
+                },
+                update_index=0,
+            )
+
+    def test_finite_tree_rejects_nan_leaf(self):
+        with self.assertRaisesRegex(FloatingPointError, "params contains"):
+            _assert_finite_tree({"good": jnp.array([1.0]), "bad": jnp.array([jnp.nan])}, "params")
 
 
 class RegisterCheckpointConfigClassesTest(unittest.TestCase):

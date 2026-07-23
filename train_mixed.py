@@ -115,6 +115,7 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 # Import the base training infrastructure
 from train import get_curriculum_levels, calculate_gae, ppo_update_networks
@@ -176,6 +177,125 @@ def safe_jax_to_python(value):
             return str(value)
     else:
         return value
+
+
+_REQUIRED_FINITE_LOSS_KEYS = (
+    "total_loss",
+    "value_loss",
+    "actor_loss",
+    "entropy",
+)
+_OPTIONAL_FINITE_LOSS_KEYS = (
+    "kickstart/kl",
+    "kickstart/value_mse",
+    "diagnostics/grad_global_norm",
+)
+_FINITE_FRACTION_KEYS = (
+    "diagnostics/grads_all_finite",
+    "diagnostics/params_all_finite",
+    "diagnostics/rollout_finite_fraction",
+    "diagnostics/rollout_obs_finite_fraction",
+    "diagnostics/rollout_value_finite_fraction",
+    "diagnostics/rollout_reward_finite_fraction",
+    "diagnostics/rollout_log_prob_finite_fraction",
+    "diagnostics/model_obs_finite_fraction",
+    "diagnostics/raw_advantages_finite_fraction",
+    "diagnostics/raw_targets_finite_fraction",
+    "diagnostics/advantages_finite_fraction",
+    "diagnostics/targets_finite_fraction",
+    "diagnostics/student_value_finite_fraction",
+    "diagnostics/student_logits_finite_fraction",
+    "diagnostics/log_prob_finite_fraction",
+    "diagnostics/ratio_finite_fraction",
+    "diagnostics/entropy_finite_fraction",
+    "diagnostics/teacher_value_finite_fraction",
+    "diagnostics/teacher_logits_finite_fraction",
+)
+_FINITE_CONTEXT_KEYS = (
+    "diagnostics/student_value_abs_max",
+    "diagnostics/student_logits_abs_max",
+    "diagnostics/raw_targets_abs_max",
+    "diagnostics/raw_advantages_abs_max",
+    "diagnostics/targets_abs_max",
+    "diagnostics/advantages_abs_max",
+    "diagnostics/log_prob_delta_abs_max",
+    "diagnostics/ratio_abs_max",
+    "diagnostics/teacher_value_abs_max",
+    "diagnostics/teacher_logits_abs_max",
+)
+
+
+def _nonfinite_count(value) -> int:
+    arr = np.asarray(jax.device_get(value))
+    if arr.dtype.kind not in {"f", "c"}:
+        return 0
+    return int(arr.size - np.isfinite(arr).sum())
+
+
+def _assert_finite_loss_info(loss_info, update_index: int) -> None:
+    failures: list[str] = []
+    for key in _REQUIRED_FINITE_LOSS_KEYS:
+        if key not in loss_info:
+            failures.append(f"{key}=missing")
+            continue
+        count = _nonfinite_count(loss_info[key])
+        if count:
+            failures.append(f"{key}: {count} non-finite")
+
+    for key in _OPTIONAL_FINITE_LOSS_KEYS:
+        if key in loss_info:
+            count = _nonfinite_count(loss_info[key])
+            if count:
+                failures.append(f"{key}: {count} non-finite")
+
+    for key in _FINITE_FRACTION_KEYS:
+        if key in loss_info:
+            arr = np.asarray(jax.device_get(loss_info[key]), dtype=np.float32)
+            if (not np.all(np.isfinite(arr))) or float(np.min(arr)) < 0.999:
+                failures.append(f"{key}: min={float(np.nanmin(arr)):.6g}")
+
+    if failures:
+        context = []
+        for key in _FINITE_CONTEXT_KEYS:
+            if key in loss_info:
+                arr = np.asarray(jax.device_get(loss_info[key]), dtype=np.float32)
+                if arr.size:
+                    context.append(f"{key}: max={float(np.nanmax(arr)):.6g}")
+        raise FloatingPointError(
+            f"Non-finite PPO update detected at update {update_index}: "
+            + "; ".join(failures + context)
+        )
+
+
+def _format_pytree_path(path) -> str:
+    try:
+        return jax.tree_util.keystr(path)
+    except Exception:
+        return str(path)
+
+
+def _assert_finite_tree(tree, label: str, max_items: int = 8) -> None:
+    failures: list[str] = []
+    total = 0
+    for path, leaf in jax.tree_util.tree_flatten_with_path(tree)[0]:
+        arr = np.asarray(jax.device_get(leaf))
+        if arr.dtype.kind not in {"f", "c"}:
+            continue
+        count = int(arr.size - np.isfinite(arr).sum())
+        if count:
+            total += count
+            if len(failures) < max_items:
+                failures.append(
+                    f"{_format_pytree_path(path)} shape={arr.shape} "
+                    f"dtype={arr.dtype} nonfinite={count}"
+                )
+    if total:
+        extra = "" if len(failures) < max_items else " ..."
+        raise FloatingPointError(
+            f"{label} contains {total} non-finite scalar(s): "
+            + "; ".join(failures)
+            + extra
+        )
 
 
 def _strip_checkpoint_env_axis(env_config, num_envs_per_device: int):
@@ -249,6 +369,27 @@ def _teacher_maps_edge_length(checkpoint):
     except (TypeError, ValueError, IndexError):
         return None
     return edge if edge > 0 else None
+
+
+def _teacher_model_env_from_checkpoint(checkpoint, student_env):
+    """Build a minimal env-like object matching a teacher checkpoint's model shape.
+
+    ``get_model_ready`` derives position-embedding width from
+    ``env.batch_cfg.maps_dims.maps_edge_length``. For cross-resolution kickstart,
+    the frozen teacher must therefore be instantiated with its own checkpoint
+    edge length even though the student rollout env is larger.
+    """
+
+    teacher_edge = _teacher_maps_edge_length(checkpoint)
+    if teacher_edge is None:
+        return student_env
+
+    batch_cfg = student_env.batch_cfg._replace(
+        maps_dims=student_env.batch_cfg.maps_dims._replace(
+            maps_edge_length=int(teacher_edge)
+        )
+    )
+    return SimpleNamespace(batch_cfg=batch_cfg)
 
 
 def _validate_checkpoint_architecture(checkpoint, config) -> None:
@@ -559,6 +700,7 @@ class MixedAgentTrainConfig:
     local_map_normalization_bounds: tuple[int, int] = (-16, 16)
     maps_net_normalization_bounds: tuple[int, int] = (-10, 10)
     loaded_max: int = 100
+    local_map_area_scale: float = 1.0
     num_rollouts_eval: int = 200
     cache_clear_interval: int = 1000
     # Entropy scheduler (cosine decay)
@@ -573,6 +715,11 @@ class MixedAgentTrainConfig:
     action_types_override: tuple | None = None
     # Debug assertions and one-time validations
     debug: bool = False
+    # Fail fast when PPO produces non-finite core losses/grad diagnostics.
+    # Params and optimizer state are additionally checked before checkpoint/final
+    # writes. Default off preserves historical runs; E9+ smoke/prod jobs enable it.
+    fail_on_nonfinite: bool = False
+    finite_check_interval: int = 0
     
     # Checkpoint loading
     resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
@@ -612,6 +759,13 @@ class MixedAgentTrainConfig:
     # Encoder mixed precision: "float32" (default) or "bfloat16". bf16 is only
     # valid for the spatial ResNet encoders (validated in get_model_ready).
     encoder_compute_dtype: str = "float32"
+    # F16: attention precision override for v4/v5 only. "encoder" preserves
+    # current behavior; "float32" keeps attention logits/softmax/projections in
+    # f32 while the spatial-ResNet conv trunk can still run in bf16.
+    attention_compute_dtype: str = "encoder"
+    # F16: optional small nonzero init for v5 token-mixer residual projections.
+    # Default 0.0 preserves the exact identity-at-init mixer.
+    token_mixer_residual_init_scale: float = 0.0
     # Optional critic-head width override; None keeps the model_size preset.
     critic_hidden_dims: tuple | None = None
     # F5: PPO value-clipping toggle. Default True preserves current behavior;
@@ -653,11 +807,51 @@ class MixedAgentTrainConfig:
 
     def __post_init__(self):
         self.map_encoder = canonical_map_encoder(self.map_encoder)
+        if self.attention_compute_dtype not in ("encoder", "float32", "bfloat16"):
+            raise ValueError(
+                "attention_compute_dtype must be one of 'encoder', 'float32', "
+                f"or 'bfloat16', got {self.attention_compute_dtype!r}"
+            )
+        attention_encoders = (
+            "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
+        )
+        if (
+            self.attention_compute_dtype != "encoder"
+            and self.map_encoder not in attention_encoders
+        ):
+            raise ValueError(
+                "--attention_compute_dtype only applies to the v4/v5 attention "
+                f"encoders, not map_encoder={self.map_encoder!r}."
+            )
+        self.token_mixer_residual_init_scale = float(
+            self.token_mixer_residual_init_scale
+        )
+        if self.token_mixer_residual_init_scale < 0.0:
+            raise ValueError(
+                "--token_mixer_residual_init_scale must be >= 0, "
+                f"got {self.token_mixer_residual_init_scale}."
+            )
+        if (
+            self.token_mixer_residual_init_scale != 0.0
+            and self.map_encoder != "resnet_spatial_8x8_se_sa_xattn"
+        ):
+            raise ValueError(
+                "--token_mixer_residual_init_scale only applies to "
+                "map_encoder=resnet_spatial_8x8_se_sa_xattn "
+                f"(resnet_spatial_v5), not map_encoder={self.map_encoder!r}."
+            )
         # F15: loaded_max_override rescales the model-side loaded normalizer
         # (tile-count quantity, ~x4 at 128). Fold it into loaded_max so
         # get_model_ready and the teacher preprocessing check read one value.
         if self.loaded_max_override is not None:
             self.loaded_max = int(self.loaded_max_override)
+        self.local_map_area_scale = float(self.local_map_area_scale)
+        if self.local_map_area_scale <= 0.0:
+            raise ValueError(
+                "local_map_area_scale must be > 0, "
+                f"got {self.local_map_area_scale}."
+            )
         # F15: teacher obs-downsampling is only meaningful with a teacher.
         if self.teacher_obs_downsample < 1:
             raise ValueError(
@@ -668,6 +862,12 @@ class MixedAgentTrainConfig:
                 "--teacher_obs_downsample is only valid together with "
                 "--teacher_checkpoint (cross-resolution kickstart)."
             )
+        if self.finite_check_interval < 0:
+            raise ValueError(
+                f"finite_check_interval must be >= 0, got {self.finite_check_interval}"
+            )
+        if self.fail_on_nonfinite and self.finite_check_interval == 0:
+            self.finite_check_interval = 1
         self.num_devices = (
             jax.local_device_count() if self.num_devices == 0 else self.num_devices
         )
@@ -832,6 +1032,8 @@ def _print_resolution_scaling_table(config) -> None:
         )
     if config.loaded_max_override is not None:
         candidates.append(("loaded_max", MixedAgentTrainConfig.loaded_max, config.loaded_max))
+    if getattr(config, "local_map_area_scale", 1.0) != 1.0:
+        candidates.append(("local_map_area_scale", 1.0, config.local_map_area_scale))
     if config.reward_normalizer is not None:
         candidates.append(
             ("rewards.normalizer", env_defaults.rewards.normalizer, config.reward_normalizer)
@@ -1064,6 +1266,11 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     print(f"🧠 Model size preset: {getattr(config, 'model_size', 'base')}", flush=True)
     print(f"🧠 Model core: {getattr(config, 'model_core', 'mlp')}", flush=True)
     print(f"🧠 Map encoder: {getattr(config, 'map_encoder', 'atari')}", flush=True)
+    print(
+        f"🧠 Encoder dtype: {getattr(config, 'encoder_compute_dtype', 'float32')}, "
+        f"attention dtype: {getattr(config, 'attention_compute_dtype', 'encoder')}",
+        flush=True,
+    )
     print("⏱️  Initializing model...", flush=True)
     t_model_init = time.time()
     network, network_params = get_model_ready(_rng, config, env)
@@ -1077,6 +1284,20 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     print(f"   core: {model_core}", flush=True)
     print(f"   model_size: {getattr(config, 'model_size', 'base')}", flush=True)
     print(f"   map_encoder: {getattr(config, 'map_encoder', 'atari')}", flush=True)
+    print(
+        f"   encoder_compute_dtype: {getattr(config, 'encoder_compute_dtype', 'float32')}",
+        flush=True,
+    )
+    print(
+        f"   attention_compute_dtype: "
+        f"{getattr(config, 'attention_compute_dtype', 'encoder')}",
+        flush=True,
+    )
+    print(
+        f"   token_mixer_residual_init_scale: "
+        f"{getattr(config, 'token_mixer_residual_init_scale', 0.0)}",
+        flush=True,
+    )
     if model_core == "transformer":
         max_agents = 4
         token_count = max_agents + 3  # agent tokens + actions/local/maps tokens
@@ -1163,6 +1384,10 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
     model_size = config.model_size if hasattr(config, "model_size") else "unknown"
     map_encoder = getattr(config, "map_encoder", "atari")
     encoder_compute_dtype = getattr(config, "encoder_compute_dtype", "float32")
+    attention_compute_dtype = getattr(config, "attention_compute_dtype", "encoder")
+    token_mixer_residual_init_scale = getattr(
+        config, "token_mixer_residual_init_scale", 0.0
+    )
     critic_hidden_dims = getattr(config, "critic_hidden_dims", None)
     critic_hidden_tag = (
         "-".join(str(int(x)) for x in critic_hidden_dims)
@@ -1179,7 +1404,10 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         f"model-size:{_tag_value(model_size)}",
         f"map-encoder:{_tag_value(map_encoder)}",
         f"encoder-dtype:{_tag_value(encoder_compute_dtype)}",
+        f"attention-dtype:{_tag_value(attention_compute_dtype)}",
+        f"token-mixer-init:{_tag_value(token_mixer_residual_init_scale)}",
         f"critic-hidden:{_tag_value(critic_hidden_tag)}",
+        f"local-map-area-scale:{_tag_value(getattr(config, 'local_map_area_scale', 1.0))}",
         f"dump-min-free-fraction:{_tag_value(dump_min_free_fraction)}",
         f"move-tiles:{_tag_value(env_defaults.agent.move_tiles)}",
         f"dig-radius-tiles:{_tag_value(env_defaults.agent.dig_radius_tiles)}",
@@ -1341,9 +1569,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             )
 
         # F3: the teacher forward runs on obs preprocessed with the STUDENT
-        # config (obs_to_model_input in ppo_update_networks). A teacher trained
-        # with different map preprocessing would see out-of-distribution inputs
-        # and emit meaningless distillation targets, so hard-fail on a mismatch.
+        # config (obs_to_model_input in ppo_update_networks), then optionally
+        # transformed to the teacher's native resolution. Fields that change raw
+        # map/local-map preprocessing must match. loaded_max is deliberately
+        # handled below: it is model-side normalization of raw loaded tile count,
+        # and cross-resolution kickstart expects teacher/student values to differ
+        # by the area scale.
         # Missing teacher fields fall back to the class defaults.
         def _normalize_bound(value):
             return tuple(value) if isinstance(value, (list, tuple)) else value
@@ -1358,7 +1589,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 "local_map_normalization_bounds",
                 MixedAgentTrainConfig.local_map_normalization_bounds,
             ),
-            ("loaded_max", MixedAgentTrainConfig.loaded_max),
         )
         preprocessing_mismatches = []
         for field_name, field_default in preprocessing_fields:
@@ -1380,11 +1610,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 "student config, so these fields must match."
             )
 
-        rng, rng_teacher = jax.random.split(rng)
-        teacher_model, _ = get_model_ready(rng_teacher, teacher_train_config, env)
-        teacher_apply_fn = teacher_model.apply
-        teacher_params = teacher_ckpt["model"]
-
         # F15: cross-resolution kickstart. The teacher model is built from ITS
         # own train_config (its native world), but its FORWARD runs on the
         # student's obs subsampled by teacher_obs_downsample. Validate that the
@@ -1395,6 +1620,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         downsample = int(config.teacher_obs_downsample)
         student_edge = int(env.batch_cfg.maps_dims.maps_edge_length)
         teacher_edge = _teacher_maps_edge_length(teacher_ckpt)
+        teacher_loaded_max = int(
+            _checkpoint_config_value(
+                teacher_ckpt, "loaded_max", MixedAgentTrainConfig.loaded_max
+            )
+        )
+        student_loaded_max = int(config.loaded_max)
         if downsample != 1:
             if teacher_edge is None:
                 raise ValueError(
@@ -1408,6 +1639,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     f"{teacher_edge} * downsample={downsample} != student "
                     f"maps_edge_length={student_edge}. The subsampled teacher obs "
                     "would be out of distribution."
+                )
+            expected_loaded_max = teacher_loaded_max * downsample * downsample
+            if student_loaded_max != expected_loaded_max:
+                raise ValueError(
+                    "Cross-resolution kickstart loaded_max mismatch: teacher "
+                    f"loaded_max={teacher_loaded_max} and downsample={downsample} "
+                    f"imply student loaded_max={expected_loaded_max}, but the "
+                    f"student has loaded_max={student_loaded_max}. Pass "
+                    f"--loaded_max_override {expected_loaded_max} so the student "
+                    "normalizes loaded tile-counts at the 128 resolution while "
+                    "the teacher obs transform divides loaded by downsample**2."
                 )
             print(
                 f"🔻 Teacher obs-downsampling x{downsample}: student edge "
@@ -1424,6 +1666,19 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 "Set --teacher_obs_downsample to student_edge/teacher_edge for "
                 "cross-resolution kickstart."
             )
+        elif student_loaded_max != teacher_loaded_max:
+            raise ValueError(
+                "Teacher/student loaded_max mismatch for same-resolution "
+                f"kickstart: teacher={teacher_loaded_max}, "
+                f"student={student_loaded_max}."
+            )
+        rng, rng_teacher = jax.random.split(rng)
+        teacher_model_env = _teacher_model_env_from_checkpoint(teacher_ckpt, env)
+        teacher_model, _ = get_model_ready(
+            rng_teacher, teacher_train_config, teacher_model_env
+        )
+        teacher_apply_fn = teacher_model.apply
+        teacher_params = teacher_ckpt["model"]
         print(
             "🎓 Kickstart teacher loaded from "
             f"{config.teacher_checkpoint} "
@@ -1871,8 +2126,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     and i % config.log_eval_interval == 0
                 )
                 need_final_state = i == config.num_updates - 1
+                need_finite_check = (
+                    config.fail_on_nonfinite
+                    and config.finite_check_interval > 0
+                    and i % config.finite_check_interval == 0
+                )
                 need_host_state = (
-                    need_train_log or need_checkpoint or need_eval or need_final_state
+                    need_train_log
+                    or need_checkpoint
+                    or need_eval
+                    or need_final_state
+                    or need_finite_check
                 )
 
                 if need_host_state:
@@ -1880,6 +2144,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     runner_state_single = unreplicate(runner_state)
                     _, _, timestep, prev_actions = runner_state_single[:4]
                     env_params_single = timestep.env_cfg
+
+                if config.fail_on_nonfinite and (
+                    need_finite_check or need_checkpoint or need_final_state
+                ):
+                    _assert_finite_loss_info(loss_info_single, i)
 
                 if need_train_log:
                     # Consolidated logging to prevent step ordering issues
@@ -1981,6 +2250,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     wandb.log(log_dict, step=i)
 
                 if need_checkpoint:
+                    if config.fail_on_nonfinite:
+                        _assert_finite_tree(
+                            runner_state_single[1].params,
+                            f"model params before checkpoint update {i}",
+                        )
+                        _assert_finite_tree(
+                            runner_state_single[1].opt_state,
+                            f"optimizer state before checkpoint update {i}",
+                        )
                     env_config_checkpoint = _strip_checkpoint_env_axis(
                         env_params_single,
                         config.num_envs_per_device,
@@ -2181,6 +2459,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             config.num_envs_per_device,
         )
         final_train_state = train_info["runner_state"][1]
+        if config.fail_on_nonfinite:
+            _assert_finite_loss_info(train_info["loss_info"], config.num_updates - 1)
+            _assert_finite_tree(final_train_state.params, "final model params")
+            _assert_finite_tree(final_train_state.opt_state, "final optimizer state")
         final_checkpoint = {
             "checkpoint_version": 2,
             "train_config": config,
@@ -2268,6 +2550,24 @@ if __name__ == "__main__":
         help="JAX cache-clear interval in updates; set 0 to disable."
     )
     parser.add_argument(
+        "--ent_schedule_start",
+        type=float,
+        default=0.15,
+        help="Initial entropy coefficient for the cosine schedule.",
+    )
+    parser.add_argument(
+        "--ent_schedule_end",
+        type=float,
+        default=0.005,
+        help="Final entropy coefficient for the cosine schedule.",
+    )
+    parser.add_argument(
+        "--ent_schedule_steps",
+        type=int,
+        default=9500,
+        help="Number of PPO updates over which to cosine-anneal entropy.",
+    )
+    parser.add_argument(
         "--model_size", type=str, default="base", choices=["base", "medium", "large"],
         help="Model capacity preset. 'medium' and 'large' progressively widen CNN and policy/value heads."
     )
@@ -2300,6 +2600,26 @@ if __name__ == "__main__":
             "Compute dtype for the spatial ResNet encoder. 'bfloat16' halves "
             "encoder memory bandwidth while keeping float32 params/loss math. "
             "Only valid with the spatial ResNet encoders."
+        ),
+    )
+    parser.add_argument(
+        "--attention_compute_dtype",
+        type=str,
+        default="encoder",
+        choices=["encoder", "float32", "bfloat16"],
+        help=(
+            "Compute dtype for v4/v5 attention submodules. 'encoder' preserves "
+            "current behavior; 'float32' keeps attention logits/softmax/projections "
+            "in f32 while the conv trunk can run with --encoder_compute_dtype bfloat16."
+        ),
+    )
+    parser.add_argument(
+        "--token_mixer_residual_init_scale",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional small nonzero kernel-init scale for v5 token-mixer residual "
+            "projections. 0.0 preserves exact identity-at-init behavior."
         ),
     )
     parser.add_argument(
@@ -2406,6 +2726,15 @@ if __name__ == "__main__":
         help="Override loaded_max, the model-side loaded normalizer (x4 at 128).",
     )
     parser.add_argument(
+        "--local_map_area_scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Divide local workspace-sum observations by this factor before model "
+            "preprocessing. Use 4.0 for 128x128 runs that double tile resolution."
+        ),
+    )
+    parser.add_argument(
         "--reward_normalizer",
         type=float,
         default=None,
@@ -2452,6 +2781,23 @@ if __name__ == "__main__":
     parser.add_argument(
         "--debug", action="store_true",
         help="Enable one-time sanity assertions/prints for agent ordering and masks"
+    )
+    parser.add_argument(
+        "--fail_on_nonfinite",
+        action="store_true",
+        help=(
+            "Fail the run when core PPO/kickstart losses, gradient diagnostics, "
+            "params, or optimizer state become non-finite."
+        ),
+    )
+    parser.add_argument(
+        "--finite_check_interval",
+        type=int,
+        default=0,
+        help=(
+            "Host-side finite-check interval in PPO updates. 0 disables unless "
+            "--fail_on_nonfinite is set, which checks every update."
+        ),
     )
     
     # Named configuration preset
@@ -2753,12 +3099,17 @@ if __name__ == "__main__":
         log_eval_interval=args.log_eval_interval,
         checkpoint_interval=args.checkpoint_interval,
         cache_clear_interval=args.cache_clear_interval,
+        ent_schedule_start=args.ent_schedule_start,
+        ent_schedule_end=args.ent_schedule_end,
+        ent_schedule_steps=args.ent_schedule_steps,
         resume_from=args.resume_from,
         resume_update=args.resume_update,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,
         action_types_override=action_types_override,
         debug=args.debug,
+        fail_on_nonfinite=args.fail_on_nonfinite,
+        finite_check_interval=args.finite_check_interval,
         config_name=args.config,
         dump_bonus_mult=dump_bonus_mult,
         excavator_relocate_dumped_mult=excavator_relocate_dumped_mult,
@@ -2779,6 +3130,8 @@ if __name__ == "__main__":
         model_core=args.model_core,
         map_encoder=args.map_encoder,
         encoder_compute_dtype=args.encoder_compute_dtype,
+        attention_compute_dtype=args.attention_compute_dtype,
+        token_mixer_residual_init_scale=args.token_mixer_residual_init_scale,
         critic_hidden_dims=critic_hidden_dims,
         use_value_clip=args.use_value_clip,
         flat_minibatch_shuffle=args.flat_minibatch_shuffle,
@@ -2793,6 +3146,7 @@ if __name__ == "__main__":
         agent_move_tiles=args.agent_move_tiles,
         dig_radius_tiles=args.dig_radius_tiles,
         loaded_max_override=args.loaded_max_override,
+        local_map_area_scale=args.local_map_area_scale,
         reward_normalizer=args.reward_normalizer,
         resnet_stage_channels=resnet_stage_channels,
         resnet_blocks_per_stage=resnet_blocks_per_stage,

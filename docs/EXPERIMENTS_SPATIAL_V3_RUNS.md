@@ -345,3 +345,322 @@ Fleet: E6 (running), E4' 8123147 (pending), E7, E8 (pending). E5 cancelled earli
   (655.4M steps). In-job full-shape smoke doubles as the memory gate.
 - Equivalence checks to read off the run: episode step counts ≈ 64² runs (~55 for
   successes); reward magnitudes comparable after normalizer 280.
+
+## E9 failure RCA + local gate fix (2026-07-22 ~15:20 CEST)
+
+- Slurm **8131923 FAILED** during the W&B-disabled first-update smoke before production
+  started. Failure signature:
+  `flax.errors.ScopeParamShapeError: Initializer expected to generate shape (64, 8) but got shape (128, 8) instead for parameter "embedding" in "/agent_state_net/embedding_1"`.
+- Root cause: `--teacher_obs_downsample 2` downsampled the teacher inputs, but
+  `train_mixed.py` still instantiated the teacher module with the student 128×128 env object.
+  `get_model_ready` derives `AgentStateNet` position-embedding width from
+  `env.batch_cfg.maps_dims.maps_edge_length`, so the frozen 64-world teacher checkpoint was
+  wrapped in a 128-position teacher module.
+- Fix on local branch: build the frozen teacher model using a minimal env-like object with
+  the teacher checkpoint's native `maps_edge_length`, while the student rollout/env remains
+  128×128. Added regression
+  `TeacherObsDownsampleTest.test_checkpoint_teacher_model_uses_native_embedding_width`.
+- Verified locally before any relaunch:
+  - `py_compile` for `train_mixed.py`, `train.py`, `utils/models.py`, `scripts/grow_checkpoint.py`,
+    and the touched tests.
+  - Focused CPU tests: `tests/test_training_utils.py TeacherObsDownsampleTest
+    ResolutionScalingConfigTest` (10 tests OK) and `tests/test_models.py
+    SpatialV4XAttnEncoderTest SpatialV5SelfAttnEncoderTest ResolutionScaling128Test`
+    (16 tests OK).
+  - Real-checkpoint local CPU smoke with the E9 flags reduced to `1` CPU, `2` envs,
+    `2` steps, and one update: loaded real `grown_medium_se_5stage_128.pkl` plus the real
+    E3 FINAL teacher, printed student `num_embeddings_agent=128`, teacher
+    `num_embeddings_agent=64`, completed the PPO update, and saved a FINAL checkpoint.
+
+## F16 implemented locally — attention hardening + probes (2026-07-22)
+
+No Slurm job launched from this change yet. The code now exposes two gated architecture
+knobs for the next attention ablation batch:
+
+- `--attention_compute_dtype {encoder,float32,bfloat16}`: default `encoder` preserves the
+  current E4'/E7 semantics. `float32` keeps v4/v5 cross-attention and v5 token-mixer
+  attention math in f32 while the spatial-ResNet conv trunk can remain bf16. Non-default
+  values fail fast on non-attention encoders.
+- `--token_mixer_residual_init_scale FLOAT`: default `0.0` preserves exact v5
+  identity-at-init and param counts. Small positive values (`1e-3`/`1e-2` candidates) make
+  the token-mixer residual projections nonzero so gradients reach the inner MHA/MLP params
+  immediately. Nonzero values fail fast unless the encoder is v5.
+
+Added `scripts/analysis/ablate_attention_checkpoint.py` for post-training probes:
+`--mode xattn` zeros the direct cross-attention branch, `--mode token_mixer` zeros v5 mixer
+blocks into identity behavior, and `--mode all_attention` does both. Always run `--dry_run`
+first to audit matched Flax paths before saving an ablated checkpoint.
+
+Local verification:
+
+- `py_compile`: `train_mixed.py`, `train.py`, `utils/models.py`, `scripts/grow_checkpoint.py`,
+  `scripts/analysis/ablate_attention_checkpoint.py`, and touched tests.
+- `tests/test_models.py`: 42 tests OK (default v3/v4/v5 param counts unchanged).
+- `tests/test_training_utils.py`: 33 tests OK (including E9 teacher-env regression and F16
+  config no-op guards).
+- Ablation helper dry-run on a temporary v5 checkpoint: `--mode xattn` matched 14 leaves;
+  `--mode token_mixer` matched 36 leaves; no checkpoint written.
+- Quiet local first-update smoke with W&B disabled and real trainer loop:
+  `--map_encoder resnet_spatial_v5 --encoder_compute_dtype bfloat16
+  --attention_compute_dtype float32 --token_mixer_residual_init_scale 0.001
+  --no_value_clip --flat_minibatch_shuffle`, `1` CPU device, `2` envs, `2` steps, `1`
+  update. It completed the PPO update and saved
+  `checkpoints/f16-attn-local-smoke-local-2026-07-22-17-01-24_FINAL.pkl`.
+
+Launch discipline from E9 is now explicit in the F16 spec: before any new attention Slurm
+job, run a quiet local W&B-off first-update smoke with the exact checkpoint/teacher/model
+flags and confirm update 1 plus checkpoint save/reload. Model init alone is not a sufficient
+gate.
+
+## E9b + E10 submitted together (2026-07-22 ~17:40 CEST)
+
+- Fresh Euler snapshot: `f16-e9e10-20260722` from local branch
+  `agent/spatial-v3-improvements` at base commit `88ccaba` plus dirty F16/E9 fixes. Remote
+  integrity checks passed before submission:
+  - `terra/terra/env.py`
+    `628b897fcbd372e86e7ee5c2c3cb41f7b9c9300539c388452085bf66acea9685`
+  - `terra/terra/state.py`
+    `ef53459f7177f994b1dd54375a7a9be479e3391d334bc278e6409c9395f2fafa`
+  - `terra-baselines/train_mixed.py`
+    `2efc18f88862738984852f2d55aaeff1d37f95a3f6e704692d432636560e420b`
+  - `terra-baselines/utils/models.py`
+    `2205cab36694f90d56bf65a5511449eaccf1d75d2749a23507ec1f0b62c39f18`
+  - `terra-baselines/scripts/grow_checkpoint.py`
+    `32e8a3e4fadcafd5286e8adcd69ab7ac4d47995df2ba7e2f6c6dfb828ebd7847`
+- **E9b 128-res relaunch**: Slurm **8183718**, script
+  `terra_sv3_E9b_res128_ks_4gpu_20260722.sbatch`. Same experiment as E9 but on the fixed
+  teacher-env code snapshot: `solo_excavator_128`, 5-stage medium SE student,
+  `--teacher_obs_downsample 2`, 512 envs/GPU, 10k updates. Student init
+  `grown_medium_se_5stage_128.pkl`
+  (`56900f03e44ce14aabb57e57a71d72856cf4b909533aad70991188fea5e7bd75`). It preserves
+  the original pilot's loaded-feature caveat for comparability.
+- **E10 v5 f32-attn eps-mixer**: Slurm **8183719**, script
+  `terra_sv5_E10_f32attn_epsmix_ks_4gpu_20260722.sbatch`. This is the combined attention
+  follow-up: E3-grown v5 student, bf16 conv trunk, `--attention_compute_dtype float32`,
+  `--token_mixer_residual_init_scale 0.001`, 1024 envs/GPU, 20k updates. Student init
+  `grown_medium_v5_f32attn_eps001_from_e3.pkl`
+  (`aecaf469b4a04d2fd49340d3905fc8a3357a78e375f4dda2c36f665ce50882e7`) was grown after
+  patching `grow_checkpoint.py` so the mixer epsilon is baked into the checkpoint rather
+  than overwritten by `--resume_from`.
+- Both jobs were submitted simultaneously and were **PENDING (Priority)** immediately after
+  `sbatch`. Do not mark either healthy until the in-job W&B-disabled first-update smoke logs
+  `SMOKE_GATE_PASSED`; production only starts after that gate.
+
+## Live refresh (2026-07-23 ~10:10 CEST)
+
+- **E9b failed during the first-update smoke**, so no W&B production run was created. It passed
+  the 4×4090 allocation guard, CUDA/cuDNN/NCCL runtime preflight, and ent-schedule patch, then
+  aborted inside the 128×128 PPO update:
+  `RESOURCE_EXHAUSTED: Out of memory while trying to allocate 11489681704 bytes`.
+  XLA reported `preallocated temp allocation: 10.70GiB`; peak buffers included
+  `bf16[512,128,128,24]` conv activations and rollout map gathers shaped
+  `s8[1,16384,128,128]`. This validates the teacher-env fix but invalidates the
+  512-env/GPU memory assumption. Next E9 gate should keep the fixed snapshot and try
+  `--num_minibatches 64` first (minibatch 512→256) before reducing envs/GPU or rollout length.
+- **E9c memory-fit relaunch submitted** as Slurm **8261393** (2026-07-23 ~10:21 CEST), script
+  `terra_sv3_E9c_res128_mb64_ks_4gpu_20260723.sbatch`. This is the narrow follow-up to the
+  E9b OOM. It keeps snapshot `f16-e9e10-20260722`, the same fixed 128×128 teacher-env code,
+  the same 5-stage medium SE student and E3 teacher checkpoints, 4×RTX 4090 guard,
+  CUDA/cuDNN/NCCL runtime preflight, 512 envs/GPU, 32 steps, smoke
+  `--total_timesteps 65536`, and production `--total_timesteps 655360000`; the only memory-fit
+  shape change is `--num_minibatches 64` in both smoke and production.
+- **E9c passed the in-job W&B-disabled smoke** at 10:31 CEST and started production W&B
+  `0ixsswn4`. The smoke's slow cuDNN autotune line explicitly showed the intended reduced
+  minibatch activation shape `bf16[256,128,128,24]` (E9b OOMed on 512). Production update 1
+  completed, so the Slurm job is healthy by the launch gate. At ~11:17 CEST it was @153/10000
+  with first eval still zero-success (`pos_term 0`, `reward -0.007`, `swhr 0.000`) and ~6.3k
+  global steps/s. Memory fit is solved; learning/equivalence is not proven yet.
+- **E10 passed its smoke and is training** as W&B `lc0s6wke`. It resumed after the
+  update-1000 eval/checkpoint block. At log progress `1691/20000`, the latest W&B summary was
+  `pos_term 3.088`, `reward 0.144`, `swhr 1.000`, `ep_len 55.0`. Normal train throughput is
+  ~24.8k steps/s; the closest control E7 was ~25.5k steps/s on this sample, so the current
+  f32-attention/epsilon-mixer cost is small. Against E4′ xattn (~27.3k), E10 is ~9% slower,
+  but E4′ does not include the v5 token mixer.
+- Other active runs are healthy:
+  - E6 `3y60iiwn`: @15486, `3.126 / 0.146`, `swhr 0.999`, `ep_len 54.3`, ~27.9k steps/s.
+  - E4′ `hafipl4q`: @14000, `3.121 / 0.145`, `swhr 0.998`, `ep_len 54.4`, ~27.3k steps/s.
+  - E7 `n3t8cy9a`: @13000, `3.117 / 0.145`, `swhr 0.998`, `ep_len 54.5`, ~25.5k steps/s.
+  - E8 multitask `smn1lc4b`: @12125, `4.387 / 0.172`, `swhr 0.997`, `ep_len 39.8`,
+    ~26.8k steps/s; this is not directly comparable to single-task foundations because the eval
+    task mix changed.
+
+## Live refresh (2026-07-23 ~14:18 CEST)
+
+All six tracked jobs are still Slurm RUNNING, with no active error markers in the latest log
+tails. W&B summaries and logs now read:
+
+- **E6 `3y60iiwn`**: @~17.2k/20k, `3.136 / 0.146`, `swhr 1.000`, `ep_len 54.3`,
+  ~27.8k steps/s. Still healthy; basically E3 continued above the old E3 final.
+- **E4′ `hafipl4q`**: @~15.9k/20k, `3.154 / 0.147`, `swhr 1.000`, `ep_len 54.0`,
+  ~27.3k steps/s. Currently the best single-task foundations run on the board.
+- **E7 `n3t8cy9a`**: @~14.7k/20k, `3.114 / 0.145`, `swhr 0.999`, `ep_len 54.5`,
+  ~25.8k steps/s. Healthy, but not beating E4′ so far; the identity-init mixer is not yet
+  paying for itself.
+- **E8 multitask `smn1lc4b`**: @~13.4k/20k, `4.431 / 0.174`, `swhr 0.997`,
+  `ep_len 39.7`. Good multitask signal, but not apples-to-apples with the single-task
+  foundations runs because the eval task mix changed.
+- **E10 `lc0s6wke`**: @~3.3k/20k, `3.059 / 0.143`, `swhr 0.997`, `ep_len 55.0`,
+  ~24.8k steps/s. Healthy, but early and currently below E4′/E6/E7. The f32-attention plus
+  epsilon-mixer cost remains small versus E7 (~4-5% slower), but there is no performance win
+  visible yet.
+- **E9c `0ixsswn4`**: @~1.1k/10k, still `0.000 / -0.007`, `swhr 0.000`, `FORWARD=1.0`,
+  `DO=0.0`, ~6.6k steps/s. Runtime/memory fit is solved, but behaviorally this is not
+  learning yet. The likely next diagnosis is cross-resolution kickstart semantics rather
+  than PPO memory: teacher loaded-feature scaling, action/logit spatial transfer, and why
+  the initialized policy collapses to forward-only.
+
+## Live refresh (2026-07-23 ~14:36 CEST)
+
+All six tracked jobs are still RUNNING. Latest Slurm/W&B read:
+
+- **E6 `3y60iiwn`**: @~17.5k/20k, `3.159 / 0.147`, `swhr 0.999`, `ep_len 53.9`,
+  ~28.0k steps/s. Now slightly ahead of E4′ on the scalar summary, but both are within
+  late-stage eval noise.
+- **E4′ `hafipl4q`**: @~16.0k/20k, `3.149 / 0.146`, `swhr 0.999`, `ep_len 54.1`,
+  ~27.4k steps/s. Still a strong single-task ceiling run; checkpoint/eval at update 16000
+  just ran.
+- **E7 `n3t8cy9a`**: @~14.9k/20k, `3.119 / 0.145`, `swhr 0.999`, `ep_len 54.5`,
+  ~25.9k steps/s. Healthy but remains behind E4′/E6.
+- **E8 multitask `smn1lc4b`**: @~13.5k/20k, `4.400 / 0.173`, `swhr 0.997`,
+  `ep_len 40.0`. Still healthy; fps sample is noisy around eval/checkpoint, with normal
+  steps returning to mid/high-20k.
+- **E10 `lc0s6wke`**: @~3.5k/20k, `3.089 / 0.144`, `swhr 0.999`, `ep_len 55.0`,
+  ~24.8k steps/s. Healthy and back around the E3-final scalar, but no sign yet that f32
+  attention plus epsilon mixer beats E4′/E7.
+- **E9c `0ixsswn4`**: @~1.2k/10k, still `0.000 / -0.007`, `swhr 0.000`, `FORWARD=1.0`,
+  `DO=0.0`, ~6.6k steps/s. This is now a stronger negative signal: the 128×128 memory fix
+  works, but the policy remains behaviorally collapsed to forward-only. Next controlled work
+  should debug cross-resolution transfer before spending more GPU on this arm.
+
+## Live refresh (2026-07-23 ~15:03 CEST)
+
+All six tracked jobs are still Slurm RUNNING. No active error/traceback/OOM markers in the
+last 300 log lines.
+
+- **E6 `3y60iiwn`**: @~17.8k/20k, `3.141 / 0.146`, `swhr 0.999`, `ep_len 54.2`,
+  ~27.9k steps/s. Healthy; near the E4′/E6 ceiling band.
+- **E4′ `hafipl4q`**: @~16.2k/20k, `3.161 / 0.147`, `swhr 0.999`, `ep_len 53.9`,
+  ~27.4k steps/s. Currently the strongest single-task scalar summary.
+- **E7 `n3t8cy9a`**: @~15.0k/20k, `3.113 / 0.145`, `swhr 0.999`, `ep_len 54.5`.
+  It is in the update-15000 checkpoint/eval block; normal steps remain ~25.8k steps/s.
+- **E8 multitask `smn1lc4b`**: @~13.6k/20k, `4.458 / 0.175`, `swhr 0.997`,
+  `ep_len 39.5`. Multitask metrics are strong, but recent log steps are intermittently very
+  slow despite no error markers. Watch whether this clears after the current eval/checkpoint
+  vicinity.
+- **E10 `lc0s6wke`**: @~3.8k/20k, `3.061 / 0.143`, `swhr 0.998`, `ep_len 55.3`,
+  ~24.7k steps/s. Healthy, but still no clear advantage from f32 attention plus epsilon mixer.
+- **E9c `0ixsswn4`**: @~1.3k/10k, still `0.000 / -0.007`, `swhr 0.000`, `FORWARD=1.0`,
+  `DO=0.0`, ~6.6k steps/s. The negative read is now robust enough that continuing mainly
+  spends GPU to characterize the failure curve; the next useful work is a local/cheap
+  cross-resolution transfer debug, not another blind 128×128 PPO run.
+
+## E9c cancellation + NaN RCA (2026-07-23 ~15:15 CEST)
+
+E9c was cancelled manually after the collapse was traced to NaNs rather than ordinary
+learning failure. Slurm **8261393** ended `CANCELLED` after `04:53:13`; the other runs were
+not touched.
+
+Confirmed evidence:
+
+- The W&B curve was forward-only from the first eval through cancellation:
+  `eval/FORWARD %=1.0`, `eval/DO=0.0`, `eval/positive_terminations=0`,
+  `eval/success_within_horizon_rate=0` at updates 100, 200, ..., 1300.
+- The saved production checkpoint
+  `checkpoints/terra-sv3-E9c-res128-mb64-ks-euler-2026-07-23-10-31-51.pkl`
+  at `next_update=1401` had **2,793,655 / 2,793,655 model params NaN** and NaNs in
+  the optimizer state.
+- More importantly, the W&B-disabled smoke checkpoint
+  `checkpoints/terra-sv3-E9c-res128-mb64-ks-smoke-euler-2026-07-23-10-22-10_FINAL.pkl`
+  at `next_update=1` already had **all model params NaN** and NaN `total_loss`,
+  `actor_loss`, `value_loss`, `entropy`, `kickstart/kl`, and `kickstart/value_mse`.
+  Therefore the bad behavior began on the first PPO update; production never had a
+  finite model.
+- The grown 128 init checkpoint `grown_medium_se_5stage_128.pkl` is finite, so the NaNs
+  are introduced by the first training update, not by the checkpoint grow itself.
+- E9c's W&B train history logged kickstart coefficients and rewards, but the actual loss
+  scalars (`total_loss`, `actor_loss`, `value_loss`, `entropy`, `kickstart/kl`,
+  `kickstart/value_mse`) were missing/NaN during the active kickstart window. In the healthy
+  64×64 kickstart controls (E3/E4′), those scalars are finite from update 0 and the policy is
+  already competent by update 100.
+- Dataset arrays checked so far are finite; 128 `images`, `occupancy`, `dumpability`, and
+  `distance` arrays have no NaNs/Infs. The first 20 128 image arrays downsample exactly to
+  their 64 source by both `a[::2, ::2]` and 2×2 block mean. A bool-mask comparison probe
+  tripped on NumPy bool subtraction before finishing mask equality, but no data finiteness
+  issue was found.
+
+Most likely root causes to debug before any relaunch:
+
+1. **Finite smoke gate missing.** The immediate operational bug is that `SMOKE_GATE_PASSED`
+   only meant "update 0 returned"; it did not assert finite loss, params, or optimizer state.
+   This allowed an all-NaN checkpoint into production.
+2. **First-update numerical fault in the 128/kickstart loss path.** Because the finite grown
+   init becomes all-NaN after one PPO update, the next probe should isolate whether the NaN
+   enters through student logits/entropy, teacher logits/KL, value MSE, advantages/targets, or
+   optimizer gradients.
+3. **Teacher obs transform remains semantically incomplete.** `downsample_teacher_obs`
+   downsamples global maps and integer-divides agent x/y plus width/height, but leaves local
+   1D maps and `agent_states[..., loaded]` unchanged. That can feed the 64-world teacher a
+   mixed-resolution local/global observation and wrong load phase. This is a correctness bug
+   even if it is not yet proven to be the NaN trigger.
+4. **128 policy equivalence still unproven.** Before training, evaluate the finite
+   `grown_medium_se_5stage_128.pkl` itself and print student vs teacher action-probability
+   histograms on the same reset batch. A function-preserving 128 grow should not start
+   forward-only if the E3 behavior transferred.
+
+Do not relaunch E9 blindly. Required next gates:
+
+- Add a cheap local/GPU debug probe for one reset/rollout batch: finite obs, finite student
+  logits/value/entropy, finite teacher logits/value/entropy after `teacher_obs_downsample=2`,
+  KL/value-MSE values, action argmax/prob histograms, advantage/target ranges, gradient
+  finiteness before optimizer apply, and param finiteness after apply.
+- Extend the Slurm smoke gate to load the smoke FINAL checkpoint and fail unless model params,
+  optimizer state, and all loss scalars are finite.
+- Fix or replace teacher obs construction so the teacher input is a coherent 64-world
+  observation, including local maps and loaded/capacity scaling, before another 128×128
+  production run.
+
+## E9c final RCA + E9d relaunch gate (2026-07-23 ~16:55 CEST)
+
+The E9c NaN/collapse was reproduced locally under the exact per-GPU production shape
+(`512` envs, `32` steps, `num_minibatches=64`, 5-stage medium SE 128 student, E3 teacher
+with `teacher_obs_downsample=2`). The first diagnostics split the failure into two bugs:
+
+1. `LocalMapWrapper._wrap_with_masks` summed 128-resolution workspace maps and cast the
+   sums to `IntLowDim` (`int8`). 128-equivalent workspaces can exceed 127 (a full 12×12
+   probe produced 144), which wrapped local maps before the policy saw them. Fixed by
+   storing local workspace sums as `IntMap`, and by scaling model-side local maps with
+   `--local_map_area_scale 4` to preserve the 64-resolution magnitude.
+2. Even after the local-map fix, the rollout had non-finite policy values/log-probs before
+   PPO. `flax.linen.Embed` returns NaNs for high out-of-range indices; 128 edge positions
+   and the 128→64 teacher transform can expose exact-edge indices such as 64 for a 64-row
+   position table. Fixed by clipping `AgentStateNet` discrete embedding inputs
+   (positions, angles, agent type) at the model boundary.
+
+Related correctness fixes now in the E9d source:
+
+- `downsample_teacher_obs` also divides loaded dirt by `downsample**2`; E9d uses
+  `--loaded_max_override 400` so the student loaded scale matches the 128 tile-count volume.
+- PPO finite diagnostics now check rollout obs/value/reward/log-prob, raw and normalized
+  advantages/targets, student value/logits/log-prob/ratio/entropy, teacher value/logits,
+  gradient norm, model params, and optimizer state. `--fail_on_nonfinite` is enabled in
+  both the W&B-disabled smoke and production phases.
+- Foundation dataset audit remains clean: 600 finite 128 maps, 388 metadata files,
+  128 `images`/`occupancy`/`dumpability` stride-match their 64 foundations source; `distance`
+  is the correct 128 recomputation (`realistic_max_distance=48`, source 64 uses 24).
+
+Local gate passed after the fixes:
+
+- Exact 1-GPU full-shape command completed one PPO update and saved
+  `checkpoints/e9-local-exact-bf16-embedclip-local-2026-07-23-16-44-45_FINAL.pkl`.
+- Checkpoint inspection: model finite fraction `1.0`, optimizer finite fraction `1.0`.
+- Loss/diagnostics: `total_loss=3.5877`, `value_loss=0.5256`, `actor_loss=0.1495`,
+  `entropy=1.3661`, `kickstart/kl=2.0685`, `kickstart/value_mse=0.6917`,
+  rollout/value/log-prob/raw advantages/normalized advantages/student logits/teacher logits
+  finite fractions all `1.0`, finite grad norm `40.895`.
+- Targeted tests passed: local-map dtype regression, embedding-index clipping regression,
+  and `test_training_utils.py` (39 tests).
+
+E9d submitted as Slurm **8323457** using the same snapshot path
+`f16-e9e10-20260722`, with the fixed files synced and hash-pinned. At submission it was
+`PENDING (Priority)`. The script still performs runtime checks, dataset audit, and a
+W&B-disabled finite one-update smoke before starting production W&B.

@@ -1,6 +1,6 @@
 # Terra Excavation Policy
 
-Status: E1/E3 finals 2026-07-22 — E3 (kickstart medium) 3.05/0.142 is the best Terra policy to date (+8.7% over teacher), E1 confirms the PPO fixes; E5 (dumpzone transfer) + E6 (300-step efficiency) launched from the E3 checkpoint. Previously: kickstart validated 2026-07-21 — medium student (E3) surpassed its
+Status: E1/E3 finals 2026-07-22 — E3 (kickstart medium) 3.05/0.142 is the best Terra policy to date (+8.7% over teacher), E1 confirms the PPO fixes; E4 from scratch gives a positive cross-attention signal; F16 attention hardening knobs are implemented but not launched. Previously: kickstart validated 2026-07-21 — medium student (E3) surpassed its
 teacher's final performance at 30% of its training budget and holds a perfect
 success-within-horizon rate; spatial-encoder family confirmed over Atari-CNN per-sample.
 
@@ -18,7 +18,9 @@ map distributions without retraining from scratch.
   `resnet_spatial_8x8` (flatten readout preserves spatial layout) → `resnet_spatial_8x8_se`
   (11 input channels: + remaining_dig, dump_deficit, coord x/y; squeeze-excitation) →
   `resnet_spatial_8x8_se_xattn` (agent-conditioned cross-attention readout: 64 tokens @8×8,
-  agent query + 4 latents — content-based "find leftover cells / highlight piles" selection).
+  agent query + 4 latents — content-based "find leftover cells / highlight piles" selection)
+  → `resnet_spatial_8x8_se_sa_xattn` (v5: two pre-norm token self-attention blocks before
+  the flatten+xattn readouts).
 - **PPO fixes** (each behind a default-off flag): value clipping off, flat env×time
   minibatch shuffling, entropy schedule stretched to the full run, bf16 encoder compute
   (f32 params), critic-head width override.
@@ -43,7 +45,7 @@ map distributions without retraining from scratch.
 | E2 nr032qs7 | se+bf16+critic512 from scratch, 20k | 2.33 / 0.108 | below teacher — from-scratch drag of the heavier bundle |
 | E1 3buorfp3 | spatial_8x8 + algo fixes, 20k | 2.83 / 0.132 (final) | beats teacher on its own encoder — algo fixes confirmed net-positive |
 | **E3 j0bs2fkl** | **medium se, grown init + kickstart from pqtmfmqy, 20k** | **3.05 / 0.142 (final), swhr 0.997, ep_len 55.2** | **best policy to date: +8.7% over teacher; also fastest episodes (55 vs E1 59 steps)** |
-| E4 k8vnwp5u | se_xattn from scratch, 20k | 2.50 / 0.117 @~17k, rising | recovered strongly; already above E2's from-scratch final (2.33) — weak positive for xattn |
+| E4 k8vnwp5u | se_xattn from scratch, 20k | 2.59 / 0.121 final | +11% over SE from scratch (E2) — cross-attention is a real architecture win, but still below warm-started runs |
 
 Supporting measurements: bf16 encoder ≈ 2× fwd+bwd (43k vs 28.8k steps/s in production);
 pmap data-parallel scaling ~95% (1-GPU probe 11.4k vs 10.8k/GPU on 4); update loop is ~86%
@@ -65,8 +67,12 @@ coast-at-80% attractor identified 2026-07-17.
    550-step horizons → tighten `max_steps_in_episode` (e.g. 300) as direct pressure on
    time-to-completion; track successful-episode length as a primary metric; optionally
    early-finish terminal bonus.
-3. **E4′ — xattn kickstarted** from the E3 checkpoint (grow v3-medium → v4-medium).
-4. Timeout truncation bootstrapping (mask-branch design port), exact invalid-action
+3. **Attention ablations (F16)**: E4′/E7 follow-ups with
+   `--attention_compute_dtype float32`; v5 epsilon mixer screens with
+   `--token_mixer_residual_init_scale 1e-3`/`1e-2`; checkpoint rollout probes via
+   `scripts/analysis/ablate_attention_checkpoint.py --mode xattn|token_mixer`.
+4. **E4′ — xattn kickstarted** from the E3 checkpoint (grow v3-medium → v4-medium).
+5. Timeout truncation bootstrapping (mask-branch design port), exact invalid-action
    masking, Muon-on-trunk optimizer A/B (only sanctioned optimizer experiment — no RL
    evidence for Shampoo-class preconditioning at this scale).
 
