@@ -227,13 +227,19 @@ def rollout_episode(
     deterministic,
     seed,
     use_mcts=False,
+    reset_keys=None,
+    record_observations=True,
 ):
     mode_str = "MCTS" if use_mcts else ("PPO (greedy)" if deterministic else "PPO (stochastic)")
     print(f"[eval_mcts] mode: {mode_str}, seed={seed}")
 
     rng = jrandom.PRNGKey(seed)
     rng, _rng = jrandom.split(rng)
-    rng_reset = jrandom.split(_rng, rl_config.num_test_rollouts)
+    rng_reset = (
+        jrandom.split(_rng, rl_config.num_test_rollouts)
+        if reset_keys is None
+        else jnp.asarray(reset_keys)
+    )
     timestep = env.reset(env_cfgs, rng_reset)
 
     # Keep pytree structure stable for PPO and MCTS paths (eval_mixed.py parity).
@@ -302,7 +308,11 @@ def rollout_episode(
         # Reset for actual run
         rng = jrandom.PRNGKey(seed)
         rng, _rng = jrandom.split(rng)
-        rng_reset = jrandom.split(_rng, rl_config.num_test_rollouts)
+        rng_reset = (
+            jrandom.split(_rng, rl_config.num_test_rollouts)
+            if reset_keys is None
+            else jnp.asarray(reset_keys)
+        )
         timestep = env.reset(env_cfgs, rng_reset)
         prev_actions = jnp.zeros(
             (rl_config.num_test_rollouts, rl_config.num_prev_actions),
@@ -346,7 +356,8 @@ def rollout_episode(
 
     start_time = time.time()
     while True:
-        obs_seq = _append_to_obs(obs, obs_seq)
+        if record_observations:
+            obs_seq = _append_to_obs(obs, obs_seq)
         active_env_mask = ~episode_terminated_once
 
         if use_mcts:

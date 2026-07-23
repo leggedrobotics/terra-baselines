@@ -18,6 +18,7 @@ from train import (
     TrainConfig,
     ppo_update_networks,
     downsample_teacher_obs,
+    get_curriculum_levels,
 )
 from train_mixed import (
     MixedAgentTrainConfig,
@@ -30,6 +31,7 @@ from train_mixed import (
     _validate_checkpoint_architecture,
     _validate_checkpoint_history_width,
     _validate_resume_update,
+    _checkpoint_load_mode,
     _teacher_model_env_from_checkpoint,
 )
 from utils.helpers import checkpoint_batch_config, replicate_checkpoint_env_config
@@ -317,6 +319,30 @@ class CheckpointCompatibilityTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _validate_resume_update(3, 3)
 
+    def test_parameters_only_warm_start_excludes_resume_state(self):
+        warm = SimpleNamespace(
+            resume_from=None,
+            warm_start_from="/tmp/parent.pkl",
+            resume_update=None,
+        )
+        self.assertEqual(_checkpoint_load_mode(warm), "warm_start")
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            _checkpoint_load_mode(
+                SimpleNamespace(
+                    resume_from="/tmp/resume.pkl",
+                    warm_start_from="/tmp/parent.pkl",
+                    resume_update=None,
+                )
+            )
+        with self.assertRaisesRegex(ValueError, "incompatible"):
+            _checkpoint_load_mode(
+                SimpleNamespace(
+                    resume_from=None,
+                    warm_start_from="/tmp/parent.pkl",
+                    resume_update=12,
+                )
+            )
+
     def test_checkpoint_env_axis_keeps_agent_vectors(self):
         class MiniEnvConfig(NamedTuple):
             agent_types: jnp.ndarray
@@ -371,6 +397,35 @@ class CheckpointCompatibilityTest(unittest.TestCase):
         np.testing.assert_array_equal(
             np.asarray(legacy_replicated.agent_types),
             np.tile(np.array([[0, 2]]), (4, 1)),
+        )
+
+
+class CurriculumLevelLoggingTest(unittest.TestCase):
+    def test_histogram_includes_every_device(self):
+        class Curriculum(NamedTuple):
+            level: jnp.ndarray
+
+        class Config(NamedTuple):
+            curriculum: Curriculum
+
+        env_cfg = Config(
+            curriculum=Curriculum(
+                level=jnp.array(
+                    [[0, 0, 1, 1], [1, 2, 2, 2]], dtype=jnp.int32
+                )
+            )
+        )
+        levels = [
+            {"maps_path": "M0"},
+            {"maps_path": "M1"},
+            {"maps_path": "M2"},
+        ]
+        stats = get_curriculum_levels(env_cfg, levels)
+        self.assertEqual(stats["Level 0: M0"], 2)
+        self.assertEqual(stats["Level 1: M1"], 3)
+        self.assertEqual(stats["Level 2: M2"], 3)
+        self.assertEqual(
+            sum(stats[f"Level {i}: M{i}"] for i in range(3)), 8
         )
 
 

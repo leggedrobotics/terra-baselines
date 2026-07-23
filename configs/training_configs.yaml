@@ -338,3 +338,52 @@ solo_excavator_multitask_trench:
       max_steps: 450
     - path: trenches/double_diagonal
       max_steps: 450
+
+
+# Frozen local-map comparison from terra/TRAINING_DESIGN.md. DATASET_PATH must
+# point at the generated training-design-v1 bank root. Both arms use the same
+# terminal universe; only staged exposure adds the M0 and M1 frontier levels.
+map_curriculum_flat_v1:
+  description: NEW-MAPS-FLAT - common local M0-M2 terminal universe from update zero
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/local_M2_terminal
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+
+map_curriculum_staged_v1:
+  description: NEW-MAPS-STAGED - per-environment M0 to M1 to common terminal universe
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/local_M0
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/local_M1
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/local_M2_terminal
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false

@@ -460,6 +460,22 @@ def _validate_resume_update(resume_update: int, num_updates: int) -> None:
         )
 
 
+def _checkpoint_load_mode(config) -> str | None:
+    if config.resume_from is not None and config.warm_start_from is not None:
+        raise ValueError(
+            "--resume_from and --warm_start_from are mutually exclusive"
+        )
+    if config.warm_start_from is not None:
+        if config.resume_update is not None:
+            raise ValueError(
+                "--resume_update is incompatible with --warm_start_from"
+            )
+        return "warm_start"
+    if config.resume_from is not None:
+        return "resume"
+    return None
+
+
 def _backfill_terminal_rewards(
     reward_seq: jax.Array,
     terminal_reward_seq: jax.Array,
@@ -693,6 +709,8 @@ class MixedAgentTrainConfig:
     log_train_interval: int = 1  # Number of updates between logging train stats
     log_eval_interval: int = 100
     checkpoint_interval: int = 100
+    checkpoint_dir: str = "checkpoints"
+    keep_checkpoint_history: bool = False
     
     # Model settings optimized for mixed agents
     num_prev_actions: int = 10  # overridden to 5 * num_agents at runtime
@@ -723,6 +741,9 @@ class MixedAgentTrainConfig:
     
     # Checkpoint loading
     resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
+    # Load only model parameters. Optimizer, update counter, environment,
+    # curriculum state, RNG, and action history are always fresh.
+    warm_start_from: str | None = None
     load_env_from_checkpoint: bool = True  # If true, use env_config from checkpoint
     resume_update: int | None = None  # Optional override for old param-only checkpoints
     
@@ -806,6 +827,7 @@ class MixedAgentTrainConfig:
 
 
     def __post_init__(self):
+        _checkpoint_load_mode(self)
         self.map_encoder = canonical_map_encoder(self.map_encoder)
         if self.attention_compute_dtype not in ("encoder", "float32", "bfloat16"):
             raise ValueError(
@@ -1470,28 +1492,49 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     checkpoint = None
     env_params_override = None
     resume_update = 0
-    if config.resume_from is not None:
-        if not os.path.exists(config.resume_from):
-            raise FileNotFoundError(f"Checkpoint does not exist: {config.resume_from}")
+    checkpoint_mode = _checkpoint_load_mode(config)
+    checkpoint_path = (
+        config.warm_start_from
+        if checkpoint_mode == "warm_start"
+        else config.resume_from
+    )
+    if checkpoint_path is not None:
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(
+                f"Checkpoint does not exist: {checkpoint_path}"
+            )
         try:
-            checkpoint = helpers.load_pkl_object(config.resume_from)
+            checkpoint = helpers.load_pkl_object(checkpoint_path)
             if "model" not in checkpoint:
                 raise KeyError("checkpoint has no 'model' parameters")
             _validate_checkpoint_architecture(checkpoint, config)
-            if config.load_env_from_checkpoint and "env_config" in checkpoint:
+            if (
+                checkpoint_mode == "resume"
+                and config.load_env_from_checkpoint
+                and "env_config" in checkpoint
+            ):
                 env_params_override = _strip_checkpoint_env_axis(
                     checkpoint["env_config"],
                     config.num_envs_per_device,
                 )
-            if "next_update" in checkpoint:
-                resume_update = int(checkpoint["next_update"])
-            elif "update" in checkpoint:
-                resume_update = int(checkpoint["update"]) + 1
-            if config.resume_update is not None:
-                resume_update = int(config.resume_update)
-            print(f"Loaded checkpoint from {config.resume_from}")
+            if checkpoint_mode == "resume":
+                if "next_update" in checkpoint:
+                    resume_update = int(checkpoint["next_update"])
+                elif "update" in checkpoint:
+                    resume_update = int(checkpoint["update"]) + 1
+                if config.resume_update is not None:
+                    resume_update = int(config.resume_update)
+                print(f"Loaded resume checkpoint from {checkpoint_path}")
+            else:
+                print(
+                    "Loaded parameters-only warm start from "
+                    f"{checkpoint_path}; optimizer, update counter, "
+                    "environment, curriculum, RNG, and histories are fresh."
+                )
         except Exception as e:
-            raise RuntimeError(f"Failed to load checkpoint from {config.resume_from}") from e
+            raise RuntimeError(
+                f"Failed to load checkpoint from {checkpoint_path}"
+            ) from e
     # Initialize training components (optionally with env override)
     rng, env, env_params, train_state = make_mixed_agent_states(
         config, env_params_override=env_params_override
@@ -1504,7 +1547,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         try:
             train_state = train_state.replace(params=checkpoint["model"])
             print("Replaced model parameters from checkpoint.")
-            if "optimizer_state" in checkpoint:
+            if (
+                checkpoint_mode == "resume"
+                and "optimizer_state" in checkpoint
+            ):
                 train_state = train_state.replace(
                     opt_state=checkpoint["optimizer_state"],
                     step=checkpoint.get("train_state_step", train_state.step),
@@ -1517,7 +1563,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "Environment, RNG, and action-history state restart on resume; "
                     "the continuation is not bit-exact."
                 )
-            else:
+            elif checkpoint_mode == "resume":
                 if config.resume_update is None:
                     resume_update = 0
                 print(
@@ -1529,6 +1575,16 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "Using manual resume_update="
                         f"{resume_update} for logging/entropy schedule."
                     )
+            else:
+                if int(jax.device_get(train_state.step)) != 0:
+                    raise RuntimeError(
+                        "parameters-only warm start did not keep a fresh "
+                        "optimizer step"
+                    )
+                print(
+                    "Verified parameters-only warm start: train_state.step=0 "
+                    "and PPO update range starts at 0."
+                )
         except Exception as e:
             raise RuntimeError("Failed to restore checkpoint training state") from e
     _validate_resume_update(resume_update, config.num_updates)
@@ -2118,7 +2174,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 )
                 need_checkpoint = (
                     config.checkpoint_interval > 0
-                    and i % config.checkpoint_interval == 0
+                    and (i + 1) % config.checkpoint_interval == 0
                 )
                 need_eval = (
                     config.log_eval_interval > 0
@@ -2151,9 +2207,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     _assert_finite_loss_info(loss_info_single, i)
 
                 if need_train_log:
-                    # Consolidated logging to prevent step ordering issues
+                    # Keep the device axis: unreplicate() above is appropriate
+                    # for replicated params/losses, but curriculum level is
+                    # independent per environment on every device.
                     curriculum_levels = get_curriculum_levels(
-                        env_params_single, env.batch_cfg.curriculum_global.levels
+                        runner_state[2].env_cfg,
+                        env.batch_cfg.curriculum_global.levels,
                     )
                     
                     # Start with base metrics
@@ -2274,7 +2333,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "next_update": i + 1,
                         "loss_info": loss_info_single,
                     }
-                    helpers.save_pkl_object(checkpoint, f"checkpoints/{config.name}.pkl")
+                    checkpoint_name = f"{config.name}.pkl"
+                    if config.keep_checkpoint_history:
+                        checkpoint_name = (
+                            f"{config.name}_update_{i + 1:06d}.pkl"
+                        )
+                    helpers.save_pkl_object(
+                        checkpoint,
+                        str(Path(config.checkpoint_dir) / checkpoint_name),
+                    )
 
                 if need_eval:
                     # Reuse the training reset shape regime and keep only the
@@ -2418,6 +2485,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     print(f"   - log_train_interval: {config.log_train_interval}")
     print(f"   - log_eval_interval: {config.log_eval_interval}")
     print(f"   - checkpoint_interval: {config.checkpoint_interval}")
+    print(f"   - checkpoint_dir: {config.checkpoint_dir}")
+    print(
+        f"   - keep_checkpoint_history: "
+        f"{config.keep_checkpoint_history}"
+    )
     enforce_border_alignment = bool(jnp.ravel(env_params.enforce_foundation_border_alignment)[0])
     enable_reachability_obs = bool(jnp.ravel(env_params.enable_reachability_obs)[0])
     foundation_dump_min_free_fraction = float(
@@ -2478,8 +2550,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             "training_duration": elapsed_time,
             "final_reward": train_info.get("final_reward", None)
         }
-        helpers.save_pkl_object(final_checkpoint, f"checkpoints/{config.name}_FINAL.pkl")
-        print(f"💾 Final mixed agent model saved to checkpoints/{config.name}_FINAL.pkl")
+        final_path = (
+            Path(config.checkpoint_dir) / f"{config.name}_FINAL.pkl"
+        )
+        helpers.save_pkl_object(final_checkpoint, str(final_path))
+        print(f"💾 Final mixed agent model saved to {final_path}")
         
     except KeyboardInterrupt:
         print("⏹️ Training interrupted. Finalizing...")
@@ -2540,6 +2615,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint_interval", type=int, default=100,
         help="Checkpoint save interval in PPO updates."
+    )
+    parser.add_argument(
+        "--checkpoint_dir",
+        type=str,
+        default="checkpoints",
+        help="Directory for periodic and final checkpoints.",
+    )
+    parser.add_argument(
+        "--keep_checkpoint_history",
+        action="store_true",
+        help="Write update-numbered periodic checkpoints instead of overwriting one file.",
     )
     parser.add_argument(
         "--eval_episodes", type=int, default=100,
@@ -2859,6 +2945,15 @@ if __name__ == "__main__":
         help="Path to a checkpoint .pkl to resume training from."
     )
     parser.add_argument(
+        "--warm_start_from",
+        type=str,
+        default=None,
+        help=(
+            "Load model parameters only. Optimizer, update counter, "
+            "environment, curriculum, RNG, and histories start fresh."
+        ),
+    )
+    parser.add_argument(
         "--resume_update", type=int, default=None,
         help=(
             "Manual next update index for old checkpoints that only contain "
@@ -3098,11 +3193,14 @@ if __name__ == "__main__":
         log_train_interval=args.log_train_interval,
         log_eval_interval=args.log_eval_interval,
         checkpoint_interval=args.checkpoint_interval,
+        checkpoint_dir=args.checkpoint_dir,
+        keep_checkpoint_history=args.keep_checkpoint_history,
         cache_clear_interval=args.cache_clear_interval,
         ent_schedule_start=args.ent_schedule_start,
         ent_schedule_end=args.ent_schedule_end,
         ent_schedule_steps=args.ent_schedule_steps,
         resume_from=args.resume_from,
+        warm_start_from=args.warm_start_from,
         resume_update=args.resume_update,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,

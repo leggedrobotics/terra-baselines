@@ -635,7 +635,7 @@ def get_curriculum_levels(env_cfg, global_curriculum_levels, timestep=None):
         timestep: Optional timestep containing observations with agent state info
     """
     curriculum_stat = {}
-    curriculum_levels = env_cfg.curriculum.level
+    curriculum_levels = jnp.ravel(env_cfg.curriculum.level)
     
     # Original curriculum level tracking
     for i, global_curriculum_level in enumerate(global_curriculum_levels):
@@ -651,14 +651,20 @@ def get_curriculum_levels(env_cfg, global_curriculum_levels, timestep=None):
     if timestep is not None and hasattr(timestep, 'observation'):
         obs = timestep.observation
         if 'agent_states' in obs and 'num_agents' in obs:
+            agent_states = obs['agent_states'].reshape(
+                (-1,) + obs['agent_states'].shape[-2:]
+            )
+            num_agents = jnp.ravel(obs['num_agents'])
             # Agent type is at index 6 in per-agent feature vector
-            agent_types_1 = obs['agent_states'][:, 0, 6].astype(jnp.int32)
-            last_idx = jnp.maximum(0, obs['num_agents'] - 1)
-            agent_types_2 = obs['agent_states'][jnp.arange(obs['agent_states'].shape[0]), last_idx, 6].astype(jnp.int32)
+            agent_types_1 = agent_states[:, 0, 6].astype(jnp.int32)
+            last_idx = jnp.maximum(0, num_agents - 1)
+            agent_types_2 = agent_states[
+                jnp.arange(agent_states.shape[0]), last_idx, 6
+            ].astype(jnp.int32)
     
     # Fallback to default mixed agent setup if no observation data
     if agent_types_1 is None or agent_types_2 is None:
-        num_envs = curriculum_levels.shape[0]
+        num_envs = curriculum_levels.size
         # Default: agent 1 = tracked (0), agent 2 = skid steer (2)
         agent_types_1 = jnp.zeros(num_envs, dtype=jnp.int32)  # All tracked
         agent_types_2 = jnp.full(num_envs, 2, dtype=jnp.int32)  # All skid steer
