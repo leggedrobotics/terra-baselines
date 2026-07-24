@@ -63,7 +63,7 @@ test -f "$BANK/validation.json"
 
 HOME_USED_GB="$(
     lquota |
-        awk -F'|' '/\\/cluster\\/home\\/lterenzi/ && /space/ {
+        awk -F'|' '/\/cluster\/home\/lterenzi/ && /space/ {
             value=$4
             gsub(/[^0-9.]/, "", value)
             print value
