@@ -6,6 +6,7 @@ import pytest
 
 from scripts.analysis.audit_historical_curriculum import (
     _collapse_with_boundary_flow,
+    _historical_terminal_reward,
     completion_observer,
     parse_labelled_values,
     summarize_rows,
@@ -58,6 +59,26 @@ def test_completion_observer_separates_visible_and_buffer_soil():
     np.testing.assert_allclose(observed["exact_completion"], [0.0])
     np.testing.assert_allclose(observed["accepted_buffer_completion"], [1.0])
     np.testing.assert_allclose(observed["buffer_only_positive_volume"], [1.0])
+
+
+def test_historical_terminal_reward_uses_code_default_when_field_is_absent():
+    state = SimpleNamespace(
+        env_cfg=SimpleNamespace(
+            rewards=SimpleNamespace(
+                terminal=jnp.array([100.0], dtype=jnp.float32),
+                normalizer=jnp.array([10.0], dtype=jnp.float32),
+            )
+        ),
+        agent=SimpleNamespace(agent_active=jnp.array([[1]], dtype=jnp.int32)),
+    )
+    reward, full_terminal = _historical_terminal_reward(
+        state,
+        jnp.array([0.8], dtype=jnp.float32),
+        jnp.array([True]),
+        jnp.array([True]),
+    )
+    np.testing.assert_allclose(reward, [5.0])
+    np.testing.assert_allclose(full_terminal, [20.0])
 
 
 class _AllValidSoilState:

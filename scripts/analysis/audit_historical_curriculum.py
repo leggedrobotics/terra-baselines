@@ -286,7 +286,8 @@ def _historical_terminal_reward(
     """Reproduce the historical terminal reward before and after normalization."""
     base_reward = state.env_cfg.rewards.terminal.astype(jnp.float32)
     minimum = jnp.asarray(
-        state.env_cfg.terminal_completion_min_threshold, dtype=jnp.float32
+        getattr(state.env_cfg, "terminal_completion_min_threshold", 0.6),
+        dtype=jnp.float32,
     )
     scaled = (completion - minimum) / jnp.maximum(1.0 - minimum, 1e-6)
     success_reward = jnp.where(
