@@ -110,6 +110,15 @@ from flax.jax_utils import replicate, unreplicate
 from flax import struct
 import utils.helpers as helpers
 from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, policy
+from utils.episode_aggregates import (
+    aggregate_to_payload,
+    assert_aggregate_integrity,
+    empty_episode_aggregate,
+    EpisodeStep,
+    new_episode_accumulator,
+    reduce_episode_aggregate,
+    update_episode_aggregate,
+)
 import json
 import os
 import shutil
@@ -518,6 +527,94 @@ def assert_initial_env_steps_zero(timestep):
 
     jax.debug.callback(_check, timestep.state.env_steps)
     return timestep
+
+
+def _write_episode_aggregate_receipt(
+    config,
+    payload: dict,
+) -> Path:
+    """Atomically save the bounded population receipt for one log window."""
+    output_dir = Path(config.checkpoint_dir) / "episode_aggregates"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = (
+        output_dir
+        / f"{config.name}_update_{int(payload['update']):06d}.json"
+    )
+    if output_path.exists():
+        raise FileExistsError(
+            f"Episode aggregate receipt already exists: {output_path}"
+        )
+    file_descriptor, temporary_path = tempfile.mkstemp(
+        prefix=f".{output_path.name}.",
+        suffix=".tmp",
+        dir=output_dir,
+    )
+    try:
+        with os.fdopen(file_descriptor, "w") as stream:
+            json.dump(payload, stream, indent=2, sort_keys=True, allow_nan=False)
+            stream.write("\n")
+        os.replace(temporary_path, output_path)
+    except Exception:
+        try:
+            os.unlink(temporary_path)
+        except FileNotFoundError:
+            pass
+        raise
+    return output_path
+
+
+def _episode_aggregate_wandb_metrics(payload: dict) -> dict[str, float]:
+    """Expose only bounded population totals and rates to W&B."""
+    totals = payload["totals"]
+    rates = payload["rates"]
+    episode_count = totals["episode_count"]
+    step_count = totals["step_count"]
+
+    def _per_episode(field: str) -> float:
+        if episode_count == 0:
+            return float("nan")
+        return float(totals[field]) / episode_count
+
+    return {
+        "episodes/count": episode_count,
+        "episodes/task_done_count": totals["task_done_count"],
+        "episodes/timeout_count": totals["timeout_count"],
+        "episodes/task_done_rate": (
+            float(rates["task_done_rate"])
+            if rates["task_done_rate"] is not None
+            else float("nan")
+        ),
+        "episodes/timeout_rate": (
+            float(rates["timeout_rate"])
+            if rates["timeout_rate"] is not None
+            else float("nan")
+        ),
+        "episodes/mean_return": _per_episode("episodic_return_sum"),
+        "episodes/mean_dig_completion": _per_episode(
+            "dig_completion_sum"
+        ),
+        "episodes/mean_dump_purity": _per_episode("dump_purity_sum"),
+        "episodes/mean_dump_volume_completion": _per_episode(
+            "dump_volume_completion_sum"
+        ),
+        "episodes/mean_combined_completion": _per_episode(
+            "combined_completion_sum"
+        ),
+        "episodes/productive_workspace_cycles": totals[
+            "productive_workspace_cycles"
+        ],
+        "episodes/no_effect_action_rate": (
+            totals["no_effect_action_count"] / step_count
+            if step_count
+            else float("nan")
+        ),
+        "episodes/maximum_mass_residual": totals[
+            "maximum_mass_residual"
+        ],
+        "episodes/reward_residual_max": totals[
+            "maximum_reward_residual"
+        ],
+    }
 
 
 def _sorted_map_indices(images_dir: Path) -> list[int]:
@@ -1778,6 +1875,22 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     def make_mixed_agent_train(
         env, env_params, config, teacher_apply_fn=None, teacher_params=None
     ):
+        family_names = tuple(env.maps_buffer.family_names)
+        primary_cell_names = tuple(env.maps_buffer.primary_cell_names)
+        stage_names = tuple(
+            level["maps_path"]
+            for level in env.batch_cfg.curriculum_global.levels
+        )
+        num_stages = len(stage_names)
+        num_families = len(family_names)
+        num_primary_cells = len(primary_cell_names)
+        aggregate_group_count = (
+            num_stages
+            * num_families
+            * num_primary_cells
+            * 4
+        )
+
         def train(rng: jax.Array, train_state: TrainState):
             # INIT ENV
             rng, _rng = jax.random.split(rng)
@@ -1855,6 +1968,30 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
             )
             prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
+            provenance_fn = jax.vmap(
+                jax.vmap(env.maps_buffer.get_map_provenance)
+            )
+            (
+                _,
+                initial_family_id,
+                initial_primary_cell_id,
+                _,
+            ) = provenance_fn(reset_rng, env_params_reset)
+            episode_accumulator = new_episode_accumulator(
+                initial_family_id,
+                initial_primary_cell_id,
+                env_params_reset.curriculum.level,
+            )
+            pending_aggregate_single = empty_episode_aggregate(
+                aggregate_group_count
+            )
+            pending_aggregate = jtu.tree_map(
+                lambda value: jnp.broadcast_to(
+                    value,
+                    (config.num_devices,) + value.shape,
+                ),
+                pending_aggregate_single,
+            )
 
             # TRAIN LOOP
             @partial(jax.pmap, axis_name="devices", donate_argnums=(0,))
@@ -1863,10 +2000,19 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 ent_coef_current,
                 kickstart_kl_coef_current,
                 kickstart_value_coef_current,
+                flush_episode_aggregate,
             ):
                 # COLLECT TRAJECTORIES
                 def _env_step(runner_state, step_idx):
-                    rng, train_state, prev_timestep, prev_actions, prev_reward = runner_state
+                    (
+                        rng,
+                        train_state,
+                        prev_timestep,
+                        prev_actions,
+                        prev_reward,
+                        episode_accumulator,
+                        pending_aggregate,
+                    ) = runner_state
 
                     # SELECT ACTION
                     rng, _rng_model, _rng_env = jax.random.split(rng, 3)
@@ -1879,6 +2025,77 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     action_env = wrap_action(action, env.batch_cfg.action_type)
                     timestep = env.step(prev_timestep, action_env, _rng_env)
                     reward_components = timestep.info["reward_components"]
+                    (
+                        _,
+                        next_family_id,
+                        next_primary_cell_id,
+                        _,
+                    ) = jax.vmap(
+                        env.maps_buffer.get_map_provenance
+                    )(_rng_env, timestep.env_cfg)
+                    episode_step = EpisodeStep(
+                        done=timestep.done,
+                        task_done=timestep.info["task_done"],
+                        timeout=timestep.info["timeout"],
+                        reward=timestep.reward,
+                        agent_rewards=reward_components["agent_rewards"],
+                        terminal_reward=reward_components["terminal"],
+                        trench_reward=reward_components["trench"],
+                        existence_reward=reward_components["existence"],
+                        reward_normalizer=(
+                            prev_timestep.env_cfg.rewards.normalizer
+                        ),
+                        action=action,
+                        action_had_effect=timestep.info[
+                            "action_had_effect"
+                        ],
+                        productive_workspace_cycle=timestep.info[
+                            "productive_workspace_cycle"
+                        ],
+                        transition_mass_residual=timestep.info[
+                            "transition_mass_residual"
+                        ],
+                        target_mutation=timestep.info["target_mutation"],
+                        obstacle_mutation=timestep.info[
+                            "obstacle_mutation"
+                        ],
+                        dig_completion=reward_components[
+                            "dig_completion_total"
+                        ],
+                        dump_purity=reward_components[
+                            "dump_completion_action_map"
+                        ],
+                        dump_volume_completion=reward_components[
+                            "total_dig_dump_completion"
+                        ],
+                        combined_completion=reward_components[
+                            "absolute_completion"
+                        ],
+                        unloaded_completion=reward_components[
+                            "unloaded_completion"
+                        ],
+                        accepted_dump_volume=reward_components[
+                            "accepted_dump_volume"
+                        ],
+                        illegal_dump_volume=reward_components[
+                            "illegal_dump_volume"
+                        ],
+                    )
+                    episode_accumulator, pending_aggregate = (
+                        update_episode_aggregate(
+                            episode_accumulator,
+                            pending_aggregate,
+                            episode_step,
+                            next_family_id=next_family_id,
+                            next_primary_cell_id=next_primary_cell_id,
+                            next_stage_id=(
+                                timestep.env_cfg.curriculum.level
+                            ),
+                            num_stages=num_stages,
+                            num_families=num_families,
+                            num_primary_cells=num_primary_cells,
+                        )
+                    )
 
                     # Removed SWAP debug prints
                     transition = Transition(
@@ -1921,7 +2138,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         prev_actions,
                     )
 
-                    runner_state = (rng, train_state, timestep, prev_actions, timestep.reward)
+                    runner_state = (
+                        rng,
+                        train_state,
+                        timestep,
+                        prev_actions,
+                        timestep.reward,
+                        episode_accumulator,
+                        pending_aggregate,
+                    )
                     return runner_state, transition
 
                 # transitions: [seq_len, batch_size, ...]
@@ -1950,7 +2175,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 transitions = transitions.replace(reward=augmented_reward)
 
                 # CALCULATE ADVANTAGE
-                rng, train_state, timestep, prev_actions, prev_reward = runner_state
+                (
+                    rng,
+                    train_state,
+                    timestep,
+                    prev_actions,
+                    prev_reward,
+                    episode_accumulator,
+                    pending_aggregate,
+                ) = runner_state
                 rng, _rng = jax.random.split(rng)
                 _, _, last_val, _ = select_action_ppo(
                     train_state, timestep.observation, prev_actions, _rng, config
@@ -2052,73 +2285,47 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 # Attach to loss_info for logging
                 loss_info = dict(loss_info)
                 loss_info["explained_variance"] = explained_var
-                done_mask = transitions.done.astype(jnp.float32)
-                success_mask = jnp.logical_and(
-                    transitions.done,
-                    transitions.task_done,
-                ).astype(jnp.float32)
-
-                def _masked_mean(values, mask):
-                    count = jnp.sum(mask)
-                    return jnp.where(
-                        count > 0,
-                        jnp.sum(values * mask) / count,
-                        jnp.nan,
-                    )
-
-                episode_count = jnp.sum(done_mask)
-                success_count = jnp.sum(success_mask)
-                loss_info["terminal/episode_count"] = episode_count
-                loss_info["terminal/success_count"] = success_count
-
-                # The legacy terminal counts above are per-device because the
-                # host logger unreplicates the first pmap result. Keep them for
-                # dashboard compatibility, but expose explicit global counts
-                # and a bounded online success rate for the complete rollout.
-                completed_episodes = jax.lax.psum(episode_count, "devices")
-                successful_episodes = jax.lax.psum(success_count, "devices")
-                loss_info["train/completed_episodes"] = completed_episodes
-                loss_info["train/successful_episodes"] = successful_episodes
-                loss_info["train/episode_success_rate"] = eval_ppo.episode_success_rate(
-                    successful_episodes,
-                    completed_episodes,
-                )
-                last_step_terminations = jax.lax.psum(
-                    jnp.sum(done_mask[-1]),
-                    "devices",
-                )
-                loss_info["progress/last_step_termination_fraction"] = (
-                    last_step_terminations
-                    / (config.num_devices * config.num_envs_per_device)
-                )
-                terminal_fields = {
-                    "dig_completion_edge": transitions.dig_completion_edge,
-                    "dig_completion_inner": transitions.dig_completion_inner,
-                    "dig_completion_total": transitions.dig_completion_total,
-                    "dig_completion_min_edge_inner": transitions.dig_completion_min_edge_inner,
-                    "dump_completion_action_map": transitions.dump_completion_action_map,
-                    "total_dig_dump_completion": transitions.total_dig_dump_completion,
-                    "remaining_edge_dig_tiles": transitions.remaining_edge_dig_tiles,
-                    "remaining_inner_dig_tiles": transitions.remaining_inner_dig_tiles,
-                }
-                for metric_name, metric_values in terminal_fields.items():
-                    loss_info[f"terminal/{metric_name}"] = _masked_mean(
-                        metric_values,
-                        done_mask,
-                    )
 
                 rng, train_state = update_state[:2]
                 # EVALUATE AGENT
                 rng, _rng = jax.random.split(rng)
 
-                runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
-                return runner_state, loss_info
+                aggregate_snapshot = reduce_episode_aggregate(
+                    pending_aggregate,
+                    "devices",
+                )
+                pending_aggregate = jax.lax.cond(
+                    flush_episode_aggregate,
+                    lambda _: empty_episode_aggregate(
+                        aggregate_group_count
+                    ),
+                    lambda aggregate: aggregate,
+                    pending_aggregate,
+                )
+                runner_state = (
+                    rng,
+                    train_state,
+                    timestep,
+                    prev_actions,
+                    prev_reward,
+                    episode_accumulator,
+                    pending_aggregate,
+                )
+                return runner_state, loss_info, aggregate_snapshot
 
             # Setup runner state for multiple devices
             rng, rng_rollout = jax.random.split(rng)
             rng = jax.random.split(rng, num=config.num_devices)
             train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
-            runner_state = (rng, train_state, timestep, prev_actions, prev_reward)
+            runner_state = (
+                rng,
+                train_state,
+                timestep,
+                prev_actions,
+                prev_reward,
+                episode_accumulator,
+                pending_aggregate,
+            )
             
             # Entropy scheduler: cosine decay using config variables
             ent_start = float(config.ent_schedule_start)
@@ -2126,6 +2333,35 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             ent_T = float(config.ent_schedule_steps)
 
             for i in tqdm(range(resume_update, config.num_updates), desc="Training"):
+                need_train_log = (
+                    config.log_train_interval > 0
+                    and i % config.log_train_interval == 0
+                )
+                need_checkpoint = (
+                    config.checkpoint_interval > 0
+                    and (i + 1) % config.checkpoint_interval == 0
+                )
+                need_eval = (
+                    config.log_eval_interval > 0
+                    and i > 0
+                    and i % config.log_eval_interval == 0
+                )
+                need_final_state = i == config.num_updates - 1
+                need_finite_check = (
+                    config.fail_on_nonfinite
+                    and config.finite_check_interval > 0
+                    and i % config.finite_check_interval == 0
+                )
+                need_episode_flush = (
+                    need_train_log
+                    or need_checkpoint
+                    or need_final_state
+                )
+                need_host_state = (
+                    need_episode_flush
+                    or need_eval
+                    or need_finite_check
+                )
                 f = min(1.0, i / ent_T) if ent_T > 0 else 1.0
                 # Cosine decay: starts at ent_start when f=0, ends at ent_end when f=1
                 ent_coef_current = ent_end + 0.5 * (ent_start - ent_end) * (1.0 + jnp.cos(jnp.pi * f))
@@ -2154,13 +2390,22 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 kickstart_value_broadcast = jnp.array(
                     [kickstart_value_coef_current] * config.num_devices
                 )
+                flush_episode_broadcast = jnp.array(
+                    [need_episode_flush] * config.num_devices,
+                    dtype=jnp.bool_,
+                )
                 start_time = time.time()
-                runner_state, loss_info = jax.block_until_ready(
+                (
+                    runner_state,
+                    loss_info,
+                    episode_aggregate_snapshot,
+                ) = jax.block_until_ready(
                     _update_step(
                         runner_state,
                         ent_broadcast,
                         kickstart_kl_broadcast,
                         kickstart_value_broadcast,
+                        flush_episode_broadcast,
                     )
                 )
                 end_time = time.time()
@@ -2172,38 +2417,28 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
                 tqdm.write(f"Steps/s: {steps_per_second:.2f}")
 
-                need_train_log = (
-                    config.log_train_interval > 0
-                    and i % config.log_train_interval == 0
-                )
-                need_checkpoint = (
-                    config.checkpoint_interval > 0
-                    and (i + 1) % config.checkpoint_interval == 0
-                )
-                need_eval = (
-                    config.log_eval_interval > 0
-                    and i > 0
-                    and i % config.log_eval_interval == 0
-                )
-                need_final_state = i == config.num_updates - 1
-                need_finite_check = (
-                    config.fail_on_nonfinite
-                    and config.finite_check_interval > 0
-                    and i % config.finite_check_interval == 0
-                )
-                need_host_state = (
-                    need_train_log
-                    or need_checkpoint
-                    or need_eval
-                    or need_final_state
-                    or need_finite_check
-                )
-
                 if need_host_state:
                     loss_info_single = unreplicate(loss_info)
                     runner_state_single = unreplicate(runner_state)
                     _, _, timestep, prev_actions = runner_state_single[:4]
                     env_params_single = timestep.env_cfg
+                if need_episode_flush:
+                    aggregate_single = unreplicate(
+                        episode_aggregate_snapshot
+                    )
+                    episode_payload = aggregate_to_payload(
+                        aggregate_single,
+                        family_names=family_names,
+                        primary_cell_names=primary_cell_names,
+                        stage_names=stage_names,
+                        update=i + 1,
+                        run_name=config.name,
+                    )
+                    assert_aggregate_integrity(episode_payload)
+                    _write_episode_aggregate_receipt(
+                        config,
+                        episode_payload,
+                    )
 
                 if config.fail_on_nonfinite and (
                     need_finite_check or need_checkpoint or need_final_state
@@ -2245,6 +2480,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "lr": config.lr,
                         "sched/entropy_coef": float(ent_coef_current),
                         **loss_info_single,
+                        **_episode_aggregate_wandb_metrics(
+                            episode_payload
+                        ),
                     }
                     # F7: log the annealed kickstart coefficients (loss terms
                     # kickstart/kl and kickstart/value_mse arrive via loss_info).
@@ -2254,75 +2492,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             kickstart_value_coef_current
                         )
 
-                    # Removed fixed agent1/agent2 type metrics to support dynamic agent counts
-                    
-                    # Add environment metrics (without separate wandb.log call)
-                    try:
-                        last_step_termination_fraction = safe_jax_to_python(
-                            loss_info_single[
-                                "progress/last_step_termination_fraction"
-                            ]
-                        )
-                        # Legacy name retained for existing W&B dashboards. It
-                        # is the fraction terminal on the final rollout step,
-                        # including timeouts, not an episode success rate.
-                        log_dict["progress/episode_completion_rate"] = (
-                            last_step_termination_fraction
-                        )
-                    except Exception:
-                        pass
-
-                    # Add reward breakdown logging (without separate wandb.log call)
-                    try:
-                        reward_components = None
-                        if hasattr(timestep, "reward_components"):
-                            reward_components = timestep.reward_components
-                        elif hasattr(timestep, "info") and isinstance(timestep.info, dict):
-                            rc = timestep.info.get("reward_components", None)
-                            reward_components = rc
-
-                        if reward_components is not None:
-                            # Support per-agent rewards vector and masks
-                            breakdown_means = {}
-                            agent_rewards = reward_components.get("agent_rewards", None)
-                            agent_active = reward_components.get("agent_active", None)
-                            num_agents = reward_components.get("num_agents", None)
-                            # Scalar components
-                            for k in ["terminal", "trench", "existence"]:
-                                if k in reward_components:
-                                    breakdown_means[k] = safe_jax_to_python(reward_components[k])
-                            # Vector per-agent rewards
-                            if agent_rewards is not None:
-                                try:
-                                    ar = agent_rewards
-                                    # Log each available agent index separately
-                                    for idx in range(ar.shape[-1]):
-                                        key = f"agent_{idx}"
-                                        breakdown_means[f"{key}"] = safe_jax_to_python(jnp.mean(ar[..., idx]))
-                                except Exception:
-                                    pass
-                            # Add to main log dict
-                            for k, v in breakdown_means.items():
-                                log_dict[f"rewards/{k}"] = v
-                            # Also log masks if present
-                            if agent_active is not None:
-                                try:
-                                    log_dict["agents/active_count"] = safe_jax_to_python(jnp.sum(agent_active))
-                                except Exception:
-                                    pass
-                            if num_agents is not None:
-                                try:
-                                    log_dict["agents/num_agents"] = safe_jax_to_python(num_agents)
-                                except Exception:
-                                    pass
-                            
-                            
-                            
-                                
-                            # Skip bar chart for now to avoid step conflicts
-                    except Exception:
-                        pass
-                    
                     # Single consolidated wandb.log call
                     wandb.log(log_dict, step=i)
 
