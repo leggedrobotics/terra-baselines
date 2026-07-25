@@ -29,6 +29,16 @@ from utils.helpers import load_pkl_object
 sys.modules["__main__"].TrainConfig = TrainConfig
 sys.modules["__main__"].MixedAgentTrainConfig = MixedAgentTrainConfig
 
+LEGACY_COMPLETION_CONTRACT = "legacy_implicit_buffer_v0"
+
+
+def environment_completion_contract() -> str:
+    try:
+        from terra.state import CORRECTED_DENSE_CONTRACT
+    except ImportError:
+        return LEGACY_COMPLETION_CONTRACT
+    return str(CORRECTED_DENSE_CONTRACT)
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -135,15 +145,43 @@ def grouped_results(
     successes: np.ndarray,
     terminations: np.ndarray,
     lengths: np.ndarray,
+    *,
+    horizon: int | None = None,
+    completion_metrics: dict[str, np.ndarray] | None = None,
 ) -> tuple[list[dict], dict]:
+    completion_metrics = completion_metrics or {}
     per_map = []
-    for row, success, terminated, length in zip(rows, successes, terminations, lengths):
+    for index, (row, success, terminated, length) in enumerate(
+        zip(rows, successes, terminations, lengths)
+    ):
+        timed_out = bool(
+            terminated
+            and horizon is not None
+            and int(length) >= int(horizon)
+        )
+        if bool(success) and timed_out:
+            termination_reason = "task_done_and_timeout"
+        elif bool(success):
+            termination_reason = "task_done"
+        elif timed_out:
+            termination_reason = "timeout"
+        elif bool(terminated):
+            termination_reason = "other_termination"
+        else:
+            termination_reason = "horizon_censored"
+        metric_values = {
+            key: float(np.asarray(values)[index])
+            for key, values in completion_metrics.items()
+        }
         per_map.append(
             {
                 **row,
                 "success": bool(success),
                 "terminated": bool(terminated),
+                "timeout": timed_out,
+                "termination_reason": termination_reason,
                 "steps": int(length),
+                **metric_values,
             }
         )
 
@@ -181,6 +219,18 @@ def grouped_results(
         "primary_cell_6_of_8": subtype_gate,
         "passed": family_gate and subtype_gate,
     }
+    summary["termination_reasons"] = {
+        reason: sum(
+            int(row["termination_reason"] == reason) for row in per_map
+        )
+        for reason in (
+            "task_done",
+            "timeout",
+            "task_done_and_timeout",
+            "other_termination",
+            "horizon_censored",
+        )
+    }
     return per_map, summary
 
 
@@ -216,6 +266,10 @@ def main() -> None:
     parser.add_argument("--horizon", type=int, default=450)
     parser.add_argument("--seed", type=int, default=20260724)
     parser.add_argument("--stochastic", action="store_true")
+    parser.add_argument(
+        "--expect-completion-contract",
+        choices=("exact_visible_dump_v1", LEGACY_COMPLETION_CONTRACT),
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.horizon != 450:
@@ -225,6 +279,15 @@ def main() -> None:
     if output.exists():
         raise FileExistsError(output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    completion_contract = environment_completion_contract()
+    if (
+        args.expect_completion_contract is not None
+        and completion_contract != args.expect_completion_contract
+    ):
+        raise RuntimeError(
+            "completion contract mismatch: expected "
+            f"{args.expect_completion_contract}, imported {completion_contract}"
+        )
 
     paths = checkpoint_paths(args)
     checkpoints = [(path, load_pkl_object(str(path))) for path in paths]
@@ -272,15 +335,44 @@ def main() -> None:
             successes = np.asarray(stats["episode_done_once"], dtype=bool)
             terminations = np.asarray(stats["episode_terminated_once"], dtype=bool)
             lengths = np.asarray(stats["episode_length"], dtype=np.int32)
+            terminal_completion = {
+                key: np.asarray(value, dtype=np.float32)
+                for key, value in stats.get("terminal_completion", {}).items()
+            }
             if (
                 not np.all(np.isfinite(lengths))
                 or successes.shape != (count,)
                 or terminations.shape != (count,)
             ):
                 raise RuntimeError("fixed evaluation returned invalid arrays")
-            per_map, summary = grouped_results(rows, successes, terminations, lengths)
+            if completion_contract == "exact_visible_dump_v1":
+                absolute = terminal_completion.get("absolute")
+                if absolute is None or absolute.shape != (count,):
+                    raise RuntimeError(
+                        "exact_visible_dump_v1 evaluation did not return "
+                        "per-map absolute completion"
+                    )
+                completion_one = np.isclose(absolute, 1.0, atol=1e-6)
+                if not np.array_equal(successes, completion_one):
+                    mismatches = np.flatnonzero(successes != completion_one)
+                    raise RuntimeError(
+                        "task_done <=> absolute_completion == 1 violated at "
+                        f"fixed-bank slots {(mismatches + 1).tolist()}"
+                    )
+            per_map, summary = grouped_results(
+                rows,
+                successes,
+                terminations,
+                lengths,
+                horizon=args.horizon,
+                completion_metrics={
+                    f"terminal_{key}": values
+                    for key, values in terminal_completion.items()
+                },
+            )
             record = {
-                "schema": "terra_fixed_bank_eval_v1",
+                "schema": "terra_fixed_bank_eval_v2",
+                "completion_contract": completion_contract,
                 "checkpoint": str(checkpoint_path),
                 "checkpoint_sha256": sha256_file(checkpoint_path),
                 "checkpoint_update": int(checkpoint.get("next_update", 0)),

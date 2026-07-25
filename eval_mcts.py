@@ -262,6 +262,12 @@ def rollout_episode(
                 "dig_completion_min_edge_inner": jnp.zeros_like(timestep.reward),
                 "dump_completion_action_map": jnp.zeros_like(timestep.reward),
                 "total_dig_dump_completion": jnp.zeros_like(timestep.reward),
+                "absolute_completion": jnp.zeros_like(timestep.reward),
+                "unloaded_completion": jnp.zeros_like(timestep.reward),
+                "task_present": jnp.zeros_like(timestep.reward),
+                "dump_mask_integrity": jnp.zeros_like(timestep.reward),
+                "accepted_dump_volume": jnp.zeros_like(timestep.reward),
+                "illegal_dump_volume": jnp.zeros_like(timestep.reward),
                 "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
                 "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
             }
@@ -334,6 +340,11 @@ def rollout_episode(
     )
     terminal_dig_completion = jnp.zeros_like(terminal_total_completion)
     terminal_dump_completion = jnp.zeros_like(terminal_total_completion)
+    terminal_absolute_completion = jnp.zeros_like(terminal_total_completion)
+    terminal_unloaded_completion = jnp.zeros_like(terminal_total_completion)
+    terminal_dump_mask_integrity = jnp.zeros_like(terminal_total_completion)
+    terminal_accepted_dump_volume = jnp.zeros_like(terminal_total_completion)
+    terminal_illegal_dump_volume = jnp.zeros_like(terminal_total_completion)
     obs_seq = {}
 
     per_agent_move_m = {
@@ -412,6 +423,41 @@ def rollout_episode(
                 "dump_completion_action_map", terminal_dump_completion
             ),
             terminal_dump_completion,
+        )
+        terminal_absolute_completion = jnp.where(
+            active_env_mask & step_done,
+            reward_components.get(
+                "absolute_completion", terminal_absolute_completion
+            ),
+            terminal_absolute_completion,
+        )
+        terminal_unloaded_completion = jnp.where(
+            active_env_mask & step_done,
+            reward_components.get(
+                "unloaded_completion", terminal_unloaded_completion
+            ),
+            terminal_unloaded_completion,
+        )
+        terminal_dump_mask_integrity = jnp.where(
+            active_env_mask & step_done,
+            reward_components.get(
+                "dump_mask_integrity", terminal_dump_mask_integrity
+            ),
+            terminal_dump_mask_integrity,
+        )
+        terminal_accepted_dump_volume = jnp.where(
+            active_env_mask & step_done,
+            reward_components.get(
+                "accepted_dump_volume", terminal_accepted_dump_volume
+            ),
+            terminal_accepted_dump_volume,
+        )
+        terminal_illegal_dump_volume = jnp.where(
+            active_env_mask & step_done,
+            reward_components.get(
+                "illegal_dump_volume", terminal_illegal_dump_volume
+            ),
+            terminal_illegal_dump_volume,
         )
 
         # Per-agent accumulation (eval_mixed.py parity)
@@ -623,6 +669,16 @@ def rollout_episode(
         "episode_done_once": episode_succeeded_once,
         "episode_terminated_once": episode_terminated_once,
         "episode_length": episode_length,
+        "terminal_completion": {
+            "absolute": terminal_absolute_completion,
+            "dig": terminal_dig_completion,
+            "dump_purity": terminal_dump_completion,
+            "dump_volume": terminal_total_completion,
+            "unloaded": terminal_unloaded_completion,
+            "dump_mask_integrity": terminal_dump_mask_integrity,
+            "accepted_dump_volume": terminal_accepted_dump_volume,
+            "illegal_dump_volume": terminal_illegal_dump_volume,
+        },
         "path_efficiency": {"mean": path_efficiency_mean, "std": path_efficiency_std},
         "workspaces_efficiency": {
             "mean": workspaces_efficiency_mean,

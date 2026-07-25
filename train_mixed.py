@@ -505,21 +505,19 @@ def _backfill_terminal_rewards(
     return reward_seq + backfill
 
 
-def randomize_initial_env_steps(timestep, reset_rng):
-    """Stagger only the first training episode timeout across vectorized envs."""
+def assert_initial_env_steps_zero(timestep):
+    """Fail the full-reset training path if any initial horizon is shortened."""
 
-    def _one_env(ts, key):
-        max_steps = jnp.maximum(jnp.asarray(ts.env_cfg.max_steps_in_episode), 1)
-        env_steps = jax.random.randint(
-            key,
-            (),
-            minval=0,
-            maxval=max_steps,
-            dtype=jnp.asarray(ts.env_cfg.max_steps_in_episode).dtype,
-        )
-        return ts._replace(state=ts.state._replace(env_steps=env_steps))
+    def _check(env_steps):
+        values = np.asarray(env_steps)
+        if np.any(values != 0):
+            raise RuntimeError(
+                "Full-task reset must start with env_steps == 0; "
+                f"observed range [{values.min()}, {values.max()}]."
+            )
 
-    return jax.vmap(jax.vmap(_one_env))(timestep, reset_rng)
+    jax.debug.callback(_check, timestep.state.env_steps)
+    return timestep
 
 
 def _sorted_map_indices(images_dir: Path) -> list[int]:
@@ -1817,7 +1815,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 action_maps,
                 distance_maps,
             )
-            timestep = randomize_initial_env_steps(timestep, reset_rng)
+            timestep = assert_initial_env_steps_zero(timestep)
             # Removed one-time debug sanity prints
             
             # Initialize reward_components in timestep.info to maintain consistent pytree structure
@@ -1840,6 +1838,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "dig_completion_min_edge_inner": jnp.zeros_like(timestep.reward),
                     "dump_completion_action_map": jnp.zeros_like(timestep.reward),
                     "total_dig_dump_completion": jnp.zeros_like(timestep.reward),
+                    "absolute_completion": jnp.zeros_like(timestep.reward),
+                    "unloaded_completion": jnp.zeros_like(timestep.reward),
+                    "task_present": jnp.zeros_like(timestep.reward),
+                    "dump_mask_integrity": jnp.zeros_like(timestep.reward),
+                    "accepted_dump_volume": jnp.zeros_like(timestep.reward),
+                    "illegal_dump_volume": jnp.zeros_like(timestep.reward),
                     "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
                     "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
                 }
@@ -2223,6 +2227,20 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "performance/env_steps_per_update": config.env_steps_per_update,
                         "performance/actual_env_steps": (i + 1)
                         * config.env_steps_per_update,
+                        "environment/effective_horizon_min": float(
+                            np.min(
+                                np.asarray(
+                                    env_params_single.max_steps_in_episode
+                                )
+                            )
+                        ),
+                        "environment/effective_horizon_max": float(
+                            np.max(
+                                np.asarray(
+                                    env_params_single.max_steps_in_episode
+                                )
+                            )
+                        ),
                         "curriculum_levels": curriculum_levels,
                         "lr": config.lr,
                         "sched/entropy_coef": float(ent_coef_current),

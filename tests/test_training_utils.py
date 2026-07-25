@@ -26,6 +26,7 @@ from train_mixed import (
     _assert_finite_tree,
     kickstart_coef_schedule,
     _backfill_terminal_rewards,
+    assert_initial_env_steps_zero,
     _strip_checkpoint_env_axis,
     _num_agents_from_env_params,
     _validate_checkpoint_architecture,
@@ -150,6 +151,23 @@ def _run_ppo_update(config, train_state, transitions, advantages, targets, **kwa
 
 
 class TrainingAccountingTest(unittest.TestCase):
+    def test_full_reset_horizon_starts_at_zero(self):
+        timestep = SimpleNamespace(
+            state=SimpleNamespace(env_steps=jnp.zeros((2, 3), dtype=jnp.int32))
+        )
+        returned = assert_initial_env_steps_zero(timestep)
+        jax.effects_barrier()
+        self.assertIs(returned, timestep)
+
+        invalid = SimpleNamespace(
+            state=SimpleNamespace(
+                env_steps=jnp.array([[0, 1, 0]], dtype=jnp.int32)
+            )
+        )
+        with self.assertRaisesRegex(Exception, "env_steps == 0"):
+            assert_initial_env_steps_zero(invalid)
+            jax.effects_barrier()
+
     def test_global_step_accounting(self):
         config = MixedAgentTrainConfig(
             name="test",
