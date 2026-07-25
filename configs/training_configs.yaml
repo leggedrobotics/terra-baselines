@@ -27,6 +27,42 @@ solo_excavator:
     - path: foundations
       max_steps: 450
 
+f0_foundation_identity_v1:
+  description: Corrected-contract F0 foundation identity feasibility probe
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: foundation
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+f0_trench_identity_v1:
+  description: Corrected-contract F0 straight-trench identity feasibility probe
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: trench
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: true
+
 solo_excavator_128:
   description: Single excavator on 128x128 foundations (F15 resolution scaling, E8 pilot)
   agent_types: [0]

@@ -96,7 +96,13 @@ import jax.tree_util as jtu
 import numpy as np
 from utils.models import MAP_ENCODER_ALIASES, canonical_map_encoder, get_model_ready
 from terra.env import TerraEnvBatch
-from terra.config import EnvConfig, BatchConfig, Rewards, CurriculumGlobalConfig, RewardsType
+from terra.config import (
+    EnvConfig,
+    BatchConfig,
+    Rewards,
+    CurriculumGlobalConfig,
+    RewardsType,
+)
 from flax.training.train_state import TrainState
 import optax
 import wandb
@@ -132,7 +138,9 @@ from train import get_curriculum_levels, calculate_gae, ppo_update_networks
 jax.config.update("jax_threefry_partitionable", True)
 
 
-def kickstart_coef_schedule(update_index: int, initial_coef: float, anneal_updates: float) -> float:
+def kickstart_coef_schedule(
+    update_index: int, initial_coef: float, anneal_updates: float
+) -> float:
     """Cosine-anneal a kickstart coefficient from ``initial_coef`` to 0.
 
     Returns ``initial_coef`` at update 0, ``0.5*initial_coef`` at the midpoint,
@@ -163,23 +171,27 @@ class Transition(struct.PyTreeNode):
     total_dig_dump_completion: jax.Array
     remaining_edge_dig_tiles: jax.Array
     remaining_inner_dig_tiles: jax.Array
+    transition_mass_residual: jax.Array
+    target_mutation: jax.Array
+    obstacle_mutation: jax.Array
     log_prob: jax.Array
     obs: jax.Array
     prev_actions: jax.Array
     prev_reward: jax.Array
 
+
 def safe_jax_to_python(value):
     """Safely convert JAX arrays to Python scalars"""
-    if hasattr(value, 'item'):
+    if hasattr(value, "item"):
         try:
             return value.item()
         except (ValueError, TypeError):
             # If it's an array with multiple elements, take the first one
-            if hasattr(value, 'shape') and value.shape:
+            if hasattr(value, "shape") and value.shape:
                 return value.ravel()[0].item()
             else:
                 return float(value)
-    elif hasattr(value, '__array__'):
+    elif hasattr(value, "__array__"):
         try:
             return float(value)
         except (ValueError, TypeError):
@@ -232,6 +244,22 @@ _FINITE_CONTEXT_KEYS = (
     "diagnostics/teacher_value_abs_max",
     "diagnostics/teacher_logits_abs_max",
 )
+
+
+def _assert_transition_integrity(integrity: dict) -> None:
+    failures = []
+    for field in (
+        "maximum_mass_residual",
+        "target_mutation_count",
+        "obstacle_mutation_count",
+    ):
+        value = int(np.asarray(integrity[field]))
+        if value:
+            failures.append(f"{field}={value}")
+    if failures:
+        raise RuntimeError(
+            "Terra rollout transition integrity failed: " + ", ".join(failures)
+        )
 
 
 def _nonfinite_count(value) -> int:
@@ -432,7 +460,9 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             saved = tuple(saved) if saved is not None else None
             current = tuple(current) if current is not None else None
         if saved != current:
-            mismatches.append(f"{field_name}: checkpoint={saved!r}, current={current!r}")
+            mismatches.append(
+                f"{field_name}: checkpoint={saved!r}, current={current!r}"
+            )
     if mismatches:
         raise ValueError(
             "Checkpoint architecture does not match the requested model: "
@@ -471,14 +501,10 @@ def _validate_resume_update(resume_update: int, num_updates: int) -> None:
 
 def _checkpoint_load_mode(config) -> str | None:
     if config.resume_from is not None and config.warm_start_from is not None:
-        raise ValueError(
-            "--resume_from and --warm_start_from are mutually exclusive"
-        )
+        raise ValueError("--resume_from and --warm_start_from are mutually exclusive")
     if config.warm_start_from is not None:
         if config.resume_update is not None:
-            raise ValueError(
-                "--resume_update is incompatible with --warm_start_from"
-            )
+            raise ValueError("--resume_update is incompatible with --warm_start_from")
         return "warm_start"
     if config.resume_from is not None:
         return "resume"
@@ -536,10 +562,7 @@ def _write_episode_aggregate_receipt(
     """Atomically save the bounded population receipt for one log window."""
     output_dir = Path(config.checkpoint_dir) / "episode_aggregates"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = (
-        output_dir
-        / f"{config.name}_update_{int(payload['update']):06d}.json"
-    )
+    output_path = output_dir / f"{config.name}_update_{int(payload['update']):06d}.json"
     if output_path.exists():
         raise FileExistsError(
             f"Episode aggregate receipt already exists: {output_path}"
@@ -590,30 +613,20 @@ def _episode_aggregate_wandb_metrics(payload: dict) -> dict[str, float]:
             else float("nan")
         ),
         "episodes/mean_return": _per_episode("episodic_return_sum"),
-        "episodes/mean_dig_completion": _per_episode(
-            "dig_completion_sum"
-        ),
+        "episodes/mean_dig_completion": _per_episode("dig_completion_sum"),
         "episodes/mean_dump_purity": _per_episode("dump_purity_sum"),
         "episodes/mean_dump_volume_completion": _per_episode(
             "dump_volume_completion_sum"
         ),
-        "episodes/mean_combined_completion": _per_episode(
-            "combined_completion_sum"
-        ),
-        "episodes/productive_workspace_cycles": totals[
-            "productive_workspace_cycles"
-        ],
+        "episodes/mean_combined_completion": _per_episode("combined_completion_sum"),
+        "episodes/productive_workspace_cycles": totals["productive_workspace_cycles"],
         "episodes/no_effect_action_rate": (
             totals["no_effect_action_count"] / step_count
             if step_count
             else float("nan")
         ),
-        "episodes/maximum_mass_residual": totals[
-            "maximum_mass_residual"
-        ],
-        "episodes/reward_residual_max": totals[
-            "maximum_reward_residual"
-        ],
+        "episodes/maximum_mass_residual": totals["maximum_mass_residual"],
+        "episodes/reward_residual_max": totals["maximum_reward_residual"],
     }
 
 
@@ -658,14 +671,22 @@ def _build_mixed_dataset_pool(
 ) -> tuple[list[dict], str, int]:
     dataset_root = os.getenv("DATASET_PATH", "")
     if not dataset_root:
-        raise RuntimeError("DATASET_PATH must be set to build a mixed target-map training pool.")
+        raise RuntimeError(
+            "DATASET_PATH must be set to build a mixed target-map training pool."
+        )
 
     if replay_map_count <= 0:
-        raise ValueError("replay_map_count must be > 0 when building a mixed dataset pool.")
+        raise ValueError(
+            "replay_map_count must be > 0 when building a mixed dataset pool."
+        )
     if target_map_repeat <= 0:
-        raise ValueError("target_map_repeat must be > 0 when building a mixed dataset pool.")
+        raise ValueError(
+            "target_map_repeat must be > 0 when building a mixed dataset pool."
+        )
     if not curriculum_levels:
-        raise ValueError("curriculum_levels_override must be set when building a mixed dataset pool.")
+        raise ValueError(
+            "curriculum_levels_override must be set when building a mixed dataset pool."
+        )
 
     target_map_dir = Path(target_map_path).resolve()
     if not target_map_dir.exists():
@@ -675,18 +696,26 @@ def _build_mixed_dataset_pool(
     if target_image is None:
         target_image = _load_optional_array(target_map_dir / "image.npy")
     if target_image is None:
-        raise FileNotFoundError(f"Could not find target-map image data under {target_map_dir}")
+        raise FileNotFoundError(
+            f"Could not find target-map image data under {target_map_dir}"
+        )
 
     target_occupancy = _load_optional_array(target_map_dir / "occupancy" / "img_1.npy")
     if target_occupancy is None:
         target_occupancy = _load_optional_array(target_map_dir / "occupancy.npy")
-    target_dumpability = _load_optional_array(target_map_dir / "dumpability" / "img_1.npy")
+    target_dumpability = _load_optional_array(
+        target_map_dir / "dumpability" / "img_1.npy"
+    )
     if target_dumpability is None:
         target_dumpability = _load_optional_array(target_map_dir / "dumpability.npy")
     target_distance = _load_optional_array(target_map_dir / "distance" / "img_1.npy")
     if target_distance is None:
         target_distance = _load_optional_array(target_map_dir / "distance.npy")
-    if target_occupancy is None or target_dumpability is None or target_distance is None:
+    if (
+        target_occupancy is None
+        or target_dumpability is None
+        or target_distance is None
+    ):
         raise FileNotFoundError(
             f"Target map at {target_map_dir} is missing occupancy, dumpability, or distance data."
         )
@@ -704,17 +733,28 @@ def _build_mixed_dataset_pool(
     for level_idx, level in enumerate(curriculum_levels):
         source_dir = Path(dataset_root) / level["maps_path"]
         if not source_dir.exists():
-            raise FileNotFoundError(f"Configured dataset path does not exist: {source_dir}")
+            raise FileNotFoundError(
+                f"Configured dataset path does not exist: {source_dir}"
+            )
 
         indices = _sorted_map_indices(source_dir / "images")
         if not indices:
             raise RuntimeError(f"No dataset maps found under {source_dir / 'images'}")
         selected_indices = indices[-min(replay_map_count, len(indices)) :]
         if len(selected_indices) < replay_map_count:
-            selected_indices.extend([selected_indices[-1]] * (replay_map_count - len(selected_indices)))
+            selected_indices.extend(
+                [selected_indices[-1]] * (replay_map_count - len(selected_indices))
+            )
 
         level_dir = temp_root / f"level_{level_idx}"
-        for subdir in ["images", "occupancy", "dumpability", "distance", "actions", "metadata"]:
+        for subdir in [
+            "images",
+            "occupancy",
+            "dumpability",
+            "distance",
+            "actions",
+            "metadata",
+        ]:
             (level_dir / subdir).mkdir(parents=True, exist_ok=True)
 
         dataset_has_actions = (source_dir / "actions").exists()
@@ -726,12 +766,24 @@ def _build_mixed_dataset_pool(
             occupancy_path = source_dir / "occupancy" / f"img_{src_idx}.npy"
             dumpability_path = source_dir / "dumpability" / f"img_{src_idx}.npy"
             distance_path = source_dir / "distance" / f"img_{src_idx}.npy"
-            if not all(path.exists() for path in [image_path, occupancy_path, dumpability_path, distance_path]):
-                raise FileNotFoundError(f"Dataset map {src_idx} in {source_dir} is incomplete.")
+            if not all(
+                path.exists()
+                for path in [
+                    image_path,
+                    occupancy_path,
+                    dumpability_path,
+                    distance_path,
+                ]
+            ):
+                raise FileNotFoundError(
+                    f"Dataset map {src_idx} in {source_dir} is incomplete."
+                )
 
             shutil.copy2(image_path, level_dir / "images" / f"img_{out_idx}.npy")
             shutil.copy2(occupancy_path, level_dir / "occupancy" / f"img_{out_idx}.npy")
-            shutil.copy2(dumpability_path, level_dir / "dumpability" / f"img_{out_idx}.npy")
+            shutil.copy2(
+                dumpability_path, level_dir / "dumpability" / f"img_{out_idx}.npy"
+            )
             shutil.copy2(distance_path, level_dir / "distance" / f"img_{out_idx}.npy")
 
             if dataset_has_actions:
@@ -741,7 +793,10 @@ def _build_mixed_dataset_pool(
                     np.zeros_like(target_image),
                 )
             else:
-                np.save(level_dir / "actions" / f"img_{out_idx}.npy", np.zeros_like(target_image))
+                np.save(
+                    level_dir / "actions" / f"img_{out_idx}.npy",
+                    np.zeros_like(target_image),
+                )
 
             dataset_metadata = source_dir / "metadata" / f"trench_{src_idx}.json"
             if dataset_metadata.exists():
@@ -755,7 +810,9 @@ def _build_mixed_dataset_pool(
         for _ in range(target_map_repeat):
             np.save(level_dir / "images" / f"img_{out_idx}.npy", target_image)
             np.save(level_dir / "occupancy" / f"img_{out_idx}.npy", target_occupancy)
-            np.save(level_dir / "dumpability" / f"img_{out_idx}.npy", target_dumpability)
+            np.save(
+                level_dir / "dumpability" / f"img_{out_idx}.npy", target_dumpability
+            )
             np.save(level_dir / "distance" / f"img_{out_idx}.npy", target_distance)
             np.save(level_dir / "actions" / f"img_{out_idx}.npy", target_actions)
             if target_metadata is not None:
@@ -776,28 +833,29 @@ def _build_mixed_dataset_pool(
     return mixed_levels, str(temp_root), mixed_pool_size
 
 
-@dataclass 
+@dataclass
 class MixedAgentTrainConfig:
     """Configuration for training mixed agent environments
-    
+
     Supports loading from named presets via --config <name>.
     See configs/training_configs.py for available presets.
     """
+
     name: str
     num_devices: int = 0
     project: str = "mixed-agents"
     group: str = "tracked-skidsteer"
     num_envs_per_device: int = 2048
-    num_steps: int = 32  
-    update_epochs: int = 2 
-    num_minibatches: int = 16 
-    total_timesteps: int = 50_000_000_000  
-    lr: float = 3e-4   
-    clip_eps: float = 0.2 
-    gamma: float = 0.9984 
+    num_steps: int = 32
+    update_epochs: int = 2
+    num_minibatches: int = 16
+    total_timesteps: int = 50_000_000_000
+    lr: float = 3e-4
+    clip_eps: float = 0.2
+    gamma: float = 0.9984
     gae_lambda: float = 0.95
-    ent_coef: float = 0.06  
-    vf_coef: float = 2.0 
+    ent_coef: float = 0.06
+    vf_coef: float = 2.0
     max_grad_norm: float = 0.5
     eval_episodes: int = 100
     seed: int = 42
@@ -806,7 +864,7 @@ class MixedAgentTrainConfig:
     checkpoint_interval: int = 100
     checkpoint_dir: str = "checkpoints"
     keep_checkpoint_history: bool = False
-    
+
     # Model settings optimized for mixed agents
     num_prev_actions: int = 10  # overridden to 5 * num_agents at runtime
     clip_action_maps: bool = True  # clips the action maps to [-1, 1]
@@ -820,7 +878,7 @@ class MixedAgentTrainConfig:
     ent_schedule_start: float = 0.15
     ent_schedule_end: float = 0.005
     ent_schedule_steps: int = 9500
-    
+
     # Removed agent-type curriculum; use override only
     # Optional override to specify an arbitrary list of agent types, e.g. (2,0,0,2)
     agent_types_override: tuple | None = None
@@ -833,7 +891,7 @@ class MixedAgentTrainConfig:
     # writes. Default off preserves historical runs; E9+ smoke/prod jobs enable it.
     fail_on_nonfinite: bool = False
     finite_check_interval: int = 0
-    
+
     # Checkpoint loading
     resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
     # Load only model parameters. Optimizer, update counter, environment,
@@ -841,22 +899,22 @@ class MixedAgentTrainConfig:
     warm_start_from: str | None = None
     load_env_from_checkpoint: bool = True  # If true, use env_config from checkpoint
     resume_update: int | None = None  # Optional override for old param-only checkpoints
-    
+
     # Named configuration preset (loads from configs/training_configs.py)
     config_name: str | None = None  # e.g., "excavator_truck", "solo_excavator"
-    
+
     # Reward multipliers (can be set via config preset or CLI)
     dump_bonus_mult: float | None = None
     excavator_relocate_dumped_mult: float | None = None
     excavator_relocate_dug_dirt_mult: float | None = None
     transport_relocate_mult: float | None = None
-    
+
     # Capacity overrides
     truck_capacity: int | None = None
     skidsteer_capacity: int | None = None
     truck_road_restricted: bool | None = None
     enforce_foundation_border_alignment: bool | None = None
-    
+
     # Curriculum/maps override (from YAML config)
     # Format: list of dicts with keys: maps_path, max_steps_in_episode, rewards_type, apply_trench_rewards
     curriculum_levels_override: list | None = None
@@ -920,7 +978,6 @@ class MixedAgentTrainConfig:
     # 2 subsamples the teacher's obs to its native (half-resolution) world.
     teacher_obs_downsample: int = 1
 
-
     def __post_init__(self):
         _checkpoint_load_mode(self)
         self.map_encoder = canonical_map_encoder(self.map_encoder)
@@ -966,8 +1023,7 @@ class MixedAgentTrainConfig:
         self.local_map_area_scale = float(self.local_map_area_scale)
         if self.local_map_area_scale <= 0.0:
             raise ValueError(
-                "local_map_area_scale must be > 0, "
-                f"got {self.local_map_area_scale}."
+                f"local_map_area_scale must be > 0, got {self.local_map_area_scale}."
             )
         # F15: teacher obs-downsampling is only meaningful with a teacher.
         if self.teacher_obs_downsample < 1:
@@ -1010,13 +1066,15 @@ class MixedAgentTrainConfig:
             and self.action_types_override is not None
             and len(self.agent_types_override) != len(self.action_types_override)
         ):
-            raise ValueError("agent_types_override and action_types_override must have equal length")
+            raise ValueError(
+                "agent_types_override and action_types_override must have equal length"
+            )
         self.num_envs = self.num_envs_per_device * self.num_devices
         self.total_timesteps_per_device = self.total_timesteps // self.num_devices
         self.eval_episodes_per_device = self.eval_episodes // self.num_devices
-        assert (
-            self.num_envs % self.num_devices == 0
-        ), "Number of environments must be divisible by the number of devices."
+        assert self.num_envs % self.num_devices == 0, (
+            "Number of environments must be divisible by the number of devices."
+        )
         self.env_steps_per_update = self.num_steps * self.num_envs
         self.num_updates = self.total_timesteps // self.env_steps_per_update
         if self.num_updates <= 0:
@@ -1037,7 +1095,7 @@ class MixedAgentTrainConfig:
 
 
 def create_mixed_agent_env_config(
-    agent_types=(0, 2), 
+    agent_types=(0, 2),
     action_types=(0, 0),
     # Optional reward multipliers
     dump_bonus_mult=None,
@@ -1073,24 +1131,32 @@ def create_mixed_agent_env_config(
     """
 
     # Use the existing dense rewards from config
-    env_config = EnvConfig()  # This automatically uses Rewards.dense() which includes all our rewards
-    
+    env_config = (
+        EnvConfig()
+    )  # This automatically uses Rewards.dense() which includes all our rewards
+
     # Set the agent types from the training configuration
     env_config = env_config._replace(agent_types=agent_types)
-    
+
     # Set the action types from the training configuration
     env_config = env_config._replace(action_types=action_types)
-    
+
     # Apply reward multipliers if provided
     if dump_bonus_mult is not None:
         env_config = env_config._replace(dump_bonus_mult=dump_bonus_mult)
     if excavator_relocate_dumped_mult is not None:
-        env_config = env_config._replace(excavator_relocate_dumped_mult=excavator_relocate_dumped_mult)
+        env_config = env_config._replace(
+            excavator_relocate_dumped_mult=excavator_relocate_dumped_mult
+        )
     if excavator_relocate_dug_dirt_mult is not None:
-        env_config = env_config._replace(excavator_relocate_dug_dirt_mult=excavator_relocate_dug_dirt_mult)
+        env_config = env_config._replace(
+            excavator_relocate_dug_dirt_mult=excavator_relocate_dug_dirt_mult
+        )
     if transport_relocate_mult is not None:
-        env_config = env_config._replace(transport_relocate_mult=transport_relocate_mult)
-    
+        env_config = env_config._replace(
+            transport_relocate_mult=transport_relocate_mult
+        )
+
     # Apply capacity overrides if provided
     if truck_capacity is not None:
         env_config = env_config._replace(truck_capacity=truck_capacity)
@@ -1136,24 +1202,42 @@ def _print_resolution_scaling_table(config) -> None:
     env_defaults = EnvConfig()
     candidates = []
     if config.agent_move_tiles is not None:
-        candidates.append(("agent.move_tiles", env_defaults.agent.move_tiles, config.agent_move_tiles))
+        candidates.append(
+            ("agent.move_tiles", env_defaults.agent.move_tiles, config.agent_move_tiles)
+        )
     if config.dig_radius_tiles is not None:
         candidates.append(
-            ("agent.dig_radius_tiles", env_defaults.agent.dig_radius_tiles, config.dig_radius_tiles)
+            (
+                "agent.dig_radius_tiles",
+                env_defaults.agent.dig_radius_tiles,
+                config.dig_radius_tiles,
+            )
         )
     if config.truck_capacity is not None:
-        candidates.append(("truck_capacity", env_defaults.truck_capacity, config.truck_capacity))
+        candidates.append(
+            ("truck_capacity", env_defaults.truck_capacity, config.truck_capacity)
+        )
     if config.skidsteer_capacity is not None:
         candidates.append(
-            ("skidsteer_capacity", env_defaults.skidsteer_capacity, config.skidsteer_capacity)
+            (
+                "skidsteer_capacity",
+                env_defaults.skidsteer_capacity,
+                config.skidsteer_capacity,
+            )
         )
     if config.loaded_max_override is not None:
-        candidates.append(("loaded_max", MixedAgentTrainConfig.loaded_max, config.loaded_max))
+        candidates.append(
+            ("loaded_max", MixedAgentTrainConfig.loaded_max, config.loaded_max)
+        )
     if getattr(config, "local_map_area_scale", 1.0) != 1.0:
         candidates.append(("local_map_area_scale", 1.0, config.local_map_area_scale))
     if config.reward_normalizer is not None:
         candidates.append(
-            ("rewards.normalizer", env_defaults.rewards.normalizer, config.reward_normalizer)
+            (
+                "rewards.normalizer",
+                env_defaults.rewards.normalizer,
+                config.reward_normalizer,
+            )
         )
     # Only genuine changes are a "scaling"; a truck preset with the default
     # capacity (52 -> 52) is not.
@@ -1173,10 +1257,10 @@ def _print_resolution_scaling_table(config) -> None:
 
 class ConfigurableAgentManager:
     """Simplified: agent types come only from override or defaults."""
-    
+
     def __init__(self, config: MixedAgentTrainConfig):
         self.config = config
-    
+
     def get_current_agent_types(self, *_, **__) -> tuple[int, int]:
         if self.config.agent_types_override is not None:
             ats = tuple(self.config.agent_types_override)
@@ -1188,7 +1272,7 @@ class ConfigurableAgentManager:
         if len(ats) == 1:
             return (int(ats[0]), int(ats[0]))
         return (0, 2)
-    
+
     def get_current_action_types(self, *_, **__) -> tuple[int, int]:
         if self.config.action_types_override is not None:
             ats = tuple(self.config.action_types_override)
@@ -1203,9 +1287,11 @@ class ConfigurableAgentManager:
         return (0, 0)
 
 
-
-
-def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig = None, env_params_override: EnvConfig = None):
+def make_mixed_agent_states(
+    config: MixedAgentTrainConfig,
+    env_params: EnvConfig = None,
+    env_params_override: EnvConfig = None,
+):
     """Initialize states for mixed agent training - compatible with make_states interface"""
     curriculum_levels = config.curriculum_levels_override
     single_map_path = config.single_map_path
@@ -1215,11 +1301,13 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
         and config.replay_map_count > 0
         and config.target_map_repeat > 0
     ):
-        curriculum_levels, mixed_dataset_root, mixed_pool_size = _build_mixed_dataset_pool(
-            curriculum_levels=curriculum_levels,
-            target_map_path=single_map_path,
-            replay_map_count=config.replay_map_count,
-            target_map_repeat=config.target_map_repeat,
+        curriculum_levels, mixed_dataset_root, mixed_pool_size = (
+            _build_mixed_dataset_pool(
+                curriculum_levels=curriculum_levels,
+                target_map_path=single_map_path,
+                replay_map_count=config.replay_map_count,
+                target_map_repeat=config.target_map_repeat,
+            )
         )
         os.environ["DATASET_PATH"] = mixed_dataset_root
         os.environ["DATASET_SIZE"] = str(mixed_pool_size)
@@ -1256,7 +1344,9 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
             last_level_type = last_level
 
         batch_cfg = BatchConfig(curriculum_global=CustomCurriculumGlobalConfig())
-        print(f"📍 Using maps from config: {[lvl['maps_path'] for lvl in curriculum_levels]}")
+        print(
+            f"📍 Using maps from config: {[lvl['maps_path'] for lvl in curriculum_levels]}"
+        )
         print(
             f"📍 Curriculum: promote after {increase_th} task success(es), "
             f"demote after {decrease_th} failure(s), last_level_type={last_level!r}"
@@ -1264,7 +1354,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     else:
         batch_cfg = BatchConfig()
         print("📍 Using default maps from config.py")
-    
+
     # Initialize environment with configurable agents
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,
@@ -1273,7 +1363,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     )
     if single_map_path is not None:
         print(f"📍 Using single map path: {single_map_path}")
-    
+
     # Get environment parameters with agent types from config
     if env_params is None:
         if env_params_override is not None:
@@ -1286,11 +1376,15 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                 agent_types = tuple(config.agent_types_override)
             else:
                 agent_types = EnvConfig().agent_types
-            
+
             # Use action types override if provided, otherwise use default (0,0)
-            action_types = config.action_types_override if config.action_types_override is not None else (0, 0)
+            action_types = (
+                config.action_types_override
+                if config.action_types_override is not None
+                else (0, 0)
+            )
             env_params = create_mixed_agent_env_config(
-                agent_types=agent_types, 
+                agent_types=agent_types,
                 action_types=action_types,
                 # Pass reward multipliers from config
                 dump_bonus_mult=config.dump_bonus_mult,
@@ -1311,33 +1405,51 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
             # Verbose training configuration summary
             type_names = {0: "Excavator", 1: "Truck", 2: "SkidSteer"}
             print("🧩 Agent Types (effective):", agent_types)
-            print("🧩 Agent Types (names):", 
-                  " + ".join(type_names.get(t, f"Unknown({t})") for t in agent_types))
+            print(
+                "🧩 Agent Types (names):",
+                " + ".join(type_names.get(t, f"Unknown({t})") for t in agent_types),
+            )
             if config.agent_types_override is not None:
                 print("✅ Using --agent_types override")
-            
+
             # Print action types information
             action_type_names = {0: "Tracked", 1: "Wheeled"}
             print("🚗 Action Types (effective):", action_types)
-            print("🚗 Action Types (names):", 
-                  " + ".join(action_type_names.get(t, f"Unknown({t})") for t in action_types))
+            print(
+                "🚗 Action Types (names):",
+                " + ".join(
+                    action_type_names.get(t, f"Unknown({t})") for t in action_types
+                ),
+            )
             if config.action_types_override is not None:
                 print("✅ Using --action_types override")
             else:
                 print("🚗 Using default action types (all tracked)")
-            
+
             # Print reward multipliers if any were set
-            if any([config.dump_bonus_mult, config.excavator_relocate_dumped_mult,
-                    config.excavator_relocate_dug_dirt_mult, config.transport_relocate_mult]):
+            if any(
+                [
+                    config.dump_bonus_mult,
+                    config.excavator_relocate_dumped_mult,
+                    config.excavator_relocate_dug_dirt_mult,
+                    config.transport_relocate_mult,
+                ]
+            ):
                 print("📊 Reward Multipliers:")
                 if config.dump_bonus_mult is not None:
                     print(f"   dump_bonus_mult: {config.dump_bonus_mult}")
                 if config.excavator_relocate_dumped_mult is not None:
-                    print(f"   excavator_relocate_dumped_mult: {config.excavator_relocate_dumped_mult}")
+                    print(
+                        f"   excavator_relocate_dumped_mult: {config.excavator_relocate_dumped_mult}"
+                    )
                 if config.excavator_relocate_dug_dirt_mult is not None:
-                    print(f"   excavator_relocate_dug_dirt_mult: {config.excavator_relocate_dug_dirt_mult}")
+                    print(
+                        f"   excavator_relocate_dug_dirt_mult: {config.excavator_relocate_dug_dirt_mult}"
+                    )
                 if config.transport_relocate_mult is not None:
-                    print(f"   transport_relocate_mult: {config.transport_relocate_mult}")
+                    print(
+                        f"   transport_relocate_mult: {config.transport_relocate_mult}"
+                    )
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
 
@@ -1353,8 +1465,11 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
         f"⏱️  Batching env_params done in {time.time() - t_env_params:.2f}s",
         flush=True,
     )
-    
-    print(f"Mixed Agent Environment - Tile size shape: {env_params.tile_size.shape}", flush=True)
+
+    print(
+        f"Mixed Agent Environment - Tile size shape: {env_params.tile_size.shape}",
+        flush=True,
+    )
 
     rng = jax.random.PRNGKey(config.seed)
     rng, _rng = jax.random.split(rng)
@@ -1369,15 +1484,23 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
         except ValueError:
             if config.agent_types_override is not None:
                 na = len(tuple(config.agent_types_override))
-            elif hasattr(env.batch_cfg, 'agent_types') and isinstance(env.batch_cfg.agent_types, (tuple, list)):
+            elif hasattr(env.batch_cfg, "agent_types") and isinstance(
+                env.batch_cfg.agent_types, (tuple, list)
+            ):
                 na = len(env.batch_cfg.agent_types)
             else:
                 na = MAX_AGENTS
         na = max(1, min(MAX_AGENTS, int(na)))
         config.num_prev_actions = int(5 * na)
-        print(f"Setting num_prev_actions to {config.num_prev_actions} (5 per agent × {na} agents)", flush=True)
+        print(
+            f"Setting num_prev_actions to {config.num_prev_actions} (5 per agent × {na} agents)",
+            flush=True,
+        )
     except Exception as e:
-        print(f"Warning: failed to infer num_agents for num_prev_actions ({e}); keeping {config.num_prev_actions}", flush=True)
+        print(
+            f"Warning: failed to infer num_agents for num_prev_actions ({e}); keeping {config.num_prev_actions}",
+            flush=True,
+        )
 
     # Create the unified network with agent type features (now that num_prev_actions is set)
     print(f"🧠 Model size preset: {getattr(config, 'model_size', 'base')}", flush=True)
@@ -1421,14 +1544,19 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
         print("   transformer details:", flush=True)
         print(f"     tokens_total: {token_count}", flush=True)
         print(f"     tokens_agent: {max_agents}", flush=True)
-        print("     tokens_global: 3 (prev_actions, local_map, global_maps)", flush=True)
+        print(
+            "     tokens_global: 3 (prev_actions, local_map, global_maps)", flush=True
+        )
         print(f"     layers: {network.transformer_num_layers}", flush=True)
         print(f"     heads: {network.transformer_num_heads}", flush=True)
         print(f"     model_dim: {network.transformer_model_dim}", flush=True)
         print(f"     ffn_dim: {network.transformer_ffn_dim}", flush=True)
     else:
         print("   mlp details:", flush=True)
-        print("     fusion: concat(agent_state, prev_actions, local_map, cnn_maps)", flush=True)
+        print(
+            "     fusion: concat(agent_state, prev_actions, local_map, cnn_maps)",
+            flush=True,
+        )
         print(f"     intermediate_mlp_dim: {network.intermediate_mlp_dim}", flush=True)
     # Debug: print number of actions for current action type (kept as requested)
     try:
@@ -1436,7 +1564,7 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
         print(f"🛠️ Debug: Number of actions = {num_actions_debug}", flush=True)
     except Exception as e:
         print(f"🛠️ Debug: Failed to read number of actions: {e}", flush=True)
-    
+
     # Optimizer with mixed agent considerations.
     # F7: when a kickstart teacher is set, warm the LR up linearly from lr/3 to
     # lr over kickstart_lr_warmup_updates PPO updates, then hold constant. Each
@@ -1475,10 +1603,9 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     train_state = TrainState.create(
         apply_fn=network.apply, params=network_params, tx=tx
     )
-    
-    
+
     print(f"Network: Unified with agent type conditioning", flush=True)
-    
+
     return rng, env, env_params, train_state
 
 
@@ -1557,7 +1684,7 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
 
 def train_mixed_agents(config: MixedAgentTrainConfig):
     """Main training function for mixed agents - with full feature parity to original train.py"""
-    
+
     run = wandb.init(
         project=config.project,
         group=config.group,
@@ -1566,20 +1693,24 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         save_code=True,
         tags=_wandb_tags_for_config(config),
     )
-    
+
     # Log source files - same as original train.py
     train_py_path = os.path.abspath(__file__)
-    config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "terra", "terra", "config.py")
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)), "terra", "terra", "config.py"
+    )
     models_path = os.path.join(os.path.dirname(__file__), "utils", "models.py")
-    
+
     code_artifact = wandb.Artifact(name="mixed_agent_source_code", type="code")
-    
-    for file_path, name in [(train_py_path, "train_mixed_agents.py"), 
-                           (config_path, "config.py"),
-                           (models_path, "models.py")]:
+
+    for file_path, name in [
+        (train_py_path, "train_mixed_agents.py"),
+        (config_path, "config.py"),
+        (models_path, "models.py"),
+    ]:
         if os.path.exists(file_path):
             code_artifact.add_file(file_path, name=name)
-    
+
     if code_artifact.files:
         run.log_artifact(code_artifact)
 
@@ -1595,9 +1726,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     )
     if checkpoint_path is not None:
         if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(
-                f"Checkpoint does not exist: {checkpoint_path}"
-            )
+            raise FileNotFoundError(f"Checkpoint does not exist: {checkpoint_path}")
         try:
             checkpoint = helpers.load_pkl_object(checkpoint_path)
             if "model" not in checkpoint:
@@ -1642,10 +1771,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         try:
             train_state = train_state.replace(params=checkpoint["model"])
             print("Replaced model parameters from checkpoint.")
-            if (
-                checkpoint_mode == "resume"
-                and "optimizer_state" in checkpoint
-            ):
+            if checkpoint_mode == "resume" and "optimizer_state" in checkpoint:
                 train_state = train_state.replace(
                     opt_state=checkpoint["optimizer_state"],
                     step=checkpoint.get("train_state_step", train_state.step),
@@ -1673,8 +1799,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             else:
                 if int(jax.device_get(train_state.step)) != 0:
                     raise RuntimeError(
-                        "parameters-only warm start did not keep a fresh "
-                        "optimizer step"
+                        "parameters-only warm start did not keep a fresh optimizer step"
                     )
                 print(
                     "Verified parameters-only warm start: train_state.step=0 "
@@ -1746,9 +1871,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             teacher_value = _normalize_bound(
                 _checkpoint_config_value(teacher_ckpt, field_name, field_default)
             )
-            student_value = _normalize_bound(
-                getattr(config, field_name, field_default)
-            )
+            student_value = _normalize_bound(getattr(config, field_name, field_default))
             if teacher_value != student_value:
                 preprocessing_mismatches.append(
                     f"{field_name}: teacher={teacher_value!r}, student={student_value!r}"
@@ -1854,42 +1977,43 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             # Basic episode metrics
             episode_done = timestep.done
             completion_rate = safe_jax_to_python(jnp.mean(episode_done))
-            
+
             # Log the metrics - ensure step is always positive and increasing
             if update_num > 0:  # Only log if we have a valid step number
-                wandb.log({
-                    "progress/episode_completion_rate": completion_rate,
-                }, step=update_num)
-                
+                wandb.log(
+                    {
+                        "progress/episode_completion_rate": completion_rate,
+                    },
+                    step=update_num,
+                )
+
         except Exception as e:
             # Log the error but don't crash the training
-            print(f"⚠️  Warning: Failed to log environment metrics at step {update_num}: {e}")
+            print(
+                f"⚠️  Warning: Failed to log environment metrics at step {update_num}: {e}"
+            )
             # Optionally log a minimal set of metrics without step to avoid the warning
             try:
-                wandb.log({
-                    "progress/episode_completion_rate": 0.0,
-                })
+                wandb.log(
+                    {
+                        "progress/episode_completion_rate": 0.0,
+                    }
+                )
             except:
                 pass  # If even this fails, just continue training
-    
+
     def make_mixed_agent_train(
         env, env_params, config, teacher_apply_fn=None, teacher_params=None
     ):
         family_names = tuple(env.maps_buffer.family_names)
         primary_cell_names = tuple(env.maps_buffer.primary_cell_names)
         stage_names = tuple(
-            level["maps_path"]
-            for level in env.batch_cfg.curriculum_global.levels
+            level["maps_path"] for level in env.batch_cfg.curriculum_global.levels
         )
         num_stages = len(stage_names)
         num_families = len(family_names)
         num_primary_cells = len(primary_cell_names)
-        aggregate_group_count = (
-            num_stages
-            * num_families
-            * num_primary_cells
-            * 4
-        )
+        aggregate_group_count = num_stages * num_families * num_primary_cells * 4
 
         def train(rng: jax.Array, train_state: TrainState):
             # INIT ENV
@@ -1930,17 +2054,21 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             )
             timestep = assert_initial_env_steps_zero(timestep)
             # Removed one-time debug sanity prints
-            
+
             # Initialize reward_components in timestep.info to maintain consistent pytree structure
             # This prevents JAX scan errors when reward_components is added later
-            if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
+            if hasattr(timestep, "info") and isinstance(timestep.info, dict):
                 # Add empty reward_components to match the structure produced in env.step/state._get_reward
                 # Shapes follow timestep.reward's batch shape; agent vectors add a MAX_AGENTS axis (4)
                 batch_shape = timestep.reward.shape
                 MAX_AGENTS = 4
                 dummy_components = {
-                    "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
-                    "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
+                    "agent_rewards": jnp.zeros(
+                        batch_shape + (MAX_AGENTS,), dtype=jnp.float32
+                    ),
+                    "agent_active": jnp.zeros(
+                        batch_shape + (MAX_AGENTS,), dtype=jnp.int32
+                    ),
                     "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
                     "terminal": jnp.zeros_like(timestep.reward),
                     "trench": jnp.zeros_like(timestep.reward),
@@ -1965,12 +2093,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     info={**timestep.info, "reward_components": dummy_components}
                 )
             prev_actions = jnp.zeros(
-                (config.num_devices, config.num_envs_per_device, config.num_prev_actions), dtype=jnp.int32
+                (
+                    config.num_devices,
+                    config.num_envs_per_device,
+                    config.num_prev_actions,
+                ),
+                dtype=jnp.int32,
             )
             prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
-            provenance_fn = jax.vmap(
-                jax.vmap(env.maps_buffer.get_map_provenance)
-            )
+            provenance_fn = jax.vmap(jax.vmap(env.maps_buffer.get_map_provenance))
             (
                 _,
                 initial_family_id,
@@ -1982,9 +2113,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 initial_primary_cell_id,
                 env_params_reset.curriculum.level,
             )
-            pending_aggregate_single = empty_episode_aggregate(
-                aggregate_group_count
-            )
+            pending_aggregate_single = empty_episode_aggregate(aggregate_group_count)
             pending_aggregate = jtu.tree_map(
                 lambda value: jnp.broadcast_to(
                     value,
@@ -2017,7 +2146,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     # SELECT ACTION
                     rng, _rng_model, _rng_env = jax.random.split(rng, 3)
                     action, log_prob, value, _ = select_action_ppo(
-                        train_state, prev_timestep.observation, prev_actions, _rng_model, config
+                        train_state,
+                        prev_timestep.observation,
+                        prev_actions,
+                        _rng_model,
+                        config,
                     )
 
                     # STEP ENV
@@ -2030,9 +2163,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         next_family_id,
                         next_primary_cell_id,
                         _,
-                    ) = jax.vmap(
-                        env.maps_buffer.get_map_provenance
-                    )(_rng_env, timestep.env_cfg)
+                    ) = jax.vmap(env.maps_buffer.get_map_provenance)(
+                        _rng_env, timestep.env_cfg
+                    )
                     episode_step = EpisodeStep(
                         done=timestep.done,
                         task_done=timestep.info["task_done"],
@@ -2042,13 +2175,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         terminal_reward=reward_components["terminal"],
                         trench_reward=reward_components["trench"],
                         existence_reward=reward_components["existence"],
-                        reward_normalizer=(
-                            prev_timestep.env_cfg.rewards.normalizer
-                        ),
+                        reward_normalizer=(prev_timestep.env_cfg.rewards.normalizer),
                         action=action,
-                        action_had_effect=timestep.info[
-                            "action_had_effect"
-                        ],
+                        action_had_effect=timestep.info["action_had_effect"],
                         productive_workspace_cycle=timestep.info[
                             "productive_workspace_cycle"
                         ],
@@ -2056,45 +2185,27 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             "transition_mass_residual"
                         ],
                         target_mutation=timestep.info["target_mutation"],
-                        obstacle_mutation=timestep.info[
-                            "obstacle_mutation"
-                        ],
-                        dig_completion=reward_components[
-                            "dig_completion_total"
-                        ],
-                        dump_purity=reward_components[
-                            "dump_completion_action_map"
-                        ],
+                        obstacle_mutation=timestep.info["obstacle_mutation"],
+                        dig_completion=reward_components["dig_completion_total"],
+                        dump_purity=reward_components["dump_completion_action_map"],
                         dump_volume_completion=reward_components[
                             "total_dig_dump_completion"
                         ],
-                        combined_completion=reward_components[
-                            "absolute_completion"
-                        ],
-                        unloaded_completion=reward_components[
-                            "unloaded_completion"
-                        ],
-                        accepted_dump_volume=reward_components[
-                            "accepted_dump_volume"
-                        ],
-                        illegal_dump_volume=reward_components[
-                            "illegal_dump_volume"
-                        ],
+                        combined_completion=reward_components["absolute_completion"],
+                        unloaded_completion=reward_components["unloaded_completion"],
+                        accepted_dump_volume=reward_components["accepted_dump_volume"],
+                        illegal_dump_volume=reward_components["illegal_dump_volume"],
                     )
-                    episode_accumulator, pending_aggregate = (
-                        update_episode_aggregate(
-                            episode_accumulator,
-                            pending_aggregate,
-                            episode_step,
-                            next_family_id=next_family_id,
-                            next_primary_cell_id=next_primary_cell_id,
-                            next_stage_id=(
-                                timestep.env_cfg.curriculum.level
-                            ),
-                            num_stages=num_stages,
-                            num_families=num_families,
-                            num_primary_cells=num_primary_cells,
-                        )
+                    episode_accumulator, pending_aggregate = update_episode_aggregate(
+                        episode_accumulator,
+                        pending_aggregate,
+                        episode_step,
+                        next_family_id=next_family_id,
+                        next_primary_cell_id=next_primary_cell_id,
+                        next_stage_id=(timestep.env_cfg.curriculum.level),
+                        num_stages=num_stages,
+                        num_families=num_families,
+                        num_primary_cells=num_primary_cells,
                     )
 
                     # Removed SWAP debug prints
@@ -2123,6 +2234,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         remaining_inner_dig_tiles=reward_components[
                             "remaining_inner_dig_tiles"
                         ],
+                        transition_mass_residual=timestep.info[
+                            "transition_mass_residual"
+                        ],
+                        target_mutation=timestep.info["target_mutation"],
+                        obstacle_mutation=timestep.info["obstacle_mutation"],
                         log_prob=log_prob,
                         obs=prev_timestep.observation,
                         prev_actions=prev_actions,
@@ -2153,17 +2269,33 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 runner_state, transitions = jax.lax.scan(
                     _env_step, runner_state, None, config.num_steps
                 )
+                transition_integrity = {
+                    "maximum_mass_residual": jax.lax.pmax(
+                        jnp.max(transitions.transition_mass_residual),
+                        "devices",
+                    ),
+                    "target_mutation_count": jax.lax.psum(
+                        jnp.sum(transitions.target_mutation.astype(jnp.int32)),
+                        "devices",
+                    ),
+                    "obstacle_mutation_count": jax.lax.psum(
+                        jnp.sum(transitions.obstacle_mutation.astype(jnp.int32)),
+                        "devices",
+                    ),
+                }
 
                 # Share terminal credit with preceding same-episode agent turns.
-                done_seq = transitions.done            # [seq, batch]
-                reward_seq = transitions.reward        # [seq, batch]
+                done_seq = transitions.done  # [seq, batch]
+                reward_seq = transitions.reward  # [seq, batch]
 
                 # Get num_agents per env (assumed constant across sequence); shape [batch]
                 # transitions.obs stores prev_timestep.observation
                 num_agents_per_env = transitions.obs["num_agents"][0]  # [batch]
                 # Clip to supported window 1..MAX_AGENTS
                 MAX_AGENTS = 4
-                num_agents_per_env = jnp.clip(num_agents_per_env.astype(jnp.int32), 1, MAX_AGENTS)
+                num_agents_per_env = jnp.clip(
+                    num_agents_per_env.astype(jnp.int32), 1, MAX_AGENTS
+                )
 
                 augmented_reward = _backfill_terminal_rewards(
                     reward_seq,
@@ -2296,9 +2428,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 )
                 pending_aggregate = jax.lax.cond(
                     flush_episode_aggregate,
-                    lambda _: empty_episode_aggregate(
-                        aggregate_group_count
-                    ),
+                    lambda _: empty_episode_aggregate(aggregate_group_count),
                     lambda aggregate: aggregate,
                     pending_aggregate,
                 )
@@ -2311,12 +2441,19 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     episode_accumulator,
                     pending_aggregate,
                 )
-                return runner_state, loss_info, aggregate_snapshot
+                return (
+                    runner_state,
+                    loss_info,
+                    aggregate_snapshot,
+                    transition_integrity,
+                )
 
             # Setup runner state for multiple devices
             rng, rng_rollout = jax.random.split(rng)
             rng = jax.random.split(rng, num=config.num_devices)
-            train_state = replicate(train_state, jax.local_devices()[: config.num_devices])
+            train_state = replicate(
+                train_state, jax.local_devices()[: config.num_devices]
+            )
             runner_state = (
                 rng,
                 train_state,
@@ -2326,7 +2463,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 episode_accumulator,
                 pending_aggregate,
             )
-            
+
             # Entropy scheduler: cosine decay using config variables
             ent_start = float(config.ent_schedule_start)
             ent_end = float(config.ent_schedule_end)
@@ -2334,8 +2471,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
             for i in tqdm(range(resume_update, config.num_updates), desc="Training"):
                 need_train_log = (
-                    config.log_train_interval > 0
-                    and i % config.log_train_interval == 0
+                    config.log_train_interval > 0 and i % config.log_train_interval == 0
                 )
                 need_checkpoint = (
                     config.checkpoint_interval > 0
@@ -2353,18 +2489,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     and i % config.finite_check_interval == 0
                 )
                 need_episode_flush = (
-                    need_train_log
-                    or need_checkpoint
-                    or need_final_state
+                    need_train_log or need_checkpoint or need_final_state
                 )
-                need_host_state = (
-                    need_episode_flush
-                    or need_eval
-                    or need_finite_check
-                )
+                need_host_state = need_episode_flush or need_eval or need_finite_check
                 f = min(1.0, i / ent_T) if ent_T > 0 else 1.0
                 # Cosine decay: starts at ent_start when f=0, ends at ent_end when f=1
-                ent_coef_current = ent_end + 0.5 * (ent_start - ent_end) * (1.0 + jnp.cos(jnp.pi * f))
+                ent_coef_current = ent_end + 0.5 * (ent_start - ent_end) * (
+                    1.0 + jnp.cos(jnp.pi * f)
+                )
                 # Linear decay from ent_start to ent_end over ent_T updates
                 # ent_coef_current = ent_start + (ent_end - ent_start) * f
                 # Broadcast scalar to devices for pmap input
@@ -2399,6 +2531,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     runner_state,
                     loss_info,
                     episode_aggregate_snapshot,
+                    transition_integrity,
                 ) = jax.block_until_ready(
                     _update_step(
                         runner_state,
@@ -2408,6 +2541,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         flush_episode_broadcast,
                     )
                 )
+                transition_integrity_single = unreplicate(transition_integrity)
+                _assert_transition_integrity(transition_integrity_single)
                 end_time = time.time()
 
                 iteration_duration = end_time - start_time
@@ -2423,9 +2558,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     _, _, timestep, prev_actions = runner_state_single[:4]
                     env_params_single = timestep.env_cfg
                 if need_episode_flush:
-                    aggregate_single = unreplicate(
-                        episode_aggregate_snapshot
-                    )
+                    aggregate_single = unreplicate(episode_aggregate_snapshot)
                     episode_payload = aggregate_to_payload(
                         aggregate_single,
                         family_names=family_names,
@@ -2453,7 +2586,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         runner_state[2].env_cfg,
                         env.batch_cfg.curriculum_global.levels,
                     )
-                    
+
                     # Start with base metrics
                     log_dict = {
                         "performance/steps_per_second": steps_per_second,
@@ -2462,27 +2595,32 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "performance/env_steps_per_update": config.env_steps_per_update,
                         "performance/actual_env_steps": (i + 1)
                         * config.env_steps_per_update,
-                        "environment/effective_horizon_min": float(
-                            np.min(
-                                np.asarray(
-                                    env_params_single.max_steps_in_episode
-                                )
+                        "integrity/maximum_transition_mass_residual": int(
+                            np.asarray(
+                                transition_integrity_single["maximum_mass_residual"]
                             )
                         ),
-                        "environment/effective_horizon_max": float(
-                            np.max(
-                                np.asarray(
-                                    env_params_single.max_steps_in_episode
-                                )
+                        "integrity/transition_target_mutation_count": int(
+                            np.asarray(
+                                transition_integrity_single["target_mutation_count"]
                             )
+                        ),
+                        "integrity/transition_obstacle_mutation_count": int(
+                            np.asarray(
+                                transition_integrity_single["obstacle_mutation_count"]
+                            )
+                        ),
+                        "environment/effective_horizon_min": float(
+                            np.min(np.asarray(env_params_single.max_steps_in_episode))
+                        ),
+                        "environment/effective_horizon_max": float(
+                            np.max(np.asarray(env_params_single.max_steps_in_episode))
                         ),
                         "curriculum_levels": curriculum_levels,
                         "lr": config.lr,
                         "sched/entropy_coef": float(ent_coef_current),
                         **loss_info_single,
-                        **_episode_aggregate_wandb_metrics(
-                            episode_payload
-                        ),
+                        **_episode_aggregate_wandb_metrics(episode_payload),
                     }
                     # F7: log the annealed kickstart coefficients (loss terms
                     # kickstart/kl and kickstart/value_mse arrive via loss_info).
@@ -2519,12 +2657,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "update": i,
                         "next_update": i + 1,
                         "loss_info": loss_info_single,
+                        "transition_integrity": {
+                            key: int(np.asarray(value))
+                            for key, value in (transition_integrity_single.items())
+                        },
                     }
                     checkpoint_name = f"{config.name}.pkl"
                     if config.keep_checkpoint_history:
-                        checkpoint_name = (
-                            f"{config.name}_update_{i + 1:06d}.pkl"
-                        )
+                        checkpoint_name = f"{config.name}_update_{i + 1:06d}.pkl"
                     helpers.save_pkl_object(
                         checkpoint,
                         str(Path(config.checkpoint_dir) / checkpoint_name),
@@ -2534,7 +2674,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     # Reuse the training reset shape regime and keep only the
                     # rollout loop outside XLA. This avoids the separate
                     # env.reset compile that can crash on RTX 4090 eval.
-                    print(f"🧪 Starting pmapped step-wise eval at update {i}", flush=True)
+                    print(
+                        f"🧪 Starting pmapped step-wise eval at update {i}", flush=True
+                    )
                     rng_eval_base = jax.random.fold_in(rng_rollout, i)
                     rng_eval = jax.random.split(rng_eval_base, config.num_devices)
                     reset_rng_eval = jax.random.split(
@@ -2575,7 +2717,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         config,
                     )
                     eval_stats = eval_ppo.aggregate_device_stats(eval_stats)
-                    print(f"🧪 Finished pmapped step-wise eval at update {i}", flush=True)
+                    print(
+                        f"🧪 Finished pmapped step-wise eval at update {i}", flush=True
+                    )
 
                     # Total eval env steps that contributed to the sums.
                     n = (
@@ -2585,8 +2729,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     )
                     avg_positive_episode_length = jnp.where(
                         eval_stats.positive_terminations > 0,
-                        eval_stats.positive_terminations_steps / eval_stats.positive_terminations,
-                        jnp.zeros_like(eval_stats.positive_terminations_steps)
+                        eval_stats.positive_terminations_steps
+                        / eval_stats.positive_terminations,
+                        jnp.zeros_like(eval_stats.positive_terminations_steps),
                     )
                     total_eval_envs = config.num_devices * config.num_envs_per_device
                     successful_episodes_per_env = (
@@ -2628,14 +2773,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                 eval_stats.initial_episode_terminations
                             ),
                             "eval/success_within_horizon_rate": (
-                                eval_stats.initial_episode_successes
-                                / total_eval_envs
+                                eval_stats.initial_episode_successes / total_eval_envs
                             ),
                             "eval/initial_episode_completion_rate": (
                                 eval_stats.initial_episode_terminations
                                 / total_eval_envs
                             ),
-                            "eval/avg_positive_episode_length": avg_positive_episode_length
+                            "eval/avg_positive_episode_length": avg_positive_episode_length,
                         }
                     )
 
@@ -2648,20 +2792,27 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 ):
                     jax.clear_caches()
                     import gc
+
                     gc.collect()
 
-            return {"runner_state": runner_state_single, "loss_info": loss_info_single}
+            return {
+                "runner_state": runner_state_single,
+                "loss_info": loss_info_single,
+                "transition_integrity": {
+                    key: int(np.asarray(value))
+                    for key, value in transition_integrity_single.items()
+                },
+            }
 
         return train
-    
+
     train_fn = make_mixed_agent_train(
         env, env_params, config, teacher_apply_fn, teacher_params
     )
-    
+
     def train_with_monitoring(rng, train_state):
         return train_fn(rng, train_state)
 
-    
     print("=" * 60)
     print(f"📊 Configuration:")
     print(f"   - Environments per device: {config.num_envs_per_device}")
@@ -2673,43 +2824,48 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     print(f"   - log_eval_interval: {config.log_eval_interval}")
     print(f"   - checkpoint_interval: {config.checkpoint_interval}")
     print(f"   - checkpoint_dir: {config.checkpoint_dir}")
-    print(
-        f"   - keep_checkpoint_history: "
-        f"{config.keep_checkpoint_history}"
+    print(f"   - keep_checkpoint_history: {config.keep_checkpoint_history}")
+    enforce_border_alignment = bool(
+        jnp.ravel(env_params.enforce_foundation_border_alignment)[0]
     )
-    enforce_border_alignment = bool(jnp.ravel(env_params.enforce_foundation_border_alignment)[0])
     enable_reachability_obs = bool(jnp.ravel(env_params.enable_reachability_obs)[0])
     foundation_dump_min_free_fraction = float(
-        jnp.ravel(getattr(env_params, "foundation_dump_min_free_fraction", jnp.array(0.0)))[0]
+        jnp.ravel(
+            getattr(env_params, "foundation_dump_min_free_fraction", jnp.array(0.0))
+        )[0]
     )
     print(f"   - enforce_foundation_border_alignment: {enforce_border_alignment}")
     print(
-        "   - foundation_dump_min_free_fraction: "
-        f"{foundation_dump_min_free_fraction}"
+        f"   - foundation_dump_min_free_fraction: {foundation_dump_min_free_fraction}"
     )
     print(f"   - enable_reachability_obs: {enable_reachability_obs}")
-    
+
     print("=" * 60)
     print("🚀 Starting Mixed Agent Training...")
-    print("⚙️  JAX is now compiling the control-flow graph. This is normal and taking a few minutes...", flush=True)
+    print(
+        "⚙️  JAX is now compiling the control-flow graph. This is normal and taking a few minutes...",
+        flush=True,
+    )
 
     try:
         t = time.time()
         train_info = jax.block_until_ready(train_with_monitoring(rng, train_state))
         elapsed_time = time.time() - t
         print(f"✅ Mixed agent training completed in {elapsed_time:.2f}s")
-        
+
         # Save final checkpoint with special naming - enhanced metadata
         try:
             at_final = train_info["runner_state"][2].env_cfg.agent_types
-            if hasattr(at_final, 'shape') and len(at_final.shape) > 1:
+            if hasattr(at_final, "shape") and len(at_final.shape) > 1:
                 a1 = int(jnp.mean(at_final[0, :, 0]))
                 a2 = int(jnp.mean(at_final[0, :, 1]))
             else:
                 a1 = int(at_final[0])
                 a2 = int(at_final[1])
             type_names = {0: "Excavator", 1: "Truck", 2: "SkidSteer"}
-            agent_types_str = f"{type_names.get(a1, 'unknown')}_{type_names.get(a2, 'unknown')}"
+            agent_types_str = (
+                f"{type_names.get(a1, 'unknown')}_{type_names.get(a2, 'unknown')}"
+            )
         except Exception:
             agent_types_str = "unknown_unknown"
 
@@ -2732,17 +2888,16 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             "update": config.num_updates - 1,
             "next_update": config.num_updates,
             "loss_info": train_info["loss_info"],
+            "transition_integrity": train_info["transition_integrity"],
             "agent_types": agent_types_str,
             "network_type": "unified_with_agent_type_conditioning",
             "training_duration": elapsed_time,
-            "final_reward": train_info.get("final_reward", None)
+            "final_reward": train_info.get("final_reward", None),
         }
-        final_path = (
-            Path(config.checkpoint_dir) / f"{config.name}_FINAL.pkl"
-        )
+        final_path = Path(config.checkpoint_dir) / f"{config.name}_FINAL.pkl"
         helpers.save_pkl_object(final_checkpoint, str(final_path))
         print(f"💾 Final mixed agent model saved to {final_path}")
-        
+
     except KeyboardInterrupt:
         print("⏹️ Training interrupted. Finalizing...")
     finally:
@@ -2754,54 +2909,74 @@ if __name__ == "__main__":
     DT = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
     import argparse
 
-    parser = argparse.ArgumentParser(description="Train mixed agent policies (Tracked + Skid Steer)")
-    parser.add_argument(
-        "-n", "--name", type=str, default="mixed-agents-skidsteer-skidsteer",
-        help="Experiment name"
+    parser = argparse.ArgumentParser(
+        description="Train mixed agent policies (Tracked + Skid Steer)"
     )
     parser.add_argument(
-        "-m", "--machine", type=str, default="local",
-        help="Machine identifier"
+        "-n",
+        "--name",
+        type=str,
+        default="mixed-agents-skidsteer-skidsteer",
+        help="Experiment name",
     )
     parser.add_argument(
-        "-d", "--num_devices", type=int, default=0,
-        help="Number of devices to use. If 0, uses all available devices."
+        "-m", "--machine", type=str, default="local", help="Machine identifier"
     )
     parser.add_argument(
-        "--lr", type=float, default=3e-4,
-        help="Learning rate"
+        "--seed",
+        type=int,
+        default=42,
+        help="Training initialization and rollout seed.",
     )
     parser.add_argument(
-        "--num_envs_per_device", type=int, default=1024,
-        help="Number of parallel envs per device"
+        "-d",
+        "--num_devices",
+        type=int,
+        default=0,
+        help="Number of devices to use. If 0, uses all available devices.",
+    )
+    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument(
+        "--num_envs_per_device",
+        type=int,
+        default=1024,
+        help="Number of parallel envs per device",
     )
     parser.add_argument(
-        "--total_timesteps", type=int, default=50_000_000_000,
-        help="Total environment timesteps across all devices"
+        "--total_timesteps",
+        type=int,
+        default=50_000_000_000,
+        help="Total environment timesteps across all devices",
     )
     parser.add_argument(
-        "--num_steps", type=int, default=32,
-        help="Rollout length per PPO update"
+        "--num_steps", type=int, default=32, help="Rollout length per PPO update"
     )
     parser.add_argument(
-        "--update_epochs", type=int, default=2,
-        help="Number of PPO epochs per rollout"
+        "--update_epochs", type=int, default=2, help="Number of PPO epochs per rollout"
     )
     parser.add_argument(
-        "--num_minibatches", type=int, default=16,
-        help="Number of minibatches per PPO epoch"
+        "--num_minibatches",
+        type=int,
+        default=16,
+        help="Number of minibatches per PPO epoch",
     )
     parser.add_argument(
-        "--log_train_interval", type=int, default=1,
-        help="Training metric logging interval in PPO updates."
+        "--log_train_interval",
+        type=int,
+        default=1,
+        help="Training metric logging interval in PPO updates.",
     )
     parser.add_argument(
-        "--log_eval_interval", type=int, default=100,
-        help="Eval logging interval in PPO updates. Set 0 to disable inline eval."
+        "--log_eval_interval",
+        type=int,
+        default=100,
+        help="Eval logging interval in PPO updates. Set 0 to disable inline eval.",
     )
     parser.add_argument(
-        "--checkpoint_interval", type=int, default=100,
-        help="Checkpoint save interval in PPO updates."
+        "--checkpoint_interval",
+        type=int,
+        default=100,
+        help="Checkpoint save interval in PPO updates.",
     )
     parser.add_argument(
         "--checkpoint_dir",
@@ -2815,12 +2990,16 @@ if __name__ == "__main__":
         help="Write update-numbered periodic checkpoints instead of overwriting one file.",
     )
     parser.add_argument(
-        "--eval_episodes", type=int, default=100,
-        help="Requested evaluation episode count (evaluation is currently step-limited)."
+        "--eval_episodes",
+        type=int,
+        default=100,
+        help="Requested evaluation episode count (evaluation is currently step-limited).",
     )
     parser.add_argument(
-        "--cache_clear_interval", type=int, default=1000,
-        help="JAX cache-clear interval in updates; set 0 to disable."
+        "--cache_clear_interval",
+        type=int,
+        default=1000,
+        help="JAX cache-clear interval in updates; set 0 to disable.",
     )
     parser.add_argument(
         "--ent_schedule_start",
@@ -2841,8 +3020,11 @@ if __name__ == "__main__":
         help="Number of PPO updates over which to cosine-anneal entropy.",
     )
     parser.add_argument(
-        "--model_size", type=str, default="base", choices=["base", "medium", "large"],
-        help="Model capacity preset. 'medium' and 'large' progressively widen CNN and policy/value heads."
+        "--model_size",
+        type=str,
+        default="base",
+        choices=["base", "medium", "large"],
+        help="Model capacity preset. 'medium' and 'large' progressively widen CNN and policy/value heads.",
     )
     parser.add_argument(
         "--model_core",
@@ -3044,16 +3226,21 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--agent_types", type=str, default=None,   # 0=excavator, 1=truck, 2=skidsteer
-        help="Override agent types with a Python tuple, e.g. '(2,0,2,0)'. Overrides --config."
+        "--agent_types",
+        type=str,
+        default=None,  # 0=excavator, 1=truck, 2=skidsteer
+        help="Override agent types with a Python tuple, e.g. '(2,0,2,0)'. Overrides --config.",
     )
     parser.add_argument(
-        "--action_types", type=str, default=None,
-        help="Override action types with a Python tuple, e.g. '(1,)' for wheeled. Overrides --config."
+        "--action_types",
+        type=str,
+        default=None,
+        help="Override action types with a Python tuple, e.g. '(1,)' for wheeled. Overrides --config.",
     )
     parser.add_argument(
-        "--debug", action="store_true",
-        help="Enable one-time sanity assertions/prints for agent ordering and masks"
+        "--debug",
+        action="store_true",
+        help="Enable one-time sanity assertions/prints for agent ordering and masks",
     )
     parser.add_argument(
         "--fail_on_nonfinite",
@@ -3072,12 +3259,15 @@ if __name__ == "__main__":
             "--fail_on_nonfinite is set, which checks every update."
         ),
     )
-    
+
     # Named configuration preset
     parser.add_argument(
-        "-c", "--config", type=str, default=None,
+        "-c",
+        "--config",
+        type=str,
+        default=None,
         help="Load a named training config preset (e.g., 'excavator_truck', 'solo_excavator'). "
-             "Run 'python configs/training_configs.py' to see available presets."
+        "Run 'python configs/training_configs.py' to see available presets.",
     )
     parser.add_argument(
         "--map_path",
@@ -3108,28 +3298,39 @@ if __name__ == "__main__":
             "times to the mixed training pool."
         ),
     )
-    
+
     # Reward multiplier arguments
     parser.add_argument(
-        "--dump_bonus_mult", type=float, default=None,
-        help="Multiplier for dump rewards (overrides config preset)"
+        "--dump_bonus_mult",
+        type=float,
+        default=None,
+        help="Multiplier for dump rewards (overrides config preset)",
     )
     parser.add_argument(
-        "--excavator_relocate_dumped_mult", type=float, default=None,
-        help="Multiplier for excavator relocating dumped material (overrides config preset)"
+        "--excavator_relocate_dumped_mult",
+        type=float,
+        default=None,
+        help="Multiplier for excavator relocating dumped material (overrides config preset)",
     )
     parser.add_argument(
-        "--excavator_relocate_dug_dirt_mult", type=float, default=None,
-        help="Multiplier for excavator relocating dug dirt (overrides config preset)"
+        "--excavator_relocate_dug_dirt_mult",
+        type=float,
+        default=None,
+        help="Multiplier for excavator relocating dug dirt (overrides config preset)",
     )
     parser.add_argument(
-        "--transport_relocate_mult", type=float, default=None,
-        help="Multiplier for transport relocation rewards (overrides config preset)"
+        "--transport_relocate_mult",
+        type=float,
+        default=None,
+        help="Multiplier for transport relocation rewards (overrides config preset)",
     )
     # Checkpoint loading arguments
     parser.add_argument(
-        "-r", "--resume_from", type=str, default=None,
-        help="Path to a checkpoint .pkl to resume training from."
+        "-r",
+        "--resume_from",
+        type=str,
+        default=None,
+        help="Path to a checkpoint .pkl to resume training from.",
     )
     parser.add_argument(
         "--warm_start_from",
@@ -3141,7 +3342,9 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--resume_update", type=int, default=None,
+        "--resume_update",
+        type=int,
+        default=None,
         help=(
             "Manual next update index for old checkpoints that only contain "
             "model params. New checkpoints store this automatically."
@@ -3152,21 +3355,22 @@ if __name__ == "__main__":
         "--load_env_from_checkpoint",
         dest="load_env_from_checkpoint",
         action="store_true",
-        help="Load env_config from the checkpoint (default)."
+        help="Load env_config from the checkpoint (default).",
     )
     env_group.add_argument(
         "--no-load-env-from-checkpoint",
         dest="load_env_from_checkpoint",
         action="store_false",
-        help="Do not load env_config from checkpoint; use default/current EnvConfig()."
+        help="Do not load env_config from checkpoint; use default/current EnvConfig().",
     )
-    
+
     args, unknown = parser.parse_known_args()
 
     # Common mistake: `--preset_name` instead of `--config preset_name`
     if args.config is None and unknown:
         try:
             from configs.training_configs import list_configs
+
             known_configs = set(list_configs())
             for token in list(unknown):
                 candidate = token.lstrip("-")
@@ -3184,11 +3388,11 @@ if __name__ == "__main__":
             f"Unrecognized arguments: {unknown}. "
             "Load a YAML preset with --config <name> (e.g. --config solo_excavator_rectangles_2stage)."
         )
-    
+
     # default to True unless explicitly disabled
     if args.load_env_from_checkpoint is None:
         args.load_env_from_checkpoint = True
-    
+
     # Initialize config values from preset if --config is provided
     agent_types_override = None
     action_types_override = None
@@ -3204,58 +3408,79 @@ if __name__ == "__main__":
     curriculum_increase_level_threshold = None
     curriculum_decrease_level_threshold = None
     curriculum_last_level_type = None
-    
+
     if args.config is not None:
         try:
             from configs.training_configs import get_config, list_configs
+
             preset = get_config(args.config)
             print(f"\n📦 Loading config preset: '{args.config}'")
             print(f"   Description: {preset.description}")
-            
+
             # Apply preset values
             agent_types_override = preset.agent_types
             action_types_override = preset.action_types
-            
+
             # Apply reward multipliers from preset
             dump_bonus_mult = preset.reward_multipliers.dump_bonus_mult
-            excavator_relocate_dumped_mult = preset.reward_multipliers.excavator_relocate_dumped_mult
-            excavator_relocate_dug_dirt_mult = preset.reward_multipliers.excavator_relocate_dug_dirt_mult
+            excavator_relocate_dumped_mult = (
+                preset.reward_multipliers.excavator_relocate_dumped_mult
+            )
+            excavator_relocate_dug_dirt_mult = (
+                preset.reward_multipliers.excavator_relocate_dug_dirt_mult
+            )
             transport_relocate_mult = preset.reward_multipliers.transport_relocate_mult
-            
+
             # Apply capacity overrides from preset
             truck_capacity = preset.truck_capacity
             skidsteer_capacity = preset.skidsteer_capacity
             truck_road_restricted = preset.truck_road_restricted
-            enforce_foundation_border_alignment = preset.enforce_foundation_border_alignment
-            
+            enforce_foundation_border_alignment = (
+                preset.enforce_foundation_border_alignment
+            )
+
             # Apply maps/curriculum from preset (convert MapLevel objects to dict format)
             if preset.maps and len(preset.maps) > 0:
                 from terra.config import RewardsType
+
                 curriculum_levels_override = []
                 for map_level in preset.maps:
                     # Convert rewards_type string to enum
-                    rewards_type = RewardsType.DENSE if map_level.rewards_type == "DENSE" else RewardsType.SPARSE
-                    curriculum_levels_override.append({
-                        "maps_path": map_level.maps_path,
-                        "max_steps_in_episode": map_level.max_steps_in_episode,
-                        "rewards_type": rewards_type,
-                        "apply_trench_rewards": map_level.apply_trench_rewards,
-                    })
-                curriculum_increase_level_threshold = preset.curriculum.increase_level_threshold
-                curriculum_decrease_level_threshold = preset.curriculum.decrease_level_threshold
+                    rewards_type = (
+                        RewardsType.DENSE
+                        if map_level.rewards_type == "DENSE"
+                        else RewardsType.SPARSE
+                    )
+                    curriculum_levels_override.append(
+                        {
+                            "maps_path": map_level.maps_path,
+                            "max_steps_in_episode": map_level.max_steps_in_episode,
+                            "rewards_type": rewards_type,
+                            "apply_trench_rewards": map_level.apply_trench_rewards,
+                        }
+                    )
+                curriculum_increase_level_threshold = (
+                    preset.curriculum.increase_level_threshold
+                )
+                curriculum_decrease_level_threshold = (
+                    preset.curriculum.decrease_level_threshold
+                )
                 curriculum_last_level_type = preset.curriculum.last_level_type
-            
+
         except ImportError as e:
             print(f"⚠️  Failed to import training configs: {e}")
             print("   Make sure configs/training_configs.py exists")
         except ValueError as e:
             print(f"⚠️  {e}")
-            print("   Run 'python configs/training_configs.py' to see available presets")
-    
+            print(
+                "   Run 'python configs/training_configs.py' to see available presets"
+            )
+
     # Override with explicit CLI arguments (these take precedence over preset)
     if args.agent_types is not None:
         try:
             import ast
+
             parsed = ast.literal_eval(args.agent_types)
             # Normalize to a tuple of ints; accept tuple, list, or single int
             if isinstance(parsed, tuple):
@@ -3265,14 +3490,17 @@ if __name__ == "__main__":
             elif isinstance(parsed, (int,)):
                 agent_types_override = (int(parsed),)
             else:
-                raise ValueError("--agent_types must be a tuple/list like (2,0,0,2) or a single int like (0)")
+                raise ValueError(
+                    "--agent_types must be a tuple/list like (2,0,0,2) or a single int like (0)"
+                )
             print(f"➡️  CLI override agent types: {agent_types_override}")
         except Exception as e:
             print(f"⚠️  Failed to parse --agent_types '{args.agent_types}': {e}")
-    
+
     if args.action_types is not None:
         try:
             import ast
+
             parsed = ast.literal_eval(args.action_types)
             # Normalize to a tuple of ints; accept tuple, list, or single int
             if isinstance(parsed, tuple):
@@ -3282,18 +3510,28 @@ if __name__ == "__main__":
             elif isinstance(parsed, (int,)):
                 action_types_override = (int(parsed),)
             else:
-                raise ValueError("--action_types must be a tuple/list like (0,1,0,1) or a single int like (0)")
+                raise ValueError(
+                    "--action_types must be a tuple/list like (0,1,0,1) or a single int like (0)"
+                )
             print(f"➡️  CLI override action types: {action_types_override}")
         except Exception as e:
             print(f"⚠️  Failed to parse --action_types '{args.action_types}': {e}")
 
-    if (args.replay_map_count > 0 or args.target_map_repeat > 0) and args.map_path is None:
+    if (
+        args.replay_map_count > 0 or args.target_map_repeat > 0
+    ) and args.map_path is None:
         raise ValueError("Mixed target-map replay requires --map_path.")
-    if (args.replay_map_count > 0 or args.target_map_repeat > 0) and args.config is None:
-        raise ValueError("Mixed target-map replay requires --config so the dataset source is defined.")
+    if (
+        args.replay_map_count > 0 or args.target_map_repeat > 0
+    ) and args.config is None:
+        raise ValueError(
+            "Mixed target-map replay requires --config so the dataset source is defined."
+        )
     if (args.replay_map_count > 0) != (args.target_map_repeat > 0):
-        raise ValueError("Set both --replay_map_count and --target_map_repeat to use mixed target-map replay.")
-    
+        raise ValueError(
+            "Set both --replay_map_count and --target_map_repeat to use mixed target-map replay."
+        )
+
     # CLI reward multiplier overrides take precedence
     if args.dump_bonus_mult is not None:
         dump_bonus_mult = args.dump_bonus_mult
@@ -3309,13 +3547,13 @@ if __name__ == "__main__":
         truck_capacity = args.truck_capacity
     if args.skidsteer_capacity is not None:
         skidsteer_capacity = args.skidsteer_capacity
-    
+
     # Use default agent types if nothing was set
     if agent_types_override is None:
         agent_types_override = (0,)  # Default to single excavator
     if action_types_override is None:
         action_types_override = (0,)  # Default to tracked
-    
+
     # Validate: skidsteers (agent_type=2) cannot use wheeled movement (action_type=1)
     for i in range(min(len(agent_types_override), len(action_types_override))):
         if agent_types_override[i] == 2 and action_types_override[i] == 1:
@@ -3324,7 +3562,7 @@ if __name__ == "__main__":
                 f"(action_type=1). Skidsteers require tracked movement (action_type=0) "
                 f"for auto-load, push-mode, and reverse-dump mechanics."
             )
-    
+
     # Parse critic-head width override from a comma-separated string.
     def _parse_int_tuple(raw, flag_name, example):
         if raw is None:
@@ -3356,9 +3594,8 @@ if __name__ == "__main__":
         raise ValueError(
             "Set both --resnet_stage_channels and --resnet_blocks_per_stage, or neither."
         )
-    if (
-        resnet_stage_channels is not None
-        and len(resnet_stage_channels) != len(resnet_blocks_per_stage)
+    if resnet_stage_channels is not None and len(resnet_stage_channels) != len(
+        resnet_blocks_per_stage
     ):
         raise ValueError(
             "--resnet_stage_channels and --resnet_blocks_per_stage must have equal "
@@ -3368,7 +3605,8 @@ if __name__ == "__main__":
     name = f"{args.name}-{args.machine}-{DT}"
 
     config = MixedAgentTrainConfig(
-        name=name, 
+        name=name,
+        seed=args.seed,
         num_devices=args.num_devices,
         lr=args.lr,
         num_envs_per_device=args.num_envs_per_device,

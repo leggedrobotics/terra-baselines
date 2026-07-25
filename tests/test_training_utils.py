@@ -24,6 +24,7 @@ from train_mixed import (
     MixedAgentTrainConfig,
     _assert_finite_loss_info,
     _assert_finite_tree,
+    _assert_transition_integrity,
     kickstart_coef_schedule,
     _backfill_terminal_rewards,
     assert_initial_env_steps_zero,
@@ -59,7 +60,9 @@ def _model_config(num_prev_actions=5, map_edge=64):
     )
 
 
-def _ppo_config(use_value_clip=True, flat_minibatch_shuffle=False, teacher_obs_downsample=1):
+def _ppo_config(
+    use_value_clip=True, flat_minibatch_shuffle=False, teacher_obs_downsample=1
+):
     return _PPOConfig(
         clip_eps=0.2,
         vf_coef=2.0,
@@ -151,6 +154,19 @@ def _run_ppo_update(config, train_state, transitions, advantages, targets, **kwa
 
 
 class TrainingAccountingTest(unittest.TestCase):
+    def test_transition_integrity_fails_before_checkpoint(self):
+        passing = {
+            "maximum_mass_residual": 0,
+            "target_mutation_count": 0,
+            "obstacle_mutation_count": 0,
+        }
+        _assert_transition_integrity(passing)
+
+        for field in passing:
+            failing = {**passing, field: 1}
+            with self.assertRaisesRegex(RuntimeError, field):
+                _assert_transition_integrity(failing)
+
     def test_full_reset_horizon_starts_at_zero(self):
         timestep = SimpleNamespace(
             state=SimpleNamespace(env_steps=jnp.zeros((2, 3), dtype=jnp.int32))
@@ -160,9 +176,7 @@ class TrainingAccountingTest(unittest.TestCase):
         self.assertIs(returned, timestep)
 
         invalid = SimpleNamespace(
-            state=SimpleNamespace(
-                env_steps=jnp.array([[0, 1, 0]], dtype=jnp.int32)
-            )
+            state=SimpleNamespace(env_steps=jnp.array([[0, 1, 0]], dtype=jnp.int32))
         )
         with self.assertRaisesRegex(Exception, "env_steps == 0"):
             assert_initial_env_steps_zero(invalid)
@@ -212,7 +226,9 @@ class TrainingAccountingTest(unittest.TestCase):
         batch_config = checkpoint_batch_config(config, TrackedAction)
 
         self.assertIs(batch_config.action_type, TrackedAction)
-        self.assertEqual(batch_config.curriculum_global.levels, config.curriculum_levels_override)
+        self.assertEqual(
+            batch_config.curriculum_global.levels, config.curriculum_levels_override
+        )
         self.assertEqual(batch_config.curriculum_global.increase_level_threshold, 3)
         self.assertEqual(batch_config.curriculum_global.decrease_level_threshold, 7)
         self.assertEqual(batch_config.curriculum_global.last_level_type, "none")
@@ -254,8 +270,9 @@ class TrainingAccountingTest(unittest.TestCase):
         self.assertEqual(se_config.map_encoder, "resnet_spatial_8x8_se")
 
     def test_four_device_accounting_does_not_divide_twice(self):
-        with patch("train_mixed.jax.local_device_count", return_value=4), patch(
-            "train_mixed.jax.devices", return_value=["cpu"] * 4
+        with (
+            patch("train_mixed.jax.local_device_count", return_value=4),
+            patch("train_mixed.jax.devices", return_value=["cpu"] * 4),
         ):
             config = MixedAgentTrainConfig(
                 name="test",
@@ -428,9 +445,7 @@ class CurriculumLevelLoggingTest(unittest.TestCase):
 
         env_cfg = Config(
             curriculum=Curriculum(
-                level=jnp.array(
-                    [[0, 0, 1, 1], [1, 2, 2, 2]], dtype=jnp.int32
-                )
+                level=jnp.array([[0, 0, 1, 1], [1, 2, 2, 2]], dtype=jnp.int32)
             )
         )
         levels = [
@@ -442,9 +457,7 @@ class CurriculumLevelLoggingTest(unittest.TestCase):
         self.assertEqual(stats["Level 0: M0"], 2)
         self.assertEqual(stats["Level 1: M1"], 3)
         self.assertEqual(stats["Level 2: M2"], 3)
-        self.assertEqual(
-            sum(stats[f"Level {i}: M{i}"] for i in range(3)), 8
-        )
+        self.assertEqual(sum(stats[f"Level {i}: M{i}"] for i in range(3)), 8)
 
 
 class ValueClipToggleTest(unittest.TestCase):
@@ -457,10 +470,18 @@ class ValueClipToggleTest(unittest.TestCase):
         targets = jnp.zeros((2, 3), dtype=jnp.float32)
 
         info_clip = _run_ppo_update(
-            _ppo_config(use_value_clip=True), train_state, transitions, advantages, targets
+            _ppo_config(use_value_clip=True),
+            train_state,
+            transitions,
+            advantages,
+            targets,
         )
         info_noclip = _run_ppo_update(
-            _ppo_config(use_value_clip=False), train_state, transitions, advantages, targets
+            _ppo_config(use_value_clip=False),
+            train_state,
+            transitions,
+            advantages,
+            targets,
         )
 
         for info in (info_clip, info_noclip):
@@ -491,9 +512,12 @@ class ValueClipToggleTest(unittest.TestCase):
         clipped_pred = transitions.value + (value - transitions.value).clip(
             -config.clip_eps, config.clip_eps
         )
-        expected_clip = 0.5 * jnp.maximum(
-            jnp.square(value - targets), jnp.square(clipped_pred - targets)
-        ).mean()
+        expected_clip = (
+            0.5
+            * jnp.maximum(
+                jnp.square(value - targets), jnp.square(clipped_pred - targets)
+            ).mean()
+        )
         expected_noclip = 0.5 * jnp.square(value - targets).mean()
         self.assertAlmostEqual(
             float(info_clip["value_loss"]), float(expected_clip), places=5
@@ -578,7 +602,9 @@ class LocalMapAreaScaleTest(unittest.TestCase):
 
         for list_idx, key in enumerate(local_keys, start=3):
             expected = obs[key].astype(jnp.float32) / 4.0
-            np.testing.assert_allclose(np.asarray(model_obs[list_idx]), np.asarray(expected))
+            np.testing.assert_allclose(
+                np.asarray(model_obs[list_idx]), np.asarray(expected)
+            )
 
     def test_default_local_map_area_scale_is_identity(self):
         env = SimpleNamespace(
@@ -697,9 +723,7 @@ class ResolutionScalingConfigTest(unittest.TestCase):
         self.assertEqual(default.loaded_max, 100)
 
     def test_local_map_area_scale_validated(self):
-        config = MixedAgentTrainConfig(
-            **self._base_kwargs(local_map_area_scale=4.0)
-        )
+        config = MixedAgentTrainConfig(**self._base_kwargs(local_map_area_scale=4.0))
         self.assertEqual(config.local_map_area_scale, 4.0)
         with self.assertRaisesRegex(ValueError, "local_map_area_scale"):
             MixedAgentTrainConfig(**self._base_kwargs(local_map_area_scale=0.0))
@@ -782,7 +806,8 @@ class ResolutionScalingConfigTest(unittest.TestCase):
         model, params = get_model_ready(jax.random.PRNGKey(0), config, env)
         # The flatten readout Dense reads 8*8*64 rows -> the 5th stage kept 8x8.
         dense_kernels = [
-            leaf for leaf in jax.tree_util.tree_leaves(params)
+            leaf
+            for leaf in jax.tree_util.tree_leaves(params)
             if getattr(leaf, "ndim", 0) == 2
         ]
         self.assertTrue(any(k.shape[0] == 8 * 8 * 64 for k in dense_kernels))
@@ -900,9 +925,7 @@ class TeacherObsDownsampleTest(unittest.TestCase):
         v_native, pi_native = policy(teacher.apply, params, native)
         down = downsample_teacher_obs(upsampled, 2)
         v_down, pi_down = policy(teacher.apply, params, down)
-        np.testing.assert_allclose(
-            np.asarray(v_native), np.asarray(v_down), atol=1e-5
-        )
+        np.testing.assert_allclose(np.asarray(v_native), np.asarray(v_down), atol=1e-5)
         np.testing.assert_allclose(
             np.asarray(pi_native.logits_parameter()),
             np.asarray(pi_down.logits_parameter()),
@@ -1026,7 +1049,9 @@ class FiniteGateTest(unittest.TestCase):
 
     def test_finite_tree_rejects_nan_leaf(self):
         with self.assertRaisesRegex(FloatingPointError, "params contains"):
-            _assert_finite_tree({"good": jnp.array([1.0]), "bad": jnp.array([jnp.nan])}, "params")
+            _assert_finite_tree(
+                {"good": jnp.array([1.0]), "bad": jnp.array([jnp.nan])}, "params"
+            )
 
 
 class RegisterCheckpointConfigClassesTest(unittest.TestCase):

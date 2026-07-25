@@ -39,7 +39,8 @@ from terra.actions import (
 
 from train import TrainConfig  # needed for unpickling checkpoints
 from train_mixed import MixedAgentTrainConfig
-sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
+
+sys.modules["__main__"].MixedAgentTrainConfig = MixedAgentTrainConfig
 
 try:
     import mctx
@@ -53,6 +54,7 @@ _DEFAULT_MAPS_DIR = Path(__file__).parent / "inference" / "maps"
 # ----------------------------------------------------------------------------
 # MCTS helpers (adapted from TerraSingleAgentOfficial/terra-baselines/eval.py)
 # ----------------------------------------------------------------------------
+
 
 def fix_env_cfg_dtypes(env_cfgs):
     """Fix the dtypes in env_cfgs to prevent JAX type promotion issues during MCTS.
@@ -208,6 +210,7 @@ def make_mcts_step_fn(model, env, config):
 # Rollout (multi-agent metrics, same as eval_mixed.py) with optional MCTS
 # ----------------------------------------------------------------------------
 
+
 def _append_to_obs(o, obs_log):
     if obs_log == {}:
         return {k: v[:, None] for k, v in o.items()}
@@ -229,10 +232,15 @@ def rollout_episode(
     use_mcts=False,
     reset_keys=None,
     record_observations=True,
+    record_actions=False,
     preserve_terminal_states=False,
     expected_slot_indices=None,
 ):
-    mode_str = "MCTS" if use_mcts else ("PPO (greedy)" if deterministic else "PPO (stochastic)")
+    mode_str = (
+        "MCTS"
+        if use_mcts
+        else ("PPO (greedy)" if deterministic else "PPO (stochastic)")
+    )
     print(f"[eval_mcts] mode: {mode_str}, seed={seed}")
 
     rng = jrandom.PRNGKey(seed)
@@ -252,11 +260,13 @@ def rollout_episode(
     # env.reset now emits reward_components, but this remains useful when
     # running against older Terra envs.
     try:
-        if hasattr(timestep, 'info') and isinstance(timestep.info, dict):
+        if hasattr(timestep, "info") and isinstance(timestep.info, dict):
             batch_shape = timestep.reward.shape
             MAX_AGENTS = 4
             dummy_components = {
-                "agent_rewards": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.float32),
+                "agent_rewards": jnp.zeros(
+                    batch_shape + (MAX_AGENTS,), dtype=jnp.float32
+                ),
                 "agent_active": jnp.zeros(batch_shape + (MAX_AGENTS,), dtype=jnp.int32),
                 "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
                 "terminal": jnp.zeros_like(timestep.reward),
@@ -302,7 +312,7 @@ def rollout_episode(
     obs = timestep.observation
     areas = (obs["target_map"] == -1).sum(
         tuple([i for i in range(len(obs["target_map"].shape))][1:])
-    ) * (tile_size ** 2)
+    ) * (tile_size**2)
     target_maps_init = obs["target_map"].copy()
     padding_masks_init = obs["padding_mask"].copy()
     dig_tiles_per_target_map_init = (target_maps_init == -1).sum(
@@ -315,7 +325,9 @@ def rollout_episode(
         mcts_step = make_mcts_step_fn(model, env, rl_config)
         print("[eval_mcts] Warming up MCTS JIT compilation...")
         t0 = time.time()
-        _rng, _ts, _pa, _act, _ppo, _mc = mcts_step(model_params, rng, timestep, prev_actions)
+        _rng, _ts, _pa, _act, _ppo, _mc = mcts_step(
+            model_params, rng, timestep, prev_actions
+        )
         jax.block_until_ready(_act)
         print(f"[eval_mcts] JIT warmup complete in {time.time() - t0:.2f}s")
         # Reset for actual run
@@ -335,13 +347,9 @@ def rollout_episode(
 
     t_counter = 0
     reward_seq = []
-    episode_terminated_once = jnp.zeros(
-        rl_config.num_test_rollouts, dtype=jnp.bool_
-    )
+    episode_terminated_once = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.bool_)
     episode_succeeded_once = jnp.zeros_like(episode_terminated_once)
-    episode_length = jnp.zeros(
-        rl_config.num_test_rollouts, dtype=jnp.int32
-    )
+    episode_length = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.int32)
     terminal_total_completion = jnp.zeros(
         rl_config.num_test_rollouts, dtype=jnp.float32
     )
@@ -353,39 +361,27 @@ def rollout_episode(
     terminal_accepted_dump_volume = jnp.zeros_like(terminal_total_completion)
     terminal_illegal_dump_volume = jnp.zeros_like(terminal_total_completion)
     if expected_slot_indices is None:
-        expected_slot_indices = jnp.arange(
-            rl_config.num_test_rollouts, dtype=jnp.int32
-        )
+        expected_slot_indices = jnp.arange(rl_config.num_test_rollouts, dtype=jnp.int32)
     else:
-        expected_slot_indices = jnp.asarray(
-            expected_slot_indices, dtype=jnp.int32
-        )
+        expected_slot_indices = jnp.asarray(expected_slot_indices, dtype=jnp.int32)
     if expected_slot_indices.shape != (rl_config.num_test_rollouts,):
-        raise ValueError(
-            "expected_slot_indices must have one entry per test rollout"
-        )
+        raise ValueError("expected_slot_indices must have one entry per test rollout")
     terminal_slot_indices = expected_slot_indices
-    no_effect_action_count = jnp.zeros(
-        rl_config.num_test_rollouts, dtype=jnp.int32
-    )
-    maximum_mass_residual = jnp.zeros(
-        rl_config.num_test_rollouts, dtype=jnp.int32
-    )
-    target_mutation = jnp.zeros(
-        rl_config.num_test_rollouts, dtype=jnp.bool_
-    )
+    no_effect_action_count = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.int32)
+    maximum_mass_residual = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.int32)
+    target_mutation = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.bool_)
     obstacle_mutation = jnp.zeros_like(target_mutation)
     nonfinite_state = jnp.zeros_like(target_mutation)
     obs_seq = {}
+    action_seq = []
+    action_had_effect_seq = []
 
     integrity_supported = False
-    initial_mass = jnp.zeros(
-        rl_config.num_test_rollouts, dtype=jnp.int32
-    )
+    initial_mass = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.int32)
     try:
-        initial_world_mass = timestep.state.world.action_map.map.astype(
-            jnp.int32
-        ).sum(axis=(-2, -1))
+        initial_world_mass = timestep.state.world.action_map.map.astype(jnp.int32).sum(
+            axis=(-2, -1)
+        )
         initial_loaded_mass = sum(
             agent_state.loaded.astype(jnp.int32).sum(axis=-1)
             for agent_state in timestep.state.agent.agent_states
@@ -423,13 +419,15 @@ def rollout_episode(
             rng, timestep, prev_actions, action, ppo_act, mcts_act = mcts_step(
                 model_params, rng, timestep, prev_actions
             )
-            disagreements = (np.array(ppo_act) != np.array(mcts_act))
+            disagreements = np.array(ppo_act) != np.array(mcts_act)
             active_host = np.asarray(active_env_mask)
             mcts_ppo_diff_count += int((disagreements & active_host).sum())
             mcts_decision_count += int(active_host.sum())
         else:
             rng, rng_act, rng_step = jrandom.split(rng, 3)
-            obs_model = obs_to_model_input(timestep.observation, prev_actions, rl_config)
+            obs_model = obs_to_model_input(
+                timestep.observation, prev_actions, rl_config
+            )
             v, logits_pi = model.apply(model_params, obs_model)
             if deterministic:
                 action = jnp.argmax(logits_pi, axis=-1)
@@ -456,8 +454,7 @@ def rollout_episode(
                     ):
                         return candidate
                     mask = active_env_mask.reshape(
-                        (active_env_mask.shape[0],)
-                        + (1,) * (candidate.ndim - 1)
+                        (active_env_mask.shape[0],) + (1,) * (candidate.ndim - 1)
                     )
                     return jnp.where(mask, candidate, previous)
 
@@ -481,11 +478,19 @@ def rollout_episode(
         next_obs = timestep.observation
         step_done = timestep.done
         step_succeeded = timestep.info["task_done"]
+        if record_actions:
+            action_seq.append(np.asarray(action, dtype=np.int32))
+            action_had_effect_seq.append(
+                np.asarray(
+                    active_env_mask & timestep.info["action_had_effect"],
+                    dtype=bool,
+                )
+            )
 
         if integrity_supported:
-            world_mass = timestep.state.world.action_map.map.astype(
-                jnp.int32
-            ).sum(axis=(-2, -1))
+            world_mass = timestep.state.world.action_map.map.astype(jnp.int32).sum(
+                axis=(-2, -1)
+            )
             loaded_mass = sum(
                 agent_state.loaded.astype(jnp.int32).sum(axis=-1)
                 for agent_state in timestep.state.agent.agent_states
@@ -511,9 +516,7 @@ def rollout_episode(
                     if finite.shape == active_env_mask.shape:
                         finite_per_leaf.append(finite)
             if finite_per_leaf:
-                state_finite = jnp.all(
-                    jnp.stack(finite_per_leaf), axis=0
-                )
+                state_finite = jnp.all(jnp.stack(finite_per_leaf), axis=0)
                 nonfinite_state |= active_env_mask & ~state_finite
 
         changed_action_map = jnp.any(
@@ -548,23 +551,17 @@ def rollout_episode(
         )
         terminal_absolute_completion = jnp.where(
             active_env_mask & step_done,
-            reward_components.get(
-                "absolute_completion", terminal_absolute_completion
-            ),
+            reward_components.get("absolute_completion", terminal_absolute_completion),
             terminal_absolute_completion,
         )
         terminal_unloaded_completion = jnp.where(
             active_env_mask & step_done,
-            reward_components.get(
-                "unloaded_completion", terminal_unloaded_completion
-            ),
+            reward_components.get("unloaded_completion", terminal_unloaded_completion),
             terminal_unloaded_completion,
         )
         terminal_dump_mask_integrity = jnp.where(
             active_env_mask & step_done,
-            reward_components.get(
-                "dump_mask_integrity", terminal_dump_mask_integrity
-            ),
+            reward_components.get("dump_mask_integrity", terminal_dump_mask_integrity),
             terminal_dump_mask_integrity,
         )
         terminal_accepted_dump_volume = jnp.where(
@@ -576,9 +573,7 @@ def rollout_episode(
         )
         terminal_illegal_dump_volume = jnp.where(
             active_env_mask & step_done,
-            reward_components.get(
-                "illegal_dump_volume", terminal_illegal_dump_volume
-            ),
+            reward_components.get("illegal_dump_volume", terminal_illegal_dump_volume),
             terminal_illegal_dump_volume,
         )
 
@@ -586,33 +581,45 @@ def rollout_episode(
         try:
             agent_states_batch = obs["agent_states"]
             active_pos_batch = agent_states_batch[:, 0, 0:2]
-            active_type_batch = agent_states_batch[:, 0, AGENT_TYPE_IDX].astype(jnp.int32)
+            active_type_batch = agent_states_batch[:, 0, AGENT_TYPE_IDX].astype(
+                jnp.int32
+            )
 
             active_env_f = active_env_mask.astype(jnp.float32)
             active_env_i = active_env_mask.astype(jnp.int32)
 
             for atype in (0, 1, 2):
-                mask = (active_type_batch == atype)
+                mask = active_type_batch == atype
                 if last_pos_per_agent[atype] is None:
                     last_pos_per_agent[atype] = active_pos_batch
                 else:
-                    delta = jnp.linalg.norm(active_pos_batch - last_pos_per_agent[atype], axis=1)
+                    delta = jnp.linalg.norm(
+                        active_pos_batch - last_pos_per_agent[atype], axis=1
+                    )
                     per_agent_move_m[atype] = (
                         per_agent_move_m[atype]
                         + delta * tile_size * mask.astype(jnp.float32) * active_env_f
                     )
                     update_pos_mask = mask & active_env_mask
                     last_pos_per_agent[atype] = jnp.where(
-                        update_pos_mask[:, None], active_pos_batch, last_pos_per_agent[atype]
+                        update_pos_mask[:, None],
+                        active_pos_batch,
+                        last_pos_per_agent[atype],
                     )
 
             if prev_action_map is not None:
-                changed = (obs["action_map"] != prev_action_map)
-                any_change = changed.reshape((changed.shape[0], -1)).any(axis=1).astype(jnp.int32)
+                changed = obs["action_map"] != prev_action_map
+                any_change = (
+                    changed.reshape((changed.shape[0], -1))
+                    .any(axis=1)
+                    .astype(jnp.int32)
+                )
                 any_change = any_change * active_env_i
                 for atype in (0, 1, 2):
                     mask = (active_type_batch == atype).astype(jnp.int32)
-                    per_agent_do_events[atype] = per_agent_do_events[atype] + any_change * mask
+                    per_agent_do_events[atype] = (
+                        per_agent_do_events[atype] + any_change * mask
+                    )
             prev_action_map = obs["action_map"].copy()
         except Exception:
             pass
@@ -646,33 +653,39 @@ def rollout_episode(
         )
 
     # ---- Metrics (same as eval_mixed.py) ----
-    team_move_m = per_agent_move_m[0] + per_agent_move_m.get(1, 0) + per_agent_move_m.get(2, 0)
-    team_path_efficiency = (team_move_m / jnp.sqrt(areas))
+    team_move_m = (
+        per_agent_move_m[0] + per_agent_move_m.get(1, 0) + per_agent_move_m.get(2, 0)
+    )
+    team_path_efficiency = team_move_m / jnp.sqrt(areas)
     path_efficiency = team_path_efficiency[episode_succeeded_once]
     path_efficiency_std = path_efficiency.std()
     path_efficiency_mean = path_efficiency.mean()
 
-    reference_workspace_area = 0.5 * np.pi * (8 ** 2)
+    reference_workspace_area = 0.5 * np.pi * (8**2)
     excavator_ops = per_agent_do_events[0] // 2
     skidsteer_ops = per_agent_do_events.get(2, 0) // 2
     truck_ops = per_agent_do_events.get(1, 0)
     team_workspace_ops = excavator_ops + skidsteer_ops + truck_ops
-    workspaces_efficiency = (
-        reference_workspace_area * (team_workspace_ops / areas)
-    )[episode_succeeded_once]
+    workspaces_efficiency = (reference_workspace_area * (team_workspace_ops / areas))[
+        episode_succeeded_once
+    ]
     workspaces_efficiency_mean = workspaces_efficiency.mean()
     workspaces_efficiency_std = workspaces_efficiency.std()
 
     reduce_axes = tuple([i for i in range(len(obs["action_map"].shape))][1:])
-    dig_req_mask = (target_maps_init < 0)
+    dig_req_mask = target_maps_init < 0
     undug_mask = dig_req_mask & (obs["action_map"] >= 0)
     undug_count = undug_mask.sum(reduce_axes)
     total_dig_req = dig_req_mask.sum(reduce_axes)
-    dig_coverage = jnp.where(total_dig_req > 0, 1.0 - (undug_count / jnp.maximum(total_dig_req, 1)), 1.0)
+    dig_coverage = jnp.where(
+        total_dig_req > 0, 1.0 - (undug_count / jnp.maximum(total_dig_req, 1)), 1.0
+    )
     dumped_vals = jnp.where(obs["action_map"] > 0, obs["action_map"], 0)
     dump_correct = jnp.where(target_maps_init > 0, dumped_vals, 0).sum(reduce_axes)
     dumped_total = dumped_vals.sum(reduce_axes)
-    dump_coverage = jnp.where(dumped_total > 0, dump_correct / jnp.maximum(dumped_total, 1), 1.0)
+    dump_coverage = jnp.where(
+        dumped_total > 0, dump_correct / jnp.maximum(dumped_total, 1), 1.0
+    )
     try:
         loaded_feat_idx = 5
         loaded_amount = jnp.maximum(obs["agent_states"][:, :, loaded_feat_idx], 0)
@@ -680,13 +693,13 @@ def rollout_episode(
     except Exception:
         loaded_sum = jnp.zeros_like(dumped_total)
     denom_total_dirt = dumped_total + undug_count + loaded_sum
-    total_completion = jnp.where(denom_total_dirt > 0, dump_correct / jnp.maximum(denom_total_dirt, 1), 0.0)
+    total_completion = jnp.where(
+        denom_total_dirt > 0, dump_correct / jnp.maximum(denom_total_dirt, 1), 0.0
+    )
     coverage_scores = jnp.where(
         episode_succeeded_once,
         1.0,
-        jnp.where(
-            episode_terminated_once, terminal_total_completion, total_completion
-        ),
+        jnp.where(episode_terminated_once, terminal_total_completion, total_completion),
     )
     dig_cov_scores = jnp.where(
         episode_succeeded_once,
@@ -723,10 +736,16 @@ def rollout_episode(
 
     if episode_length is not None:
         completed_steps = episode_length[episode_succeeded_once]
-        goal_steps_mean = completed_steps.mean() if completed_steps.size > 0 else jnp.array(0)
-        goal_steps_std = completed_steps.std() if completed_steps.size > 0 else jnp.array(0)
+        goal_steps_mean = (
+            completed_steps.mean() if completed_steps.size > 0 else jnp.array(0)
+        )
+        goal_steps_std = (
+            completed_steps.std() if completed_steps.size > 0 else jnp.array(0)
+        )
         goal_efficiency_mean = (
-            (1.0 / jnp.maximum(goal_steps_mean, 1)) if completed_steps.size > 0 else jnp.array(0.0)
+            (1.0 / jnp.maximum(goal_steps_mean, 1))
+            if completed_steps.size > 0
+            else jnp.array(0.0)
         )
         progress_rate = coverage_scores / jnp.maximum(episode_length, 1)
         goal_progress_rate_mean = progress_rate.mean()
@@ -742,7 +761,9 @@ def rollout_episode(
         out = {}
         for k, v in v_dict.items():
             try:
-                out[k] = jnp.where(episode_succeeded_once, v, 0).sum() / jnp.maximum(episode_succeeded_once.sum(), 1)
+                out[k] = jnp.where(episode_succeeded_once, v, 0).sum() / jnp.maximum(
+                    episode_succeeded_once.sum(), 1
+                )
             except Exception:
                 out[k] = jnp.array(0)
         return out
@@ -755,7 +776,9 @@ def rollout_episode(
     for k, v in per_agent_move_m.items():
         try:
             path_eff = jnp.where(episode_succeeded_once, v / sqrt_areas, 0)
-            per_agent_path_eff_mean[k] = path_eff.sum() / jnp.maximum(episode_succeeded_once.sum(), 1)
+            per_agent_path_eff_mean[k] = path_eff.sum() / jnp.maximum(
+                episode_succeeded_once.sum(), 1
+            )
         except Exception:
             per_agent_path_eff_mean[k] = jnp.array(0.0)
 
@@ -763,8 +786,12 @@ def rollout_episode(
     for k, v in per_agent_do_events.items():
         try:
             n_ops = v if k == 1 else v // 2
-            ws_eff = jnp.where(episode_succeeded_once, reference_workspace_area * (n_ops / areas), 0)
-            per_agent_workspace_eff_mean[k] = ws_eff.sum() / jnp.maximum(episode_succeeded_once.sum(), 1)
+            ws_eff = jnp.where(
+                episode_succeeded_once, reference_workspace_area * (n_ops / areas), 0
+            )
+            per_agent_workspace_eff_mean[k] = ws_eff.sum() / jnp.maximum(
+                episode_succeeded_once.sum(), 1
+            )
         except Exception:
             per_agent_workspace_eff_mean[k] = jnp.array(0.0)
 
@@ -778,11 +805,14 @@ def rollout_episode(
         mean_of_agent_path_eff = jnp.array(0.0)
     collab_gain_path_eff = path_efficiency_mean - mean_of_agent_path_eff
 
-    do_means = jnp.array([
-        per_agent_do_events_mean.get(0, 0.0),
-        per_agent_do_events_mean.get(1, 0.0),
-        per_agent_do_events_mean.get(2, 0.0),
-    ], dtype=jnp.float32)
+    do_means = jnp.array(
+        [
+            per_agent_do_events_mean.get(0, 0.0),
+            per_agent_do_events_mean.get(1, 0.0),
+            per_agent_do_events_mean.get(2, 0.0),
+        ],
+        dtype=jnp.float32,
+    )
     do_total = do_means.sum() + 1e-8
     p = do_means / do_total
     diversity_entropy = -jnp.sum(jnp.where(p > 0, p * jnp.log(p + 1e-8), 0.0))
@@ -862,6 +892,9 @@ def rollout_episode(
             "mcts_ppo_disagreements": int(mcts_ppo_diff_count),
         },
     }
+    if record_actions:
+        stats["action_sequence"] = np.stack(action_seq)
+        stats["action_had_effect_sequence"] = np.stack(action_had_effect_seq)
     return np.cumsum(np.stack(reward_seq), axis=0), stats, obs_seq
 
 
@@ -895,10 +928,11 @@ def print_stats(stats):
     if mcts_info:
         print(f"MCTS used: {mcts_info.get('used', False)}")
         if mcts_info.get("used"):
-            print(f"  MCTS != PPO disagreements: {mcts_info.get('mcts_ppo_disagreements', 0)}")
+            print(
+                f"  MCTS != PPO disagreements: {mcts_info.get('mcts_ppo_disagreements', 0)}"
+            )
     print(
-        "Success within horizon: "
-        f"{success_count}/{rollout_count} ({success_rate:.2f}%)"
+        f"Success within horizon: {success_count}/{rollout_count} ({success_rate:.2f}%)"
     )
     if episode_terminated_once is not None:
         terminated_count = int(episode_terminated_once.sum())
@@ -907,12 +941,22 @@ def print_stats(stats):
             f"{terminated_count}/{rollout_count} "
             f"({100 * terminated_count / max(rollout_count, 1):.2f}%)"
         )
-    print(f"Path efficiency: {path_efficiency['mean']:.2f} ({path_efficiency['std']:.2f})")
-    print(f"Workspaces efficiency: {workspaces_efficiency['mean']:.2f} ({workspaces_efficiency['std']:.2f})")
+    print(
+        f"Path efficiency: {path_efficiency['mean']:.2f} ({path_efficiency['std']:.2f})"
+    )
+    print(
+        f"Workspaces efficiency: {workspaces_efficiency['mean']:.2f} ({workspaces_efficiency['std']:.2f})"
+    )
     try:
-        print(f"Coverage (total): {float(coverage['total']['mean']):.2f} ({float(coverage['total']['std']):.2f})")
-        print(f"  Dig coverage:  {float(coverage['dig']['mean']):.2f} ({float(coverage['dig']['std']):.2f})")
-        print(f"  Dump coverage: {float(coverage['dump']['mean']):.2f} ({float(coverage['dump']['std']):.2f})")
+        print(
+            f"Coverage (total): {float(coverage['total']['mean']):.2f} ({float(coverage['total']['std']):.2f})"
+        )
+        print(
+            f"  Dig coverage:  {float(coverage['dig']['mean']):.2f} ({float(coverage['dig']['std']):.2f})"
+        )
+        print(
+            f"  Dump coverage: {float(coverage['dump']['mean']):.2f} ({float(coverage['dump']['std']):.2f})"
+        )
     except Exception:
         pass
     if avg_steps_till_completion is not None:
@@ -925,15 +969,23 @@ def print_stats(stats):
         pe = per_agent.get("path_efficiency_mean", {})
         we = per_agent.get("workspace_efficiency_mean", {})
         de = per_agent.get("do_events_mean", {})
+
         def _fmt(x):
             try:
                 return float(x)
             except Exception:
                 return 0.0
+
         print("Per-agent (mean over completed envs):")
-        print(f"  Excavator: move_m={_fmt(mm.get('excavator', 0)):.2f}, path_eff={_fmt(pe.get('excavator', 0)):.2f}, workspace_eff={_fmt(we.get('excavator', 0)):.2f}, do_events={int(_fmt(de.get('excavator', 0)))}")
-        print(f"  Truck:     move_m={_fmt(mm.get('truck', 0)):.2f}, path_eff={_fmt(pe.get('truck', 0)):.2f}, workspace_eff={_fmt(we.get('truck', 0)):.2f}, do_events={int(_fmt(de.get('truck', 0)))}")
-        print(f"  Skidsteer: move_m={_fmt(mm.get('skidsteer', 0)):.2f}, path_eff={_fmt(pe.get('skidsteer', 0)):.2f}, workspace_eff={_fmt(we.get('skidsteer', 0)):.2f}, do_events={int(_fmt(de.get('skidsteer', 0)))}")
+        print(
+            f"  Excavator: move_m={_fmt(mm.get('excavator', 0)):.2f}, path_eff={_fmt(pe.get('excavator', 0)):.2f}, workspace_eff={_fmt(we.get('excavator', 0)):.2f}, do_events={int(_fmt(de.get('excavator', 0)))}"
+        )
+        print(
+            f"  Truck:     move_m={_fmt(mm.get('truck', 0)):.2f}, path_eff={_fmt(pe.get('truck', 0)):.2f}, workspace_eff={_fmt(we.get('truck', 0)):.2f}, do_events={int(_fmt(de.get('truck', 0)))}"
+        )
+        print(
+            f"  Skidsteer: move_m={_fmt(mm.get('skidsteer', 0)):.2f}, path_eff={_fmt(pe.get('skidsteer', 0)):.2f}, workspace_eff={_fmt(we.get('skidsteer', 0)):.2f}, do_events={int(_fmt(de.get('skidsteer', 0)))}"
+        )
     if collaboration:
         try:
             tpe = float(collaboration.get("team_path_efficiency_mean", 0.0))
@@ -968,25 +1020,62 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-run", "--run_name", type=str, default="mixed_agents_checkpoint.pkl",
-                        help="Path to mixed agent trained checkpoint.")
-    parser.add_argument("-env", "--env_name", type=str, default="Terra", help="Environment name.")
-    parser.add_argument("-n", "--n_envs", type=int, default=100, help="Number of environments.")
-    parser.add_argument("-steps", "--n_steps", type=int, default=800, help="Number of steps.")
-    parser.add_argument("-d", "--deterministic", type=int, default=0,
-                        help="Deterministic PPO (0 stochastic, 1 greedy). Ignored when --use-mcts is set.")
+    parser.add_argument(
+        "-run",
+        "--run_name",
+        type=str,
+        default="mixed_agents_checkpoint.pkl",
+        help="Path to mixed agent trained checkpoint.",
+    )
+    parser.add_argument(
+        "-env", "--env_name", type=str, default="Terra", help="Environment name."
+    )
+    parser.add_argument(
+        "-n", "--n_envs", type=int, default=100, help="Number of environments."
+    )
+    parser.add_argument(
+        "-steps", "--n_steps", type=int, default=800, help="Number of steps."
+    )
+    parser.add_argument(
+        "-d",
+        "--deterministic",
+        type=int,
+        default=0,
+        help="Deterministic PPO (0 stochastic, 1 greedy). Ignored when --use-mcts is set.",
+    )
     parser.add_argument("-s", "--seed", type=int, default=0, help="Random seed.")
-    parser.add_argument("--map_name", type=str, default=None,
-                        help="If set, evaluate only on `inference/maps/<map_name>`.")
-    parser.add_argument("--map_path", type=str, default=None,
-                        help="Explicit path to a single-map folder (overrides --map_name).")
+    parser.add_argument(
+        "--map_name",
+        type=str,
+        default=None,
+        help="If set, evaluate only on `inference/maps/<map_name>`.",
+    )
+    parser.add_argument(
+        "--map_path",
+        type=str,
+        default=None,
+        help="Explicit path to a single-map folder (overrides --map_name).",
+    )
     # --- MCTS add-on flags (OFF by default) ---
-    parser.add_argument("--use-mcts", dest="use_mcts", action="store_true",
-                        help="Enable MCTS (gumbel_muzero_policy) planning at each step.")
-    parser.add_argument("-sim", "--num_simulations", type=int, default=32,
-                        help="Number of MCTS simulations per step (only used with --use-mcts).")
-    parser.add_argument("--gamma", type=float, default=None,
-                        help="Discount factor for MCTS recurrent_fn (default: config.gamma or 0.99).")
+    parser.add_argument(
+        "--use-mcts",
+        dest="use_mcts",
+        action="store_true",
+        help="Enable MCTS (gumbel_muzero_policy) planning at each step.",
+    )
+    parser.add_argument(
+        "-sim",
+        "--num_simulations",
+        type=int,
+        default=32,
+        help="Number of MCTS simulations per step (only used with --use-mcts).",
+    )
+    parser.add_argument(
+        "--gamma",
+        type=float,
+        default=None,
+        help="Discount factor for MCTS recurrent_fn (default: config.gamma or 0.99).",
+    )
     args, _ = parser.parse_known_args()
 
     # Single-map resolution (eval_mixed.py parity)
@@ -997,8 +1086,12 @@ def main():
         single_map_path = str(_DEFAULT_MAPS_DIR / args.map_name)
     if single_map_path is not None:
         if not Path(single_map_path).exists():
-            raise FileNotFoundError(f"--map_path/--map_name resolves to missing folder: {single_map_path}")
-        print(f"Single-map eval: evaluating {args.n_envs} rollouts on '{single_map_path}'")
+            raise FileNotFoundError(
+                f"--map_path/--map_name resolves to missing folder: {single_map_path}"
+            )
+        print(
+            f"Single-map eval: evaluating {args.n_envs} rollouts on '{single_map_path}'"
+        )
 
     n_envs = args.n_envs
     log = load_pkl_object(f"{args.run_name}")
@@ -1027,12 +1120,14 @@ def main():
         env_cfgs = fix_env_cfg_dtypes(env_cfgs)
 
     action_types_ckpt = getattr(env_cfgs, "action_types", 0)
+
     def _normalize_types_list(x):
         try:
             if isinstance(x, tuple):
                 return [int(v) for v in x]
             if hasattr(x, "ndim"):
                 import numpy as _np
+
                 if getattr(x, "ndim", 0) == 0:
                     return [int(_np.array(x).item())]
                 if x.ndim >= 2:
@@ -1045,11 +1140,14 @@ def main():
         except Exception:
             pass
         return [0]
+
     action_types_list = _normalize_types_list(action_types_ckpt)
     all_wheeled = len(action_types_list) > 0 and all(t == 1 for t in action_types_list)
     action_type = WheeledAction if all_wheeled else TrackedAction
     batch_cfg = checkpoint_batch_config(config, action_type)
-    print(f"selected batch action_type: {'WheeledAction' if batch_cfg.action_type is WheeledAction else 'TrackedAction'}")
+    print(
+        f"selected batch action_type: {'WheeledAction' if batch_cfg.action_type is WheeledAction else 'TrackedAction'}"
+    )
     print(
         "checkpoint map curriculum: "
         f"{[level['maps_path'] for level in batch_cfg.curriculum_global.levels]}"
@@ -1069,7 +1167,9 @@ def main():
     deterministic = bool(args.deterministic)
 
     if args.use_mcts:
-        print(f"\n[eval_mcts] Mode: MCTS (num_simulations={config.num_simulations}, gamma={config.gamma})")
+        print(
+            f"\n[eval_mcts] Mode: MCTS (num_simulations={config.num_simulations}, gamma={config.gamma})"
+        )
     else:
         print(f"\n[eval_mcts] Mode: PPO, deterministic={deterministic}")
 
