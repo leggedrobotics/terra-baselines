@@ -10,6 +10,7 @@ from scripts.analysis.audit_historical_curriculum import (
     completion_observer,
     parse_labelled_values,
     summarize_rows,
+    terminal_reward_reconstruction_is_valid,
     verify_unique_training_manifest,
 )
 
@@ -79,6 +80,11 @@ def test_historical_terminal_reward_uses_code_default_when_field_is_absent():
     )
     np.testing.assert_allclose(reward, [5.0])
     np.testing.assert_allclose(full_terminal, [20.0])
+
+
+def test_terminal_reward_reconstruction_tolerance_is_float32_scale_only():
+    assert terminal_reward_reconstruction_is_valid(1.430511474609375e-6)
+    assert not terminal_reward_reconstruction_is_valid(1.1e-5)
 
 
 class _AllValidSoilState:

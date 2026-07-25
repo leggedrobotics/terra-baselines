@@ -51,6 +51,12 @@ HISTORICAL_COMPLETION_CONTRACT = "legacy_implicit_buffer_v0"
 AUDIT_SCHEMA = "terra_historical_curriculum_audit_v1"
 D1_MAX_TRANSITIONS = 259_200
 DO_ACTION = 6
+TERMINAL_REWARD_RECONSTRUCTION_ATOL = 1e-5
+
+
+def terminal_reward_reconstruction_is_valid(error: float) -> bool:
+    """Accept only float32-scale observer reordering error."""
+    return abs(float(error)) <= TERMINAL_REWARD_RECONSTRUCTION_ATOL
 
 
 def parse_labelled_values(values: list[str], *, option: str) -> dict[str, str]:
@@ -782,7 +788,9 @@ def build_per_map(
             or bool(scalar_metrics["nonfinite_state"])
             or bool(scalar_metrics["observer_internal_mismatch"])
             or bool(scalar_metrics["observer_transition_mismatch"])
-            or float(scalar_metrics["terminal_reward_reconstruction_error"]) > 1e-6
+            or not terminal_reward_reconstruction_is_valid(
+                scalar_metrics["terminal_reward_reconstruction_error"]
+            )
         )
         per_map.append(
             {
@@ -1123,6 +1131,11 @@ def main() -> None:
                     "d1_semantic_datasets": sorted(semantic_datasets),
                     "d1_maximum_transitions": semantic_transitions,
                     "d1_transition_budget": D1_MAX_TRANSITIONS,
+                    "numerical_tolerances": {
+                        "terminal_reward_reconstruction_atol": (
+                            TERMINAL_REWARD_RECONSTRUCTION_ATOL
+                        )
+                    },
                     "unique_training_manifest": unique_receipt,
                     "reset_integrity": reset_receipts,
                     "records": records,

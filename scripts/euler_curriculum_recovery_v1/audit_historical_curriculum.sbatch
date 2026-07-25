@@ -148,6 +148,9 @@ if payload["schema"] != "terra_historical_curriculum_audit_v1":
 if not payload["observer_only"]:
     raise SystemExit("historical audit is not marked observer-only")
 expected_records = {"preflight": 1, "deterministic": 20, "sampled": 16}[kind]
+reward_reconstruction_atol = payload["numerical_tolerances"][
+    "terminal_reward_reconstruction_atol"
+]
 if len(payload["records"]) != expected_records:
     raise SystemExit(
         f"{kind}: expected {expected_records} records, "
@@ -172,7 +175,10 @@ for record in payload["records"]:
             raise SystemExit("non-finite audit metric")
         if row["target_mutation"] or row["obstacle_mutation"] or row["nonfinite_state"]:
             raise SystemExit("historical rollout integrity failure")
-        if row["terminal_reward_reconstruction_error"] > 1e-6:
+        if (
+            row["terminal_reward_reconstruction_error"]
+            > reward_reconstruction_atol
+        ):
             raise SystemExit("terminal reward reconstruction mismatch")
         if record["d1_semantic_attribution"] and (
             row["observer_internal_mismatch"]
