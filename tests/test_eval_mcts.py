@@ -11,7 +11,6 @@ from eval_mcts import make_mcts_recurrent_fn, make_mcts_step_fn, rollout_episode
 from terra.actions import TrackedAction
 from terra.env import TimeStep
 
-
 BATCH_SIZE = 2
 
 
@@ -49,7 +48,7 @@ def _timestep():
         observation=_observation(),
         reward=jnp.zeros((BATCH_SIZE,)),
         done=jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_),
-        info={},
+        info={"task_done": jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_)},
         env_cfg=jnp.zeros((BATCH_SIZE,)),
     )
 
@@ -93,19 +92,23 @@ class FakeRolloutEnv(FakeEnv):
         done = jnp.array([next_state[0] >= 1, next_state[1] >= 2])
         task_done = jnp.array([next_state[0] >= 1, False])
         completion = jnp.array([1.0, 0.4])
+        reward_components = {
+            **timestep.info.get("reward_components", {}),
+            "total_dig_dump_completion": completion,
+            "dig_completion_total": completion,
+            "dump_completion_action_map": completion,
+        }
         return timestep._replace(
             state=next_state,
             reward=jnp.array([1.0, 2.0]),
             done=done,
             info={
                 "task_done": task_done,
-                "reward_components": {
-                    "total_dig_dump_completion": completion,
-                    "dig_completion_total": completion,
-                    "dump_completion_action_map": completion,
-                },
+                "reward_components": reward_components,
             },
         )
+
+    step_no_reset = step
 
 
 class RolloutEpisodeAccountingTest(unittest.TestCase):
@@ -126,12 +129,18 @@ class RolloutEpisodeAccountingTest(unittest.TestCase):
             deterministic=True,
             seed=0,
             use_mcts=False,
+            preserve_terminal_states=True,
+            expected_slot_indices=jnp.array([4, 9]),
         )
 
         np.testing.assert_array_equal(stats["episode_terminated_once"], [True, True])
         np.testing.assert_array_equal(stats["episode_done_once"], [True, False])
         np.testing.assert_array_equal(stats["episode_length"], [1, 2])
         np.testing.assert_allclose(cumulative_rewards[-1], [1.0, 4.0])
+        np.testing.assert_array_equal(
+            stats["integrity"]["slot_index_zero_based"], [4, 9]
+        )
+        self.assertFalse(stats["integrity"]["supported"])
 
     def test_eval_mixed_reuses_the_authoritative_rollout(self):
         self.assertIs(eval_mixed.rollout_episode, rollout_episode)
@@ -141,9 +150,7 @@ class RolloutEpisodeAccountingTest(unittest.TestCase):
 class MctsAbsorptionTest(unittest.TestCase):
     def test_recurrent_terminal_states_are_absorbing(self):
         recurrent_fn = make_mcts_recurrent_fn(FakeModel(), FakeEnv(), _config())
-        previous_actions = jnp.array(
-            [[1, 2, 3], [4, 5, 6]], dtype=jnp.int32
-        )
+        previous_actions = jnp.array([[1, 2, 3], [4, 5, 6]], dtype=jnp.int32)
         actions = jnp.array([7, 6], dtype=jnp.int32)
 
         output, embedding = recurrent_fn(

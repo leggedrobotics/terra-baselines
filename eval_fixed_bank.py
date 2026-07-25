@@ -129,15 +129,110 @@ def verify_exact_reset(
     reset_keys,
     directory: Path,
     count: int,
-) -> None:
+) -> dict:
     timestep = env.reset(env_params, reset_keys)
-    observed = np.asarray(timestep.observation["target_map"])
-    if observed.shape[0] != count:
-        raise RuntimeError(f"reset produced {observed.shape[0]} maps, expected {count}")
+    state = timestep.state
+    observed_fields = {
+        "target": np.asarray(state.world.target_map.map),
+        "initial_action": np.asarray(state.world.action_map.map),
+        "occupancy": np.asarray(state.world.padding_mask.map),
+        "dumpability": np.asarray(state.world.dumpability_mask_init.map),
+        "distance": np.asarray(state.world.relocation_distance_map),
+    }
+    if observed_fields["target"].shape[0] != count:
+        raise RuntimeError(
+            f"reset produced {observed_fields['target'].shape[0]} maps, "
+            f"expected {count}"
+        )
+    source_directories = {
+        "target": "images",
+        "initial_action": "actions",
+        "occupancy": "occupancy",
+        "dumpability": "dumpability",
+        "distance": "distance",
+    }
     for index in range(count):
-        expected = np.load(directory / "images" / f"img_{index + 1}.npy")
-        if not np.array_equal(np.squeeze(observed[index]), expected):
-            raise RuntimeError(f"exact reset mismatch at slot {index + 1}")
+        for field, subdirectory in source_directories.items():
+            expected = np.load(
+                directory / subdirectory / f"img_{index + 1}.npy"
+            )
+            observed = np.squeeze(observed_fields[field][index])
+            equal = (
+                np.allclose(observed, expected, rtol=0.0, atol=1e-7)
+                if field == "distance"
+                else np.array_equal(observed, expected)
+            )
+            if not equal:
+                raise RuntimeError(
+                    f"exact reset {field} mismatch at slot {index + 1}"
+                )
+
+        expected_metadata = {
+            "trench_axes": np.asarray(env.maps_buffer.trench_axes[0, index]),
+            "trench_type": np.asarray(env.maps_buffer.trench_types[0, index]),
+            "foundation_border_axes": np.asarray(
+                env.maps_buffer.foundation_border_axes[0, index]
+            ),
+            "foundation_border_type": np.asarray(
+                env.maps_buffer.foundation_border_types[0, index]
+            ),
+        }
+        observed_metadata = {
+            "trench_axes": np.asarray(state.world.trench_axes[index]),
+            "trench_type": np.asarray(state.world.trench_type[index]),
+            "foundation_border_axes": np.asarray(
+                state.world.foundation_border_axes[index]
+            ),
+            "foundation_border_type": np.asarray(
+                state.world.foundation_border_type[index]
+            ),
+        }
+        for field, expected in expected_metadata.items():
+            if not np.array_equal(observed_metadata[field], expected):
+                raise RuntimeError(
+                    f"exact reset {field} mismatch at slot {index + 1}"
+                )
+
+    env_steps = np.asarray(state.env_steps)
+    if env_steps.shape != (count,) or np.any(env_steps != 0):
+        raise RuntimeError(
+            "fixed evaluation reset must start every slot with env_steps == 0"
+        )
+
+    layer_hashes = {}
+    for field, subdirectory in {
+        **source_directories,
+        "metadata": "metadata",
+    }.items():
+        digest = hashlib.sha256()
+        for index in range(1, count + 1):
+            filename = (
+                f"trench_{index}.json"
+                if field == "metadata"
+                else f"img_{index}.npy"
+            )
+            digest.update(
+                (directory / subdirectory / filename).read_bytes()
+            )
+        layer_hashes[field] = digest.hexdigest()
+    return {
+        "passed": True,
+        "slots": count,
+        "env_steps_min": int(env_steps.min()),
+        "env_steps_max": int(env_steps.max()),
+        "verified_fields": [
+            "target",
+            "initial_action",
+            "occupancy",
+            "dumpability",
+            "distance",
+            "trench_axes",
+            "trench_type",
+            "foundation_border_axes",
+            "foundation_border_type",
+        ],
+        "layer_sha256": layer_hashes,
+    }
 
 
 def grouped_results(
@@ -148,8 +243,10 @@ def grouped_results(
     *,
     horizon: int | None = None,
     completion_metrics: dict[str, np.ndarray] | None = None,
+    integrity_metrics: dict[str, np.ndarray] | None = None,
 ) -> tuple[list[dict], dict]:
     completion_metrics = completion_metrics or {}
+    integrity_metrics = integrity_metrics or {}
     per_map = []
     for index, (row, success, terminated, length) in enumerate(
         zip(rows, successes, terminations, lengths)
@@ -173,6 +270,19 @@ def grouped_results(
             key: float(np.asarray(values)[index])
             for key, values in completion_metrics.items()
         }
+        integrity_values = {
+            key: np.asarray(values)[index].item()
+            for key, values in integrity_metrics.items()
+        }
+        integrity_failure = bool(
+            int(integrity_values.get("maximum_mass_residual", 0)) != 0
+            or bool(integrity_values.get("target_mutation", False))
+            or bool(integrity_values.get("obstacle_mutation", False))
+            or bool(integrity_values.get("nonfinite_state", False))
+            or bool(integrity_values.get("termination_disagreement", False))
+            or bool(integrity_values.get("slot_index_disagreement", False))
+            or bool(integrity_values.get("integrity_unavailable", False))
+        )
         per_map.append(
             {
                 **row,
@@ -182,6 +292,8 @@ def grouped_results(
                 "termination_reason": termination_reason,
                 "steps": int(length),
                 **metric_values,
+                **integrity_values,
+                "integrity_failure": integrity_failure,
             }
         )
 
@@ -214,10 +326,48 @@ def grouped_results(
     subtype_gate = all(
         item["successes"] >= 6 for item in summary["by_primary_cell"].values()
     )
+    integrity_failure_count = sum(
+        int(row["integrity_failure"]) for row in per_map
+    )
+    summary["integrity"] = {
+        "passed": integrity_failure_count == 0,
+        "failure_count": integrity_failure_count,
+        "mass_residual_failures": sum(
+            int(int(row.get("maximum_mass_residual", 0)) != 0)
+            for row in per_map
+        ),
+        "target_mutations": sum(
+            int(bool(row.get("target_mutation", False))) for row in per_map
+        ),
+        "obstacle_mutations": sum(
+            int(bool(row.get("obstacle_mutation", False))) for row in per_map
+        ),
+        "nonfinite_states": sum(
+            int(bool(row.get("nonfinite_state", False))) for row in per_map
+        ),
+        "termination_disagreements": sum(
+            int(bool(row.get("termination_disagreement", False)))
+            for row in per_map
+        ),
+        "slot_index_disagreements": sum(
+            int(bool(row.get("slot_index_disagreement", False)))
+            for row in per_map
+        ),
+        "unavailable": sum(
+            int(bool(row.get("integrity_unavailable", False)))
+            for row in per_map
+        ),
+    }
     summary["mastery_gate"] = {
         "family_26_of_32": family_gate,
         "primary_cell_6_of_8": subtype_gate,
-        "passed": family_gate and subtype_gate,
+        "performance_passed": family_gate and subtype_gate,
+        "integrity_passed": summary["integrity"]["passed"],
+        "passed": (
+            family_gate
+            and subtype_gate
+            and summary["integrity"]["passed"]
+        ),
     }
     summary["termination_reasons"] = {
         reason: sum(
@@ -315,7 +465,13 @@ def main() -> None:
         _, env, env_params, initialized_state = make_mixed_agent_states(config)
         env_params = jax.tree_util.tree_map(lambda value: value[0], env_params)
         reset_keys = exact_reset_keys(count)
-        verify_exact_reset(env, env_params, reset_keys, directory, count)
+        reset_verification = verify_exact_reset(
+            env,
+            env_params,
+            reset_keys,
+            directory,
+            count,
+        )
         model = SimpleNamespace(apply=initialized_state.apply_fn)
 
         for checkpoint_path, checkpoint in checkpoints:
@@ -331,6 +487,8 @@ def main() -> None:
                 use_mcts=False,
                 reset_keys=reset_keys,
                 record_observations=False,
+                preserve_terminal_states=True,
+                expected_slot_indices=np.arange(count, dtype=np.int32),
             )
             successes = np.asarray(stats["episode_done_once"], dtype=bool)
             terminations = np.asarray(stats["episode_terminated_once"], dtype=bool)
@@ -339,6 +497,25 @@ def main() -> None:
                 key: np.asarray(value, dtype=np.float32)
                 for key, value in stats.get("terminal_completion", {}).items()
             }
+            raw_integrity = stats.get("integrity", {})
+            integrity_supported = bool(raw_integrity.get("supported", False))
+            if (
+                completion_contract == "exact_visible_dump_v1"
+                and not integrity_supported
+            ):
+                raise RuntimeError(
+                    "fixed evaluation did not return supported state integrity metrics"
+                )
+            integrity_metrics = {
+                key: np.asarray(value)
+                for key, value in raw_integrity.items()
+                if key != "supported"
+            }
+            integrity_metrics["integrity_unavailable"] = np.full(
+                count,
+                not integrity_supported,
+                dtype=bool,
+            )
             if (
                 not np.all(np.isfinite(lengths))
                 or successes.shape != (count,)
@@ -359,6 +536,22 @@ def main() -> None:
                         "task_done <=> absolute_completion == 1 violated at "
                         f"fixed-bank slots {(mismatches + 1).tolist()}"
                     )
+            expected_slots = np.arange(count, dtype=np.int32)
+            observed_slots = np.asarray(
+                integrity_metrics["slot_index_zero_based"],
+                dtype=np.int32,
+            )
+            if observed_slots.shape != (count,):
+                raise RuntimeError(
+                    "fixed evaluation returned invalid terminal slot indices"
+                )
+            integrity_metrics["slot_index_disagreement"] = (
+                observed_slots != expected_slots
+            )
+            expected_termination = successes | (lengths >= args.horizon)
+            integrity_metrics["termination_disagreement"] = (
+                terminations != expected_termination
+            )
             per_map, summary = grouped_results(
                 rows,
                 successes,
@@ -369,9 +562,10 @@ def main() -> None:
                     f"terminal_{key}": values
                     for key, values in terminal_completion.items()
                 },
+                integrity_metrics=integrity_metrics,
             )
             record = {
-                "schema": "terra_fixed_bank_eval_v2",
+                "schema": "terra_fixed_bank_eval_v3",
                 "completion_contract": completion_contract,
                 "checkpoint": str(checkpoint_path),
                 "checkpoint_sha256": sha256_file(checkpoint_path),
@@ -383,8 +577,12 @@ def main() -> None:
                 "manifest_sha256": sha256_file(directory / "manifest.jsonl"),
                 "horizon": args.horizon,
                 "deterministic": not args.stochastic,
+                "policy_mode": (
+                    "sampled" if args.stochastic else "deterministic"
+                ),
                 "seed": args.seed,
                 "exact_manifest_enumeration": True,
+                "reset_verification": reset_verification,
                 "summary": summary,
                 "per_map": per_map,
             }

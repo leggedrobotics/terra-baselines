@@ -229,6 +229,8 @@ def rollout_episode(
     use_mcts=False,
     reset_keys=None,
     record_observations=True,
+    preserve_terminal_states=False,
+    expected_slot_indices=None,
 ):
     mode_str = "MCTS" if use_mcts else ("PPO (greedy)" if deterministic else "PPO (stochastic)")
     print(f"[eval_mcts] mode: {mode_str}, seed={seed}")
@@ -241,6 +243,10 @@ def rollout_episode(
         else jnp.asarray(reset_keys)
     )
     timestep = env.reset(env_cfgs, rng_reset)
+    if preserve_terminal_states and use_mcts:
+        raise ValueError(
+            "preserve_terminal_states is only supported for direct policy evaluation"
+        )
 
     # Keep pytree structure stable for PPO and MCTS paths (eval_mixed.py parity).
     # env.reset now emits reward_components, but this remains useful when
@@ -298,6 +304,7 @@ def rollout_episode(
         tuple([i for i in range(len(obs["target_map"].shape))][1:])
     ) * (tile_size ** 2)
     target_maps_init = obs["target_map"].copy()
+    padding_masks_init = obs["padding_mask"].copy()
     dig_tiles_per_target_map_init = (target_maps_init == -1).sum(
         tuple([i for i in range(len(target_maps_init.shape))][1:])
     )
@@ -345,7 +352,48 @@ def rollout_episode(
     terminal_dump_mask_integrity = jnp.zeros_like(terminal_total_completion)
     terminal_accepted_dump_volume = jnp.zeros_like(terminal_total_completion)
     terminal_illegal_dump_volume = jnp.zeros_like(terminal_total_completion)
+    if expected_slot_indices is None:
+        expected_slot_indices = jnp.arange(
+            rl_config.num_test_rollouts, dtype=jnp.int32
+        )
+    else:
+        expected_slot_indices = jnp.asarray(
+            expected_slot_indices, dtype=jnp.int32
+        )
+    if expected_slot_indices.shape != (rl_config.num_test_rollouts,):
+        raise ValueError(
+            "expected_slot_indices must have one entry per test rollout"
+        )
+    terminal_slot_indices = expected_slot_indices
+    no_effect_action_count = jnp.zeros(
+        rl_config.num_test_rollouts, dtype=jnp.int32
+    )
+    maximum_mass_residual = jnp.zeros(
+        rl_config.num_test_rollouts, dtype=jnp.int32
+    )
+    target_mutation = jnp.zeros(
+        rl_config.num_test_rollouts, dtype=jnp.bool_
+    )
+    obstacle_mutation = jnp.zeros_like(target_mutation)
+    nonfinite_state = jnp.zeros_like(target_mutation)
     obs_seq = {}
+
+    integrity_supported = False
+    initial_mass = jnp.zeros(
+        rl_config.num_test_rollouts, dtype=jnp.int32
+    )
+    try:
+        initial_world_mass = timestep.state.world.action_map.map.astype(
+            jnp.int32
+        ).sum(axis=(-2, -1))
+        initial_loaded_mass = sum(
+            agent_state.loaded.astype(jnp.int32).sum(axis=-1)
+            for agent_state in timestep.state.agent.agent_states
+        )
+        initial_mass = initial_world_mass + initial_loaded_mass
+        integrity_supported = True
+    except (AttributeError, TypeError):
+        pass
 
     per_agent_move_m = {
         0: jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.float32),
@@ -391,9 +439,39 @@ def rollout_episode(
             prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
             prev_actions = prev_actions.at[:, 0].set(action)
             rng_step = jrandom.split(rng_step, rl_config.num_test_rollouts)
-            timestep = env.step(
-                timestep, wrap_action(action, env.batch_cfg.action_type), rng_step
-            )
+            wrapped_action = wrap_action(action, env.batch_cfg.action_type)
+            if preserve_terminal_states:
+                candidate_timestep = env.step_no_reset(
+                    timestep,
+                    wrapped_action,
+                    rng_step,
+                )
+
+                def _preserve_inactive(previous, candidate):
+                    if not hasattr(candidate, "shape"):
+                        return candidate
+                    if (
+                        candidate.ndim == 0
+                        or candidate.shape[0] != rl_config.num_test_rollouts
+                    ):
+                        return candidate
+                    mask = active_env_mask.reshape(
+                        (active_env_mask.shape[0],)
+                        + (1,) * (candidate.ndim - 1)
+                    )
+                    return jnp.where(mask, candidate, previous)
+
+                timestep = jax.tree_util.tree_map(
+                    _preserve_inactive,
+                    timestep,
+                    candidate_timestep,
+                )
+            else:
+                timestep = env.step(
+                    timestep,
+                    wrapped_action,
+                    rng_step,
+                )
             # Match training: action history is cleared at episode boundaries.
             prev_actions = jnp.where(
                 timestep.done[:, None], jnp.zeros_like(prev_actions), prev_actions
@@ -403,6 +481,50 @@ def rollout_episode(
         next_obs = timestep.observation
         step_done = timestep.done
         step_succeeded = timestep.info["task_done"]
+
+        if integrity_supported:
+            world_mass = timestep.state.world.action_map.map.astype(
+                jnp.int32
+            ).sum(axis=(-2, -1))
+            loaded_mass = sum(
+                agent_state.loaded.astype(jnp.int32).sum(axis=-1)
+                for agent_state in timestep.state.agent.agent_states
+            )
+            mass_residual = jnp.abs(world_mass + loaded_mass - initial_mass)
+            maximum_mass_residual = jnp.maximum(
+                maximum_mass_residual,
+                jnp.where(active_env_mask, mass_residual, 0),
+            )
+            target_mutation |= active_env_mask & jnp.any(
+                timestep.state.world.target_map.map != target_maps_init,
+                axis=(-2, -1),
+            )
+            obstacle_mutation |= active_env_mask & jnp.any(
+                timestep.state.world.padding_mask.map != padding_masks_init,
+                axis=(-2, -1),
+            )
+            finite_per_leaf = []
+            for leaf in jax.tree_util.tree_leaves(timestep.state):
+                if hasattr(leaf, "shape") and leaf.shape:
+                    reduce_axes = tuple(range(1, leaf.ndim))
+                    finite = jnp.all(jnp.isfinite(leaf), axis=reduce_axes)
+                    if finite.shape == active_env_mask.shape:
+                        finite_per_leaf.append(finite)
+            if finite_per_leaf:
+                state_finite = jnp.all(
+                    jnp.stack(finite_per_leaf), axis=0
+                )
+                nonfinite_state |= active_env_mask & ~state_finite
+
+        changed_action_map = jnp.any(
+            next_obs["action_map"] != obs["action_map"], axis=(-2, -1)
+        )
+        changed_agent = jnp.any(
+            next_obs["agent_states"] != obs["agent_states"], axis=(-2, -1)
+        )
+        no_effect_action_count += (
+            active_env_mask & ~changed_action_map & ~changed_agent
+        ).astype(jnp.int32)
 
         reward_components = timestep.info.get("reward_components", {})
         terminal_total_completion = jnp.where(
@@ -678,6 +800,15 @@ def rollout_episode(
             "dump_mask_integrity": terminal_dump_mask_integrity,
             "accepted_dump_volume": terminal_accepted_dump_volume,
             "illegal_dump_volume": terminal_illegal_dump_volume,
+        },
+        "integrity": {
+            "supported": integrity_supported,
+            "slot_index_zero_based": terminal_slot_indices,
+            "maximum_mass_residual": maximum_mass_residual,
+            "no_effect_action_count": no_effect_action_count,
+            "target_mutation": target_mutation,
+            "obstacle_mutation": obstacle_mutation,
+            "nonfinite_state": nonfinite_state,
         },
         "path_efficiency": {"mean": path_efficiency_mean, "std": path_efficiency_std},
         "workspaces_efficiency": {
