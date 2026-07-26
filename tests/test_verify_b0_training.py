@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from scripts.verify_b0_training import (
+    assert_equal_aggregate_prefix,
     assert_equal_trees,
     manifest_digest,
 )
@@ -38,6 +40,27 @@ class VerifyB0TrainingTest(unittest.TestCase):
                 digest,
                 manifest_digest([second, first]),
             )
+
+    def test_aggregate_prefix_ignores_only_run_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reference = root / "reference.json"
+            candidate = root / "candidate.json"
+            reference.write_text(
+                json.dumps({"update": 1, "run_name": "short", "totals": {"done": 2}})
+            )
+            candidate.write_text(
+                json.dumps({"update": 1, "run_name": "long", "totals": {"done": 2}})
+            )
+            self.assertEqual(
+                assert_equal_aggregate_prefix([reference], [candidate]),
+                1,
+            )
+            candidate.write_text(
+                json.dumps({"update": 1, "run_name": "long", "totals": {"done": 3}})
+            )
+            with self.assertRaisesRegex(RuntimeError, "prefix differs at update 1"):
+                assert_equal_aggregate_prefix([reference], [candidate])
 
 
 if __name__ == "__main__":

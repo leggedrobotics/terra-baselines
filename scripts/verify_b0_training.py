@@ -154,6 +154,100 @@ def aggregate_receipts(
     }
 
 
+def assert_equal_aggregate_prefix(
+    reference_paths: list[Path],
+    candidate_paths: list[Path],
+) -> int:
+    if len(reference_paths) > len(candidate_paths):
+        raise RuntimeError("candidate aggregate history is shorter than reference")
+    for reference_path, candidate_path in zip(
+        reference_paths,
+        candidate_paths,
+        strict=False,
+    ):
+        reference = json.loads(reference_path.read_text())
+        candidate = json.loads(candidate_path.read_text())
+        reference.pop("run_name", None)
+        candidate.pop("run_name", None)
+        if reference != candidate:
+            raise RuntimeError(
+                "B0 aggregate prefix differs at update "
+                f"{reference.get('update')}: {reference_path} vs {candidate_path}"
+            )
+    return len(reference_paths)
+
+
+def verify_reproducible_prefix(
+    reference_directory: Path,
+    candidate_numbered: list[tuple[int, Path, dict]],
+    candidate_aggregate_paths: list[Path],
+    panel: str,
+    reference_updates: int,
+) -> dict[str, Any]:
+    reference_numbered = numbered_checkpoints(
+        reference_directory,
+        reference_updates,
+    )
+    candidate_by_update = {
+        update: (path, checkpoint) for update, path, checkpoint in candidate_numbered
+    }
+    checkpoint_records = []
+    for update, reference_path, reference in reference_numbered:
+        if update not in candidate_by_update:
+            raise RuntimeError(f"candidate lacks prefix checkpoint {update}")
+        candidate_path, candidate = candidate_by_update[update]
+        if int(reference["train_config"].seed) != int(candidate["train_config"].seed):
+            raise RuntimeError(f"B0 prefix seed differs at update {update}")
+        checkpoint_records.append(
+            {
+                "update": update,
+                "model_leaves": assert_equal_trees(
+                    reference["model"],
+                    candidate["model"],
+                    f"B0 prefix model at update {update}",
+                ),
+                "optimizer_leaves": assert_equal_trees(
+                    reference["optimizer_state"],
+                    candidate["optimizer_state"],
+                    f"B0 prefix optimizer at update {update}",
+                ),
+                "train_state_step_leaves": assert_equal_trees(
+                    reference["train_state_step"],
+                    candidate["train_state_step"],
+                    f"B0 prefix train step at update {update}",
+                ),
+                "reference_path": str(reference_path),
+                "reference_sha256": sha256_file(reference_path),
+                "candidate_path": str(candidate_path),
+                "candidate_sha256": sha256_file(candidate_path),
+            }
+        )
+
+    reference_aggregate_paths, reference_aggregate_gate = aggregate_receipts(
+        reference_directory / "episode_aggregates",
+        panel=panel,
+        expected_updates=reference_updates,
+    )
+    compared_aggregates = assert_equal_aggregate_prefix(
+        reference_aggregate_paths,
+        candidate_aggregate_paths,
+    )
+    return {
+        "passed": True,
+        "reference_checkpoint_dir": str(reference_directory),
+        "reference_updates": reference_updates,
+        "checkpoint_records": checkpoint_records,
+        "aggregate_receipts_compared": compared_aggregates,
+        "reference_aggregate_manifest_sha256": manifest_digest(
+            reference_aggregate_paths
+        ),
+        "candidate_prefix_aggregate_manifest_sha256": manifest_digest(
+            candidate_aggregate_paths[:reference_updates]
+        ),
+        "reference_aggregate_gate": reference_aggregate_gate,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint-dir", type=Path, required=True)
@@ -167,10 +261,23 @@ def main() -> None:
         type=int,
         default=INITIAL_UPDATES,
     )
+    parser.add_argument("--reference-checkpoint-dir", type=Path)
+    parser.add_argument("--reference-updates", type=int)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.expected_updates % CHECKPOINT_CADENCE:
         raise ValueError("--expected-updates must be divisible by checkpoint cadence")
+    if (args.reference_checkpoint_dir is None) != (args.reference_updates is None):
+        raise ValueError(
+            "--reference-checkpoint-dir and --reference-updates must be used together"
+        )
+    if args.reference_updates is not None:
+        if args.reference_updates % CHECKPOINT_CADENCE:
+            raise ValueError(
+                "--reference-updates must be divisible by checkpoint cadence"
+            )
+        if args.reference_updates >= args.expected_updates:
+            raise ValueError("--reference-updates must be below --expected-updates")
     directory = args.checkpoint_dir.resolve()
     output = args.output.resolve()
     if output.exists():
@@ -226,6 +333,15 @@ def main() -> None:
         args.expected_updates,
     )
     checkpoint_paths = [path for _, path, _ in numbered]
+    reproducible_prefix = None
+    if args.reference_checkpoint_dir is not None:
+        reproducible_prefix = verify_reproducible_prefix(
+            args.reference_checkpoint_dir.resolve(),
+            numbered,
+            aggregate_paths,
+            args.panel,
+            args.reference_updates,
+        )
     receipt = {
         "schema": "terra_b0_training_gate_v1",
         "passed": True,
@@ -253,6 +369,7 @@ def main() -> None:
             "sha256": sha256_file(last_path),
         },
         "final_equals_last_update": equality,
+        "reproducible_prefix": reproducible_prefix,
     }
     with output.open("x") as stream:
         json.dump(receipt, stream, indent=2, sort_keys=True)
