@@ -46,7 +46,7 @@ case "$PANEL" in
 esac
 B0_UPDATES="${B0_UPDATES:-500}"
 case "$B0_UPDATES" in
-    500 | 1000) ;;
+    500 | 1000 | 2000) ;;
     *)
         echo "Unsupported bounded B0 update target: $B0_UPDATES" >&2
         exit 3

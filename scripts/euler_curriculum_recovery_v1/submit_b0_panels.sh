@@ -10,7 +10,7 @@ EVAL_SCRIPT="$SCRIPT_ROOT/eval_b0_panel.sbatch"
 RECEIPT="$RUN_ROOT/submitted_jobs.txt"
 PENDING_RECEIPT="$RUN_ROOT/submitted_jobs.pending.$BASHPID"
 case "$B0_UPDATES" in
-    500 | 1000) ;;
+    500 | 1000 | 2000) ;;
     *)
         echo "Unsupported bounded B0 update target: $B0_UPDATES" >&2
         exit 2
