@@ -10,7 +10,12 @@ EVAL_SCRIPT="$SCRIPT_ROOT/eval_b0_panel.sbatch"
 RECEIPT="$RUN_ROOT/submitted_jobs.txt"
 PENDING_RECEIPT="$RUN_ROOT/submitted_jobs.pending.$BASHPID"
 case "$B0_UPDATES" in
-    500 | 1000 | 2000) ;;
+    500 | 1000 | 2000)
+        TRAIN_TIME_LIMIT=08:00:00
+        ;;
+    5000)
+        TRAIN_TIME_LIMIT=16:00:00
+        ;;
     *)
         echo "Unsupported bounded B0 update target: $B0_UPDATES" >&2
         exit 2
@@ -54,6 +59,7 @@ trap 'echo "Partial B0 submission receipt: $PENDING_RECEIPT" >&2' ERR
 {
     echo "submitted_at=$(date --iso-8601=seconds)"
     echo "b0_updates=$B0_UPDATES"
+    echo "train_time_limit=$TRAIN_TIME_LIMIT"
     echo "excluded_nodes=${EXCLUDE_NODES:-none}"
     echo "panels=${PANELS[*]}"
 } > "$PENDING_RECEIPT"
@@ -63,6 +69,7 @@ for PANEL in "${PANELS[@]}"; do
             "${SBATCH_EXCLUDE_ARGS[@]}" \
             --output="$RUN_ROOT/logs/%x_%j.out" \
             --job-name="terra-b0-${PANEL//_/-}" \
+            --time="$TRAIN_TIME_LIMIT" \
             --export="ALL,PANEL=$PANEL,RUN_ROOT=$RUN_ROOT,B0_UPDATES=$B0_UPDATES" \
             "$TRAIN_SCRIPT"
     )"
