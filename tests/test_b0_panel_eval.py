@@ -11,12 +11,19 @@ from eval_b0_panel import (
     configure_for_panel,
     consecutive_cell_witnesses,
     decision,
+    development_count,
+    development_relative_path,
     slight_improvement,
+    training_relative_path,
     verify_b0_checkpoint,
 )
 
 
-def _checkpoint(panel="foundation_geometry", integrity_failure=False):
+def _checkpoint(
+    panel="foundation_geometry",
+    integrity_failure=False,
+    planned_updates=INITIAL_UPDATES,
+):
     spec = PANEL_SPECS[panel]
     config = SimpleNamespace(
         config_name=spec["config_name"],
@@ -26,9 +33,9 @@ def _checkpoint(panel="foundation_geometry", integrity_failure=False):
         num_envs=4096,
         num_steps=32,
         env_steps_per_update=TRANSITIONS_PER_UPDATE,
-        num_updates=INITIAL_UPDATES,
-        total_timesteps=INITIAL_UPDATES * TRANSITIONS_PER_UPDATE,
-        actual_total_timesteps=(INITIAL_UPDATES * TRANSITIONS_PER_UPDATE),
+        num_updates=planned_updates,
+        total_timesteps=planned_updates * TRANSITIONS_PER_UPDATE,
+        actual_total_timesteps=(planned_updates * TRANSITIONS_PER_UPDATE),
         lr=3e-4,
         clip_eps=0.2,
         gamma=0.9984,
@@ -76,7 +83,7 @@ def _checkpoint(panel="foundation_geometry", integrity_failure=False):
         teacher_obs_downsample=1,
         curriculum_levels_override=[
             {
-                "maps_path": f"panels/train/{panel}",
+                "maps_path": training_relative_path(panel),
                 "max_steps_in_episode": 450,
                 "rewards_type": 0,
                 "apply_trench_rewards": False,
@@ -123,10 +130,51 @@ class B0PanelEvalTest(unittest.TestCase):
             self.assertEqual(config.agent_types, (0,))
             self.assertEqual(
                 config.maps[0].maps_path,
-                f"panels/train/{panel}",
+                training_relative_path(panel),
             )
             self.assertEqual(config.maps[0].max_steps_in_episode, 450)
             self.assertFalse(config.maps[0].apply_trench_rewards)
+
+    def test_one_side_isolate_freezes_cell_paths_counts_and_budget(self):
+        panel = "trench_one_d02_isolate"
+        spec = PANEL_SPECS[panel]
+        self.assertEqual(spec["cells"], ("t_straight_one_d02",))
+        self.assertEqual(spec["train_count"], 64)
+        self.assertEqual(development_count(panel), 8)
+        self.assertEqual(
+            training_relative_path(panel),
+            "cells/train/t_straight_one_d02",
+        )
+        self.assertEqual(
+            development_relative_path(panel),
+            "cells/development/t_straight_one_d02",
+        )
+        self.assertFalse(spec["continuation_allowed"])
+        configured = configure_for_panel(
+            _checkpoint(panel, planned_updates=2000)["train_config"],
+            panel,
+            development_count(panel),
+        )
+        self.assertEqual(configured.num_envs_per_device, 8)
+        self.assertEqual(configured.num_minibatches, 8)
+        self.assertEqual(
+            configured.curriculum_levels_override[0]["maps_path"],
+            "cells/development/t_straight_one_d02",
+        )
+        gate = verify_b0_checkpoint(
+            _checkpoint(panel, planned_updates=2000),
+            panel,
+            100,
+            planned_updates=2000,
+        )
+        self.assertTrue(gate["passed"])
+        with self.assertRaisesRegex(RuntimeError, "requires planned_updates"):
+            verify_b0_checkpoint(
+                _checkpoint(panel, planned_updates=1000),
+                panel,
+                100,
+                planned_updates=1000,
+            )
 
     def test_evaluator_uses_largest_valid_inherited_minibatch_divisor(
         self,
@@ -234,6 +282,30 @@ class B0PanelEvalTest(unittest.TestCase):
         result = decision(records)
         self.assertEqual(result["decision"], "conditional_cell_isolates")
         self.assertEqual(result["conditional_cell_isolates"], ["b"])
+
+    def test_failed_one_shot_isolate_never_authorizes_continuation(self):
+        records = [
+            _record(100, {"a": (0, 0.20)}),
+            _record(200, {"a": (1, 0.20)}),
+            _record(300, {"a": (2, 0.30)}),
+            _record(400, {"a": (3, 0.40)}),
+            _record(500, {"a": (5, 0.90)}),
+        ]
+        result = decision(records, continuation_allowed=False)
+        self.assertTrue(result["slight_improvement"]["passed"])
+        self.assertFalse(result["continuation_allowed"])
+        self.assertFalse(result["continue_same_panel"])
+        self.assertEqual(result["decision"], "stop_and_diagnose_panel")
+
+    def test_one_shot_isolate_can_pass_the_normal_consecutive_gate(self):
+        records = [
+            _record(100, {"a": (6, 1.0)}),
+            _record(200, {"a": (6, 1.0)}),
+        ]
+        result = decision(records, continuation_allowed=False)
+        self.assertEqual(result["decision"], "panel_witness_passed")
+        self.assertTrue(result["witness"]["passed"])
+        self.assertFalse(result["continuation_allowed"])
 
 
 if __name__ == "__main__":

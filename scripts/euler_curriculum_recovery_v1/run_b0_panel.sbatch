@@ -13,6 +13,7 @@ set -euo pipefail
 umask 002
 
 : "${PANEL:?submit with a declared B0 panel}"
+TRAIN_RELATIVE_PATH="panels/train/$PANEL"
 case "$PANEL" in
     foundation_geometry)
         PRESET=b0_foundation_geometry_v1
@@ -33,6 +34,12 @@ case "$PANEL" in
         PRESET=b0_trench_side_v1
         TRAIN_SEED=2026072704
         PANEL_COUNT=16
+        ;;
+    trench_one_d02_isolate)
+        PRESET=b0_trench_one_d02_isolate_v1
+        TRAIN_SEED=2026072704
+        PANEL_COUNT=64
+        TRAIN_RELATIVE_PATH=cells/train/t_straight_one_d02
         ;;
     trench_topology)
         PRESET=b0_trench_topology_v1
@@ -74,6 +81,10 @@ case "$B0_UPDATES" in
         exit 3
         ;;
 esac
+if [[ "$PANEL" == trench_one_d02_isolate && "$B0_UPDATES" != 2000 ]]; then
+    echo "trench_one_d02_isolate requires B0_UPDATES=2000" >&2
+    exit 3
+fi
 B0_TIMESTEPS=$((B0_UPDATES * 131072))
 EXPECTED_CHECKPOINTS=$((B0_UPDATES / 100))
 
@@ -118,7 +129,7 @@ test -s "$SOURCE/terra/REVISION"
 test -s "$SOURCE/terra-baselines/REVISION"
 test -f "$RUN_ROOT/manifests/source_files.sha256"
 test -f "$RUN_ROOT/manifests/bank_files.sha256"
-test -f "$BANK/panels/train/$PANEL/manifest.jsonl"
+test -f "$BANK/$TRAIN_RELATIVE_PATH/manifest.jsonl"
 test ! -e "$PANEL_ROOT/TRAINING_COMPLETE"
 (
     cd "$RUN_ROOT"
@@ -208,7 +219,7 @@ test "${#SMOKE_AGGREGATES[@]}" -eq 1
 "$VENV/bin/python" -u scripts/verify_b0_smoke.py \
     --checkpoint "${SMOKE_FINALS[0]}" \
     --aggregate "${SMOKE_AGGREGATES[0]}" \
-    --dataset "$BANK/panels/train/$PANEL" \
+    --dataset "$BANK/$TRAIN_RELATIVE_PATH" \
     --panel "$PANEL" \
     --expected-dataset-count "$PANEL_COUNT" \
     --output "$SMOKE_DIR/SMOKE_GATE.json"
@@ -244,7 +255,7 @@ test "$FINAL_COUNT" -eq 1
     --checkpoint-dir "$CHECKPOINT_DIR" \
     --panel "$PANEL" \
     --expected-updates "$B0_UPDATES" \
-    --dataset "$BANK/panels/train/$PANEL" \
+    --dataset "$BANK/$TRAIN_RELATIVE_PATH" \
     --expected-dataset-count "$PANEL_COUNT" \
     --output "$PANEL_ROOT/TRAINING_GATE.json"
 touch "$PANEL_ROOT/TRAINING_COMPLETE"

@@ -91,6 +91,19 @@ PANEL_SPECS = {
         "train_count": 16,
         "reward_contract": "corrected_dense_v1_trench_absolute_off",
     },
+    "trench_one_d02_isolate": {
+        "config_name": "b0_trench_one_d02_isolate_v1",
+        "family": "trench",
+        "cells": ("t_straight_one_d02",),
+        "seed": 2026072704,
+        "train_count": 64,
+        "development_count": 8,
+        "train_path": "cells/train/t_straight_one_d02",
+        "development_path": "cells/development/t_straight_one_d02",
+        "continuation_allowed": False,
+        "fixed_updates": 2000,
+        "reward_contract": "corrected_dense_v1_trench_absolute_off",
+    },
     "trench_topology": {
         "config_name": "b0_trench_topology_v1",
         "family": "trench",
@@ -122,6 +135,21 @@ def panel_spec(panel: str) -> dict:
         raise ValueError(f"unknown B0 panel {panel}") from error
 
 
+def training_relative_path(panel: str) -> str:
+    spec = panel_spec(panel)
+    return spec.get("train_path", f"panels/train/{panel}")
+
+
+def development_relative_path(panel: str) -> str:
+    spec = panel_spec(panel)
+    return spec.get("development_path", f"panels/development/{panel}")
+
+
+def development_count(panel: str) -> int:
+    spec = panel_spec(panel)
+    return int(spec.get("development_count", spec["train_count"]))
+
+
 def verify_b0_checkpoint(
     checkpoint: dict,
     panel: str,
@@ -130,6 +158,12 @@ def verify_b0_checkpoint(
     planned_updates: int = INITIAL_UPDATES,
 ) -> dict:
     spec = panel_spec(panel)
+    fixed_updates = spec.get("fixed_updates")
+    if fixed_updates is not None and planned_updates not in (1, fixed_updates):
+        raise RuntimeError(
+            f"B0 {panel} requires planned_updates=1 smoke or "
+            f"planned_updates={fixed_updates}"
+        )
     if int(checkpoint["next_update"]) != expected_next_update:
         raise RuntimeError(
             "B0 checkpoint update mismatch: "
@@ -205,7 +239,7 @@ def verify_b0_checkpoint(
             f"observed={observed}, expected={expected}"
         )
     levels = config_value(config, "curriculum_levels_override")
-    expected_path = f"panels/train/{panel}"
+    expected_path = training_relative_path(panel)
     if len(levels) != 1:
         raise RuntimeError("B0 checkpoint must have exactly one map level")
     level = levels[0]
@@ -248,7 +282,7 @@ def configure_for_panel(train_config, panel: str, count: int):
     config.action_types_override = (0,)
     config.curriculum_levels_override = [
         {
-            "maps_path": f"panels/development/{panel}",
+            "maps_path": development_relative_path(panel),
             "max_steps_in_episode": HORIZON,
             "rewards_type": 0,
             "apply_trench_rewards": False,
@@ -520,12 +554,17 @@ def slight_improvement(records: list[dict], cells: list[str]) -> dict:
     }
 
 
-def decision(records: list[dict]) -> dict:
+def decision(
+    records: list[dict],
+    *,
+    continuation_allowed: bool = True,
+) -> dict:
     witness = consecutive_cell_witnesses(records)
     if witness["passed"]:
         return {
             "decision": "panel_witness_passed",
             "continue_same_panel": False,
+            "continuation_allowed": continuation_allowed,
             "conditional_cell_isolates": [],
             "witness": witness,
             "slight_improvement": {
@@ -535,7 +574,7 @@ def decision(records: list[dict]) -> dict:
         }
     unwitnessed = witness["unwitnessed_cells"]
     progress = slight_improvement(records, unwitnessed)
-    if progress["passed"]:
+    if progress["passed"] and continuation_allowed:
         outcome = "continue_same_panel"
         isolates: list[str] = []
     else:
@@ -549,6 +588,7 @@ def decision(records: list[dict]) -> dict:
     return {
         "decision": outcome,
         "continue_same_panel": outcome == "continue_same_panel",
+        "continuation_allowed": continuation_allowed,
         "conditional_cell_isolates": isolates,
         "witness": witness,
         "slight_improvement": progress,
@@ -584,13 +624,14 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     spec = panel_spec(args.panel)
     bank_root = args.bank_root.resolve()
-    relative_path = f"panels/development/{args.panel}"
+    relative_path = development_relative_path(args.panel)
     directory = bank_root / relative_path
     rows = load_manifest(directory)
-    if len(rows) != spec["train_count"]:
+    expected_development_count = development_count(args.panel)
+    if len(rows) != expected_development_count:
         raise RuntimeError(
             f"B0 {args.panel} development count {len(rows)} does not "
-            f"match declared {spec['train_count']}"
+            f"match declared {expected_development_count}"
         )
     observed_cells = tuple(sorted({row["primary_cell"] for row in rows}))
     if observed_cells != tuple(sorted(spec["cells"])):
@@ -715,7 +756,10 @@ def main() -> None:
         "reset_verification": reset_verification,
         "checkpoint_gates": checkpoint_gates,
         "records": records,
-        "adjudication": decision(records),
+        "adjudication": decision(
+            records,
+            continuation_allowed=spec.get("continuation_allowed", True),
+        ),
     }
     with output.open("w") as stream:
         json.dump(payload, stream, indent=2, sort_keys=True)

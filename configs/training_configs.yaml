@@ -153,6 +153,24 @@ b0_trench_side_v1:
       rewards_type: DENSE
       apply_trench_rewards: false
 
+b0_trench_one_d02_isolate_v1:
+  description: B0 conditional straight one-side close-dump trench isolate
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: cells/train/t_straight_one_d02
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
 b0_trench_topology_v1:
   description: B0 straight, segmented, junction, and disconnected trench panel
   agent_types: [0]

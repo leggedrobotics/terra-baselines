@@ -34,14 +34,18 @@ else
         trench_topology
     )
 fi
+HAS_ONE_D02_ISOLATE=false
 for PANEL in "${PANELS[@]}"; do
     case "$PANEL" in
-        foundation_geometry | foundation_distance | trench_distance | trench_side | trench_topology) ;;
+        foundation_geometry | foundation_distance | trench_distance | trench_side | trench_one_d02_isolate | trench_topology) ;;
         *)
             echo "Unsupported B0 panel: $PANEL" >&2
             exit 3
             ;;
     esac
+    if [[ "$PANEL" == trench_one_d02_isolate ]]; then
+        HAS_ONE_D02_ISOLATE=true
+    fi
 done
 case "$B0_TRAIN_VARIANT" in
     base_v1) ;;
@@ -62,6 +66,20 @@ case "$B0_TRAIN_VARIANT" in
         exit 4
         ;;
 esac
+if [[ "$HAS_ONE_D02_ISOLATE" == true ]]; then
+    if [[ "${#PANELS[@]}" -ne 1 ]]; then
+        echo "trench_one_d02_isolate must be the only submitted panel" >&2
+        exit 6
+    fi
+    if [[ "$B0_TRAIN_VARIANT" != base_v1 ]]; then
+        echo "trench_one_d02_isolate requires B0_TRAIN_VARIANT=base_v1" >&2
+        exit 6
+    fi
+    if [[ "$B0_UPDATES" != 2000 ]]; then
+        echo "trench_one_d02_isolate requires B0_UPDATES=2000" >&2
+        exit 6
+    fi
+fi
 if [[ "$PYTHONDONTWRITEBYTECODE" != 1 ]]; then
     echo "B0 submissions require PYTHONDONTWRITEBYTECODE=1" >&2
     exit 5

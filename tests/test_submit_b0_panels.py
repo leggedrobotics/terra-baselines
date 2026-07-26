@@ -123,6 +123,55 @@ class SubmitB0PanelsTest(unittest.TestCase):
         )
         self.assertFalse((self.root / "sbatch.log").exists())
 
+    def test_one_side_isolate_is_submitted_alone_at_exact_budget(self):
+        result = self.run_submit(
+            "trench_one_d02_isolate",
+            B0_UPDATES="2000",
+            B0_TRAIN_VARIANT="base_v1",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        receipt = (self.root / "submitted_jobs.txt").read_text()
+        self.assertIn("b0_updates=2000\n", receipt)
+        self.assertIn("train_variant=base_v1\n", receipt)
+        self.assertIn("panels=trench_one_d02_isolate\n", receipt)
+        self.assertIn("trench_one_d02_isolate_train_job=9001\n", receipt)
+        self.assertIn("trench_one_d02_isolate_eval_job=9002\n", receipt)
+
+        calls = (self.root / "sbatch.log").read_text().splitlines()
+        self.assertEqual(len(calls), 2)
+        expected_export = (
+            f"--export=ALL,PANEL=trench_one_d02_isolate,RUN_ROOT={self.root},"
+            "B0_UPDATES=2000,B0_TRAIN_VARIANT=base_v1,"
+            "PYTHONDONTWRITEBYTECODE=1"
+        )
+        self.assertIn(expected_export, calls[0])
+        self.assertIn(expected_export, calls[1])
+        self.assertIn("--dependency=afterok:9001", calls[1])
+
+    def test_one_side_isolate_rejects_the_wrong_budget_before_submission(self):
+        result = self.run_submit(
+            "trench_one_d02_isolate",
+            B0_UPDATES="1000",
+            B0_TRAIN_VARIANT="base_v1",
+        )
+        self.assertEqual(result.returncode, 6)
+        self.assertIn("requires B0_UPDATES=2000", result.stderr)
+        self.assertFalse((self.root / "sbatch.log").exists())
+        self.assertFalse((self.root / "submitted_jobs.txt").exists())
+
+    def test_one_side_isolate_rejects_a_mixed_submission(self):
+        result = self.run_submit(
+            "trench_one_d02_isolate",
+            "trench_side",
+            B0_UPDATES="2000",
+            B0_TRAIN_VARIANT="base_v1",
+        )
+        self.assertEqual(result.returncode, 6)
+        self.assertIn("must be the only submitted panel", result.stderr)
+        self.assertFalse((self.root / "sbatch.log").exists())
+        self.assertFalse((self.root / "submitted_jobs.txt").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

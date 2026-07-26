@@ -17,6 +17,9 @@ case "$PANEL" in
     foundation_geometry | trench_side)
         PANEL_COUNT=16
         ;;
+    trench_one_d02_isolate)
+        PANEL_COUNT=8
+        ;;
     foundation_distance | trench_distance)
         PANEL_COUNT=32
         ;;
@@ -36,6 +39,10 @@ case "$B0_UPDATES" in
         exit 3
         ;;
 esac
+if [[ "$PANEL" == trench_one_d02_isolate && "$B0_UPDATES" != 2000 ]]; then
+    echo "trench_one_d02_isolate requires B0_UPDATES=2000" >&2
+    exit 3
+fi
 EXPECTED_CHECKPOINTS=$((B0_UPDATES / 100))
 
 RUN_ROOT="${RUN_ROOT:-/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/b0_panels_v1}"
