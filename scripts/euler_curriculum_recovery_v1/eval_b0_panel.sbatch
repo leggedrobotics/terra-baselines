@@ -30,7 +30,8 @@ case "$PANEL" in
 esac
 
 RUN_ROOT="${RUN_ROOT:-/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/b0_panels_v1}"
-SOURCE="$RUN_ROOT/source"
+SOURCE_ROOT="${SOURCE_ROOT:-$RUN_ROOT}"
+SOURCE="$SOURCE_ROOT/source"
 BANK="$RUN_ROOT/bank"
 PANEL_ROOT="$RUN_ROOT/runs/$PANEL"
 CHECKPOINT_DIR="$PANEL_ROOT/checkpoints"
@@ -61,8 +62,11 @@ test -f "$PANEL_ROOT/TRAINING_COMPLETE"
 test -f "$PANEL_ROOT/TRAINING_GATE.json"
 test ! -e "$OUTPUT"
 (
-    cd "$RUN_ROOT"
+    cd "$SOURCE_ROOT"
     sha256sum --check manifests/source_files.sha256
+)
+(
+    cd "$RUN_ROOT"
     sha256sum --check manifests/bank_files.sha256
 )
 
