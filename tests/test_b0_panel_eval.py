@@ -70,7 +70,7 @@ def _checkpoint(panel="foundation_geometry", integrity_failure=False):
         finite_check_interval=1,
         resume_from=None,
         warm_start_from=None,
-        load_env_from_checkpoint=True,
+        load_env_from_checkpoint=False,
         teacher_checkpoint=None,
         teacher_obs_downsample=1,
         curriculum_levels_override=[

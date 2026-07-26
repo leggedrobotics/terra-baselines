@@ -189,7 +189,10 @@ def verify_b0_checkpoint(
         "finite_check_interval": 1,
         "resume_from": None,
         "warm_start_from": None,
-        "load_env_from_checkpoint": True,
+        # The current CLI resolves the unused scratch-run flag to False.
+        # It is inert while resume_from is None, but freeze the serialized
+        # value so the receipt matches the checkpoint exactly.
+        "load_env_from_checkpoint": False,
         "teacher_checkpoint": None,
         "teacher_obs_downsample": 1,
     }
