@@ -571,13 +571,24 @@ def rollout_historical_audit(
     inward_boundary_volume = jnp.zeros((count,), dtype=jnp.int32)
     observer_internal_mismatch = jnp.zeros((count,), dtype=jnp.bool_)
     observer_transition_mismatch = jnp.zeros((count,), dtype=jnp.bool_)
+    observer_nonveto_candidate_mismatch_count = jnp.zeros(
+        (count,), dtype=jnp.int32
+    )
+    observer_nonveto_load_mismatch_count = jnp.zeros((count,), dtype=jnp.int32)
+    observer_veto_transition_mismatch_count = jnp.zeros((count,), dtype=jnp.int32)
+    observer_first_mismatch_step = jnp.full((count,), -1, dtype=jnp.int32)
+    observer_first_loaded_before = jnp.zeros((count,), dtype=jnp.int32)
+    observer_first_loaded_after = jnp.zeros((count,), dtype=jnp.int32)
+    observer_first_candidate_map_delta = jnp.zeros((count,), dtype=jnp.int32)
+    observer_first_actual_map_delta = jnp.zeros((count,), dtype=jnp.int32)
+    observer_first_candidate_l1_error = jnp.zeros((count,), dtype=jnp.int32)
     terminal_values: dict[str, jax.Array] = {}
     rng = jax.random.PRNGKey(seed)
     dump_observer = (
         jax.jit(jax.vmap(historical_dump_observer)) if observe_dump_semantics else None
     )
 
-    for _ in range(horizon):
+    for step_index in range(horizon):
         rng, action_key, step_key = jax.random.split(rng, 3)
         model_input = obs_to_model_input(timestep.observation, prev_actions, config)
         _, logits = model.apply(model_params, model_input)
@@ -658,13 +669,70 @@ def rollout_historical_audit(
             observer_internal_mismatch |= (
                 active & dump_diagnostics["candidate_internal_mismatch"]
             )
-            observer_transition_mismatch |= active & (
-                (
-                    dump_diagnostics["attempt"]
-                    & ~veto_condition
-                    & (~candidate_match | ~load_changed)
-                )
-                | (veto_condition & (terrain_changed | load_changed))
+            nonveto_candidate_mismatch = (
+                active
+                & dump_diagnostics["attempt"]
+                & ~veto_condition
+                & ~candidate_match
+            )
+            nonveto_load_mismatch = (
+                active
+                & dump_diagnostics["attempt"]
+                & ~veto_condition
+                & ~load_changed
+            )
+            veto_transition_mismatch = active & veto_condition & (
+                terrain_changed | load_changed
+            )
+            transition_mismatch = (
+                nonveto_candidate_mismatch
+                | nonveto_load_mismatch
+                | veto_transition_mismatch
+            )
+            observer_transition_mismatch |= transition_mismatch
+            observer_nonveto_candidate_mismatch_count += (
+                nonveto_candidate_mismatch.astype(jnp.int32)
+            )
+            observer_nonveto_load_mismatch_count += nonveto_load_mismatch.astype(
+                jnp.int32
+            )
+            observer_veto_transition_mismatch_count += (
+                veto_transition_mismatch.astype(jnp.int32)
+            )
+
+            first_mismatch = transition_mismatch & (observer_first_mismatch_step < 0)
+            candidate_map = dump_diagnostics["candidate_map"].astype(jnp.int32)
+            previous_map_i32 = previous_map.astype(jnp.int32)
+            current_map_i32 = current_map.astype(jnp.int32)
+            observer_first_mismatch_step = jnp.where(
+                first_mismatch,
+                jnp.int32(step_index + 1),
+                observer_first_mismatch_step,
+            )
+            observer_first_loaded_before = jnp.where(
+                first_mismatch,
+                previous_loaded,
+                observer_first_loaded_before,
+            )
+            observer_first_loaded_after = jnp.where(
+                first_mismatch,
+                current_loaded,
+                observer_first_loaded_after,
+            )
+            observer_first_candidate_map_delta = jnp.where(
+                first_mismatch,
+                (candidate_map - previous_map_i32).sum(axis=(-2, -1)),
+                observer_first_candidate_map_delta,
+            )
+            observer_first_actual_map_delta = jnp.where(
+                first_mismatch,
+                (current_map_i32 - previous_map_i32).sum(axis=(-2, -1)),
+                observer_first_actual_map_delta,
+            )
+            observer_first_candidate_l1_error = jnp.where(
+                first_mismatch,
+                jnp.abs(candidate_map - current_map_i32).sum(axis=(-2, -1)),
+                observer_first_candidate_l1_error,
             )
 
         prev_actions = jnp.roll(prev_actions, shift=1, axis=1)
@@ -740,6 +808,19 @@ def rollout_historical_audit(
         "nonfinite_state": nonfinite_state,
         "observer_internal_mismatch": observer_internal_mismatch,
         "observer_transition_mismatch": observer_transition_mismatch,
+        "observer_nonveto_candidate_mismatch_count": (
+            observer_nonveto_candidate_mismatch_count
+        ),
+        "observer_nonveto_load_mismatch_count": observer_nonveto_load_mismatch_count,
+        "observer_veto_transition_mismatch_count": (
+            observer_veto_transition_mismatch_count
+        ),
+        "observer_first_mismatch_step": observer_first_mismatch_step,
+        "observer_first_loaded_before": observer_first_loaded_before,
+        "observer_first_loaded_after": observer_first_loaded_after,
+        "observer_first_candidate_map_delta": observer_first_candidate_map_delta,
+        "observer_first_actual_map_delta": observer_first_actual_map_delta,
+        "observer_first_candidate_l1_error": observer_first_candidate_l1_error,
         "terminal_reward_reconstruction_error": reconstructed_error,
         **terminal_values,
     }
