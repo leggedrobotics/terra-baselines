@@ -626,7 +626,8 @@ def _episode_aggregate_wandb_metrics(payload: dict) -> dict[str, float]:
             else float("nan")
         ),
         "episodes/maximum_mass_residual": totals["maximum_mass_residual"],
-        "episodes/reward_residual_max": totals["maximum_reward_residual"],
+        "episodes/episode_reward_drift_max": totals["maximum_reward_residual"],
+        "episodes/step_reward_residual_max": totals["maximum_step_reward_residual"],
     }
 
 

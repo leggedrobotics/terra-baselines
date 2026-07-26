@@ -28,7 +28,7 @@ case "$ARM" in
         ;;
 esac
 
-RUN_ROOT=/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/f0
+RUN_ROOT="${RUN_ROOT:-/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/f0}"
 SOURCE="$RUN_ROOT/source"
 BANK="$RUN_ROOT/bank"
 ARM_ROOT="$RUN_ROOT/$ARM"

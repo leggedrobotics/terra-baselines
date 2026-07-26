@@ -56,6 +56,9 @@ class EpisodeAccumulator(struct.PyTreeNode):
     terminal_reward_raw_sum: jax.Array
     trench_reward_sum: jax.Array
     existence_reward_sum: jax.Array
+    step_reward_residual_abs_sum: jax.Array
+    maximum_step_reward_residual: jax.Array
+    step_reward_residual_violation_count: jax.Array
     step_count: jax.Array
     action_counts: jax.Array
     explicit_noop_count: jax.Array
@@ -81,6 +84,9 @@ class EpisodeAggregate(struct.PyTreeNode):
     reward_residual_abs_sum: jax.Array
     maximum_reward_residual: jax.Array
     reward_residual_violation_count: jax.Array
+    step_reward_residual_abs_sum: jax.Array
+    maximum_step_reward_residual: jax.Array
+    step_reward_residual_violation_count: jax.Array
     step_count: jax.Array
     action_counts: jax.Array
     explicit_noop_count: jax.Array
@@ -103,6 +109,7 @@ class EpisodeAggregate(struct.PyTreeNode):
 
 _MAX_AGGREGATE_FIELDS = (
     "maximum_reward_residual",
+    "maximum_step_reward_residual",
     "maximum_mass_residual",
 )
 
@@ -127,6 +134,9 @@ def new_episode_accumulator(
         terminal_reward_raw_sum=zeros_float,
         trench_reward_sum=zeros_float,
         existence_reward_sum=zeros_float,
+        step_reward_residual_abs_sum=zeros_float,
+        maximum_step_reward_residual=zeros_float,
+        step_reward_residual_violation_count=zeros_int,
         step_count=zeros_int,
         action_counts=jnp.zeros(shape + (NUM_ACTIONS,), dtype=jnp.int32),
         explicit_noop_count=zeros_int,
@@ -161,6 +171,9 @@ def empty_episode_aggregate(group_count: int) -> EpisodeAggregate:
         reward_residual_abs_sum=zeros_float,
         maximum_reward_residual=zeros_float,
         reward_residual_violation_count=zeros_int,
+        step_reward_residual_abs_sum=zeros_float,
+        maximum_step_reward_residual=zeros_float,
+        step_reward_residual_violation_count=zeros_int,
         step_count=zeros_int,
         action_counts=jnp.zeros(
             shape + (NUM_ACTIONS,),
@@ -252,6 +265,23 @@ def update_episode_aggregate(
 ) -> tuple[EpisodeAccumulator, EpisodeAggregate]:
     """Accumulate one step and emit only complete episodes into ``pending``."""
     trench_reward = jnp.nan_to_num(step.trench_reward, nan=0.0)
+    step_component_sum = (
+        step.agent_rewards.sum(axis=-1)
+        + step.terminal_reward
+        + trench_reward
+        + step.existence_reward
+    )
+    step_reward_residual = jnp.abs(step.reward - step_component_sum)
+    step_reward_residual_tolerance = reward_residual_rtol * jnp.maximum(
+        jnp.float32(1.0),
+        jnp.maximum(
+            jnp.abs(step.reward),
+            jnp.abs(step_component_sum),
+        ),
+    )
+    step_reward_residual_violation = (
+        step_reward_residual > step_reward_residual_tolerance
+    ).astype(jnp.int32)
     updated = accumulator.replace(
         episodic_return=accumulator.episodic_return + step.reward,
         agent_reward_sum=accumulator.agent_reward_sum + step.agent_rewards,
@@ -264,6 +294,17 @@ def update_episode_aggregate(
         ),
         trench_reward_sum=accumulator.trench_reward_sum + trench_reward,
         existence_reward_sum=(accumulator.existence_reward_sum + step.existence_reward),
+        step_reward_residual_abs_sum=(
+            accumulator.step_reward_residual_abs_sum + step_reward_residual
+        ),
+        maximum_step_reward_residual=jnp.maximum(
+            accumulator.maximum_step_reward_residual,
+            step_reward_residual,
+        ),
+        step_reward_residual_violation_count=(
+            accumulator.step_reward_residual_violation_count
+            + step_reward_residual_violation
+        ),
         step_count=accumulator.step_count + 1,
         action_counts=(
             accumulator.action_counts
@@ -316,6 +357,9 @@ def update_episode_aggregate(
             "episode aggregate group count does not match the declared axes"
         )
 
+    # Keep the independently accumulated episode reconstruction as an audit
+    # metric. Signed float32 sums can exceed the per-step tolerance solely from
+    # association drift, so this quantity must not be a hard integrity gate.
     component_sum = (
         updated.agent_reward_sum.sum(axis=-1)
         + updated.terminal_reward_normalized_sum
@@ -409,6 +453,24 @@ def update_episode_aggregate(
             group,
             done,
             (reward_residual > reward_residual_tolerance).astype(jnp.int32),
+            expected_group_count,
+        ),
+        step_reward_residual_abs_sum=_masked_scatter_sum(
+            group,
+            done,
+            updated.step_reward_residual_abs_sum,
+            expected_group_count,
+        ),
+        maximum_step_reward_residual=_masked_scatter_max(
+            group,
+            done,
+            updated.maximum_step_reward_residual,
+            expected_group_count,
+        ),
+        step_reward_residual_violation_count=_masked_scatter_sum(
+            group,
+            done,
+            updated.step_reward_residual_violation_count,
             expected_group_count,
         ),
         step_count=_masked_scatter_sum(
@@ -533,6 +595,9 @@ def update_episode_aggregate(
             "terminal_reward_raw_sum",
             "trench_reward_sum",
             "existence_reward_sum",
+            "step_reward_residual_abs_sum",
+            "maximum_step_reward_residual",
+            "step_reward_residual_violation_count",
             "step_count",
             "action_counts",
             "explicit_noop_count",
@@ -661,6 +726,15 @@ def aggregate_to_payload(
         "maximum_reward_residual": float(
             arrays["maximum_reward_residual"].max(initial=0.0)
         ),
+        "step_reward_residual_abs_sum": float(
+            arrays["step_reward_residual_abs_sum"].sum()
+        ),
+        "maximum_step_reward_residual": float(
+            arrays["maximum_step_reward_residual"].max(initial=0.0)
+        ),
+        "step_reward_residual_violation_count": int(
+            arrays["step_reward_residual_violation_count"].sum()
+        ),
         "exact_dump_volume_sum": float(arrays["exact_dump_volume_sum"].sum()),
         "accepted_dump_volume_sum": float(arrays["accepted_dump_volume_sum"].sum()),
         "buffer_only_dump_volume_sum": float(
@@ -688,10 +762,11 @@ def aggregate_to_payload(
         ),
     }
     return {
-        "schema": "terra_training_episode_aggregate_v1",
+        "schema": "terra_training_episode_aggregate_v2",
         "contract": "exact_visible_dump_v1",
         "numerical_tolerances": {
-            "reward_component_relative": REWARD_COMPONENT_RTOL,
+            "step_reward_component_relative": REWARD_COMPONENT_RTOL,
+            "episode_reward_drift_relative_informational": REWARD_COMPONENT_RTOL,
         },
         "run_name": run_name,
         "update": int(update),
@@ -711,14 +786,14 @@ def aggregate_to_payload(
 
 
 def assert_aggregate_integrity(payload: dict) -> None:
-    """Hard fail before checkpointing if a completed episode is inconsistent."""
+    """Hard fail before checkpointing on transition-level inconsistencies."""
     totals = payload["totals"]
     failures = []
     for field in (
         "mass_residual_violation_count",
         "target_mutation_count",
         "obstacle_mutation_count",
-        "reward_residual_violation_count",
+        "step_reward_residual_violation_count",
     ):
         if totals[field]:
             failures.append(f"{field}={totals[field]}")

@@ -1,14 +1,17 @@
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from utils.episode_aggregates import aggregate_to_payload
-from utils.episode_aggregates import assert_aggregate_integrity
-from utils.episode_aggregates import empty_episode_aggregate
-from utils.episode_aggregates import EpisodeStep
-from utils.episode_aggregates import merge_episode_aggregates
-from utils.episode_aggregates import new_episode_accumulator
-from utils.episode_aggregates import update_episode_aggregate
+from utils.episode_aggregates import (
+    EpisodeStep,
+    aggregate_to_payload,
+    assert_aggregate_integrity,
+    empty_episode_aggregate,
+    merge_episode_aggregates,
+    new_episode_accumulator,
+    update_episode_aggregate,
+)
 
 
 def _step(
@@ -123,6 +126,7 @@ def test_episode_sum_survives_two_rollout_windows_and_resets_only_on_done():
     assert float(pending.episodic_return_sum.sum()) == pytest.approx(4.0)
     assert float(pending.reward_component_sum.sum()) == pytest.approx(4.0)
     assert int(pending.reward_residual_violation_count.sum()) == 0
+    assert int(pending.step_reward_residual_violation_count.sum()) == 0
     assert float(pending.terminal_reward_raw_sum.sum()) == pytest.approx(18.0)
     assert int(accumulator.step_count[0]) == 0
     assert float(accumulator.episodic_return[0]) == pytest.approx(0.0)
@@ -260,3 +264,58 @@ def test_reward_reconstruction_uses_a_small_relative_tolerance():
         step,
     )
     assert int(aggregate.reward_residual_violation_count.sum()) == 1
+    assert int(aggregate.step_reward_residual_violation_count.sum()) == 1
+
+
+def test_episode_float32_drift_is_informational_when_every_step_reconstructs():
+    """Long signed returns must not turn association drift into a hard failure."""
+    accumulator = new_episode_accumulator(
+        jnp.zeros((1,), dtype=jnp.int32),
+        jnp.zeros((1,), dtype=jnp.int32),
+        jnp.zeros((1,), dtype=jnp.int32),
+    )
+    pending = empty_episode_aggregate(16)
+    step_count = 450
+    agent_rewards = jnp.concatenate(
+        (
+            jnp.full((step_count // 2,), 0.8, dtype=jnp.float32),
+            jnp.full((step_count // 2,), -0.8, dtype=jnp.float32),
+        )
+    )
+
+    def scan_step(carry, values):
+        index, agent_reward = values
+        done = jnp.reshape(index == step_count - 1, (1,))
+        existence_reward = jnp.float32(0.005)
+        step = _step(
+            reward=jnp.reshape(agent_reward + existence_reward, (1,)),
+            done=done,
+            task_done=jnp.zeros((1,), dtype=jnp.bool_),
+            timeout=done,
+            agent_reward=jnp.reshape(agent_reward, (1,)),
+            existence_reward=existence_reward,
+        )
+        return _update(carry[0], carry[1], step), None
+
+    (accumulator, aggregate), _ = jax.lax.scan(
+        scan_step,
+        (accumulator, pending),
+        (jnp.arange(step_count), agent_rewards),
+    )
+    del accumulator
+
+    assert int(aggregate.episode_count.sum()) == 1
+    assert int(aggregate.reward_residual_violation_count.sum()) == 1
+    assert int(aggregate.step_reward_residual_violation_count.sum()) == 0
+    payload = aggregate_to_payload(
+        aggregate,
+        family_names=("unknown", "foundation"),
+        primary_cell_names=("unknown", "easy"),
+        stage_names=("F0",),
+        update=1,
+        run_name="float32-drift-fixture",
+    )
+    assert payload["schema"] == "terra_training_episode_aggregate_v2"
+    assert payload["totals"]["maximum_reward_residual"] > 1e-5
+    assert payload["totals"]["maximum_step_reward_residual"] == 0.0
+    assert_aggregate_integrity(payload)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUN_ROOT=/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/f0
+RUN_ROOT="${RUN_ROOT:-/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/f0}"
 SCRIPT_ROOT="$RUN_ROOT/source/terra-baselines/scripts/euler_curriculum_recovery_v1"
 TRAIN_SCRIPT="$SCRIPT_ROOT/run_f0_identity.sbatch"
 EVAL_SCRIPT="$SCRIPT_ROOT/eval_f0_identity.sbatch"
@@ -15,28 +15,32 @@ mkdir -p "$RUN_ROOT/logs"
 
 FOUNDATION_TRAIN_JOB="$(
     sbatch --parsable \
+        --output="$RUN_ROOT/logs/%x_%j.out" \
         --job-name=terra-f0-foundation \
-        --export=ALL,ARM=foundation \
+        --export="ALL,ARM=foundation,RUN_ROOT=$RUN_ROOT" \
         "$TRAIN_SCRIPT"
 )"
 TRENCH_TRAIN_JOB="$(
     sbatch --parsable \
+        --output="$RUN_ROOT/logs/%x_%j.out" \
         --job-name=terra-f0-trench \
-        --export=ALL,ARM=trench \
+        --export="ALL,ARM=trench,RUN_ROOT=$RUN_ROOT" \
         "$TRAIN_SCRIPT"
 )"
 FOUNDATION_EVAL_JOB="$(
     sbatch --parsable \
+        --output="$RUN_ROOT/logs/%x_%j.out" \
         --dependency="afterok:$FOUNDATION_TRAIN_JOB" \
         --job-name=terra-f0-foundation-eval \
-        --export=ALL,ARM=foundation \
+        --export="ALL,ARM=foundation,RUN_ROOT=$RUN_ROOT" \
         "$EVAL_SCRIPT"
 )"
 TRENCH_EVAL_JOB="$(
     sbatch --parsable \
+        --output="$RUN_ROOT/logs/%x_%j.out" \
         --dependency="afterok:$TRENCH_TRAIN_JOB" \
         --job-name=terra-f0-trench-eval \
-        --export=ALL,ARM=trench \
+        --export="ALL,ARM=trench,RUN_ROOT=$RUN_ROOT" \
         "$EVAL_SCRIPT"
 )"
 

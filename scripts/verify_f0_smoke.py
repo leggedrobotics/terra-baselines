@@ -133,7 +133,7 @@ def main() -> None:
 
     aggregate = json.loads(args.aggregate.read_text())
     if (
-        aggregate["schema"] != "terra_training_episode_aggregate_v1"
+        aggregate["schema"] != "terra_training_episode_aggregate_v2"
         or aggregate["contract"] != "exact_visible_dump_v1"
         or int(aggregate["update"]) != 1
     ):
@@ -143,7 +143,7 @@ def main() -> None:
         "mass_residual_violation_count",
         "target_mutation_count",
         "obstacle_mutation_count",
-        "reward_residual_violation_count",
+        "step_reward_residual_violation_count",
     ):
         if int(totals[field]) != 0:
             raise RuntimeError(f"F0 smoke aggregate {field} is nonzero")
