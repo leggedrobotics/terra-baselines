@@ -44,6 +44,16 @@ case "$PANEL" in
         exit 2
         ;;
 esac
+B0_UPDATES="${B0_UPDATES:-500}"
+case "$B0_UPDATES" in
+    500 | 1000) ;;
+    *)
+        echo "Unsupported bounded B0 update target: $B0_UPDATES" >&2
+        exit 3
+        ;;
+esac
+B0_TIMESTEPS=$((B0_UPDATES * 131072))
+EXPECTED_CHECKPOINTS=$((B0_UPDATES / 100))
 
 RUN_ROOT="${RUN_ROOT:-/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/b0_panels_v1}"
 SOURCE="$RUN_ROOT/source"
@@ -180,13 +190,13 @@ test "${#SMOKE_AGGREGATES[@]}" -eq 1
     --panel "$PANEL" \
     --output "$SMOKE_DIR/SMOKE_GATE.json"
 
-echo "=== B0 $PANEL 500-update bounded panel ==="
+echo "=== B0 $PANEL $B0_UPDATES-update bounded panel ==="
 export WANDB_MODE=online
 unset WANDB_RUN_ID WANDB_RESUME
 "$VENV/bin/python" -u train_mixed.py \
     "${COMMON_ARGS[@]}" \
-    --name "terra-recovery-b0-$PANEL" \
-    --total_timesteps 65536000 \
+    --name "terra-recovery-b0-$PANEL-u$B0_UPDATES" \
+    --total_timesteps "$B0_TIMESTEPS" \
     --checkpoint_interval 100 \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --keep_checkpoint_history \
@@ -204,13 +214,13 @@ FINAL_COUNT="$(
     find "$CHECKPOINT_DIR" -maxdepth 1 -type f \
         -name '*_FINAL.pkl' | wc -l
 )"
-test "$UPDATE_CHECKPOINT_COUNT" -eq 5
-test "$AGGREGATE_COUNT" -eq 500
+test "$UPDATE_CHECKPOINT_COUNT" -eq "$EXPECTED_CHECKPOINTS"
+test "$AGGREGATE_COUNT" -eq "$B0_UPDATES"
 test "$FINAL_COUNT" -eq 1
 "$VENV/bin/python" -u scripts/verify_b0_training.py \
     --checkpoint-dir "$CHECKPOINT_DIR" \
     --panel "$PANEL" \
-    --expected-updates 500 \
+    --expected-updates "$B0_UPDATES" \
     --output "$PANEL_ROOT/TRAINING_GATE.json"
 touch "$PANEL_ROOT/TRAINING_COMPLETE"
 echo "B0_${PANEL^^}_TRAINING_COMPLETE"

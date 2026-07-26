@@ -28,6 +28,15 @@ case "$PANEL" in
         exit 2
         ;;
 esac
+B0_UPDATES="${B0_UPDATES:-500}"
+case "$B0_UPDATES" in
+    500 | 1000) ;;
+    *)
+        echo "Unsupported bounded B0 update target: $B0_UPDATES" >&2
+        exit 3
+        ;;
+esac
+EXPECTED_CHECKPOINTS=$((B0_UPDATES / 100))
 
 RUN_ROOT="${RUN_ROOT:-/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/b0_panels_v1}"
 SOURCE_ROOT="${SOURCE_ROOT:-$RUN_ROOT}"
@@ -84,12 +93,12 @@ cd "$SOURCE/terra-baselines"
     --checkpoint-glob "$CHECKPOINT_DIR/*_update_*.pkl" \
     --bank-root "$BANK" \
     --panel "$PANEL" \
-    --expected-checkpoints 5 \
-    --planned-updates 500 \
+    --expected-checkpoints "$EXPECTED_CHECKPOINTS" \
+    --planned-updates "$B0_UPDATES" \
     --output "$OUTPUT"
 
 DECISION="$(
-    "$VENV/bin/python" - "$OUTPUT" "$PANEL" <<'PY'
+    "$VENV/bin/python" - "$OUTPUT" "$PANEL" "$EXPECTED_CHECKPOINTS" <<'PY'
 import json
 import sys
 
@@ -98,8 +107,12 @@ if payload["schema"] != "terra_b0_panel_eval_v1":
     raise SystemExit("unexpected B0 evaluation schema")
 if payload["panel"] != sys.argv[2]:
     raise SystemExit("unexpected B0 panel")
-if len(payload["records"]) != 5:
-    raise SystemExit("B0 evaluation did not cover five checkpoints")
+expected_records = int(sys.argv[3])
+if len(payload["records"]) != expected_records:
+    raise SystemExit(
+        f"B0 evaluation covered {len(payload['records'])} checkpoints, "
+        f"expected {expected_records}"
+    )
 if not payload["reset_verification"]["passed"]:
     raise SystemExit("B0 reset verification failed")
 for record in payload["records"]:
