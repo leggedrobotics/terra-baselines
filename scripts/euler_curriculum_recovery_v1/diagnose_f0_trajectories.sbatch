@@ -59,7 +59,21 @@ test "${GPU_NAMES[0]}" = "NVIDIA GeForce RTX 4090"
 "$VENV/bin/python" "$RUNTIME_CHECK" --min-devices 1
 
 cd "$SOURCE/terra-baselines"
-"$VENV/bin/python" -m pytest -q tests/test_diagnose_f0_trajectories.py
+"$VENV/bin/python" - <<'PY'
+import runpy
+
+namespace = runpy.run_path("tests/test_diagnose_f0_trajectories.py")
+tests = sorted(
+    (name, function)
+    for name, function in namespace.items()
+    if name.startswith("test_") and callable(function)
+)
+if len(tests) != 2:
+    raise SystemExit(f"expected two focused helper tests, got {[name for name, _ in tests]}")
+for name, function in tests:
+    function()
+    print(f"{name}: PASSED")
+PY
 "$VENV/bin/python" -u scripts/analysis/diagnose_f0_trajectories.py \
     --run-root "$F0_ROOT" \
     --output "$OUTPUT"
