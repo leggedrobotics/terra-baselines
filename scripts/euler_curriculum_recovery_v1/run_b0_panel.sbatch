@@ -54,6 +54,13 @@ case "$B0_TRAIN_VARIANT" in
         fi
         PANEL_COUNT=128
         ;;
+    foundation_distance_diversity_v1)
+        if [[ "$PANEL" != foundation_distance ]]; then
+            echo "foundation_distance_diversity_v1 requires PANEL=foundation_distance" >&2
+            exit 4
+        fi
+        PANEL_COUNT=256
+        ;;
     *)
         echo "Unsupported B0 training variant: $B0_TRAIN_VARIANT" >&2
         exit 4
