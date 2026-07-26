@@ -12,9 +12,9 @@
 set -euo pipefail
 umask 002
 
-: "${AUDIT_KIND:?submit with AUDIT_KIND=preflight, deterministic, or sampled}"
+: "${AUDIT_KIND:?submit with AUDIT_KIND=preflight, deterministic, sampled, or observer_diagnostic}"
 case "$AUDIT_KIND" in
-    preflight|deterministic|sampled) ;;
+    preflight|deterministic|sampled|observer_diagnostic) ;;
     *)
         echo "Unsupported AUDIT_KIND=$AUDIT_KIND" >&2
         exit 2
@@ -23,7 +23,7 @@ esac
 
 RUN_ROOT=/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725
 HISTORICAL_ROOT=/cluster/scratch/lterenzi/codex_terra_edge_runs/map_curriculum_v1_20260724
-AUDIT_ROOT="$RUN_ROOT/historical_audit"
+AUDIT_ROOT="${AUDIT_ROOT:-$RUN_ROOT/historical_audit}"
 SOURCE="$AUDIT_ROOT/source"
 BANK="$HISTORICAL_ROOT/bank"
 CHECKPOINT_ROOT="$HISTORICAL_ROOT/checkpoints"
@@ -134,6 +134,17 @@ case "$AUDIT_KIND" in
             --seed 2026072506 \
             --seed 2026072507
         ;;
+    observer_diagnostic)
+        "$VENV/bin/python" -u "$AUDIT_SCRIPT" \
+            "${COMMON_ARGS[@]}" \
+            --checkpoint "flat_u1000=$FLAT_U1000" \
+            --expected-checkpoint-sha256 "flat_u1000=ced599e4cca1958f468e794931ee94206dc4e5fdf833e3bb03cb1fb58a865d14" \
+            --dataset development/M1 \
+            --semantic-label flat_u1000 \
+            --semantic-dataset development/M1 \
+            --mode deterministic \
+            --seed 2026072500
+        ;;
 esac
 
 "$VENV/bin/python" - "$OUTPUT" "$AUDIT_KIND" <<'PY'
@@ -147,7 +158,12 @@ if payload["schema"] != "terra_historical_curriculum_audit_v1":
     raise SystemExit("unexpected audit schema")
 if not payload["observer_only"]:
     raise SystemExit("historical audit is not marked observer-only")
-expected_records = {"preflight": 1, "deterministic": 20, "sampled": 16}[kind]
+expected_records = {
+    "preflight": 1,
+    "deterministic": 20,
+    "sampled": 16,
+    "observer_diagnostic": 1,
+}[kind]
 reward_reconstruction_atol = payload["numerical_tolerances"][
     "terminal_reward_reconstruction_atol"
 ]
@@ -180,11 +196,28 @@ for record in payload["records"]:
             > reward_reconstruction_atol
         ):
             raise SystemExit("terminal reward reconstruction mismatch")
-        if record["d1_semantic_attribution"] and (
+        if kind != "observer_diagnostic" and record["d1_semantic_attribution"] and (
             row["observer_internal_mismatch"]
             or row["observer_transition_mismatch"]
         ):
             raise SystemExit("D1 observer does not reproduce the old transition")
+if kind == "observer_diagnostic":
+    mismatches = [
+        row
+        for record in payload["records"]
+        for row in record["per_map"]
+        if row["observer_transition_mismatch"]
+    ]
+    if not mismatches:
+        raise SystemExit("observer diagnostic did not reproduce the mismatch")
+    for row in mismatches:
+        classified = (
+            row["observer_nonveto_candidate_mismatch_count"]
+            + row["observer_nonveto_load_mismatch_count"]
+            + row["observer_veto_transition_mismatch_count"]
+        )
+        if classified <= 0 or row["observer_first_mismatch_step"] <= 0:
+            raise SystemExit("observer mismatch lacks diagnostic provenance")
 print(f"HISTORICAL_{kind.upper()}_AUDIT_PASSED")
 PY
 
