@@ -19,6 +19,7 @@ from eval_b0_panel import (
     panel_spec,
     verify_b0_checkpoint,
 )
+from terra.maps_buffer import validate_exact_dataset_contract
 from train_mixed import _validate_checkpoint_architecture
 from utils.helpers import load_pkl_object
 
@@ -167,6 +168,8 @@ def main() -> None:
         type=int,
         default=INITIAL_UPDATES,
     )
+    parser.add_argument("--dataset", type=Path)
+    parser.add_argument("--expected-dataset-count", type=int)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.expected_updates % CHECKPOINT_CADENCE:
@@ -176,6 +179,24 @@ def main() -> None:
     if output.exists():
         raise FileExistsError(output)
     output.parent.mkdir(parents=True, exist_ok=True)
+    if args.expected_dataset_count is not None and args.dataset is None:
+        raise ValueError("--expected-dataset-count requires --dataset")
+    dataset_gate = None
+    if args.dataset is not None:
+        expected_dataset_count = (
+            panel_spec(args.panel)["train_count"]
+            if args.expected_dataset_count is None
+            else args.expected_dataset_count
+        )
+        if expected_dataset_count <= 0:
+            raise ValueError("--expected-dataset-count must be positive")
+        dataset = args.dataset.resolve()
+        validate_exact_dataset_contract(dataset, expected_dataset_count)
+        dataset_gate = {
+            "path": str(dataset),
+            "manifest_sha256": sha256_file(dataset / "manifest.jsonl"),
+            "expected_count": expected_dataset_count,
+        }
 
     numbered = numbered_checkpoints(
         directory,
@@ -233,6 +254,7 @@ def main() -> None:
         "reward_contract": panel_spec(args.panel)["reward_contract"],
         "completion_contract": "exact_visible_dump_v1",
         "checkpoint_dir": str(directory),
+        "dataset_gate": dataset_gate,
         "numbered_checkpoint_gate": {
             "count": len(numbered),
             "updates": [update for update, _, _ in numbered],

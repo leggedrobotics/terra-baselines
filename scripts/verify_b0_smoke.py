@@ -54,6 +54,7 @@ def main() -> None:
         choices=tuple(PANEL_SPECS),
         required=True,
     )
+    parser.add_argument("--expected-dataset-count", type=int)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     for path in (args.checkpoint, args.aggregate):
@@ -63,9 +64,16 @@ def main() -> None:
         raise FileExistsError(args.output)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     spec = panel_spec(args.panel)
+    expected_dataset_count = (
+        spec["train_count"]
+        if args.expected_dataset_count is None
+        else args.expected_dataset_count
+    )
+    if expected_dataset_count <= 0:
+        raise ValueError("--expected-dataset-count must be positive")
     validate_exact_dataset_contract(
         args.dataset,
-        spec["train_count"],
+        expected_dataset_count,
     )
 
     helpers.register_checkpoint_config_classes()
@@ -117,6 +125,7 @@ def main() -> None:
         "aggregate_sha256": sha256_file(args.aggregate),
         "dataset": str(args.dataset.resolve()),
         "dataset_manifest_sha256": sha256_file(args.dataset / "manifest.jsonl"),
+        "expected_dataset_count": expected_dataset_count,
         "model_leaf_count": assert_finite_tree(
             checkpoint["model"],
             "B0 model",

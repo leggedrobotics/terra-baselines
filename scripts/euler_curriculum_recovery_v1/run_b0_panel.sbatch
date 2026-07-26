@@ -44,6 +44,21 @@ case "$PANEL" in
         exit 2
         ;;
 esac
+B0_TRAIN_VARIANT="${B0_TRAIN_VARIANT:-base_v1}"
+case "$B0_TRAIN_VARIANT" in
+    base_v1) ;;
+    trench_side_diversity_v1)
+        if [[ "$PANEL" != trench_side ]]; then
+            echo "trench_side_diversity_v1 requires PANEL=trench_side" >&2
+            exit 4
+        fi
+        PANEL_COUNT=128
+        ;;
+    *)
+        echo "Unsupported B0 training variant: $B0_TRAIN_VARIANT" >&2
+        exit 4
+        ;;
+esac
 B0_UPDATES="${B0_UPDATES:-500}"
 case "$B0_UPDATES" in
     500 | 1000 | 2000) ;;
@@ -188,6 +203,7 @@ test "${#SMOKE_AGGREGATES[@]}" -eq 1
     --aggregate "${SMOKE_AGGREGATES[0]}" \
     --dataset "$BANK/panels/train/$PANEL" \
     --panel "$PANEL" \
+    --expected-dataset-count "$PANEL_COUNT" \
     --output "$SMOKE_DIR/SMOKE_GATE.json"
 
 echo "=== B0 $PANEL $B0_UPDATES-update bounded panel ==="
@@ -221,6 +237,8 @@ test "$FINAL_COUNT" -eq 1
     --checkpoint-dir "$CHECKPOINT_DIR" \
     --panel "$PANEL" \
     --expected-updates "$B0_UPDATES" \
+    --dataset "$BANK/panels/train/$PANEL" \
+    --expected-dataset-count "$PANEL_COUNT" \
     --output "$PANEL_ROOT/TRAINING_GATE.json"
 touch "$PANEL_ROOT/TRAINING_COMPLETE"
 echo "B0_${PANEL^^}_TRAINING_COMPLETE"
