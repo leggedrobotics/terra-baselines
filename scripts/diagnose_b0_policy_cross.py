@@ -15,6 +15,7 @@ import numpy as np
 
 from eval_b0_panel import (
     HORIZON,
+    PANEL_SPECS,
     configure_for_panel,
     panel_spec,
     summarize_checkpoint,
@@ -123,7 +124,7 @@ def main() -> None:
     parser.add_argument("--bank-root", type=Path, required=True)
     parser.add_argument(
         "--panel",
-        choices=("trench_distance", "trench_side"),
+        choices=tuple(PANEL_SPECS),
         required=True,
     )
     parser.add_argument("--planned-updates", type=int, default=1000)

@@ -12,9 +12,9 @@
 set -euo pipefail
 umask 002
 
-: "${PANEL:?submit trench_distance or trench_side}"
+: "${PANEL:?submit a declared B0 panel}"
 case "$PANEL" in
-    trench_distance)
+    foundation_distance | trench_distance)
         PANEL_COUNT=32
         ;;
     trench_side)
@@ -25,6 +25,17 @@ case "$PANEL" in
         exit 2
         ;;
 esac
+CHECKPOINT_UPDATE="${CHECKPOINT_UPDATE:-900}"
+PLANNED_UPDATES="${PLANNED_UPDATES:-1000}"
+if [[ ! "$CHECKPOINT_UPDATE" =~ ^[0-9]+$ ]] ||
+    [[ ! "$PLANNED_UPDATES" =~ ^[0-9]+$ ]] ||
+    ((CHECKPOINT_UPDATE <= 0)) ||
+    ((CHECKPOINT_UPDATE % 100 != 0)) ||
+    ((CHECKPOINT_UPDATE > PLANNED_UPDATES)); then
+    echo "Invalid B0 policy-cross update/planned-updates pair" >&2
+    exit 3
+fi
+printf -v CHECKPOINT_UPDATE_PADDED '%06d' "$CHECKPOINT_UPDATE"
 
 TRAINING_ROOT="${TRAINING_ROOT:-/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/b0_panels_u1000_v1}"
 SOURCE_ROOT="${SOURCE_ROOT:-/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/b0_policy_cross_v1}"
@@ -32,7 +43,7 @@ SOURCE="$SOURCE_ROOT/source"
 BANK="$TRAINING_ROOT/bank"
 CHECKPOINT_DIR="$TRAINING_ROOT/runs/$PANEL/checkpoints"
 PANEL_ROOT="$SOURCE_ROOT/runs/$PANEL"
-OUTPUT="$PANEL_ROOT/policy_cross.json"
+OUTPUT="$PANEL_ROOT/policy_cross_update_${CHECKPOINT_UPDATE_PADDED}.json"
 VENV=/cluster/scratch/lterenzi/terra_main_20260717_venv
 RUNTIME_CHECK=/cluster/home/lterenzi/codex_terra_edge_validation/scripts/check_jax_runtime.py
 
@@ -82,7 +93,8 @@ cd "$SOURCE/terra-baselines"
     -s tests -p 'test_diagnose_b0_policy_cross.py' -q
 
 mapfile -t CHECKPOINTS < <(
-    find "$CHECKPOINT_DIR" -maxdepth 1 -type f -name '*_update_000900.pkl'
+    find "$CHECKPOINT_DIR" -maxdepth 1 -type f \
+        -name "*_update_${CHECKPOINT_UPDATE_PADDED}.pkl"
 )
 test "${#CHECKPOINTS[@]}" -eq 1
 
@@ -90,17 +102,18 @@ test "${#CHECKPOINTS[@]}" -eq 1
     --checkpoint "${CHECKPOINTS[0]}" \
     --bank-root "$BANK" \
     --panel "$PANEL" \
-    --planned-updates 1000 \
+    --planned-updates "$PLANNED_UPDATES" \
     --output "$OUTPUT"
 
-"$VENV/bin/python" - "$OUTPUT" "$PANEL" <<'PY'
+"$VENV/bin/python" - \
+    "$OUTPUT" "$PANEL" "$CHECKPOINT_UPDATE" <<'PY'
 import json
 import sys
 
 payload = json.load(open(sys.argv[1]))
 if payload["schema"] != "terra_b0_policy_cross_v1":
     raise SystemExit("unexpected B0 policy-cross schema")
-if payload["panel"] != sys.argv[2] or payload["checkpoint_update"] != 900:
+if payload["panel"] != sys.argv[2] or payload["checkpoint_update"] != int(sys.argv[3]):
     raise SystemExit("wrong B0 policy-cross treatment")
 if len(payload["records"]) != 10:
     raise SystemExit("incomplete B0 policy cross")
@@ -116,5 +129,5 @@ if any(
     raise SystemExit("B0 policy-cross integrity failure")
 PY
 
-touch "$PANEL_ROOT/POLICY_CROSS_COMPLETE"
-echo "B0_${PANEL^^}_POLICY_CROSS_COMPLETE"
+touch "$PANEL_ROOT/POLICY_CROSS_UPDATE_${CHECKPOINT_UPDATE_PADDED}_COMPLETE"
+echo "B0_${PANEL^^}_POLICY_CROSS_UPDATE_${CHECKPOINT_UPDATE_PADDED}_COMPLETE"
