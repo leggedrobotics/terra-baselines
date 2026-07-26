@@ -54,6 +54,33 @@ IDENTITIES = {
         "train_seed": 2026072602,
     },
 }
+F0_TREATMENTS = {
+    "corrected_dense_v1": {
+        "foundation": {
+            "config_name": "f0_foundation_identity_v1",
+            "apply_trench_rewards": False,
+        },
+        "trench": {
+            "config_name": "f0_trench_identity_v1",
+            "apply_trench_rewards": True,
+        },
+    },
+    "corrected_dense_v1_trench_absolute_off": {
+        "trench": {
+            "config_name": "f0_trench_identity_shaping_off_v1",
+            "apply_trench_rewards": False,
+        },
+    },
+}
+
+
+def treatment_spec(identity: str, treatment: str) -> dict:
+    try:
+        return F0_TREATMENTS[treatment][identity]
+    except KeyError as error:
+        raise ValueError(
+            f"unsupported F0 identity/treatment pair: {identity}/{treatment}"
+        ) from error
 
 
 def load_single_manifest(directory: Path) -> dict:
@@ -87,8 +114,10 @@ def verify_production_checkpoint(
     checkpoint: dict,
     identity: str,
     expected_update: int,
+    treatment: str = "corrected_dense_v1",
 ) -> dict:
     identity_spec = IDENTITIES[identity]
+    reward_spec = treatment_spec(identity, treatment)
     if int(checkpoint["next_update"]) != expected_update:
         raise RuntimeError(
             "F0 checkpoint update mismatch: "
@@ -98,7 +127,7 @@ def verify_production_checkpoint(
         raise RuntimeError("F0 checkpoint lacks optimizer state")
 
     expected = {
-        "config_name": f"f0_{identity}_identity_v1",
+        "config_name": reward_spec["config_name"],
         "seed": identity_spec["train_seed"],
         "num_devices": 4,
         "num_envs_per_device": 1024,
@@ -138,7 +167,7 @@ def verify_production_checkpoint(
     if (
         level["maps_path"] != identity
         or int(level["max_steps_in_episode"]) != HORIZON
-        or bool(level["apply_trench_rewards"]) != identity_spec["apply_trench_rewards"]
+        or bool(level["apply_trench_rewards"]) != reward_spec["apply_trench_rewards"]
     ):
         raise RuntimeError(f"F0 checkpoint map level mismatch: {level}")
 
@@ -164,7 +193,12 @@ def verify_production_checkpoint(
     }
 
 
-def configure_for_identity(train_config, identity: str):
+def configure_for_identity(
+    train_config,
+    identity: str,
+    treatment: str = "corrected_dense_v1",
+):
+    reward_spec = treatment_spec(identity, treatment)
     config = copy.deepcopy(train_config)
     config.num_devices = 1
     config.num_envs_per_device = len(RESET_SEEDS)
@@ -185,7 +219,7 @@ def configure_for_identity(train_config, identity: str):
             "maps_path": identity,
             "max_steps_in_episode": HORIZON,
             "rewards_type": 0,
-            "apply_trench_rewards": IDENTITIES[identity]["apply_trench_rewards"],
+            "apply_trench_rewards": reward_spec["apply_trench_rewards"],
         }
     ]
     config.curriculum_increase_level_threshold = 20
@@ -534,6 +568,11 @@ def main() -> None:
         choices=tuple(IDENTITIES),
         required=True,
     )
+    parser.add_argument(
+        "--treatment",
+        choices=tuple(F0_TREATMENTS),
+        default="corrected_dense_v1",
+    )
     parser.add_argument("--expected-checkpoints", type=int, default=10)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -584,11 +623,16 @@ def main() -> None:
             checkpoint,
             args.identity,
             update,
+            args.treatment,
         )
 
     os.environ["DATASET_PATH"] = str(dataset_root)
     os.environ["DATASET_SIZE"] = "1"
-    config = configure_for_identity(reference_config, args.identity)
+    config = configure_for_identity(
+        reference_config,
+        args.identity,
+        args.treatment,
+    )
     _, env, env_params, initialized_state = make_mixed_agent_states(config)
     env_params = jax.tree_util.tree_map(lambda value: value[0], env_params)
     reset_keys = declared_reset_keys()
@@ -604,7 +648,7 @@ def main() -> None:
     payload = {
         "schema": "terra_f0_identity_eval_v1",
         "completion_contract": "exact_visible_dump_v1",
-        "reward_contract": "corrected_dense_v1",
+        "reward_contract": args.treatment,
         "identity": args.identity,
         "map_id": manifest["map_id"],
         "source_id": manifest["source_id"],

@@ -13,10 +13,13 @@ set -euo pipefail
 umask 002
 
 : "${ARM:?submit with ARM=foundation or ARM=trench}"
-case "$ARM" in
-    foundation|trench) ;;
+F0_TREATMENT="${F0_TREATMENT:-corrected_dense_v1}"
+case "$ARM:$F0_TREATMENT" in
+    foundation:corrected_dense_v1) ;;
+    trench:corrected_dense_v1) ;;
+    trench:corrected_dense_v1_trench_absolute_off) ;;
     *)
-        echo "Unsupported F0 ARM=$ARM" >&2
+        echo "Unsupported F0 arm/treatment: $ARM/$F0_TREATMENT" >&2
         exit 2
         ;;
 esac
@@ -69,17 +72,21 @@ cd "$SOURCE/terra-baselines"
     --checkpoint-glob "$CHECKPOINT_DIR/*_update_*.pkl" \
     --dataset-root "$BANK" \
     --identity "$ARM" \
+    --treatment "$F0_TREATMENT" \
     --expected-checkpoints 10 \
     --output "$OUTPUT"
 
 GATE_RESULT="$(
-    "$VENV/bin/python" - "$OUTPUT" <<'PY'
+    "$VENV/bin/python" - "$OUTPUT" "$F0_TREATMENT" <<'PY'
 import json
 import sys
 
 payload = json.load(open(sys.argv[1]))
 if payload["schema"] != "terra_f0_identity_eval_v1":
     raise SystemExit("unexpected F0 evaluation schema")
+expected_treatment = sys.argv[2]
+if payload["reward_contract"] != expected_treatment:
+    raise SystemExit("unexpected F0 reward treatment")
 if len(payload["records"]) != 10:
     raise SystemExit("F0 evaluation did not cover ten checkpoints")
 if not payload["reset_verification"]["passed"]:

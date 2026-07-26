@@ -11,7 +11,7 @@ from pathlib import Path
 import jax
 import numpy as np
 
-from eval_f0_identity import IDENTITIES
+from eval_f0_identity import F0_TREATMENTS, IDENTITIES, treatment_spec
 from utils import helpers
 
 
@@ -50,6 +50,11 @@ def main() -> None:
         required=True,
     )
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument(
+        "--treatment",
+        choices=tuple(F0_TREATMENTS),
+        default="corrected_dense_v1",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -68,7 +73,8 @@ def main() -> None:
         raise RuntimeError("F0 smoke checkpoint lacks optimizer state")
 
     config = checkpoint["train_config"]
-    expected_preset = f"f0_{args.identity}_identity_v1"
+    reward_spec = treatment_spec(args.identity, args.treatment)
+    expected_preset = reward_spec["config_name"]
     expected = {
         "config_name": expected_preset,
         "seed": args.seed,
@@ -110,8 +116,7 @@ def main() -> None:
     if (
         level["maps_path"] != args.identity
         or int(level["max_steps_in_episode"]) != 450
-        or bool(level["apply_trench_rewards"])
-        != IDENTITIES[args.identity]["apply_trench_rewards"]
+        or bool(level["apply_trench_rewards"]) != reward_spec["apply_trench_rewards"]
     ):
         raise RuntimeError(f"F0 smoke map level mismatch: {level}")
 
@@ -158,7 +163,7 @@ def main() -> None:
         "schema": "terra_f0_update1_smoke_v1",
         "status": "passed",
         "identity": args.identity,
-        "reward_contract": "corrected_dense_v1",
+        "reward_contract": args.treatment,
         "completion_contract": "exact_visible_dump_v1",
         "checkpoint": str(args.checkpoint.resolve()),
         "checkpoint_sha256": sha256_file(args.checkpoint),

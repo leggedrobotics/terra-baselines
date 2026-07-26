@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import asdict
 from types import SimpleNamespace
 
 import numpy as np
@@ -9,9 +10,11 @@ from eval_f0_identity import (
     PRODUCTION_TIMESTEPS,
     PRODUCTION_UPDATES,
     RESET_SEEDS,
+    configure_for_identity,
     consecutive_mastery,
     declared_reset_keys,
     summarize_rollout,
+    treatment_spec,
     verify_production_checkpoint,
 )
 
@@ -61,9 +64,14 @@ def _rollout_fixture(success_count=29, mass_failure=False):
     return stats, cumulative_rewards
 
 
-def _production_checkpoint(identity="foundation", integrity_failure=False):
+def _production_checkpoint(
+    identity="foundation",
+    integrity_failure=False,
+    treatment="corrected_dense_v1",
+):
+    reward_spec = treatment_spec(identity, treatment)
     config = SimpleNamespace(
-        config_name=f"f0_{identity}_identity_v1",
+        config_name=reward_spec["config_name"],
         seed=2026072601 if identity == "foundation" else 2026072602,
         num_devices=4,
         num_envs_per_device=1024,
@@ -92,7 +100,7 @@ def _production_checkpoint(identity="foundation", integrity_failure=False):
                 "maps_path": identity,
                 "max_steps_in_episode": HORIZON,
                 "rewards_type": 0,
-                "apply_trench_rewards": identity == "trench",
+                "apply_trench_rewards": reward_spec["apply_trench_rewards"],
             }
         ],
     )
@@ -113,6 +121,7 @@ class F0IdentityEvalTest(unittest.TestCase):
     def test_identity_presets_freeze_family_specific_dense_config(self):
         foundation = get_config("f0_foundation_identity_v1")
         trench = get_config("f0_trench_identity_v1")
+        trench_repair = get_config("f0_trench_identity_shaping_off_v1")
 
         self.assertEqual(foundation.agent_types, (0,))
         self.assertEqual(foundation.maps[0].maps_path, "foundation")
@@ -123,6 +132,19 @@ class F0IdentityEvalTest(unittest.TestCase):
         self.assertEqual(trench.maps[0].maps_path, "trench")
         self.assertEqual(trench.maps[0].max_steps_in_episode, HORIZON)
         self.assertTrue(trench.maps[0].apply_trench_rewards)
+
+        self.assertEqual(trench_repair.agent_types, (0,))
+        self.assertEqual(trench_repair.maps[0].maps_path, "trench")
+        self.assertEqual(trench_repair.maps[0].max_steps_in_episode, HORIZON)
+        self.assertFalse(trench_repair.maps[0].apply_trench_rewards)
+
+        trench_fields = asdict(trench)
+        repair_fields = asdict(trench_repair)
+        for fields in (trench_fields, repair_fields):
+            fields.pop("name")
+            fields.pop("description")
+        trench_fields["maps"][0]["apply_trench_rewards"] = False
+        self.assertEqual(trench_fields, repair_fields)
 
     def test_declared_reset_seeds_are_frozen_and_distinct(self):
         self.assertEqual(len(RESET_SEEDS), 32)
@@ -176,6 +198,28 @@ class F0IdentityEvalTest(unittest.TestCase):
                 "foundation",
                 100,
             )
+
+    def test_trench_repair_changes_only_registered_reward_treatment(self):
+        treatment = "corrected_dense_v1_trench_absolute_off"
+        checkpoint = _production_checkpoint(
+            identity="trench",
+            treatment=treatment,
+        )
+        gate = verify_production_checkpoint(
+            checkpoint,
+            "trench",
+            100,
+            treatment,
+        )
+        self.assertTrue(gate["passed"])
+        config = configure_for_identity(
+            checkpoint["train_config"],
+            "trench",
+            treatment,
+        )
+        self.assertFalse(config.curriculum_levels_override[0]["apply_trench_rewards"])
+        with self.assertRaisesRegex(ValueError, "unsupported F0"):
+            treatment_spec("foundation", treatment)
 
 
 if __name__ == "__main__":

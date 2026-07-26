@@ -63,6 +63,24 @@ f0_trench_identity_v1:
       rewards_type: DENSE
       apply_trench_rewards: true
 
+f0_trench_identity_shaping_off_v1:
+  description: F0R trench repair with absolute distance/alignment shaping disabled
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: trench
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
 solo_excavator_128:
   description: Single excavator on 128x128 foundations (F15 resolution scaling, E8 pilot)
   agent_types: [0]

@@ -13,17 +13,25 @@ set -euo pipefail
 umask 002
 
 : "${ARM:?submit with ARM=foundation or ARM=trench}"
-case "$ARM" in
-    foundation)
+F0_TREATMENT="${F0_TREATMENT:-corrected_dense_v1}"
+case "$ARM:$F0_TREATMENT" in
+    foundation:corrected_dense_v1)
         PRESET=f0_foundation_identity_v1
         TRAIN_SEED=2026072601
+        RUN_STEM=terra-recovery-f0-foundation
         ;;
-    trench)
+    trench:corrected_dense_v1)
         PRESET=f0_trench_identity_v1
         TRAIN_SEED=2026072602
+        RUN_STEM=terra-recovery-f0-trench
+        ;;
+    trench:corrected_dense_v1_trench_absolute_off)
+        PRESET=f0_trench_identity_shaping_off_v1
+        TRAIN_SEED=2026072602
+        RUN_STEM=terra-recovery-f0r-trench-shaping-off
         ;;
     *)
-        echo "Unsupported F0 ARM=$ARM" >&2
+        echo "Unsupported F0 arm/treatment: $ARM/$F0_TREATMENT" >&2
         exit 2
         ;;
 esac
@@ -104,6 +112,12 @@ done
 
 cd "$SOURCE/terra-baselines"
 
+echo "=== F0 $ARM source-contract tests ==="
+"$VENV/bin/python" -m unittest discover \
+    -s tests -p 'test_f0_identity_eval.py' -q
+"$VENV/bin/python" -m unittest discover \
+    -s tests -p 'test_verify_f0_training.py' -q
+
 COMMON_ARGS=(
     --config "$PRESET"
     --machine euler
@@ -134,7 +148,7 @@ echo "=== F0 $ARM exact update-1 smoke ==="
 export WANDB_MODE=disabled
 "$VENV/bin/python" -u train_mixed.py \
     "${COMMON_ARGS[@]}" \
-    --name "terra-recovery-f0-${ARM}-smoke" \
+    --name "$RUN_STEM-smoke" \
     --total_timesteps 131072 \
     --checkpoint_interval 1 \
     --checkpoint_dir "$SMOKE_DIR" \
@@ -155,6 +169,7 @@ test "${#SMOKE_AGGREGATES[@]}" -eq 1
     --aggregate "${SMOKE_AGGREGATES[0]}" \
     --identity "$ARM" \
     --seed "$TRAIN_SEED" \
+    --treatment "$F0_TREATMENT" \
     --output "$SMOKE_DIR/SMOKE_GATE.json"
 
 echo "=== F0 $ARM 1,000-update production ==="
@@ -162,7 +177,7 @@ export WANDB_MODE=online
 unset WANDB_RUN_ID WANDB_RESUME
 "$VENV/bin/python" -u train_mixed.py \
     "${COMMON_ARGS[@]}" \
-    --name "terra-recovery-f0-${ARM}" \
+    --name "$RUN_STEM" \
     --total_timesteps 131072000 \
     --checkpoint_interval 100 \
     --checkpoint_dir "$CHECKPOINT_DIR" \
@@ -184,5 +199,10 @@ FINAL_COUNT="$(
 test "$UPDATE_CHECKPOINT_COUNT" -eq 10
 test "$AGGREGATE_COUNT" -eq 1000
 test "$FINAL_COUNT" -eq 1
+"$VENV/bin/python" -u scripts/verify_f0_training.py \
+    --checkpoint-dir "$CHECKPOINT_DIR" \
+    --identity "$ARM" \
+    --treatment "$F0_TREATMENT" \
+    --output "$ARM_ROOT/TRAINING_GATE.json"
 touch "$ARM_ROOT/TRAINING_COMPLETE"
 echo "F0_${ARM^^}_TRAINING_COMPLETE"
