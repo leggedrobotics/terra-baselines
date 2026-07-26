@@ -81,6 +81,96 @@ f0_trench_identity_shaping_off_v1:
       rewards_type: DENSE
       apply_trench_rewards: false
 
+b0_foundation_geometry_v1:
+  description: B0 foundation OSM versus procedural all-around panel
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: panels/train/foundation_geometry
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+b0_foundation_distance_v1:
+  description: B0 paired foundation dump-distance panel
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: panels/train/foundation_distance
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+b0_trench_distance_v1:
+  description: B0 paired straight-trench dump-distance panel
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: panels/train/trench_distance
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+b0_trench_side_v1:
+  description: B0 paired close both-side versus one-side trench panel
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: panels/train/trench_side
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+b0_trench_topology_v1:
+  description: B0 straight, segmented, junction, and disconnected trench panel
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: panels/train/trench_topology
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
 solo_excavator_128:
   description: Single excavator on 128x128 foundations (F15 resolution scaling, E8 pilot)
   agent_types: [0]

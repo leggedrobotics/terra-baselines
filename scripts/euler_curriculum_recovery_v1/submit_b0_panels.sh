@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+RUN_ROOT="${RUN_ROOT:-/cluster/scratch/lterenzi/codex_terra_edge_runs/curriculum_recovery_v1_20260725/b0_panels_v1}"
+SCRIPT_ROOT="$RUN_ROOT/source/terra-baselines/scripts/euler_curriculum_recovery_v1"
+TRAIN_SCRIPT="$SCRIPT_ROOT/run_b0_panel.sbatch"
+EVAL_SCRIPT="$SCRIPT_ROOT/eval_b0_panel.sbatch"
+RECEIPT="$RUN_ROOT/submitted_jobs.txt"
+PENDING_RECEIPT="$RUN_ROOT/submitted_jobs.pending.$BASHPID"
+PANELS=(
+    foundation_geometry
+    foundation_distance
+    trench_distance
+    trench_side
+    trench_topology
+)
+
+test -x "$TRAIN_SCRIPT"
+test -x "$EVAL_SCRIPT"
+test -f "$RUN_ROOT/manifests/source_files.sha256"
+test -f "$RUN_ROOT/manifests/bank_files.sha256"
+test ! -e "$RECEIPT"
+test ! -e "$PENDING_RECEIPT"
+mkdir -p "$RUN_ROOT/logs"
+
+trap 'echo "Partial B0 submission receipt: $PENDING_RECEIPT" >&2' ERR
+echo "submitted_at=$(date --iso-8601=seconds)" > "$PENDING_RECEIPT"
+for PANEL in "${PANELS[@]}"; do
+    TRAIN_JOB="$(
+        sbatch --parsable \
+            --output="$RUN_ROOT/logs/%x_%j.out" \
+            --job-name="terra-b0-${PANEL//_/-}" \
+            --export="ALL,PANEL=$PANEL,RUN_ROOT=$RUN_ROOT" \
+            "$TRAIN_SCRIPT"
+    )"
+    echo "${PANEL}_train_job=$TRAIN_JOB" >> "$PENDING_RECEIPT"
+
+    EVAL_JOB="$(
+        sbatch --parsable \
+            --output="$RUN_ROOT/logs/%x_%j.out" \
+            --dependency="afterok:$TRAIN_JOB" \
+            --job-name="terra-b0-${PANEL//_/-}-eval" \
+            --export="ALL,PANEL=$PANEL,RUN_ROOT=$RUN_ROOT" \
+            "$EVAL_SCRIPT"
+    )"
+    echo "${PANEL}_eval_job=$EVAL_JOB" >> "$PENDING_RECEIPT"
+done
+mv "$PENDING_RECEIPT" "$RECEIPT"
+trap - ERR
+cat "$RECEIPT"
