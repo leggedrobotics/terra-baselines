@@ -20,6 +20,9 @@ case "$PANEL" in
     trench_side)
         PANEL_COUNT=16
         ;;
+    trench_topology)
+        PANEL_COUNT=48
+        ;;
     *)
         echo "Unsupported B0 policy-cross panel: $PANEL" >&2
         exit 2
@@ -27,6 +30,9 @@ case "$PANEL" in
 esac
 CHECKPOINT_UPDATE="${CHECKPOINT_UPDATE:-900}"
 PLANNED_UPDATES="${PLANNED_UPDATES:-1000}"
+: "${EXPECTED_SOURCE_MANIFEST_SHA256:?submit expected source-manifest SHA-256}"
+: "${EXPECTED_BANK_MANIFEST_SHA256:?submit expected bank-manifest SHA-256}"
+: "${EXPECTED_CHECKPOINT_SHA256:?submit expected checkpoint SHA-256}"
 if [[ ! "$CHECKPOINT_UPDATE" =~ ^[0-9]+$ ]] ||
     [[ ! "$PLANNED_UPDATES" =~ ^[0-9]+$ ]] ||
     ((CHECKPOINT_UPDATE <= 0)) ||
@@ -72,6 +78,14 @@ test -f "$TRAINING_ROOT/runs/$PANEL/PANEL_DIAGNOSIS_REQUIRED"
 test -f "$SOURCE_ROOT/manifests/source_files.sha256"
 test -f "$TRAINING_ROOT/manifests/bank_files.sha256"
 test ! -e "$OUTPUT"
+test "$(
+    sha256sum "$SOURCE_ROOT/manifests/source_files.sha256" |
+        cut -d' ' -f1
+)" = "$EXPECTED_SOURCE_MANIFEST_SHA256"
+test "$(
+    sha256sum "$TRAINING_ROOT/manifests/bank_files.sha256" |
+        cut -d' ' -f1
+)" = "$EXPECTED_BANK_MANIFEST_SHA256"
 (
     cd "$SOURCE_ROOT"
     sha256sum --check manifests/source_files.sha256
@@ -97,6 +111,9 @@ mapfile -t CHECKPOINTS < <(
         -name "*_update_${CHECKPOINT_UPDATE_PADDED}.pkl"
 )
 test "${#CHECKPOINTS[@]}" -eq 1
+test "$(
+    sha256sum "${CHECKPOINTS[0]}" | cut -d' ' -f1
+)" = "$EXPECTED_CHECKPOINT_SHA256"
 
 "$VENV/bin/python" -u scripts/diagnose_b0_policy_cross.py \
     --checkpoint "${CHECKPOINTS[0]}" \
@@ -106,7 +123,8 @@ test "${#CHECKPOINTS[@]}" -eq 1
     --output "$OUTPUT"
 
 "$VENV/bin/python" - \
-    "$OUTPUT" "$PANEL" "$CHECKPOINT_UPDATE" <<'PY'
+    "$OUTPUT" "$PANEL" "$CHECKPOINT_UPDATE" \
+    "$EXPECTED_CHECKPOINT_SHA256" <<'PY'
 import json
 import sys
 
@@ -115,8 +133,20 @@ if payload["schema"] != "terra_b0_policy_cross_v1":
     raise SystemExit("unexpected B0 policy-cross schema")
 if payload["panel"] != sys.argv[2] or payload["checkpoint_update"] != int(sys.argv[3]):
     raise SystemExit("wrong B0 policy-cross treatment")
+if payload["checkpoint_sha256"] != sys.argv[4]:
+    raise SystemExit("wrong B0 policy-cross checkpoint hash")
 if len(payload["records"]) != 10:
     raise SystemExit("incomplete B0 policy cross")
+for split in ("train", "development"):
+    records = [record for record in payload["records"] if record["split"] == split]
+    if len(records) != 5:
+        raise SystemExit(f"incomplete {split} B0 policy cross")
+    deterministic = [
+        record for record in records if record["policy_mode"] == "deterministic"
+    ]
+    sampled = [record for record in records if record["policy_mode"] == "sampled"]
+    if len(deterministic) != 1 or len(sampled) != 4:
+        raise SystemExit(f"wrong {split} B0 policy modes")
 if not all(
     verification["passed"]
     for verification in payload["reset_verifications"].values()
