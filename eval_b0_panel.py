@@ -8,6 +8,7 @@ import copy
 import glob
 import itertools
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -237,15 +238,12 @@ def configure_for_panel(train_config, panel: str, count: int):
     config.num_test_rollouts = count
     config.eval_episodes = count
     config.eval_episodes_per_device = count
-    config.num_minibatches = min(
+    config.num_minibatches = math.gcd(
         int(getattr(config, "num_minibatches", 32)),
         count,
     )
-    if count % config.num_minibatches != 0:
-        raise RuntimeError(
-            f"{count} B0 maps are not divisible by "
-            f"num_minibatches={config.num_minibatches}"
-        )
+    if config.num_minibatches <= 0:
+        raise RuntimeError("B0 evaluator requires a positive minibatch divisor")
     config.agent_types_override = (0,)
     config.action_types_override = (0,)
     config.curriculum_levels_override = [

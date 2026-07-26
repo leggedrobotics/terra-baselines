@@ -8,6 +8,7 @@ from eval_b0_panel import (
     INITIAL_UPDATES,
     PANEL_SPECS,
     TRANSITIONS_PER_UPDATE,
+    configure_for_panel,
     consecutive_cell_witnesses,
     decision,
     slight_improvement,
@@ -126,6 +127,18 @@ class B0PanelEvalTest(unittest.TestCase):
             )
             self.assertEqual(config.maps[0].max_steps_in_episode, 450)
             self.assertFalse(config.maps[0].apply_trench_rewards)
+
+    def test_evaluator_uses_largest_valid_inherited_minibatch_divisor(
+        self,
+    ):
+        train_config = _checkpoint("trench_topology")["train_config"]
+        configured = configure_for_panel(
+            train_config,
+            "trench_topology",
+            48,
+        )
+        self.assertEqual(configured.num_minibatches, 16)
+        self.assertEqual(configured.num_envs_per_device, 48)
 
     def test_checkpoint_gate_freezes_initial_panel_treatment(self):
         gate = verify_b0_checkpoint(
