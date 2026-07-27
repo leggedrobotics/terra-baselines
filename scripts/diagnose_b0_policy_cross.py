@@ -118,9 +118,156 @@ def compact_summary(summary: dict) -> dict:
     }
 
 
+TRACE_COMPONENTS = (
+    "absolute",
+    "dig",
+    "dump_purity",
+    "dump_volume",
+    "unloaded",
+    "accepted_dump_volume",
+    "illegal_dump_volume",
+)
+
+
+def selected_failed_traces(rows: list[dict], summary: dict, stats: dict) -> dict:
+    actions = np.asarray(stats["action_sequence"], dtype=np.int32)
+    effects = np.asarray(stats["action_had_effect_sequence"], dtype=bool)
+    completion = {
+        name: np.asarray(stats["completion_sequence"][name], dtype=np.float32)
+        for name in TRACE_COMPONENTS
+    }
+    if (
+        actions.ndim != 2
+        or actions.shape[1] != len(rows)
+        or effects.shape != actions.shape
+        or any(values.shape != actions.shape for values in completion.values())
+        or any(not np.all(np.isfinite(values)) for values in completion.values())
+        or np.any(actions < 0)
+        or np.any(actions >= 8)
+    ):
+        raise RuntimeError("B0 policy-cross failed traces have invalid shapes/actions")
+
+    result = {}
+    for cell in sorted({row["primary_cell"] for row in rows}):
+        failed = [
+            index
+            for index, row in enumerate(summary["per_map"])
+            if row["primary_cell"] == cell and not row["success"]
+        ]
+
+        def peak(index):
+            length = int(summary["per_map"][index]["steps"])
+            return float(completion["absolute"][:length, index].max())
+
+        selected = {}
+        if failed:
+            high = max(
+                failed,
+                key=lambda index: (
+                    peak(index),
+                    summary["per_map"][index]["terminal_absolute"],
+                    -index,
+                ),
+            )
+            selected.setdefault(high, []).append("high_completion")
+            zero = next((index for index in failed if peak(index) <= 1e-6), None)
+            if zero is not None:
+                selected.setdefault(zero, []).append("zero_progress")
+        traces = []
+        for index, labels in selected.items():
+            length = int(summary["per_map"][index]["steps"])
+            traces.append(
+                {
+                    "selection": labels,
+                    "map_id": rows[index]["map_id"],
+                    "source_id": rows[index]["source_id"],
+                    "primary_cell": cell,
+                    "slot_index": int(rows[index]["slot_index"]),
+                    "steps": length,
+                    "actions": actions[:length, index].tolist(),
+                    "action_had_effect": effects[:length, index].tolist(),
+                    "completion": {
+                        name: completion[name][:length, index].tolist()
+                        for name in TRACE_COMPONENTS
+                    },
+                    "peak_absolute_completion": peak(index),
+                    "terminal_absolute_completion": float(
+                        summary["per_map"][index]["terminal_absolute"]
+                    ),
+                    "final_success": False,
+                }
+            )
+        result[cell] = {"failed_identities": len(failed), "traces": traces}
+    return result
+
+
+def write_partial(output: Path, payload: dict) -> Path:
+    partial = Path(f"{output}.partial")
+    staging = Path(f"{partial}.tmp")
+    with staging.open("w") as stream:
+        json.dump(payload, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+    os.replace(staging, partial)
+    return partial
+
+
+def payload_for(
+    args,
+    bank_root: Path,
+    checkpoints: list[tuple[Path, dict]],
+    reset_verifications: dict,
+    records: list[dict],
+    *,
+    status: str,
+) -> dict:
+    completed_updates = sorted({int(record["checkpoint_update"]) for record in records})
+    checkpoint_rows = [
+        {
+            "path": str(path),
+            "sha256": sha256_file(path),
+            "update": int(checkpoint["next_update"]),
+        }
+        for path, checkpoint in checkpoints
+    ]
+    payload = {
+        "schema": "terra_b0_policy_cross_v1",
+        "status": status,
+        "completion_contract": "exact_visible_dump_v1",
+        "panel": args.panel,
+        "bank_root": str(bank_root),
+        "horizon": HORIZON,
+        "checkpoints": checkpoint_rows,
+        "completed_checkpoint_updates": completed_updates,
+        "reset_verifications": reset_verifications,
+        "records": records,
+        "cross_summary_by_checkpoint": {
+            str(update): aggregate_cross(
+                [
+                    record
+                    for record in records
+                    if int(record["checkpoint_update"]) == update
+                ]
+            )
+            for update in completed_updates
+        },
+    }
+    if len(checkpoint_rows) == 1:
+        payload.update(
+            {
+                "checkpoint": checkpoint_rows[0]["path"],
+                "checkpoint_sha256": checkpoint_rows[0]["sha256"],
+                "checkpoint_update": checkpoint_rows[0]["update"],
+                "cross_summary": payload["cross_summary_by_checkpoint"][
+                    str(checkpoint_rows[0]["update"])
+                ],
+            }
+        )
+    return payload
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path, action="append", required=True)
     parser.add_argument("--bank-root", type=Path, required=True)
     parser.add_argument(
         "--panel",
@@ -155,19 +302,27 @@ def main() -> None:
         raise FileExistsError(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     bank_root = args.bank_root.resolve()
-    checkpoint_path = args.checkpoint.resolve()
-    checkpoint = load_pkl_object(str(checkpoint_path))
-    _validate_checkpoint_architecture(checkpoint, checkpoint["train_config"])
-    verify_b0_checkpoint(
-        checkpoint,
-        args.panel,
-        int(checkpoint["next_update"]),
-        planned_updates=args.planned_updates,
-    )
+    checkpoints = [
+        (path.resolve(), load_pkl_object(str(path.resolve())))
+        for path in args.checkpoint
+    ]
+    checkpoints.sort(key=lambda item: int(item[1]["next_update"]))
+    updates = [int(checkpoint["next_update"]) for _, checkpoint in checkpoints]
+    if len(updates) != len(set(updates)):
+        raise ValueError("B0 policy cross requires unique checkpoint updates")
+    reference_config = checkpoints[0][1]["train_config"]
+    for _, checkpoint in checkpoints:
+        _validate_checkpoint_architecture(checkpoint, reference_config)
+        verify_b0_checkpoint(
+            checkpoint,
+            args.panel,
+            int(checkpoint["next_update"]),
+            planned_updates=args.planned_updates,
+        )
     spec = panel_spec(args.panel)
     records = []
     reset_verifications = {}
-
+    contexts = {}
     for split in ("train", "development"):
         relative_path = f"panels/{split}/{args.panel}"
         directory = bank_root / relative_path
@@ -177,7 +332,7 @@ def main() -> None:
         os.environ["DATASET_PATH"] = str(bank_root)
         os.environ["DATASET_SIZE"] = str(len(rows))
         config = configure_for_panel(
-            copy.deepcopy(checkpoint["train_config"]),
+            copy.deepcopy(reference_config),
             args.panel,
             len(rows),
         )
@@ -192,64 +347,100 @@ def main() -> None:
             directory,
             len(rows),
         )
-        model = SimpleNamespace(apply=initialized_state.apply_fn)
-        modes = [
-            ("deterministic", args.deterministic_seed, True),
-            *[("sampled", seed, False) for seed in sampled_seeds],
-        ]
-        for policy_mode, seed, deterministic in modes:
-            _, stats, _ = rollout_episode(
-                env,
-                model,
-                checkpoint["model"],
-                env_params,
-                config,
-                max_frames=HORIZON,
-                deterministic=deterministic,
-                seed=seed,
-                use_mcts=False,
-                reset_keys=reset_keys,
-                record_observations=False,
-                record_actions=True,
-                preserve_terminal_states=True,
-                expected_slot_indices=np.arange(len(rows), dtype=np.int32),
-            )
-            summary = compact_summary(summarize_checkpoint(rows, stats))
-            if summary["integrity_failure_count"]:
-                raise RuntimeError("B0 policy-cross rollout failed integrity")
-            records.append(
-                {
-                    "split": split,
-                    "relative_path": relative_path,
-                    "manifest_sha256": sha256_file(directory / "manifest.jsonl"),
-                    "policy_mode": policy_mode,
-                    "deterministic": deterministic,
-                    "seed": seed,
-                    "summary": summary,
-                }
-            )
-            print(
-                f"{args.panel} {split} {policy_mode} seed {seed}: "
-                f"{summary['overall']['successes']}/"
-                f"{summary['overall']['episodes']}"
-            )
+        contexts[split] = (
+            rows,
+            relative_path,
+            directory,
+            config,
+            env,
+            env_params,
+            reset_keys,
+            SimpleNamespace(apply=initialized_state.apply_fn),
+        )
 
-    payload = {
-        "schema": "terra_b0_policy_cross_v1",
-        "completion_contract": "exact_visible_dump_v1",
-        "panel": args.panel,
-        "checkpoint": str(checkpoint_path),
-        "checkpoint_sha256": sha256_file(checkpoint_path),
-        "checkpoint_update": int(checkpoint["next_update"]),
-        "bank_root": str(bank_root),
-        "horizon": HORIZON,
-        "reset_verifications": reset_verifications,
-        "records": records,
-        "cross_summary": aggregate_cross(records),
-    }
-    with output.open("x") as stream:
-        json.dump(payload, stream, indent=2, sort_keys=True)
-        stream.write("\n")
+    modes = [
+        ("deterministic", args.deterministic_seed, True),
+        *[("sampled", seed, False) for seed in sampled_seeds],
+    ]
+    for checkpoint_path, checkpoint in checkpoints:
+        update = int(checkpoint["next_update"])
+        checkpoint_sha256 = sha256_file(checkpoint_path)
+        for split, context in contexts.items():
+            (
+                rows,
+                relative_path,
+                directory,
+                config,
+                env,
+                env_params,
+                reset_keys,
+                model,
+            ) = context
+            for policy_mode, seed, deterministic in modes:
+                _, stats, _ = rollout_episode(
+                    env,
+                    model,
+                    checkpoint["model"],
+                    env_params,
+                    config,
+                    max_frames=HORIZON,
+                    deterministic=deterministic,
+                    seed=seed,
+                    use_mcts=False,
+                    reset_keys=reset_keys,
+                    record_observations=False,
+                    record_actions=True,
+                    preserve_terminal_states=True,
+                    expected_slot_indices=np.arange(len(rows), dtype=np.int32),
+                    record_completion=True,
+                )
+                summary = compact_summary(summarize_checkpoint(rows, stats))
+                if summary["integrity_failure_count"]:
+                    raise RuntimeError("B0 policy-cross rollout failed integrity")
+                records.append(
+                    {
+                        "checkpoint": str(checkpoint_path),
+                        "checkpoint_sha256": checkpoint_sha256,
+                        "checkpoint_update": update,
+                        "split": split,
+                        "relative_path": relative_path,
+                        "manifest_sha256": sha256_file(directory / "manifest.jsonl"),
+                        "policy_mode": policy_mode,
+                        "deterministic": deterministic,
+                        "seed": seed,
+                        "summary": summary,
+                        "failed_traces": selected_failed_traces(rows, summary, stats),
+                    }
+                )
+                print(
+                    f"{args.panel} update {update} {split} {policy_mode} seed {seed}: "
+                    f"{summary['overall']['successes']}/"
+                    f"{summary['overall']['episodes']}"
+                )
+        write_partial(
+            output,
+            payload_for(
+                args,
+                bank_root,
+                checkpoints,
+                reset_verifications,
+                records,
+                status="incomplete",
+            ),
+        )
+
+    partial = write_partial(
+        output,
+        payload_for(
+            args,
+            bank_root,
+            checkpoints,
+            reset_verifications,
+            records,
+            status="complete",
+        ),
+    )
+    os.replace(partial, output)
     print("B0_POLICY_CROSS_COMPLETE")
 
 

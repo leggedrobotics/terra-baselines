@@ -235,6 +235,7 @@ def rollout_episode(
     record_actions=False,
     preserve_terminal_states=False,
     expected_slot_indices=None,
+    record_completion=False,
 ):
     mode_str = (
         "MCTS"
@@ -375,6 +376,16 @@ def rollout_episode(
     obs_seq = {}
     action_seq = []
     action_had_effect_seq = []
+    completion_components = (
+        ("absolute", "absolute_completion"),
+        ("dig", "dig_completion_total"),
+        ("dump_purity", "dump_completion_action_map"),
+        ("dump_volume", "total_dig_dump_completion"),
+        ("unloaded", "unloaded_completion"),
+        ("accepted_dump_volume", "accepted_dump_volume"),
+        ("illegal_dump_volume", "illegal_dump_volume"),
+    )
+    completion_seq = {name: [] for name, _ in completion_components}
 
     integrity_supported = False
     initial_mass = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.int32)
@@ -530,6 +541,20 @@ def rollout_episode(
         ).astype(jnp.int32)
 
         reward_components = timestep.info.get("reward_components", {})
+        if record_completion:
+            for name, component_name in completion_components:
+                if component_name not in reward_components:
+                    raise RuntimeError(
+                        f"completion trace lacks reward component {component_name}"
+                    )
+                completion_seq[name].append(
+                    np.asarray(
+                        jnp.where(
+                            active_env_mask, reward_components[component_name], 0
+                        ),
+                        dtype=np.float32,
+                    )
+                )
         terminal_total_completion = jnp.where(
             active_env_mask & step_done,
             reward_components.get(
@@ -895,6 +920,10 @@ def rollout_episode(
     if record_actions:
         stats["action_sequence"] = np.stack(action_seq)
         stats["action_had_effect_sequence"] = np.stack(action_had_effect_seq)
+    if record_completion:
+        stats["completion_sequence"] = {
+            name: np.stack(values) for name, values in completion_seq.items()
+        }
     return np.cumsum(np.stack(reward_seq), axis=0), stats, obs_seq
 
 

@@ -48,7 +48,10 @@ def _timestep():
         observation=_observation(),
         reward=jnp.zeros((BATCH_SIZE,)),
         done=jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_),
-        info={"task_done": jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_)},
+        info={
+            "task_done": jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_),
+            "action_had_effect": jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_),
+        },
         env_cfg=jnp.zeros((BATCH_SIZE,)),
     )
 
@@ -97,6 +100,10 @@ class FakeRolloutEnv(FakeEnv):
             "total_dig_dump_completion": completion,
             "dig_completion_total": completion,
             "dump_completion_action_map": completion,
+            "absolute_completion": completion,
+            "unloaded_completion": jnp.ones_like(completion),
+            "accepted_dump_volume": completion * 2,
+            "illegal_dump_volume": jnp.zeros_like(completion),
         }
         return timestep._replace(
             state=next_state,
@@ -104,6 +111,7 @@ class FakeRolloutEnv(FakeEnv):
             done=done,
             info={
                 "task_done": task_done,
+                "action_had_effect": jnp.array([True, False]),
                 "reward_components": reward_components,
             },
         )
@@ -141,6 +149,33 @@ class RolloutEpisodeAccountingTest(unittest.TestCase):
             stats["integrity"]["slot_index_zero_based"], [4, 9]
         )
         self.assertFalse(stats["integrity"]["supported"])
+
+    def test_opt_in_action_and_completion_traces_are_first_episode_aligned(self):
+        config = _config()
+        config.num_prev_actions = 3
+        env_cfgs = SimpleNamespace(
+            tile_size=jnp.ones((BATCH_SIZE,)),
+            agent=SimpleNamespace(move_tiles=jnp.ones((BATCH_SIZE,))),
+        )
+        _, stats, _ = rollout_episode(
+            FakeRolloutEnv(),
+            FakeModel(),
+            None,
+            env_cfgs,
+            config,
+            max_frames=5,
+            deterministic=True,
+            seed=0,
+            use_mcts=False,
+            record_actions=True,
+            record_completion=True,
+            preserve_terminal_states=True,
+        )
+
+        np.testing.assert_allclose(
+            stats["completion_sequence"]["absolute"],
+            [[1.0, 0.4], [0.0, 0.4]],
+        )
 
     def test_eval_mixed_reuses_the_authoritative_rollout(self):
         self.assertIs(eval_mixed.rollout_episode, rollout_episode)
