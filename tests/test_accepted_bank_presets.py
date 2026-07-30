@@ -127,9 +127,14 @@ def test_shared_launcher_freezes_production_ppo_contract():
         "--num_minibatches 32",
         "--lr 3e-4",
         "--log_eval_interval 0",
-        "--checkpoint_interval 500",
         "--keep_checkpoint_history",
         'FINITE_CHECK_INTERVAL="${FINITE_CHECK_INTERVAL:-10}"',
         '--finite_check_interval "$FINITE_CHECK_INTERVAL"',
+        'CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-500}"',
+        '--checkpoint_interval "$CHECKPOINT_INTERVAL"',
+        'CACHE_CLEAR_INTERVAL="${CACHE_CLEAR_INTERVAL:-1000}"',
+        '--cache_clear_interval "$CACHE_CLEAR_INTERVAL"',
+        'if [ "$#" -ne 4 ]',
     ):
         assert argument in script
+    assert '"$@"' not in script

@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 SCHEMA = "terra_curriculum_loader_bank_v1"
+SCENARIO_IDENTITY_CONTRACT = "terra_reset_arrays_sha256_v1"
 ARMS = ("F-ANCHOR", "T-ANCHOR", "G-UNIFORM", "G-ADAPTIVE")
 FAMILIES = ("foundation", "trench")
 BRANCH_DEPTHS = ("Anchor", "One-axis", "Composed")
@@ -309,6 +310,11 @@ def load_accepted_bank(
         raise ValueError(f"{index_path}: invalid JSON: {exc}") from exc
     if not isinstance(index, dict) or index.get("schema") != SCHEMA:
         raise ValueError(f"{index_path} must use schema {SCHEMA!r}")
+    if index.get("scenario_identity_contract") != SCENARIO_IDENTITY_CONTRACT:
+        raise ValueError(
+            f"{index_path}: scenario_identity_contract must be "
+            f"{SCENARIO_IDENTITY_CONTRACT!r}"
+        )
 
     protocol_sha256 = _sha256_field(
         index, "environment_protocol_sha256", index_path

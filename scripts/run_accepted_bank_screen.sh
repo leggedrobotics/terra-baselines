@@ -2,11 +2,15 @@
 # Run one accepted-bank screen locally or inside an existing allocation.
 set -euo pipefail
 
-ARM="${1:?usage: run_accepted_bank_screen.sh ARM BANK_ROOT RUN_NAME NUM_UPDATES [train_mixed args...]}"
+ARM="${1:?usage: run_accepted_bank_screen.sh ARM BANK_ROOT RUN_NAME NUM_UPDATES}"
 BANK_ROOT="${2:?missing accepted bank root}"
 RUN_NAME="${3:?missing run name}"
 NUM_UPDATES="${4:?missing PPO update count}"
-shift 4
+if [ "$#" -ne 4 ]; then
+    echo "usage: run_accepted_bank_screen.sh ARM BANK_ROOT RUN_NAME NUM_UPDATES" >&2
+    echo "training arguments are frozen; use the documented operational environment variables" >&2
+    exit 2
+fi
 
 case "$ARM" in
     F-ANCHOR|T-ANCHOR|G-UNIFORM|G-ADAPTIVE) ;;
@@ -24,7 +28,31 @@ NUM_DEVICES="${NUM_DEVICES:-1}"
 NUM_ENVS_PER_DEVICE="${NUM_ENVS_PER_DEVICE:-1024}"
 NUM_STEPS="${NUM_STEPS:-32}"
 FINITE_CHECK_INTERVAL="${FINITE_CHECK_INTERVAL:-10}"
+CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-500}"
+LOG_TRAIN_INTERVAL="${LOG_TRAIN_INTERVAL:-10}"
+CACHE_CLEAR_INTERVAL="${CACHE_CLEAR_INTERVAL:-1000}"
+MACHINE="${MACHINE:-local}"
 TOTAL_TIMESTEPS=$((NUM_DEVICES * NUM_ENVS_PER_DEVICE * NUM_STEPS * NUM_UPDATES))
+
+case "$MACHINE" in
+    local|euler) ;;
+    *) echo "MACHINE must be local or euler, got '$MACHINE'" >&2; exit 2 ;;
+esac
+for value in \
+    "$NUM_DEVICES" "$NUM_ENVS_PER_DEVICE" "$NUM_STEPS" \
+    "$NUM_UPDATES" "$FINITE_CHECK_INTERVAL" "$CHECKPOINT_INTERVAL" \
+    "$LOG_TRAIN_INTERVAL" "$CACHE_CLEAR_INTERVAL"; do
+    [[ "$value" =~ ^[0-9]+$ ]] || {
+        echo "operational integer arguments must be nonnegative integers" >&2
+        exit 2
+    }
+done
+if [ "$NUM_DEVICES" -eq 0 ] || [ "$NUM_ENVS_PER_DEVICE" -eq 0 ] \
+    || [ "$NUM_STEPS" -eq 0 ] || [ "$NUM_UPDATES" -eq 0 ] \
+    || [ "$CHECKPOINT_INTERVAL" -eq 0 ]; then
+    echo "device, environment, step, update, and checkpoint counts must be positive" >&2
+    exit 2
+fi
 
 mkdir -p "$RUN_ROOT/checkpoints" "$RUN_ROOT/wandb"
 export PYTHONPATH="$TERRA_ROOT:$REPO${PYTHONPATH:+:$PYTHONPATH}"
@@ -33,6 +61,7 @@ export WANDB_DIR="${WANDB_DIR:-$RUN_ROOT/wandb}"
 
 exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --config "$ARM" \
+    --machine "$MACHINE" \
     --accepted-bank-root "$BANK_ROOT" \
     --terra-revision "$TERRA_REVISION" \
     --name "$RUN_NAME" \
@@ -57,9 +86,9 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --no-load-env-from-checkpoint \
     --fail_on_nonfinite \
     --finite_check_interval "$FINITE_CHECK_INTERVAL" \
-    --log_train_interval 10 \
+    --log_train_interval "$LOG_TRAIN_INTERVAL" \
     --log_eval_interval 0 \
-    --checkpoint_interval 500 \
+    --checkpoint_interval "$CHECKPOINT_INTERVAL" \
+    --cache_clear_interval "$CACHE_CLEAR_INTERVAL" \
     --keep_checkpoint_history \
-    --checkpoint_dir "$RUN_ROOT/checkpoints" \
-    "$@"
+    --checkpoint_dir "$RUN_ROOT/checkpoints"

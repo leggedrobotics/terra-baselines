@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import dataclasses
+import enum
 import glob
 import hashlib
 import json
@@ -47,6 +49,112 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _field(value, name: str, default=None):
+    if isinstance(value, dict):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _jsonable(value):
+    if dataclasses.is_dataclass(value):
+        return {
+            field.name: _jsonable(getattr(value, field.name))
+            for field in dataclasses.fields(value)
+        }
+    if isinstance(value, enum.Enum):
+        return _jsonable(value.value)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _jsonable(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (tuple, list)):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
+    """Return the path-independent treatment contract for one checkpoint."""
+    config = checkpoint.get("train_config")
+    if config is None:
+        raise ValueError("checkpoint has no train_config")
+    bank = _field(config, "accepted_bank")
+    curriculum = _field(config, "curriculum_levels_override")
+    contract = {
+        "schema": "terra_fixed_bank_treatment_v1",
+        "run": {
+            "name": _field(config, "name"),
+            "seed": _field(config, "seed"),
+            "config_name": _field(config, "config_name"),
+            "accepted_bank_arm": _field(bank, "arm"),
+        },
+        "bank": {
+            "terra_revision": _field(bank, "terra_revision"),
+            "environment_protocol_sha256": _field(
+                bank, "environment_protocol_sha256"
+            ),
+            "source_registry_sha256": _field(bank, "source_registry_sha256"),
+        },
+        "ppo": {
+            name: _jsonable(_field(config, name))
+            for name in (
+                "num_devices",
+                "num_envs_per_device",
+                "num_steps",
+                "update_epochs",
+                "num_minibatches",
+                "lr",
+                "gamma",
+                "gae_lambda",
+                "clip_eps",
+                "vf_coef",
+                "max_grad_norm",
+                "ent_schedule_start",
+                "ent_schedule_end",
+                "ent_schedule_steps",
+                "use_value_clip",
+                "flat_minibatch_shuffle",
+            )
+        },
+        "reward_action": {
+            "agent_types": _jsonable(_field(config, "agent_types_override")),
+            "action_types": _jsonable(_field(config, "action_types_override")),
+            "relocation_progress_mult": _field(
+                config, "relocation_progress_mult"
+            ),
+            "curriculum_levels": _jsonable(curriculum),
+        },
+        "sampler": _jsonable(_field(config, "pooled_sampler")),
+        "architecture": {
+            name: _jsonable(_field(config, name))
+            for name in (
+                "model_size",
+                "model_core",
+                "map_encoder",
+                "encoder_compute_dtype",
+                "attention_compute_dtype",
+                "token_mixer_residual_init_scale",
+                "critic_hidden_dims",
+                "loaded_max",
+            )
+        },
+    }
+    encoded = json.dumps(
+        contract,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode()
+    return {
+        "contract": contract,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+    }
 
 
 def selected_map_indices(keys: jax.Array, count: int) -> np.ndarray:
@@ -434,7 +542,11 @@ def comparison_gate(reference: dict, candidate: dict) -> dict:
         and micro_p10_delta >= -PROMOTION_GUARD_TOLERANCE
         and worst_condition_delta >= -PROMOTION_GUARD_TOLERANCE
     )
-    integrity_passed = bool(candidate["integrity"]["passed"])
+    reference_integrity_passed = bool(reference["integrity"]["passed"])
+    candidate_integrity_passed = bool(candidate["integrity"]["passed"])
+    integrity_passed = (
+        reference_integrity_passed and candidate_integrity_passed
+    )
     return {
         "schema": "terra_fixed_bank_comparison_gate_v1",
         "reference_episodes": reference_episodes,
@@ -450,6 +562,8 @@ def comparison_gate(reference: dict, candidate: dict) -> dict:
         "guard_tolerance": PROMOTION_GUARD_TOLERANCE,
         "progress_passed": bool(progress_passed),
         "guards_passed": guards_passed,
+        "reference_integrity_passed": reference_integrity_passed,
+        "candidate_integrity_passed": candidate_integrity_passed,
         "integrity_passed": integrity_passed,
         "passed": bool(progress_passed and guards_passed and integrity_passed),
     }
@@ -602,13 +716,47 @@ def checkpoint_paths(args) -> list[Path]:
     paths = [Path(path).resolve() for path in args.checkpoint]
     for pattern in args.checkpoint_glob:
         paths.extend(Path(path).resolve() for path in glob.glob(pattern))
-    paths = sorted(set(paths))
     if not paths:
         raise ValueError("provide --checkpoint or --checkpoint-glob")
+    if len(paths) != len(set(paths)):
+        raise ValueError("fixed-bank evaluation received a duplicate checkpoint path")
+    paths = sorted(paths)
     missing = [path for path in paths if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"missing checkpoints: {missing}")
     return paths
+
+
+def validate_checkpoint_sequence(
+    checkpoints: list[tuple[Path, dict]],
+) -> dict:
+    """Require one strictly ordered treatment before any environment setup."""
+    updates = [
+        int(checkpoint.get("next_update", 0))
+        for _, checkpoint in checkpoints
+    ]
+    if any(update <= 0 for update in updates):
+        raise ValueError("checkpoint next_update must be a positive integer")
+    if any(current >= following for current, following in zip(updates, updates[1:])):
+        raise ValueError(
+            "fixed-bank checkpoint updates must be strictly increasing and unique"
+        )
+    treatment_fingerprints = [
+        checkpoint_treatment_fingerprint(checkpoint)
+        for _, checkpoint in checkpoints
+    ]
+    reference_treatment = treatment_fingerprints[0]
+    for (path, _), fingerprint in zip(
+        checkpoints[1:],
+        treatment_fingerprints[1:],
+    ):
+        if fingerprint["sha256"] != reference_treatment["sha256"]:
+            raise ValueError(
+                "fixed-bank checkpoint list mixes treatment contracts: "
+                f"{path} has {fingerprint['sha256']}, expected "
+                f"{reference_treatment['sha256']}"
+            )
+    return reference_treatment
 
 
 def main() -> None:
@@ -709,6 +857,7 @@ def main() -> None:
             str(item[0]),
         )
     )
+    reference_treatment = validate_checkpoint_sequence(checkpoints)
     reference_train_config = checkpoints[0][1]["train_config"]
     for _, checkpoint in checkpoints:
         if "model" not in checkpoint:
@@ -849,6 +998,7 @@ def main() -> None:
                 "checkpoint": str(checkpoint_path),
                 "checkpoint_sha256": sha256_file(checkpoint_path),
                 "checkpoint_update": int(checkpoint.get("next_update", 0)),
+                "treatment_fingerprint": reference_treatment,
                 "bank_root": str(bank_root),
                 "accepted_bank": (
                     None

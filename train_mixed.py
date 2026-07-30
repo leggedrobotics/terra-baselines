@@ -2134,11 +2134,18 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
             reset_env_params = env_params
             if pooled_sampler is not None:
+                initial_levels = pooled_sampler.sample_levels(
+                    (config.num_devices, config.num_envs_per_device)
+                )
+                pooled_sampler.observe_reset_exposures(
+                    np.bincount(
+                        initial_levels.reshape(-1),
+                        minlength=len(pooled_sampler.names),
+                    )
+                )
                 reset_env_params = assign_curriculum_levels(
                     env_params,
-                    pooled_sampler.sample_levels(
-                        (config.num_devices, config.num_envs_per_device)
-                    ),
+                    initial_levels,
                 )
 
             # TERRA: Reset envs
@@ -2399,6 +2406,16 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "devices",
                     ),
                 }
+                reset_levels = jnp.broadcast_to(
+                    timestep.env_cfg.curriculum.level[None, :],
+                    transitions.done.shape,
+                )
+                reset_exposure_count = jax.lax.psum(
+                    jnp.zeros((num_stages,), dtype=jnp.int32)
+                    .at[reset_levels.reshape(-1)]
+                    .add(transitions.done.reshape(-1).astype(jnp.int32)),
+                    "devices",
+                )
 
                 # Share terminal credit with preceding same-episode agent turns.
                 done_seq = transitions.done  # [seq, batch]
@@ -2562,6 +2579,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     loss_info,
                     aggregate_snapshot,
                     transition_integrity,
+                    reset_exposure_count,
                 )
 
             # Setup runner state for multiple devices
@@ -2667,6 +2685,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     loss_info,
                     episode_aggregate_snapshot,
                     transition_integrity,
+                    reset_exposure_count,
                 ) = jax.block_until_ready(
                     _update_step(
                         runner_state,
@@ -2678,6 +2697,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 )
                 transition_integrity_single = unreplicate(transition_integrity)
                 _assert_transition_integrity(transition_integrity_single)
+                if pooled_sampler is not None:
+                    pooled_sampler.observe_reset_exposures(
+                        np.asarray(unreplicate(reset_exposure_count))
+                    )
                 end_time = time.time()
 
                 iteration_duration = end_time - start_time

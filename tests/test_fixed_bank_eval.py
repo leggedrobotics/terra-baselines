@@ -10,12 +10,14 @@ import numpy as np
 
 from eval_fixed_bank import (
     LEGACY_COMPLETION_CONTRACT,
+    checkpoint_treatment_fingerprint,
     comparison_gate,
     environment_completion_contract,
     exact_reset_keys,
     grouped_results,
     manifest_reset_keys,
     selected_map_indices,
+    validate_checkpoint_sequence,
     verify_exact_reset,
 )
 
@@ -246,6 +248,111 @@ class FixedBankEvalTest(unittest.TestCase):
         self.assertTrue(gate["progress_passed"])
         self.assertFalse(gate["guards_passed"])
         self.assertFalse(gate["passed"])
+
+    def test_comparison_gate_requires_reference_and_candidate_integrity(self):
+        rows = [
+            {
+                "slot_index": index + 1,
+                "map_id": f"map-{index}",
+                "family": "foundation",
+                "primary_cell": "condition",
+            }
+            for index in range(4)
+        ]
+
+        def summary(completion):
+            completion = np.asarray(completion, dtype=np.float32)
+            _, result = grouped_results(
+                rows,
+                completion == 1.0,
+                np.ones(4, dtype=bool),
+                np.ones(4, dtype=np.int32),
+                completion_metrics={"terminal_absolute": completion},
+            )
+            return result
+
+        reference = summary([0.5] * 4)
+        candidate = summary([0.6] * 4)
+        reference["integrity"]["passed"] = False
+        gate = comparison_gate(reference, candidate)
+        self.assertFalse(gate["reference_integrity_passed"])
+        self.assertTrue(gate["candidate_integrity_passed"])
+        self.assertFalse(gate["integrity_passed"])
+        self.assertFalse(gate["passed"])
+
+    def test_treatment_fingerprint_rejects_run_or_protocol_drift(self):
+        bank = SimpleNamespace(
+            arm="G-UNIFORM",
+            terra_revision="terra-rev",
+            environment_protocol_sha256="a" * 64,
+            source_registry_sha256="b" * 64,
+        )
+        config = SimpleNamespace(
+            name="run",
+            seed=7,
+            config_name="G-UNIFORM",
+            accepted_bank=bank,
+            num_devices=4,
+            num_envs_per_device=1024,
+            num_steps=32,
+            update_epochs=2,
+            num_minibatches=32,
+            lr=3e-4,
+            relocation_progress_mult=1.5,
+            agent_types_override=(0,),
+            action_types_override=(0,),
+            curriculum_levels_override=[
+                {
+                    "maps_path": "train/a",
+                    "max_steps_in_episode": 450,
+                    "rewards_type": 0,
+                    "apply_trench_rewards": False,
+                }
+            ],
+        )
+        baseline = checkpoint_treatment_fingerprint(
+            {"train_config": config}
+        )
+        same = checkpoint_treatment_fingerprint(
+            {"train_config": config}
+        )
+        self.assertEqual(baseline, same)
+
+        changed_run = SimpleNamespace(**vars(config))
+        changed_run.seed = 8
+        self.assertNotEqual(
+            baseline["sha256"],
+            checkpoint_treatment_fingerprint(
+                {"train_config": changed_run}
+            )["sha256"],
+        )
+        changed_protocol = SimpleNamespace(**vars(bank))
+        changed_protocol.environment_protocol_sha256 = "c" * 64
+        changed_bank_config = SimpleNamespace(**vars(config))
+        changed_bank_config.accepted_bank = changed_protocol
+        self.assertNotEqual(
+            baseline["sha256"],
+            checkpoint_treatment_fingerprint(
+                {"train_config": changed_bank_config}
+            )["sha256"],
+        )
+
+    def test_checkpoint_sequence_rejects_duplicate_updates_and_mixed_runs(self):
+        config = SimpleNamespace(name="run-a", seed=1)
+        checkpoints = [
+            (Path("a.pkl"), {"next_update": 500, "train_config": config}),
+            (Path("b.pkl"), {"next_update": 500, "train_config": config}),
+        ]
+        with self.assertRaisesRegex(ValueError, "strictly increasing"):
+            validate_checkpoint_sequence(checkpoints)
+
+        changed = SimpleNamespace(name="run-b", seed=1)
+        checkpoints[1] = (
+            Path("b.pkl"),
+            {"next_update": 1000, "train_config": changed},
+        )
+        with self.assertRaisesRegex(ValueError, "mixes treatment"):
+            validate_checkpoint_sequence(checkpoints)
 
     def test_exact_reset_verifies_all_layers_and_metadata(self):
         with tempfile.TemporaryDirectory() as temporary:

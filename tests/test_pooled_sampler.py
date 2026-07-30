@@ -104,6 +104,9 @@ def test_sampling_and_telemetry_report_condition_and_branch_mass():
     np.testing.assert_allclose(counts, sampler.probabilities, atol=0.01)
 
     sampler.start(0)
+    sampler.observe_reset_exposures(
+        np.bincount(drawn.ravel(), minlength=len(NAMES))
+    )
     _observe(sampler, [0.2] * 8)
     sampler.refresh(1)
     metrics = sampler.telemetry()
@@ -112,10 +115,41 @@ def test_sampling_and_telemetry_report_condition_and_branch_mass():
     )
     assert metrics["sampler_family_q/foundation"] == pytest.approx(0.5)
     assert metrics["sampler_depth_q/Anchor"] == pytest.approx(0.5)
-    assert metrics["sampler/window_episodes"] == 80
-    assert json.loads(json.dumps(sampler.receipt()))["schema"] == (
-        "terra_pooled_condition_sampler_v1"
+    assert metrics["sampler/closed_completed_episodes"] == 80
+    assert metrics["sampler/closed_sampled_assignments"] == drawn.size
+    assert metrics["sampler/closed_reset_exposures"] == drawn.size
+    receipt = json.loads(json.dumps(sampler.receipt()))
+    assert receipt["schema"] == "terra_pooled_condition_sampler_v2"
+    assert receipt["windows"]["current"]["completed_episode_mass"] == [
+        None
+    ] * 8
+    assert receipt["windows"]["closed"]["completed_episode_count"] == [
+        10
+    ] * 8
+    assert sum(receipt["windows"]["closed"]["sampled_assignment_count"]) == (
+        drawn.size
     )
+
+
+def test_assignments_resets_and_completed_episodes_are_not_conflated():
+    sampler = _sampler(rule="uniform")
+    drawn = sampler.sample_levels((2, 64))
+    sampler.observe_reset_exposures(
+        np.array([8, 7, 6, 5, 4, 3, 2, 1], dtype=np.int64)
+    )
+    _observe(sampler, [0.1] * 8, episodes=2)
+    receipt = sampler.receipt()["windows"]["current"]
+    assert sum(receipt["sampled_assignment_count"]) == drawn.size
+    assert sum(receipt["reset_exposure_count"]) == 36
+    assert sum(receipt["completed_episode_count"]) == 16
+
+
+def test_reset_exposure_shape_and_dtype_are_checked():
+    sampler = _sampler(rule="uniform")
+    with pytest.raises(ValueError, match="condition count"):
+        sampler.observe_reset_exposures(np.zeros(7, dtype=np.int64))
+    with pytest.raises(ValueError, match="nonnegative integers"):
+        sampler.observe_reset_exposures(np.full(8, 0.5, dtype=np.float64))
 
 
 def test_duplicate_conditions_and_infeasible_cap_fail_loudly():

@@ -139,8 +139,13 @@ class PooledConditionSampler:
         self._episodes = np.zeros(self._count, dtype=np.int64)
         self._completion_sum = np.zeros(self._count, dtype=np.float64)
         self._last_episodes = np.zeros(self._count, dtype=np.int64)
+        self._assignments = np.zeros(self._count, dtype=np.int64)
+        self._last_assignments = np.zeros(self._count, dtype=np.int64)
+        self._reset_exposures = np.zeros(self._count, dtype=np.int64)
+        self._last_reset_exposures = np.zeros(self._count, dtype=np.int64)
         self._window_updates = 0
         self._last_window_updates = 0
+        self._has_closed_window = False
         self._last_refresh_update: int | None = None
         self._refreshes = 0
         self._rng = np.random.default_rng(settings.seed)
@@ -154,7 +159,21 @@ class PooledConditionSampler:
         samples = self._rng.choice(
             self._count, size=sample_count, p=self._probabilities
         )
+        self._assignments += np.bincount(samples, minlength=self._count)
         return samples.reshape(shape).astype(np.int32)
+
+    def observe_reset_exposures(self, counts: np.ndarray) -> None:
+        """Count maps actually instantiated by reset, separately from episodes."""
+        values = np.asarray(counts)
+        if values.shape != (self._count,):
+            raise ValueError(
+                "reset exposure counts must match the condition count"
+            )
+        if values.dtype.kind not in "iub" or np.any(values < 0):
+            raise ValueError(
+                "reset exposure counts must be nonnegative integers"
+            )
+        self._reset_exposures += values.astype(np.int64)
 
     def start(self, update_index: int) -> None:
         if self._last_refresh_update is None:
@@ -194,10 +213,15 @@ class PooledConditionSampler:
             self._probabilities = self._adaptive_distribution()
 
         self._last_episodes = self._episodes
+        self._last_assignments = self._assignments
+        self._last_reset_exposures = self._reset_exposures
         self._episodes = np.zeros(self._count, dtype=np.int64)
         self._completion_sum = np.zeros(self._count, dtype=np.float64)
+        self._assignments = np.zeros(self._count, dtype=np.int64)
+        self._reset_exposures = np.zeros(self._count, dtype=np.int64)
         self._last_window_updates = self._window_updates
         self._window_updates = 0
+        self._has_closed_window = True
         self._last_refresh_update = int(update_index)
         self._refreshes += 1
 
@@ -225,16 +249,11 @@ class PooledConditionSampler:
         )
         return probabilities / probabilities.sum()
 
-    def realized_mass(self) -> np.ndarray:
-        episodes = (
-            self._last_episodes
-            if self._last_episodes.sum() > 0
-            else self._episodes
-        )
-        total = int(episodes.sum())
+    def _mass(self, counts: np.ndarray) -> np.ndarray:
+        total = int(counts.sum())
         if total == 0:
             return np.full(self._count, np.nan, dtype=np.float64)
-        return episodes.astype(np.float64) / total
+        return counts.astype(np.float64) / total
 
     def _label_mass(
         self, probabilities: np.ndarray, field: str
@@ -249,7 +268,6 @@ class PooledConditionSampler:
         return result
 
     def telemetry(self) -> dict[str, float]:
-        realized = self.realized_mass()
         metrics = {
             "sampler/is_adaptive": float(self.settings.rule == "adaptive"),
             "sampler/refreshes": float(self._refreshes),
@@ -267,34 +285,58 @@ class PooledConditionSampler:
             "sampler/measured_conditions": float(
                 np.count_nonzero(~np.isnan(self._competence))
             ),
-            "sampler/window_episodes": float(
-                (
-                    self._last_episodes
-                    if self._last_episodes.sum() > 0
-                    else self._episodes
-                ).sum()
-            ),
-            "sampler/window_updates": float(
-                self._last_window_updates
-                if self._last_episodes.sum() > 0
-                else self._window_updates
-            ),
+            "sampler/has_closed_window": float(self._has_closed_window),
+            "sampler/current_window_updates": float(self._window_updates),
+            "sampler/closed_window_updates": float(self._last_window_updates),
         }
-        if np.isfinite(realized).all():
-            metrics["sampler/realized_entropy"] = entropy(realized)
-            metrics["sampler/realized_ess"] = effective_sample_size(realized)
-            metrics["sampler/realized_l1_error"] = float(
-                np.abs(realized - self._probabilities).sum()
+        windows = (
+            (
+                "current",
+                self._episodes,
+                self._assignments,
+                self._reset_exposures,
+            ),
+            (
+                "closed",
+                self._last_episodes,
+                self._last_assignments,
+                self._last_reset_exposures,
+            ),
+        )
+        masses = {}
+        for window, episodes, assignments, reset_exposures in windows:
+            metrics[f"sampler/{window}_completed_episodes"] = float(
+                episodes.sum()
             )
+            metrics[f"sampler/{window}_sampled_assignments"] = float(
+                assignments.sum()
+            )
+            metrics[f"sampler/{window}_reset_exposures"] = float(
+                reset_exposures.sum()
+            )
+            for measure, counts in (
+                ("completed_episode", episodes),
+                ("assignment", assignments),
+                ("reset_exposure", reset_exposures),
+            ):
+                mass = self._mass(counts)
+                masses[(window, measure)] = mass
+                if np.isfinite(mass).all():
+                    prefix = f"sampler/{window}_{measure}"
+                    metrics[f"{prefix}_entropy"] = entropy(mass)
+                    metrics[f"{prefix}_ess"] = effective_sample_size(mass)
         for index, name in enumerate(self.names):
             token = metric_token(name)
             metrics[f"sampler_q/{token}"] = float(self._probabilities[index])
-            if np.isfinite(realized[index]):
-                metrics[f"sampler_realized/{token}"] = float(realized[index])
             if not math.isnan(self._competence[index]):
                 metrics[f"sampler_competence/{token}"] = float(
                     self._competence[index]
                 )
+            for (window, measure), mass in masses.items():
+                if np.isfinite(mass[index]):
+                    metrics[
+                        f"sampler_{measure}_{window}/{token}"
+                    ] = float(mass[index])
         for field, prefix in (
             ("family", "sampler_family"),
             ("branch_depth", "sampler_depth"),
@@ -303,15 +345,43 @@ class PooledConditionSampler:
                 self._probabilities, field
             ).items():
                 metrics[f"{prefix}_q/{metric_token(value)}"] = mass
-            if np.isfinite(realized).all():
-                for value, mass in self._label_mass(realized, field).items():
-                    metrics[f"{prefix}_realized/{metric_token(value)}"] = mass
+            for (window, measure), distribution in masses.items():
+                if np.isfinite(distribution).all():
+                    for value, mass in self._label_mass(
+                        distribution, field
+                    ).items():
+                        metrics[
+                            f"{prefix}_{measure}_{window}/"
+                            f"{metric_token(value)}"
+                        ] = mass
         return metrics
 
     def receipt(self) -> dict:
-        realized = self.realized_mass()
+        def window_receipt(
+            updates: int,
+            episodes: np.ndarray,
+            assignments: np.ndarray,
+            reset_exposures: np.ndarray,
+        ) -> dict:
+            def mass(counts: np.ndarray) -> list[float | None]:
+                values = self._mass(counts)
+                return [
+                    None if math.isnan(value) else float(value)
+                    for value in values
+                ]
+
+            return {
+                "updates": updates,
+                "completed_episode_count": episodes.tolist(),
+                "completed_episode_mass": mass(episodes),
+                "sampled_assignment_count": assignments.tolist(),
+                "sampled_assignment_mass": mass(assignments),
+                "reset_exposure_count": reset_exposures.tolist(),
+                "reset_exposure_mass": mass(reset_exposures),
+            }
+
         return {
-            "schema": "terra_pooled_condition_sampler_v1",
+            "schema": "terra_pooled_condition_sampler_v2",
             "rule": self.settings.rule,
             "settings": {
                 field: getattr(self.settings, field)
@@ -322,9 +392,24 @@ class PooledConditionSampler:
             "maps_per_condition": list(self.maps_per_condition),
             "refreshes": self._refreshes,
             "intended_mass": [float(value) for value in self._probabilities],
-            "realized_mass": [
-                None if math.isnan(value) else float(value) for value in realized
-            ],
+            "windows": {
+                "current": window_receipt(
+                    self._window_updates,
+                    self._episodes,
+                    self._assignments,
+                    self._reset_exposures,
+                ),
+                "closed": (
+                    window_receipt(
+                        self._last_window_updates,
+                        self._last_episodes,
+                        self._last_assignments,
+                        self._last_reset_exposures,
+                    )
+                    if self._has_closed_window
+                    else None
+                ),
+            },
             "competence": [
                 None if math.isnan(value) else float(value)
                 for value in self._competence

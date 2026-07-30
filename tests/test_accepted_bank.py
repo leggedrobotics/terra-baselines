@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 
 from utils import accepted_bank as accepted_bank_module
-from utils.accepted_bank import SCHEMA, load_accepted_bank
+from utils.accepted_bank import (
+    SCENARIO_IDENTITY_CONTRACT,
+    SCHEMA,
+    load_accepted_bank,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -118,6 +122,7 @@ def _write_bank(root: Path) -> Path:
         json.dumps(
             {
                 "schema": SCHEMA,
+                "scenario_identity_contract": SCENARIO_IDENTITY_CONTRACT,
                 "environment_protocol": "environment_protocol.json",
                 "environment_protocol_sha256": (
                     protocol["environment_protocol_sha256"]
@@ -160,6 +165,20 @@ def test_legacy_or_unfrozen_roots_fail_loudly(tmp_path):
     index["schema"] = "terra_curriculum_m3_training_dataset_v1"
     index_path.write_text(json.dumps(index) + "\n")
     with pytest.raises(ValueError, match="terra_curriculum_loader_bank_v1"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
+
+
+@pytest.mark.parametrize("value", [None, "terra_legacy_map_id_v0"])
+def test_root_requires_reset_array_scenario_identity(tmp_path, value):
+    root = _write_bank(tmp_path)
+    index_path = root / "dataset.json"
+    index = json.loads(index_path.read_text())
+    if value is None:
+        index.pop("scenario_identity_contract")
+    else:
+        index["scenario_identity_contract"] = value
+    index_path.write_text(json.dumps(index) + "\n")
+    with pytest.raises(ValueError, match="terra_reset_arrays_sha256_v1"):
         load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
 
 

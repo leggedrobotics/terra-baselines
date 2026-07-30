@@ -1,6 +1,6 @@
 # P5 Accepted-Bank Experiment Implementation
 
-- Status: implementation complete; CPU validation passed
+- Status: local/Euler implementation complete; validation pending
 - Date: 2026-07-30
 - Canonical authority:
   [`D5_D7_IMPLEMENTATION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_simple_mapbank_reward_20260730/D5_D7_IMPLEMENTATION_PLAN.md)
@@ -46,6 +46,8 @@ All arms freeze:
 
 - `environment_protocol = "environment_protocol.json"` plus its canonical
   SHA-256;
+- `scenario_identity_contract = "terra_reset_arrays_sha256_v1"` at the bank
+  root, as emitted and enforced by the paired Terra commit;
 - `source_registry = "source_registry.jsonl"` plus its file SHA-256;
 - `train[]` entries with `condition_id`, `family`, `branch_depth`,
   `maps_path`, and `map_count`;
@@ -91,9 +93,10 @@ mastered condition remains in the uniform floor and re-enters automatically if
 its completion EMA falls below the threshold. Per-condition mass is capped at
 0.15.
 
-The receipt logs intended and realized condition, family, and branch-depth
-mass, competence, entropy, effective sample size, protocol hash, arm, root and
-map count.
+The receipt keeps three quantities separate: sampled level assignments, maps
+actually instantiated by reset, and completed episodes used to estimate
+competence. It reports both the accumulating current window and the last
+closed window; completed-episode mass is never labelled as realized exposure.
 
 ## 4. Fixed evaluation and comparison gate
 
@@ -141,7 +144,7 @@ scripts/run_accepted_bank_screen.sh \
   G-UNIFORM /path/to/accepted-bank p5-g-uniform-s0 2000
 ```
 
-`NUM_DEVICES`, `NUM_ENVS_PER_DEVICE`, and `NUM_STEPS` are environment
+`NUM_DEVICES`, `NUM_ENVS_PER_DEVICE`, and `NUM_STEPS` are operational
 parameters; their defaults are `1`, `1024`, and `32`. The script computes
 `total_timesteps` from those values and the required update count. `SEED` is
 required and must match between paired `G-UNIFORM` and `G-ADAPTIVE` runs.
@@ -149,7 +152,8 @@ The production PPO shape is frozen at 2 update epochs, 32 minibatches and
 learning rate `3e-4`; inline evaluation is disabled, and numbered checkpoints
 are retained every 500 updates. `FINITE_CHECK_INTERVAL` defaults to 10 for
 2k/20k runs; set it to 1 for an update-1 smoke. The script neither submits a
-job nor chooses an Euler partition.
+job nor chooses an Euler partition. It accepts no trailing training arguments,
+so callers cannot override the frozen treatment.
 
 Example fixed evaluation:
 
@@ -163,6 +167,11 @@ python eval_fixed_bank.py \
   --output /path/to/development_eval.json
 ```
 
+The immutable Euler preparation, smoke, screen, reset-parity and fail-closed
+future-20k boundary are documented in
+[`scripts/euler_accepted_bank_v1/README.md`](../../scripts/euler_accepted_bank_v1/README.md).
+`SUBMIT=0` is local-only and performs no remote mutation.
+
 ## 6. Implementation checklist
 
 - [x] reject legacy/review-only/stale bank roots before JAX;
@@ -172,7 +181,8 @@ python eval_fixed_bank.py \
   strict staged scheduler;
 - [x] freeze reward and horizon across condition levels;
 - [x] disable the per-environment Terra ratchet;
-- [x] log intended and realized condition/family/depth exposure;
+- [x] log intended mass, sampled assignments, reset exposure and completed
+  episodes without conflating them;
 - [x] add the four parameterized configs and one shared local/allocation
   entrypoint;
 - [x] freeze and test the production PPO shape, explicit seed, checkpoint
@@ -183,10 +193,16 @@ python eval_fixed_bank.py \
 - [x] use frozen evaluation reset seeds and episode identities;
 - [x] validate archive runs from an explicit frozen Terra revision without
   requiring `.git`;
+- [x] require reset-array scenario identity before JAX;
+- [x] separate assignments, reset exposure and completed-episode competence;
+- [x] reject mixed-treatment or duplicate-update fixed-evaluation lists;
+- [x] implement content-addressed Euler smoke and screen launch;
+- [x] fail closed on P6 until the separate 256-train-layouts/condition bank
+  exists; retain the generalist selection receipt as the future P6 gate;
 - [x] pass the full terra-baselines CPU suite against the paired Terra commit
-  (`201 passed`);
+  (`216 passed`);
 - [ ] complete one local or allocated-GPU first-update smoke per arm;
 - [ ] submit the bounded screens only after the accepted bank is frozen.
 
-The last two items are execution gates, not authorization to train from this
+The unchecked items are execution gates, not evidence supplied by this
 implementation commit alone.
