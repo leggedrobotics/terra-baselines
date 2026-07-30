@@ -6,13 +6,13 @@
 # launch failure), the per-condition telemetry reports all 32 conditions on the
 # dose arms, and the promotion rule the preset asks for is the one in force.
 #
-#   scripts/smoke_m2_local.sh wave|dose|fast
+#   scripts/smoke_m2_local.sh wave|dose|dose_fast
 #
 # Run it from the checkout that carries the condition telemetry; the dose arms'
 # 32-condition check needs it.
 set -euo pipefail
 
-ARM="${1:?usage: smoke_m2_local.sh wave|dose|fast}"
+ARM="${1:?usage: smoke_m2_local.sh wave|dose|dose_fast}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TERRA=/home/lorenzo/moleworks/.worktrees/terra_v5m_screen_20260730
 VENV=/home/lorenzo/moleworks/.venv-terra-gpu-uv
@@ -20,8 +20,10 @@ VENV=/home/lorenzo/moleworks/.venv-terra-gpu-uv
 case "$ARM" in
     wave) PRESET=m2_wave_long; NAME=terra-v6m-wave-long-smoke; BANK=curriculum_v5m; SEED=20260730 ;;
     dose) PRESET=m2_dose;      NAME=terra-v6m-dose-smoke;      BANK=curriculum_v6m; SEED=20260731 ;;
-    fast) PRESET=m2_dose_fast; NAME=terra-v6m-dose-fast-smoke; BANK=curriculum_v6m; SEED=20260732 ;;
-    *) echo "unknown arm $ARM" >&2; exit 2 ;;
+    fast|dose_fast)
+          ARM=dose_fast
+          PRESET=m2_dose_fast; NAME=terra-v6m-dose-fast-smoke; BANK=curriculum_v6m; SEED=20260732 ;;
+    *) echo "unknown arm $ARM (want wave|dose|dose_fast)" >&2; exit 2 ;;
 esac
 
 export PYTHONPATH="$TERRA:$REPO"
