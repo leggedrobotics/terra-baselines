@@ -16,7 +16,13 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _write_level(root: Path, condition: str, family: str, depth: str) -> dict:
+def _write_level(
+    root: Path,
+    condition: str,
+    family: str,
+    depth: str,
+    map_count: int,
+) -> dict:
     relative = Path("train") / condition
     directory = root / relative
     directory.mkdir(parents=True)
@@ -28,7 +34,7 @@ def _write_level(root: Path, condition: str, family: str, depth: str) -> dict:
             "family": family,
             "primary_cell": condition,
         }
-        for index in (1, 2)
+        for index in range(1, map_count + 1)
     ]
     (directory / "manifest.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in rows)
@@ -38,7 +44,7 @@ def _write_level(root: Path, condition: str, family: str, depth: str) -> dict:
         "family": family,
         "branch_depth": depth,
         "maps_path": relative.as_posix(),
-        "map_count": 2,
+        "map_count": map_count,
     }
 
 
@@ -64,7 +70,7 @@ def _freeze_current_protocol(monkeypatch):
     )
 
 
-def _write_bank(root: Path) -> Path:
+def _write_bank(root: Path, map_count: int = 64) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     protocol = _protocol()
     (root / "environment_protocol.json").write_text(
@@ -73,10 +79,10 @@ def _write_bank(root: Path) -> Path:
     registry = root / "source_registry.jsonl"
     registry.write_text('{"source_id": "s0", "split": "train"}\n')
     train = [
-        _write_level(root, "f-anchor", "foundation", "Anchor"),
-        _write_level(root, "t-anchor", "trench", "Anchor"),
-        _write_level(root, "f-axis", "foundation", "One-axis"),
-        _write_level(root, "t-composed", "trench", "Composed"),
+        _write_level(root, "f-anchor", "foundation", "Anchor", map_count),
+        _write_level(root, "t-anchor", "trench", "Anchor", map_count),
+        _write_level(root, "f-axis", "foundation", "One-axis", map_count),
+        _write_level(root, "t-composed", "trench", "Composed", map_count),
     ]
     evaluation_panels = {}
     for panel_name in ("promotion", "development", "sealed"):
@@ -154,7 +160,7 @@ def test_arm_selection_is_explicit(tmp_path, arm, conditions):
         "terra-test-revision",
     )
     assert [level.condition_id for level in bank.levels] == conditions
-    assert bank.map_count_per_condition == 2
+    assert bank.map_count_per_condition == 64
     assert bank.terra_revision == "terra-test-revision"
 
 
@@ -222,8 +228,8 @@ def test_unequal_level_counts_are_rejected(tmp_path):
     rows = [json.loads(line) for line in (t_level / "manifest.jsonl").read_text().splitlines()]
     rows.append(
         {
-            "slot_index": 3,
-            "map_id": "t-composed-3",
+            "slot_index": 65,
+            "map_id": "t-composed-65",
             "family": "trench",
             "primary_cell": "t-composed",
         }
@@ -233,7 +239,13 @@ def test_unequal_level_counts_are_rejected(tmp_path):
     )
     next(
         entry for entry in index["train"] if entry["condition_id"] == "t-composed"
-    )["map_count"] = 3
+    )["map_count"] = 65
     index_path.write_text(json.dumps(index) + "\n")
     with pytest.raises(ValueError, match="unequal per-condition map counts"):
         load_accepted_bank(root, "G-ADAPTIVE", "terra-test-revision")
+
+
+def test_wrong_train_maps_per_condition_is_rejected(tmp_path):
+    root = _write_bank(tmp_path, map_count=63)
+    with pytest.raises(ValueError, match="exactly 64 train maps per condition"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")

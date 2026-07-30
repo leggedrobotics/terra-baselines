@@ -242,6 +242,21 @@ def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
     assert "NUM_DEVICES=4" in sbatch
     assert "NUM_ENVS_PER_DEVICE=1024" in sbatch
     assert "NUM_STEPS=32" in sbatch
+    assert "EXPECTED_TRAIN_MAPS_PER_CONDITION=64" in prepare
+    assert (
+        '"train_maps_per_condition": int(train_maps_per_condition)'
+        in prepare
+    )
+    assert (
+        'test "$MANIFEST_TRAIN_MAPS_PER_CONDITION" = 64'
+        in sbatch
+    )
+    assert sbatch.count(
+        '"train_maps_per_condition=$MANIFEST_TRAIN_MAPS_PER_CONDITION"'
+    ) == 2
+    assert sbatch.index(
+        'test "$MANIFEST_TRAIN_MAPS_PER_CONDITION" = 64'
+    ) < sbatch.index("module load stack/2024-06")
     assert '/$PHASE/s$SEED"' in prepare
     assert 'RUN_DIR="$RUN_PARENT/$ARM"' in prepare
     assert "/$PHASE/s$SEED/$ARM" in sbatch

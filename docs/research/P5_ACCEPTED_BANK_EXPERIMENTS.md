@@ -50,7 +50,7 @@ All arms freeze:
   root, as emitted and enforced by the paired Terra commit;
 - `source_registry = "source_registry.jsonl"` plus its file SHA-256;
 - `train[]` entries with `condition_id`, `family`, `branch_depth`,
-  `maps_path`, and `map_count`;
+  `maps_path`, and exactly `map_count = 64`;
 - exact MapsBuffer datasets under every training `maps_path`; and
 - `promotion`, `development`, and `sealed` evaluation panels.
 
@@ -62,7 +62,7 @@ archive manifest. Before JAX initialization, the loader:
    `.git`;
 2. verifies the source-registry hash;
 3. verifies each training manifest is one condition with contiguous slots and
-   equal map count across the selected arm;
+   exactly 64 maps per condition;
 4. verifies every evaluation panel path, count, condition count and contiguous
    manifest; and
 5. recomputes each evaluation `episode_id` from `scenario_id`, `reset_seed`,
@@ -200,7 +200,7 @@ future-20k boundary are documented in
 - [x] fail closed on P6 until the separate 256-train-layouts/condition bank
   exists; retain the generalist selection receipt as the future P6 gate;
 - [x] pass the full terra-baselines CPU suite against the paired Terra commit
-  (`216 passed`);
+  (`218 passed`);
 - [ ] complete one local or allocated-GPU first-update smoke per arm;
 - [ ] submit the bounded screens only after the accepted bank is frozen.
 

@@ -18,7 +18,8 @@ Both source repositories must be clean. The bank must be loader-ready, bound
 to the exact Terra commit, and declare
 `scenario_identity_contract=terra_reset_arrays_sha256_v1`. This depends on the
 paired Terra materializer/MapsBuffer commit that implements that contract.
-Banks containing `NON_ADMISSION.md` or `REVIEW_ONLY.md` are rejected.
+Every smoke/screen condition must contain exactly 64 training maps. Banks
+containing `NON_ADMISSION.md` or `REVIEW_ONLY.md` are rejected.
 
 The preparation output is one deterministic `campaign-<sha>.tar.zst` with:
 
@@ -55,6 +56,8 @@ Every allocation requires exactly four RTX 4090 GPUs, four CPUs, and the
 artifact ledger are checked before JAX. Non-smoke jobs also require
 an `api.wandb.ai` credential in Euler's private `~/.netrc`; W&B is disabled
 for smoke.
+The campaign manifest, run contract, and final receipt each record
+`train_maps_per_condition=64`.
 
 Screens retain checkpoints every 500 updates and evaluate only 500, 1,000 and
 2,000.

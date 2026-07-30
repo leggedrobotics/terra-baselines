@@ -13,6 +13,7 @@ SCENARIO_IDENTITY_CONTRACT = "terra_reset_arrays_sha256_v1"
 ARMS = ("F-ANCHOR", "T-ANCHOR", "G-UNIFORM", "G-ADAPTIVE")
 FAMILIES = ("foundation", "trench")
 BRANCH_DEPTHS = ("Anchor", "One-axis", "Composed")
+TRAIN_MAPS_PER_CONDITION = 64
 
 
 def _sha256_file(path: Path) -> str:
@@ -404,6 +405,13 @@ def load_accepted_bank(
             f"{index_path}: arm {arm} has unequal per-condition map counts "
             f"{sorted(map_counts)}; Terra levels must have one slot count"
         )
+    map_count_per_condition = next(iter(map_counts))
+    if map_count_per_condition != TRAIN_MAPS_PER_CONDITION:
+        raise ValueError(
+            f"{index_path}: arm {arm} must have exactly "
+            f"{TRAIN_MAPS_PER_CONDITION} train maps per condition, got "
+            f"{map_count_per_condition}"
+        )
 
     return AcceptedBank(
         root=root_path,
@@ -411,7 +419,7 @@ def load_accepted_bank(
         terra_revision=terra_revision,
         levels=selected,
         evaluation_panels=evaluation_panels,
-        map_count_per_condition=next(iter(map_counts)),
+        map_count_per_condition=map_count_per_condition,
         environment_protocol_sha256=protocol_sha256,
         source_registry_sha256=registry_sha256,
     )

@@ -55,6 +55,7 @@ VENV="/cluster/project/rsl/lterenzi/terra_curriculum_20260730_c14bd7d_3ce0e84_py
 VENV_LEDGER="$VENV/provenance/artifact-hashes.sha256"
 VENV_LEDGER_SHA="853871aef55efe34a64474660109673c0d48b9a34cba333e368600a11b126d5c"
 IDENTITY_CONTRACT="terra_reset_arrays_sha256_v1"
+EXPECTED_TRAIN_MAPS_PER_CONDITION=64
 
 for repository in "$REPO" "$TERRA_REPO"; do
     git -C "$repository" rev-parse --is-inside-work-tree >/dev/null
@@ -147,6 +148,28 @@ for marker in NON_ADMISSION.md REVIEW_ONLY.md; do
     fi
 done
 
+BANK_MAPS_PER_CONDITION="$(
+    python3 -c '
+import json, sys
+train = json.load(open(sys.argv[1])).get("train")
+if not isinstance(train, list) or not train:
+    raise SystemExit("staged bank train must be a nonempty list")
+counts = {entry.get("map_count") for entry in train}
+if len(counts) != 1 or any(
+    not isinstance(value, int) or isinstance(value, bool) or value <= 0
+    for value in counts
+):
+    raise SystemExit(
+        f"staged bank must declare one positive map_count, got {sorted(counts, key=str)}"
+    )
+print(next(iter(counts)))
+' "$BANK_STAGE/dataset.json"
+)"
+test "$BANK_MAPS_PER_CONDITION" = "$EXPECTED_TRAIN_MAPS_PER_CONDITION" || {
+    echo "smoke/screen banks require exactly $EXPECTED_TRAIN_MAPS_PER_CONDITION train maps per condition; staged bank has $BANK_MAPS_PER_CONDITION" >&2
+    exit 6
+}
+
 BANK_TREE_SHA="$(
     tar --sort=name --mtime='UTC 1970-01-01' \
         --owner=0 --group=0 --numeric-owner \
@@ -166,7 +189,8 @@ import json, pathlib, sys
 (
     output, terra_revision, baselines_revision, bank_tree_sha,
     dataset_sha, protocol_sha, registry_sha, runtime_sha,
-    venv, ledger, ledger_sha, identity_contract, admission
+    venv, ledger, ledger_sha, identity_contract, admission,
+    train_maps_per_condition
 ) = sys.argv[1:]
 payload = {
     "schema": "terra_accepted_bank_euler_campaign_v1",
@@ -178,6 +202,7 @@ payload = {
     "bank_environment_protocol_file_sha256": protocol_sha,
     "bank_source_registry_file_sha256": registry_sha,
     "scenario_identity_contract": identity_contract,
+    "train_maps_per_condition": int(train_maps_per_condition),
     "runtime_check_sha256": runtime_sha,
     "venv": venv,
     "venv_ledger": ledger,
@@ -214,7 +239,8 @@ pathlib.Path(output).write_text(
     "$VENV_LEDGER" \
     "$VENV_LEDGER_SHA" \
     "$IDENTITY_CONTRACT" \
-    "$ADMISSION"
+    "$ADMISSION" \
+    "$BANK_MAPS_PER_CONDITION"
 
 ARCHIVE_TMP="$STAGE/campaign.tar.zst"
 tar --sort=name --mtime='UTC 1970-01-01' \

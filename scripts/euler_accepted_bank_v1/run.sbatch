@@ -93,6 +93,33 @@ test -f "$BANK/dataset.json"
 test -f "$RUNTIME_CHECK"
 test -f "$GATE_TOOL"
 
+manifest_value() {
+    python3 -c \
+        'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' \
+        "$MANIFEST" "$1"
+}
+TERRA_REVISION="$(manifest_value terra_revision)"
+BASELINES_REVISION="$(manifest_value terra_baselines_revision)"
+MANIFEST_ADMISSION="$(manifest_value admission)"
+MANIFEST_IDENTITY_CONTRACT="$(manifest_value scenario_identity_contract)"
+MANIFEST_TRAIN_MAPS_PER_CONDITION="$(
+    manifest_value train_maps_per_condition
+)"
+MANIFEST_VENV_LEDGER="$(manifest_value venv_ledger)"
+MANIFEST_VENV_LEDGER_SHA="$(manifest_value venv_ledger_sha256)"
+test "$MANIFEST_ADMISSION" = frozen
+test "$MANIFEST_IDENTITY_CONTRACT" = terra_reset_arrays_sha256_v1
+test "$MANIFEST_TRAIN_MAPS_PER_CONDITION" = 64 || {
+    echo "smoke/screen campaign requires exactly 64 train maps per condition" >&2
+    exit 46
+}
+test ! -e "$BANK/NON_ADMISSION.md"
+test ! -e "$BANK/REVIEW_ONLY.md"
+test "$MANIFEST_VENV_LEDGER" = "$VENV_LEDGER"
+test "$MANIFEST_VENV_LEDGER_SHA" = "$VENV_LEDGER_SHA"
+test "$(sha256sum "$VENV_LEDGER" | awk '{print $1}')" = "$VENV_LEDGER_SHA"
+(cd "$(dirname "$VENV_LEDGER")" && sha256sum -c "$(basename "$VENV_LEDGER")")
+
 module load stack/2024-06 cuda/12.1.1
 if [ "$PHASE" != smoke ]; then
     module load eth_proxy
@@ -104,26 +131,6 @@ if [ "$PHASE" != smoke ]; then
         exit 45
     }
 fi
-
-manifest_value() {
-    "$VENV/bin/python" -c \
-        'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' \
-        "$MANIFEST" "$1"
-}
-TERRA_REVISION="$(manifest_value terra_revision)"
-BASELINES_REVISION="$(manifest_value terra_baselines_revision)"
-MANIFEST_ADMISSION="$(manifest_value admission)"
-MANIFEST_IDENTITY_CONTRACT="$(manifest_value scenario_identity_contract)"
-MANIFEST_VENV_LEDGER="$(manifest_value venv_ledger)"
-MANIFEST_VENV_LEDGER_SHA="$(manifest_value venv_ledger_sha256)"
-test "$MANIFEST_ADMISSION" = frozen
-test "$MANIFEST_IDENTITY_CONTRACT" = terra_reset_arrays_sha256_v1
-test ! -e "$BANK/NON_ADMISSION.md"
-test ! -e "$BANK/REVIEW_ONLY.md"
-test "$MANIFEST_VENV_LEDGER" = "$VENV_LEDGER"
-test "$MANIFEST_VENV_LEDGER_SHA" = "$VENV_LEDGER_SHA"
-test "$(sha256sum "$VENV_LEDGER" | awk '{print $1}')" = "$VENV_LEDGER_SHA"
-(cd "$(dirname "$VENV_LEDGER")" && sha256sum -c "$(basename "$VENV_LEDGER")")
 
 PYTHON="$VENV/bin/python"
 SITE_PACKAGES="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
@@ -153,8 +160,8 @@ export JAX_PLATFORMS=cuda
     'import pathlib,sys,terra; from utils import accepted_bank; roots=[pathlib.Path(terra.__file__).resolve().parents[1], pathlib.Path(accepted_bank.__file__).resolve().parents[1]]; expected=[pathlib.Path(p).resolve() for p in sys.argv[1:]]; assert roots == expected, (roots, expected)' \
     "$TERRA" "$BASELINES"
 "$PYTHON" -c \
-    'import sys; from utils.accepted_bank import load_accepted_bank; bank=load_accepted_bank(sys.argv[1], sys.argv[2], sys.argv[3]); print(len(bank.levels), bank.map_count_per_condition)' \
-    "$BANK" "$ARM" "$TERRA_REVISION"
+    'import sys; from utils.accepted_bank import load_accepted_bank; bank=load_accepted_bank(sys.argv[1], sys.argv[2], sys.argv[3]); expected=int(sys.argv[4]); assert bank.map_count_per_condition == expected, (bank.map_count_per_condition, expected); print(len(bank.levels), bank.map_count_per_condition)' \
+    "$BANK" "$ARM" "$TERRA_REVISION" "$MANIFEST_TRAIN_MAPS_PER_CONDITION"
 
 NUM_DEVICES=4
 NUM_ENVS_PER_DEVICE=1024
@@ -207,6 +214,7 @@ printf '%s\n' \
     "num_devices=$NUM_DEVICES" \
     "num_envs_per_device=$NUM_ENVS_PER_DEVICE" \
     "num_steps=$NUM_STEPS" \
+    "train_maps_per_condition=$MANIFEST_TRAIN_MAPS_PER_CONDITION" \
     "global_transitions=$GLOBAL_TRANSITIONS" \
     "terra_revision=$TERRA_REVISION" \
     "terra_baselines_revision=$BASELINES_REVISION" \
@@ -320,6 +328,7 @@ printf '%s\n' \
     "seed=$SEED" \
     "updates=$UPDATES" \
     "global_transitions=$GLOBAL_TRANSITIONS" \
+    "train_maps_per_condition=$MANIFEST_TRAIN_MAPS_PER_CONDITION" \
     "slurm_job_id=$SLURM_JOB_ID" \
     "slurm_partition=$SLURM_JOB_PARTITION" \
     "wandb_mode=$WANDB_MODE" \
