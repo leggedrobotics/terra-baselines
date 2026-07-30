@@ -92,12 +92,14 @@ def configure_for_bank(train_config, relative_path: str, count: int):
     config.num_devices = 1
     config.num_envs_per_device = count
     config.num_test_rollouts = count
-    config.num_minibatches = min(int(getattr(config, "num_minibatches", 32)), count)
-    if count % config.num_minibatches != 0:
-        raise RuntimeError(
-            f"{count} eval maps are not divisible by "
-            f"num_minibatches={config.num_minibatches}"
-        )
+    # num_minibatches is unused by the fixed-bank rollout but must still divide
+    # num_envs_per_device for MixedAgentTrainConfig to construct. Take the
+    # largest divisor of the slot count that does not exceed the configured
+    # value (identical to the old min() whenever that already divided count).
+    requested = min(int(getattr(config, "num_minibatches", 32)), count)
+    config.num_minibatches = next(
+        candidate for candidate in range(requested, 0, -1) if count % candidate == 0
+    )
     config.agent_types_override = (0,)
     config.action_types_override = (0,)
     config.curriculum_levels_override = [
@@ -404,14 +406,14 @@ def main() -> None:
     parser.add_argument("--bank-root", type=Path, required=True)
     parser.add_argument(
         "--split",
-        choices=("development", "sealed"),
         default="development",
+        help="bank subdirectory (e.g. 'development', 'sealed', 'held_out')",
     )
     parser.add_argument(
         "--strata",
         nargs="+",
-        choices=("M0", "M1", "M2"),
         default=("M0", "M1", "M2"),
+        help="stratum directories under --split (e.g. 'M0 M1 M2', or 'all')",
     )
     parser.add_argument("--horizon", type=int, default=450)
     parser.add_argument("--seed", type=int, default=20260724)
