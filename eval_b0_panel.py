@@ -201,6 +201,8 @@ def verify_b0_checkpoint(
         "ent_schedule_steps": 950,
         "agent_types_override": (0,),
         "action_types_override": (0,),
+        # Historical corrected_dense_v1 treatment identity. These are serialized
+        # receipt fields, not current Terra reward configuration.
         "dump_bonus_mult": 0.5,
         "excavator_relocate_dumped_mult": 1.5,
         "excavator_relocate_dug_dirt_mult": 1.5,

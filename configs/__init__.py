@@ -11,18 +11,17 @@ Available functions:
 Usage:
     # In train_mixed.py:
     python train_mixed.py --config excavator_truck
-    
+
     # Or programmatically:
     from configs.training_configs import get_config
     config = get_config("excavator_truck")
-    
+
     # List available configs:
     python configs/training_configs.py
 """
 
 from .training_configs import (
     TrainingConfig,
-    RewardMultipliers,
     MapLevel,
     get_config,
     list_configs,
@@ -31,7 +30,6 @@ from .training_configs import (
 
 __all__ = [
     "TrainingConfig",
-    "RewardMultipliers", 
     "MapLevel",
     "get_config",
     "list_configs",

@@ -11,7 +11,7 @@ Configurations are defined in: configs/training_configs.yaml
 This YAML file contains named presets that specify:
 - agent_types: Which agents to use (0=excavator, 1=truck, 2=skidsteer)
 - action_types: Movement type per agent (0=tracked, 1=wheeled)
-- reward_multipliers: Tuning parameters for reward shaping
+- relocation_progress_mult: Agent-neutral signed relocation-progress multiplier
 - maps: Which map datasets to train on
 - capacity overrides: truck_capacity, skidsteer_capacity, truck_road_restricted
 
@@ -35,8 +35,8 @@ python train_mixed.py --config excavator_truck
 # Use a preset with custom name for wandb
 python train_mixed.py --config excavator_skidsteer --name "my-experiment"
 
-# Override a specific parameter from the preset
-python train_mixed.py --config excavator_truck --transport_relocate_mult 2.5
+# Override the agent-neutral relocation progress multiplier
+python train_mixed.py --config excavator_truck --relocation_progress_mult 2.0
 
 # List all available presets
 python configs/training_configs.py
@@ -61,11 +61,7 @@ Edit configs/training_configs.yaml to add new presets:
       description: My custom training setup
       agent_types: [0, 2, 2]
       action_types: [0, 0, 0]
-      reward_multipliers:
-        dump_bonus_mult: 0.5
-        excavator_relocate_dumped_mult: 0.3
-        excavator_relocate_dug_dirt_mult: 1.5
-        transport_relocate_mult: 2.0
+      relocation_progress_mult: 1.5
       maps:
         - path: foundations_dumpzones_v3
           max_steps: 900
@@ -84,10 +80,7 @@ Action Types:
   1 = Wheeled movement
 
 Reward Multipliers:
-  dump_bonus_mult              - Bonus for correct dumping
-  excavator_relocate_dumped_mult   - Excavator reward for moving already-dumped dirt
-  excavator_relocate_dug_dirt_mult - Excavator reward for moving freshly dug dirt
-  transport_relocate_mult      - Transport agent (truck/skidsteer) relocating dirt reward
+  relocation_progress_mult - Agent-neutral multiplier for signed relocation progress
 """
 
 import jax
@@ -102,7 +95,6 @@ from terra.config import (
     Rewards,
     CurriculumGlobalConfig,
     RewardsType,
-    check_relocation_multipliers,
 )
 from flax.training.train_state import TrainState
 import optax
@@ -893,12 +885,6 @@ class MixedAgentTrainConfig:
     # writes. Default off preserves historical runs; E9+ smoke/prod jobs enable it.
     fail_on_nonfinite: bool = False
     finite_check_interval: int = 0
-    # reward-v2 launch gate. When set, a run whose EFFECTIVE env config has
-    # excavator_relocate_dumped_mult >= excavator_relocate_dug_dirt_mult (i.e.
-    # the re-dig discount is off, the reward-v1 configuration M1-B exploited)
-    # refuses to start. Off by default so the M1 arms stay reproducible.
-    require_reward_v2: bool = False
-
     # Checkpoint loading
     resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
     # Load only model parameters. Optimizer, update counter, environment,
@@ -910,11 +896,8 @@ class MixedAgentTrainConfig:
     # Named configuration preset (loads from configs/training_configs.py)
     config_name: str | None = None  # e.g., "excavator_truck", "solo_excavator"
 
-    # Reward multipliers (can be set via config preset or CLI)
-    dump_bonus_mult: float | None = None
-    excavator_relocate_dumped_mult: float | None = None
-    excavator_relocate_dug_dirt_mult: float | None = None
-    transport_relocate_mult: float | None = None
+    # Agent-neutral relocation reward (can be set via config preset or CLI).
+    relocation_progress_mult: float | None = None
 
     # Capacity overrides
     truck_capacity: int | None = None
@@ -1104,11 +1087,7 @@ class MixedAgentTrainConfig:
 def create_mixed_agent_env_config(
     agent_types=(0, 2),
     action_types=(0, 0),
-    # Optional reward multipliers
-    dump_bonus_mult=None,
-    excavator_relocate_dumped_mult=None,
-    excavator_relocate_dug_dirt_mult=None,
-    transport_relocate_mult=None,
+    relocation_progress_mult=None,
     # Optional capacity overrides
     truck_capacity=None,
     skidsteer_capacity=None,
@@ -1124,10 +1103,7 @@ def create_mixed_agent_env_config(
     Args:
         agent_types: Tuple of agent type IDs (0=excavator, 1=truck, 2=skidsteer)
         action_types: Tuple of action type IDs (0=tracked, 1=wheeled)
-        dump_bonus_mult: Multiplier for dump rewards
-        excavator_relocate_dumped_mult: Multiplier for excavator relocating dumped material
-        excavator_relocate_dug_dirt_mult: Multiplier for excavator relocating dug dirt
-        transport_relocate_mult: Multiplier for transport relocation rewards
+        relocation_progress_mult: Agent-neutral signed relocation progress multiplier
         truck_capacity: Override for truck capacity
         skidsteer_capacity: Override for skidsteer capacity
         truck_road_restricted: Whether trucks are restricted to roads
@@ -1148,20 +1124,9 @@ def create_mixed_agent_env_config(
     # Set the action types from the training configuration
     env_config = env_config._replace(action_types=action_types)
 
-    # Apply reward multipliers if provided
-    if dump_bonus_mult is not None:
-        env_config = env_config._replace(dump_bonus_mult=dump_bonus_mult)
-    if excavator_relocate_dumped_mult is not None:
+    if relocation_progress_mult is not None:
         env_config = env_config._replace(
-            excavator_relocate_dumped_mult=excavator_relocate_dumped_mult
-        )
-    if excavator_relocate_dug_dirt_mult is not None:
-        env_config = env_config._replace(
-            excavator_relocate_dug_dirt_mult=excavator_relocate_dug_dirt_mult
-        )
-    if transport_relocate_mult is not None:
-        env_config = env_config._replace(
-            transport_relocate_mult=transport_relocate_mult
+            relocation_progress_mult=relocation_progress_mult
         )
 
     # Apply capacity overrides if provided
@@ -1393,11 +1358,7 @@ def make_mixed_agent_states(
             env_params = create_mixed_agent_env_config(
                 agent_types=agent_types,
                 action_types=action_types,
-                # Pass reward multipliers from config
-                dump_bonus_mult=config.dump_bonus_mult,
-                excavator_relocate_dumped_mult=config.excavator_relocate_dumped_mult,
-                excavator_relocate_dug_dirt_mult=config.excavator_relocate_dug_dirt_mult,
-                transport_relocate_mult=config.transport_relocate_mult,
+                relocation_progress_mult=config.relocation_progress_mult,
                 # Pass capacity overrides
                 truck_capacity=config.truck_capacity,
                 skidsteer_capacity=config.skidsteer_capacity,
@@ -1433,51 +1394,17 @@ def make_mixed_agent_states(
             else:
                 print("🚗 Using default action types (all tracked)")
 
-            # Print reward multipliers if any were set
-            if any(
-                [
-                    config.dump_bonus_mult,
-                    config.excavator_relocate_dumped_mult,
-                    config.excavator_relocate_dug_dirt_mult,
-                    config.transport_relocate_mult,
-                ]
-            ):
-                print("📊 Reward Multipliers:")
-                if config.dump_bonus_mult is not None:
-                    print(f"   dump_bonus_mult: {config.dump_bonus_mult}")
-                if config.excavator_relocate_dumped_mult is not None:
-                    print(
-                        f"   excavator_relocate_dumped_mult: {config.excavator_relocate_dumped_mult}"
-                    )
-                if config.excavator_relocate_dug_dirt_mult is not None:
-                    print(
-                        f"   excavator_relocate_dug_dirt_mult: {config.excavator_relocate_dug_dirt_mult}"
-                    )
-                if config.transport_relocate_mult is not None:
-                    print(
-                        f"   transport_relocate_mult: {config.transport_relocate_mult}"
-                    )
+            if config.relocation_progress_mult is not None:
+                print(
+                    "📊 Relocation progress multiplier: "
+                    f"{config.relocation_progress_mult}"
+                )
 
-    # REVIEW_V6 R-2: the reward-v2 guard used to be dead code. Report the
-    # EFFECTIVE multipliers (after preset, CLI and checkpoint precedence) on
-    # every run, from both branches above, so a reward-v1 launch is visible in
-    # the first page of the log instead of in the readout.
+    # Report the effective value after preset, CLI, and checkpoint precedence.
     print(
-        "🪣 Relocation multipliers (effective): "
-        f"excavator_relocate_dumped_mult={float(env_params.excavator_relocate_dumped_mult)}, "
-        f"excavator_relocate_dug_dirt_mult={float(env_params.excavator_relocate_dug_dirt_mult)}, "
-        f"transport_relocate_mult={float(env_params.transport_relocate_mult)}"
+        "🪣 Relocation progress multiplier (effective): "
+        f"{float(env_params.relocation_progress_mult)}"
     )
-    _relocation_warning = check_relocation_multipliers(env_params)
-    if _relocation_warning:
-        print(f"⚠️  {_relocation_warning}", flush=True)
-        if config.require_reward_v2:
-            raise ValueError(
-                _relocation_warning
-                + " --require_reward_v2 is set, refusing to launch."
-            )
-    else:
-        print("✅ reward-v2 active: the excavator re-dig discount is a discount.")
 
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
@@ -3288,17 +3215,6 @@ if __name__ == "__main__":
             "--fail_on_nonfinite is set, which checks every update."
         ),
     )
-    parser.add_argument(
-        "--require_reward_v2",
-        action="store_true",
-        help=(
-            "Refuse to launch unless the effective config has "
-            "excavator_relocate_dumped_mult < excavator_relocate_dug_dirt_mult "
-            "(the re-dig discount is on). Set on the M2 arms; leave off to "
-            "reproduce the reward-v1 M1 arms."
-        ),
-    )
-
     # Named configuration preset
     parser.add_argument(
         "-c",
@@ -3338,30 +3254,14 @@ if __name__ == "__main__":
         ),
     )
 
-    # Reward multiplier arguments
     parser.add_argument(
-        "--dump_bonus_mult",
+        "--relocation_progress_mult",
         type=float,
         default=None,
-        help="Multiplier for dump rewards (overrides config preset)",
-    )
-    parser.add_argument(
-        "--excavator_relocate_dumped_mult",
-        type=float,
-        default=None,
-        help="Multiplier for excavator relocating dumped material (overrides config preset)",
-    )
-    parser.add_argument(
-        "--excavator_relocate_dug_dirt_mult",
-        type=float,
-        default=None,
-        help="Multiplier for excavator relocating dug dirt (overrides config preset)",
-    )
-    parser.add_argument(
-        "--transport_relocate_mult",
-        type=float,
-        default=None,
-        help="Multiplier for transport relocation rewards (overrides config preset)",
+        help=(
+            "Agent-neutral multiplier for signed relocation progress "
+            "(overrides config preset)"
+        ),
     )
     # Checkpoint loading arguments
     parser.add_argument(
@@ -3435,10 +3335,7 @@ if __name__ == "__main__":
     # Initialize config values from preset if --config is provided
     agent_types_override = None
     action_types_override = None
-    dump_bonus_mult = None
-    excavator_relocate_dumped_mult = None
-    excavator_relocate_dug_dirt_mult = None
-    transport_relocate_mult = None
+    relocation_progress_mult = None
     truck_capacity = None
     skidsteer_capacity = None
     truck_road_restricted = None
@@ -3460,15 +3357,7 @@ if __name__ == "__main__":
             agent_types_override = preset.agent_types
             action_types_override = preset.action_types
 
-            # Apply reward multipliers from preset
-            dump_bonus_mult = preset.reward_multipliers.dump_bonus_mult
-            excavator_relocate_dumped_mult = (
-                preset.reward_multipliers.excavator_relocate_dumped_mult
-            )
-            excavator_relocate_dug_dirt_mult = (
-                preset.reward_multipliers.excavator_relocate_dug_dirt_mult
-            )
-            transport_relocate_mult = preset.reward_multipliers.transport_relocate_mult
+            relocation_progress_mult = preset.relocation_progress_mult
 
             # Apply capacity overrides from preset
             truck_capacity = preset.truck_capacity
@@ -3571,15 +3460,8 @@ if __name__ == "__main__":
             "Set both --replay_map_count and --target_map_repeat to use mixed target-map replay."
         )
 
-    # CLI reward multiplier overrides take precedence
-    if args.dump_bonus_mult is not None:
-        dump_bonus_mult = args.dump_bonus_mult
-    if args.excavator_relocate_dumped_mult is not None:
-        excavator_relocate_dumped_mult = args.excavator_relocate_dumped_mult
-    if args.excavator_relocate_dug_dirt_mult is not None:
-        excavator_relocate_dug_dirt_mult = args.excavator_relocate_dug_dirt_mult
-    if args.transport_relocate_mult is not None:
-        transport_relocate_mult = args.transport_relocate_mult
+    if args.relocation_progress_mult is not None:
+        relocation_progress_mult = args.relocation_progress_mult
 
     # F15: CLI capacity overrides take precedence over the preset values.
     if args.truck_capacity is not None:
@@ -3671,13 +3553,9 @@ if __name__ == "__main__":
         action_types_override=action_types_override,
         debug=args.debug,
         fail_on_nonfinite=args.fail_on_nonfinite,
-        require_reward_v2=args.require_reward_v2,
         finite_check_interval=args.finite_check_interval,
         config_name=args.config,
-        dump_bonus_mult=dump_bonus_mult,
-        excavator_relocate_dumped_mult=excavator_relocate_dumped_mult,
-        excavator_relocate_dug_dirt_mult=excavator_relocate_dug_dirt_mult,
-        transport_relocate_mult=transport_relocate_mult,
+        relocation_progress_mult=relocation_progress_mult,
         truck_capacity=truck_capacity,
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,

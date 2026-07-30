@@ -8,24 +8,23 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TERRA=/home/lorenzo/moleworks/.worktrees/terra_v5m_screen_20260730
+TERRA=/home/lorenzo/moleworks/.worktrees/terra_simple_mapbank_reward_20260730
 BANK_V5M="$REPO/terra_data/curriculum_v5m"
 BANK_V6M="$REPO/terra_data/curriculum_v6m"
-RUN_ROOT=/cluster/scratch/lterenzi/codex_terra_edge_runs/map_curriculum_v6m_20260730
+RUN_ROOT=/cluster/scratch/lterenzi/codex_terra_edge_runs/map_curriculum_v6m_reward_v3_20260730
 VENV=/home/lorenzo/moleworks/.venv-terra-gpu-uv
 SUBMIT="${SUBMIT:-1}"
 
 test -f "$BANK_V5M/curriculum_v5m_provenance.json"
 test -f "$BANK_V6M/curriculum_v6m_provenance.json"
-test -f "$REPO/logs/smoke_m2/LOCAL_SMOKE_PASSED"
+test -f "$REPO/logs/smoke_m2_v3/LOCAL_SMOKE_PASSED"
 # The M2 diagnostics are the per-condition telemetry and the choke table. A
 # checkout without them cannot answer the questions M2 is asking.
 test -f "$REPO/scripts/analyze_condition_telemetry.py"
 test -f "$REPO/utils/episode_aggregates.py"
 
-# REVIEW_V6 R-1 was a launch blocker: every launchable preset shipped
-# dumped == dug == 1.5, so reward-v2 was inert. This gate is that finding turned
-# into a red test, and it runs against the same terra the jobs will use.
+# Validate the single relocation reward knob against the same Terra source the
+# jobs will use.
 PYTHONPATH="$TERRA:$REPO" JAX_PLATFORMS=cpu PYGAME_HIDE_SUPPORT_PROMPT=1 \
     SDL_VIDEODRIVER=dummy "$VENV/bin/python" -m pytest "$REPO/tests/test_m2_presets.py" -q
 
@@ -71,7 +70,7 @@ rsync -aH --delete "$BANK_V5M/" "euler:$RUN_ROOT/bank/v5m/"
 rsync -aH --delete "$BANK_V6M/" "euler:$RUN_ROOT/bank/v6m/"
 
 ssh euler "cat > '$RUN_ROOT/source_sync_manifest.txt'" <<EOF
-campaign=M2 dose curriculum (CURRICULUM_SPEC_V6.md section 4)
+campaign=M2 map curriculum with agent-neutral reward-v3 (CURRICULUM_SPEC_V6.md section 4 maps/scheduler only)
 terra_revision=$TERRA_REV
 terra_uncommitted_files=$TERRA_DIRTY
 terra_baselines_revision=$BASELINES_REV
@@ -89,7 +88,7 @@ bank_v6m_manifest_csv_sha256=$BANK_V6M_SHA
 holdout_map_indices=3,7,11,14
 level_size=864
 init=scratch
-reward=v2 excavator_relocate_dumped_mult=0.2 dug=1.5 (--require_reward_v2)
+reward=agent-neutral relocation_progress_mult=1.5
 arms=WAVE:m2_wave_long@v5m seed 20260730 | DOSE:m2_dose@v6m seed 20260731 | FAST:m2_dose_fast@v6m seed 20260732
 promotion=WAVE,DOSE 3-consecutive-exact | FAST 2-consecutive-exact (graded disjunct DESCOPED)
 requeue=forbidden (REVIEW_V6 F5-3 cond_cum resume reset)
@@ -115,7 +114,7 @@ ssh euler "
     touch SOURCE_SYNC_VERIFIED
     echo SOURCE_SYNC_VERIFIED
 "
-scp -q "$REPO/logs/smoke_m2/LOCAL_SMOKE_PASSED" "euler:$RUN_ROOT/LOCAL_SMOKE_PASSED"
+scp -q "$REPO/logs/smoke_m2_v3/LOCAL_SMOKE_PASSED" "euler:$RUN_ROOT/LOCAL_SMOKE_PASSED"
 
 if [ "$SUBMIT" != "1" ]; then
     echo "SUBMIT=0, stopping after sync"

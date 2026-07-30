@@ -4,7 +4,7 @@
 # 
 # Usage:
 #   python train_mixed.py --config excavator_truck
-#   python train_mixed.py --config solo_excavator --transport_relocate_mult 2.0
+#   python train_mixed.py --config solo_excavator --relocation_progress_mult 2.0
 #
 # Agent types: 0=excavator, 1=truck, 2=skidsteer
 # Action types: 0=tracked, 1=wheeled
@@ -19,10 +19,7 @@ solo_excavator:
   description: Single excavator agent with tracked movement
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations
       max_steps: 450
@@ -31,10 +28,7 @@ f0_foundation_identity_v1:
   description: Corrected-contract F0 foundation identity feasibility probe
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 20
     decrease_level_threshold: 80
@@ -49,10 +43,7 @@ f0_trench_identity_v1:
   description: Corrected-contract F0 straight-trench identity feasibility probe
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 20
     decrease_level_threshold: 80
@@ -67,10 +58,7 @@ f0_trench_identity_shaping_off_v1:
   description: F0R trench repair with absolute distance/alignment shaping disabled
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 20
     decrease_level_threshold: 80
@@ -85,10 +73,7 @@ b0_foundation_geometry_v1:
   description: B0 foundation OSM versus procedural all-around panel
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 20
     decrease_level_threshold: 80
@@ -103,10 +88,7 @@ b0_foundation_distance_v1:
   description: B0 paired foundation dump-distance panel
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 20
     decrease_level_threshold: 80
@@ -121,10 +103,7 @@ b0_trench_distance_v1:
   description: B0 paired straight-trench dump-distance panel
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 20
     decrease_level_threshold: 80
@@ -139,10 +118,7 @@ b0_trench_side_v1:
   description: B0 paired close both-side versus one-side trench panel
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 20
     decrease_level_threshold: 80
@@ -157,10 +133,7 @@ b0_trench_one_d02_isolate_v1:
   description: B0 conditional straight one-side close-dump trench isolate
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 20
     decrease_level_threshold: 80
@@ -175,10 +148,7 @@ b0_trench_topology_v1:
   description: B0 straight, segmented, junction, and disconnected trench panel
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 20
     decrease_level_threshold: 80
@@ -193,10 +163,7 @@ solo_excavator_128:
   description: Single excavator on 128x128 foundations (F15 resolution scaling, E8 pilot)
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_128
       max_steps: 450
@@ -206,10 +173,7 @@ solo_excavator_rectangles:
   agent_types: [0]
   action_types: [0]
   enforce_foundation_border_alignment: true
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_rectangles_real_ring
       max_steps: 450
@@ -219,10 +183,7 @@ solo_excavator_rectangles_dumpzone:
   agent_types: [0]
   action_types: [0]
   enforce_foundation_border_alignment: false
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_rectangles_real_dumpzone
       max_steps: 600
@@ -231,10 +192,7 @@ dual_excavator_rectangles_dumpzone:
   description: Single excavator agent with tracked movement on rectangle maps
   agent_types: [0,0]
   action_types: [0,0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_rectangles_real_dumpzone
       max_steps: 750
@@ -245,10 +203,7 @@ solo_excavator_rectangles_2stage:
   description: Solo excavator 2-level curriculum - ring then dumpzone on task success
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 10
     decrease_level_threshold: 100
@@ -261,13 +216,10 @@ solo_excavator_rectangles_2stage:
 
 
 solo_excavator_more_dumpbonus:
-  description: Single excavator agent with tracked movement more dumpbonus
+  description: Historical foundation preset name using the current relocation reward
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 1
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations
       max_steps: 500
@@ -277,10 +229,7 @@ solo_excavator_dumpzone:
   description: Single excavator agent with tracked movement and dumpzone maps
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_dumpzones_v3
       max_steps: 600
@@ -289,9 +238,7 @@ solo_skidsteer:
   description: Single skidsteer agent
   agent_types: [2]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: relocations_harder
       max_steps: 600
@@ -304,11 +251,7 @@ excavator_skidsteer:
   description: Excavator + Skidsteer combination (tracked movement)
   agent_types: [0, 2]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_dumpzones_v3
       max_steps: 800
@@ -317,11 +260,7 @@ excavator_truck:
   description: Excavator + Truck combination for transport tasks
   agent_types: [0, 1]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 2.0
+  relocation_progress_mult: 1.5
   truck_capacity: 52
   truck_road_restricted: false
   maps:
@@ -332,11 +271,7 @@ excavator_truck_roads:
   description: Excavator + Truck with road restrictions
   agent_types: [0, 1]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 2.0
+  relocation_progress_mult: 1.5
   truck_capacity: 52
   truck_road_restricted: true
   maps:
@@ -347,11 +282,7 @@ dual_excavator:
   description: Two excavators working together
   agent_types: [0, 0]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations #_dumpzones_v3
       max_steps: 650
@@ -366,11 +297,7 @@ excavators_truck:
   description: "Mixed team: 2 excavators + truck"
   agent_types: [0, 0, 1]
   action_types: [0, 0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.8
+  relocation_progress_mult: 1.5
   truck_capacity: 52
   truck_road_restricted: true
   maps:
@@ -386,10 +313,7 @@ trench_excavator:
   description: Excavator specialized for trench digging
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: trenches/single
       max_steps: 500
@@ -399,10 +323,7 @@ trench_excavator_double:
   description: Excavator specialized for double trench digging
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: trenches/double
       max_steps: 500
@@ -412,10 +333,7 @@ trench_masked_excavator:
   description: Excavator specialized for trench digging
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: trenches/single_masked_ring
       max_steps: 500
@@ -425,11 +343,7 @@ trench_dumpzone:
   description: Excavator + Skidsteer for trench tasks
   agent_types: [0, 2]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: trenches/single_dumpzone_v2
       max_steps: 800
@@ -440,10 +354,7 @@ full_excavator:
   description: Excavator generalized
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations
       max_steps: 500
@@ -462,11 +373,7 @@ wheeled_solo_excavator:
   description: Single excavator with wheeled movement
   agent_types: [0]
   action_types: [1]  # Wheeled
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations
       max_steps: 500
@@ -476,10 +383,7 @@ solo_excavator_short300:
   description: Single excavator, foundations maps, short 300-step horizon (step-efficiency E6)
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations
       max_steps: 300
@@ -489,10 +393,7 @@ solo_excavator_multitask_trench:
   description: Foundations + trench families jointly (multi-task E8; curriculum then mixed)
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations
       max_steps: 450
@@ -509,10 +410,7 @@ map_curriculum_flat_v1:
   description: NEW-MAPS-FLAT - common local M0-M2 terminal universe from update zero
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 3
     decrease_level_threshold: 3
@@ -528,10 +426,7 @@ map_curriculum_staged_v1:
   description: NEW-MAPS-STAGED - per-environment M0 to M1 to common terminal universe
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 3
     decrease_level_threshold: 3
@@ -557,23 +452,16 @@ map_curriculum_staged_v1:
 # max_steps is set on EVERY level because terra/curriculum.py rewrites
 # EnvConfig.max_steps_in_episode from this table on both reset and update.
 #
-# REWARD-V1, ON PURPOSE. All three M1 presets pin
-# excavator_relocate_dumped_mult == excavator_relocate_dug_dirt_mult == 1.5,
-# which disables the excavator re-dig discount: this is what jobs
-# 9046454/9046455/9046456 actually ran, and M1-B's staging farm is a result of
-# it. Do NOT "fix" these values — they are the M1 record and
-# tests/test_m2_presets.py asserts them. Reward-v2 (0.2 / 1.5) is opted into by
-# the M2 presets below.
+# These names preserve the historical M1 map/scheduler treatments. Their
+# executable reward is now the agent-neutral relocation-progress reward and
+# therefore does not reproduce the historical M1 reward contract.
 # -----------------------------------------------------------------------------
 
 curriculum_v5m_a_t0:
   description: A_t0-baseline - the 8 v5-main T0 anchors only, 50/50 family balance
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 3
     decrease_level_threshold: 3
@@ -588,10 +476,7 @@ curriculum_v5m_b_uniform:
   description: B_uniform-full - all 29 v5-main conditions, uniform, 50/50 family balance
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 3
     decrease_level_threshold: 3
@@ -606,10 +491,7 @@ curriculum_v5m_c_waves:
   description: C_curriculum - cumulative admission waves L0->L1->L2->L3 (per-env, 3/3/none)
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 3
     decrease_level_threshold: 3
@@ -636,12 +518,9 @@ curriculum_v5m_c_waves:
 # M2 dose-curriculum campaign (CURRICULUM_SPEC_V6.md section 4). Three arms,
 # 8,000 updates each, scratch init, E8 template arch, 4 x 1024 x 32.
 #
-# REWARD-V2 IS ACTIVE ON ALL THREE ARMS: excavator_relocate_dumped_mult 0.2 <
-# excavator_relocate_dug_dirt_mult 1.5, so lifting one's own spoil pays 0.2/1.5
-# = 1/7.5 of fresh work. Measured end to end (tests/test_m2_presets.py): the
-# stage-on-legal-ground loop drops from -2.32 to -49.56 against the direct loop.
-# Consequence, pre-registered in docs/EXPERIMENTS.md: completion is comparable
-# to M1, RETURN IS NOT (M1 ran reward-v1 at 1.5 / 1.5).
+# The map and promotion treatments remain unchanged. All arms now use the same
+# agent-neutral relocation-progress reward; historical reward-v1/reward-v2
+# return comparisons are not valid for new runs from these presets.
 #
 # Bank per arm. DATASET_PATH must match the arm; DATASET_SIZE is 864 for both
 # banks (terra/maps_buffer.py requires one slot count for every level):
@@ -658,13 +537,10 @@ curriculum_v5m_c_waves:
 # -----------------------------------------------------------------------------
 
 m2_wave_long:
-  description: M2-wave-long - M1-C's wave recipe at 8k updates on curriculum_v5m, reward-v2 (budget control)
+  description: M2-wave-long - M1-C's wave recipe at 8k updates on curriculum_v5m
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 3
     decrease_level_threshold: 3
@@ -688,13 +564,10 @@ m2_wave_long:
       apply_trench_rewards: false
 
 m2_dose:
-  description: M2-dose - dose levels L0p->L3p on curriculum_v6m, 3-consecutive-exact promotion, reward-v2
+  description: M2-dose - dose levels L0p->L3p on curriculum_v6m, 3-consecutive-exact promotion
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 3
     decrease_level_threshold: 3
@@ -718,13 +591,10 @@ m2_dose:
       apply_trench_rewards: false
 
 m2_dose_fast:
-  description: M2-dose-fast - dose levels L0p->L3p on curriculum_v6m, 2-consecutive-exact promotion, reward-v2
+  description: M2-dose-fast - dose levels L0p->L3p on curriculum_v6m, 2-consecutive-exact promotion
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 2
     decrease_level_threshold: 3

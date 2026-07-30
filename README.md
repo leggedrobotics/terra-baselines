@@ -80,7 +80,7 @@ python train_mixed.py --config excavator_truck
 | Config Name | Agents | Maps | Description |
 |-------------|--------|------|-------------|
 | `solo_excavator` | Excavator | `foundations` | Single excavator, no dumpzones |
-| `solo_excavator_more_dumpbonus` | Excavator | `foundations` | Single excavator, higher dump bonus |
+| `solo_excavator_more_dumpbonus` | Excavator | `foundations` | Historical preset name; current relocation reward |
 | `solo_excavator_dumpzone` | Excavator | `foundations_dumpzones_v3` | Single excavator with dumpzones |
 | `solo_skidsteer` | Skidsteer | `relocations_harder` | Single skidsteer relocation |
 | `excavator_skidsteer` | Excavator + Skidsteer | `foundations_dumpzones_v3` | Two-agent foundation |
@@ -99,7 +99,7 @@ python train_mixed.py --config excavator_truck
 Each preset in `configs/training_configs.yaml` defines:
 - `agent_types`: Which agents to use (0=excavator, 1=truck, 2=skidsteer)
 - `action_types`: Movement type (0=tracked, 1=wheeled)
-- `reward_multipliers`: Reward shaping parameters
+- `relocation_progress_mult`: Agent-neutral signed relocation-progress multiplier
 - `maps`: Which map datasets to train on
 
 Example:
@@ -108,9 +108,7 @@ excavator_skidsteer:
   description: Excavator + Skidsteer combination
   agent_types: [0, 2]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_dumpzones_v3
       max_steps: 800
@@ -120,8 +118,8 @@ excavator_skidsteer:
 
 You can override preset values with CLI arguments:
 ```bash
-# Use preset but change a reward multiplier
-python train_mixed.py --config excavator_truck --transport_relocate_mult 2.0
+# Use preset but change the agent-neutral relocation progress multiplier
+python train_mixed.py --config excavator_truck --relocation_progress_mult 2.0
 
 # Use preset but override agent types
 python train_mixed.py --config solo_excavator --agent_types "(0,2)"
@@ -129,6 +127,11 @@ python train_mixed.py --config solo_excavator --agent_types "(0,2)"
 # Use the spatial residual encoder for a new 64x64-map experiment
 python train_mixed.py --config solo_excavator --map_encoder resnet_spatial_8x8
 ```
+
+Checkpoints containing the pre-reward-v3 Terra `EnvConfig` cannot be unpickled
+by the current schema, including through `--warm_start_from`. Extract parameters
+under the matching historical Terra revision, then write a current-schema
+params-only checkpoint. Treat any resulting run as a new reward treatment.
 
 ### Global Map Encoders
 
