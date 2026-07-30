@@ -527,6 +527,10 @@ class MixedAgentTrainConfig:
     excavator_relocate_dumped_mult: float | None = None
     excavator_relocate_dug_dirt_mult: float | None = None
     transport_relocate_mult: float | None = None
+    direct_dig_reward_enabled: bool | None = None
+    direct_dig_reward_per_tile: float | None = None
+    legacy_dig_rewards_enabled: bool | None = None
+    dump_rewards_enabled: bool | None = None
     
     # Capacity overrides
     truck_capacity: int | None = None
@@ -612,6 +616,10 @@ def create_mixed_agent_env_config(
     excavator_relocate_dumped_mult=None,
     excavator_relocate_dug_dirt_mult=None,
     transport_relocate_mult=None,
+    direct_dig_reward_enabled=None,
+    direct_dig_reward_per_tile=None,
+    legacy_dig_rewards_enabled=None,
+    dump_rewards_enabled=None,
     # Optional capacity overrides
     truck_capacity=None,
     skidsteer_capacity=None,
@@ -627,6 +635,10 @@ def create_mixed_agent_env_config(
         excavator_relocate_dumped_mult: Multiplier for excavator relocating dumped material
         excavator_relocate_dug_dirt_mult: Multiplier for excavator relocating dug dirt
         transport_relocate_mult: Multiplier for transport relocation rewards
+        direct_dig_reward_enabled: Enable dense direct reward for newly dug target dirt
+        direct_dig_reward_per_tile: Reward amount per newly dug target tile/depth unit
+        legacy_dig_rewards_enabled: Enable the existing dig reward stack
+        dump_rewards_enabled: Enable dump action rewards
         truck_capacity: Override for truck capacity
         skidsteer_capacity: Override for skidsteer capacity
         truck_road_restricted: Whether trucks are restricted to roads
@@ -651,6 +663,14 @@ def create_mixed_agent_env_config(
         env_config = env_config._replace(excavator_relocate_dug_dirt_mult=excavator_relocate_dug_dirt_mult)
     if transport_relocate_mult is not None:
         env_config = env_config._replace(transport_relocate_mult=transport_relocate_mult)
+    if direct_dig_reward_enabled is not None:
+        env_config = env_config._replace(direct_dig_reward_enabled=direct_dig_reward_enabled)
+    if direct_dig_reward_per_tile is not None:
+        env_config = env_config._replace(direct_dig_reward_per_tile=direct_dig_reward_per_tile)
+    if legacy_dig_rewards_enabled is not None:
+        env_config = env_config._replace(legacy_dig_rewards_enabled=legacy_dig_rewards_enabled)
+    if dump_rewards_enabled is not None:
+        env_config = env_config._replace(dump_rewards_enabled=dump_rewards_enabled)
     
     # Apply capacity overrides if provided
     if truck_capacity is not None:
@@ -793,6 +813,10 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                 excavator_relocate_dumped_mult=config.excavator_relocate_dumped_mult,
                 excavator_relocate_dug_dirt_mult=config.excavator_relocate_dug_dirt_mult,
                 transport_relocate_mult=config.transport_relocate_mult,
+                direct_dig_reward_enabled=config.direct_dig_reward_enabled,
+                direct_dig_reward_per_tile=config.direct_dig_reward_per_tile,
+                legacy_dig_rewards_enabled=config.legacy_dig_rewards_enabled,
+                dump_rewards_enabled=config.dump_rewards_enabled,
                 # Pass capacity overrides
                 truck_capacity=config.truck_capacity,
                 skidsteer_capacity=config.skidsteer_capacity,
@@ -829,6 +853,21 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
                     print(f"   excavator_relocate_dug_dirt_mult: {config.excavator_relocate_dug_dirt_mult}")
                 if config.transport_relocate_mult is not None:
                     print(f"   transport_relocate_mult: {config.transport_relocate_mult}")
+            if any([
+                config.direct_dig_reward_enabled is not None,
+                config.direct_dig_reward_per_tile is not None,
+                config.legacy_dig_rewards_enabled is not None,
+                config.dump_rewards_enabled is not None,
+            ]):
+                print("📊 Reward Options:")
+                if config.direct_dig_reward_enabled is not None:
+                    print(f"   direct_dig_reward_enabled: {config.direct_dig_reward_enabled}")
+                if config.direct_dig_reward_per_tile is not None:
+                    print(f"   direct_dig_reward_per_tile: {config.direct_dig_reward_per_tile}")
+                if config.legacy_dig_rewards_enabled is not None:
+                    print(f"   legacy_dig_rewards_enabled: {config.legacy_dig_rewards_enabled}")
+                if config.dump_rewards_enabled is not None:
+                    print(f"   dump_rewards_enabled: {config.dump_rewards_enabled}")
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
 
@@ -845,6 +884,16 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
         flush=True,
     )
     
+    map_edge_px = int(env.batch_cfg.maps_dims.maps_edge_length)
+    map_edge_m = float(env.batch_cfg.maps.edge_length_m)
+    resolved_meters_per_tile = map_edge_m / map_edge_px
+    print(
+        "Mixed Agent Environment - Resolved map scale: "
+        f"map_edge={map_edge_px}x{map_edge_px} px, "
+        f"edge_length={map_edge_m:.3f} m, "
+        f"meters_per_tile={resolved_meters_per_tile:.6f}",
+        flush=True,
+    )
     print(f"Mixed Agent Environment - Tile size shape: {env_params.tile_size.shape}", flush=True)
     tile_size_m = float(jnp.ravel(env_params.tile_size)[0])
     excavator_width_cells = int(jnp.ravel(env_params.agent.width)[0])
@@ -936,10 +985,11 @@ def make_mixed_agent_states(config: MixedAgentTrainConfig, env_params: EnvConfig
     return rng, env, env_params, train_state
 
 
-def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
-    def _tag_value(value) -> str:
-        return str(value).replace(" ", "_").replace("/", "-")
+def _wandb_tag_value(value) -> str:
+    return str(value).replace(" ", "_").replace("/", "-")
 
+
+def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
     env_defaults = EnvConfig()
     agent_type_names = {0: "excavator", 1: "truck", 2: "skidsteer"}
     action_type_names = {0: "tracked", 1: "wheeled"}
@@ -958,14 +1008,14 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
     tags = [
         "mixed-agents",
         "unified-network",
-        f"config:{_tag_value(config.config_name or 'manual')}",
+        f"config:{_wandb_tag_value(config.config_name or 'manual')}",
         f"agents:{'-'.join(agent_type_names.get(int(t), str(t)) for t in agent_types)}",
         f"actions:{'-'.join(action_type_names.get(int(t), str(t)) for t in action_types)}",
-        f"model-size:{_tag_value(model_size)}",
-        f"map-encoder:{_tag_value(map_encoder)}",
-        f"dump-min-free-fraction:{_tag_value(dump_min_free_fraction)}",
-        f"move-tiles:{_tag_value(env_defaults.agent.move_tiles)}",
-        f"dig-radius-tiles:{_tag_value(env_defaults.agent.dig_radius_tiles)}",
+        f"model-size:{_wandb_tag_value(model_size)}",
+        f"map-encoder:{_wandb_tag_value(map_encoder)}",
+        f"dump-min-free-fraction:{_wandb_tag_value(dump_min_free_fraction)}",
+        f"move-tiles:{_wandb_tag_value(env_defaults.agent.move_tiles)}",
+        f"dig-radius-tiles:{_wandb_tag_value(env_defaults.agent.dig_radius_tiles)}",
         "edge-align:on" if edge_align_enabled else "edge-align:off",
         "terminal:digdump60-inner20-edge20",
         "terminal-fallback:digdump60-dig40",
@@ -973,22 +1023,40 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
 
     slurm_job_id = os.getenv("SLURM_JOB_ID") or os.getenv("SLURM_JOBID")
     if slurm_job_id:
-        tags.append(f"job:{_tag_value(slurm_job_id)}")
+        tags.append(f"job:{_wandb_tag_value(slurm_job_id)}")
 
     slurm_gpu_count = os.getenv("SLURM_GPUS_ON_NODE") or os.getenv("SLURM_GPUS")
     if slurm_gpu_count:
-        tags.append(f"gpus:{_tag_value(slurm_gpu_count)}")
+        tags.append(f"gpus:{_wandb_tag_value(slurm_gpu_count)}")
     else:
-        tags.append(f"gpus:{_tag_value(config.num_devices)}")
+        tags.append(f"gpus:{_wandb_tag_value(config.num_devices)}")
 
     if config.curriculum_levels_override:
         for level in config.curriculum_levels_override:
-            tags.append(f"map:{_tag_value(level['maps_path'])}")
+            tags.append(f"map:{_wandb_tag_value(level['maps_path'])}")
     else:
         tags.append("map:default")
 
     if config.single_map_path is not None:
-        tags.append(f"single-map:{_tag_value(Path(config.single_map_path).stem)}")
+        tags.append(f"single-map:{_wandb_tag_value(Path(config.single_map_path).stem)}")
+    if config.direct_dig_reward_enabled is not None:
+        tags.append(
+            "direct-dig:on" if config.direct_dig_reward_enabled else "direct-dig:off"
+        )
+    if config.direct_dig_reward_per_tile is not None:
+        tags.append(
+            f"direct-dig-per-tile:{_wandb_tag_value(config.direct_dig_reward_per_tile)}"
+        )
+    if config.legacy_dig_rewards_enabled is not None:
+        tags.append(
+            "legacy-dig:on"
+            if config.legacy_dig_rewards_enabled
+            else "legacy-dig:off"
+        )
+    if config.dump_rewards_enabled is not None:
+        tags.append(
+            "dump-rewards:on" if config.dump_rewards_enabled else "dump-rewards:off"
+        )
 
     return list(dict.fromkeys(tags))
 
@@ -1051,6 +1119,22 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     rng, env, env_params, train_state = make_mixed_agent_states(
         config, env_params_override=env_params_override
     )
+    resolved_map_edge_px = int(env.batch_cfg.maps_dims.maps_edge_length)
+    resolved_edge_length_m = float(env.batch_cfg.maps.edge_length_m)
+    resolved_meters_per_tile = resolved_edge_length_m / resolved_map_edge_px
+    wandb.config.update(
+        {
+            "resolved_map_edge_px": resolved_map_edge_px,
+            "resolved_edge_length_m": resolved_edge_length_m,
+            "resolved_meters_per_tile": resolved_meters_per_tile,
+        },
+        allow_val_change=True,
+    )
+    resolved_tags = (
+        f"map-size:{resolved_map_edge_px}",
+        f"meters-per-tile:{_wandb_tag_value(f'{resolved_meters_per_tile:.6f}')}",
+    )
+    run.tags = tuple(dict.fromkeys(tuple(run.tags or ()) + resolved_tags))
     if checkpoint is not None:
         _validate_checkpoint_history_width(checkpoint, config)
 
@@ -1930,6 +2014,30 @@ if __name__ == "__main__":
         "--transport_relocate_mult", type=float, default=None,
         help="Multiplier for transport relocation rewards (overrides config preset)"
     )
+    parser.add_argument(
+        "--direct_dig_reward_enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable direct reward proportional to newly dug target dirt.",
+    )
+    parser.add_argument(
+        "--direct_dig_reward_per_tile",
+        type=float,
+        default=None,
+        help="Reward amount per newly dug target tile/depth unit.",
+    )
+    parser.add_argument(
+        "--legacy_dig_rewards_enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable the existing dig reward stack.",
+    )
+    parser.add_argument(
+        "--dump_rewards_enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable dump action rewards.",
+    )
     # Checkpoint loading arguments
     parser.add_argument(
         "-r", "--resume_from", type=str, default=None,
@@ -1991,6 +2099,10 @@ if __name__ == "__main__":
     excavator_relocate_dumped_mult = None
     excavator_relocate_dug_dirt_mult = None
     transport_relocate_mult = None
+    direct_dig_reward_enabled = None
+    direct_dig_reward_per_tile = None
+    legacy_dig_rewards_enabled = None
+    dump_rewards_enabled = None
     truck_capacity = None
     skidsteer_capacity = None
     truck_road_restricted = None
@@ -2016,6 +2128,10 @@ if __name__ == "__main__":
             excavator_relocate_dumped_mult = preset.reward_multipliers.excavator_relocate_dumped_mult
             excavator_relocate_dug_dirt_mult = preset.reward_multipliers.excavator_relocate_dug_dirt_mult
             transport_relocate_mult = preset.reward_multipliers.transport_relocate_mult
+            direct_dig_reward_enabled = preset.reward_options.direct_dig_reward_enabled
+            direct_dig_reward_per_tile = preset.reward_options.direct_dig_reward_per_tile
+            legacy_dig_rewards_enabled = preset.reward_options.legacy_dig_rewards_enabled
+            dump_rewards_enabled = preset.reward_options.dump_rewards_enabled
             
             # Apply capacity overrides from preset
             truck_capacity = preset.truck_capacity
@@ -2098,6 +2214,14 @@ if __name__ == "__main__":
         excavator_relocate_dug_dirt_mult = args.excavator_relocate_dug_dirt_mult
     if args.transport_relocate_mult is not None:
         transport_relocate_mult = args.transport_relocate_mult
+    if args.direct_dig_reward_enabled is not None:
+        direct_dig_reward_enabled = args.direct_dig_reward_enabled
+    if args.direct_dig_reward_per_tile is not None:
+        direct_dig_reward_per_tile = args.direct_dig_reward_per_tile
+    if args.legacy_dig_rewards_enabled is not None:
+        legacy_dig_rewards_enabled = args.legacy_dig_rewards_enabled
+    if args.dump_rewards_enabled is not None:
+        dump_rewards_enabled = args.dump_rewards_enabled
     
     # Use default agent types if nothing was set
     if agent_types_override is None:
@@ -2141,6 +2265,10 @@ if __name__ == "__main__":
         excavator_relocate_dumped_mult=excavator_relocate_dumped_mult,
         excavator_relocate_dug_dirt_mult=excavator_relocate_dug_dirt_mult,
         transport_relocate_mult=transport_relocate_mult,
+        direct_dig_reward_enabled=direct_dig_reward_enabled,
+        direct_dig_reward_per_tile=direct_dig_reward_per_tile,
+        legacy_dig_rewards_enabled=legacy_dig_rewards_enabled,
+        dump_rewards_enabled=dump_rewards_enabled,
         truck_capacity=truck_capacity,
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,

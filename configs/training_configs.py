@@ -34,6 +34,15 @@ class RewardMultipliers:
 
 
 @dataclass
+class RewardOptions:
+    """Optional reward switches for ablation experiments."""
+    direct_dig_reward_enabled: Optional[bool] = None
+    direct_dig_reward_per_tile: Optional[float] = None
+    legacy_dig_rewards_enabled: Optional[bool] = None
+    dump_rewards_enabled: Optional[bool] = None
+
+
+@dataclass
 class MapLevel:
     """Configuration for a single curriculum level."""
     maps_path: str
@@ -66,6 +75,7 @@ class TrainingConfig:
     
     # Reward multipliers
     reward_multipliers: RewardMultipliers = field(default_factory=RewardMultipliers)
+    reward_options: RewardOptions = field(default_factory=RewardOptions)
     
     # Optional overrides for EnvConfig fields
     truck_capacity: Optional[int] = None
@@ -110,6 +120,14 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             excavator_relocate_dug_dirt_mult=rm_data.get('excavator_relocate_dug_dirt_mult', 1.5),
             transport_relocate_mult=rm_data.get('transport_relocate_mult', 1.5),
         )
+
+        ro_data = cfg.get('reward_options', {})
+        reward_options = RewardOptions(
+            direct_dig_reward_enabled=ro_data.get('direct_dig_reward_enabled'),
+            direct_dig_reward_per_tile=ro_data.get('direct_dig_reward_per_tile'),
+            legacy_dig_rewards_enabled=ro_data.get('legacy_dig_rewards_enabled'),
+            dump_rewards_enabled=ro_data.get('dump_rewards_enabled'),
+        )
         
         # Parse maps
         maps = []
@@ -137,6 +155,7 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             maps=maps,
             curriculum=curriculum,
             reward_multipliers=reward_multipliers,
+            reward_options=reward_options,
             truck_capacity=cfg.get('truck_capacity'),
             skidsteer_capacity=cfg.get('skidsteer_capacity'),
             truck_road_restricted=cfg.get('truck_road_restricted'),

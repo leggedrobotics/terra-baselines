@@ -27,6 +27,38 @@ solo_excavator:
     - path: foundations
       max_steps: 450
 
+
+solo_excavator_direct_dig_reward:
+  description: Single excavator with direct reward for newly dug target dirt
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  reward_options:
+    direct_dig_reward_enabled: true
+    direct_dig_reward_per_tile: 1.5
+    legacy_dig_rewards_enabled: false
+    dump_rewards_enabled: false
+  maps:
+    - path: foundations
+      max_steps: 450
+
+
+
+solo_excavator_96x96:
+  description: Single excavator agent with tracked movement
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: foundations_96x96
+      max_steps: 600
+
 solo_excavator_rectangles:
   description: Single excavator agent with tracked movement on rectangle maps
   agent_types: [0]
@@ -110,6 +142,18 @@ solo_excavator_dumpzone:
   maps:
     - path: foundations_dumpzones_v3
       max_steps: 600
+
+solo_excavator_dumpzone_96x96:
+  description: Single excavator agent with tracked movement and dumpzone maps
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  maps:
+    - path: foundations_dumpzones_v3_96x96
+      max_steps: 700
 
 solo_skidsteer:
   description: Single skidsteer agent

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -n 1
 #SBATCH --cpus-per-task=4
-#SBATCH --gpus=gpu:rtx_3090:2
+#SBATCH --gpus=gpu:rtx_4090:2
 #SBATCH --time=24:00:00
 #SBATCH --mem-per-cpu=8G
 #SBATCH --mail-type=END
@@ -33,10 +33,11 @@ export DATASET_SIZE=600
 cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
 
 python train_mixed.py \
-    --config solo_excavator \
+    --config solo_excavator_direct_dig_reward \
     --model_size base \
     --model_core mlp \
-    --map_encoder resnet_spatial_v2
+    #--map_encoder resnet_spatial_v2 \
+    #--num_envs_per_device 512
     #--resume_from /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-07-15-12-34-56.pkl
     # --replay_map_count 15 --target_map_repeat 10 \
     # --total_timesteps 5_000_000_000 \
