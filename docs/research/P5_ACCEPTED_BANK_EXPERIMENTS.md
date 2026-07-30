@@ -1,0 +1,192 @@
+# P5 Accepted-Bank Experiment Implementation
+
+- Status: implementation complete; CPU validation passed
+- Date: 2026-07-30
+- Canonical authority:
+  [`D5_D7_IMPLEMENTATION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_simple_mapbank_reward_20260730/D5_D7_IMPLEMENTATION_PLAN.md)
+  §P5a
+- Research-code constraints:
+  [`$simple-research-code`](/home/lorenzo/git/codex_skills/skills/simple-research-code/SKILL.md)
+- Terra branch: `experiment/simple-mapbank-reward-v3`
+- terra-baselines branch: `experiment/simple-mapbank-reward-v3`
+
+This document is the executable terra-baselines side of the canonical P5a
+plan. The canonical plan should link here rather than duplicate these commands
+or implementation details.
+
+## 1. Question and minimal matrix
+
+The initial screen has four scratch-trained arms:
+
+| Arm | Training conditions | Condition sampler | Question |
+|---|---|---|---|
+| `F-ANCHOR` | accepted foundation `Anchor` conditions | uniform | are the new foundation anchors learnable? |
+| `T-ANCHOR` | accepted trench `Anchor` conditions | uniform | are the new trench anchors learnable? |
+| `G-UNIFORM` | every accepted condition | uniform | can one generalist learn the target distribution directly? |
+| `G-ADAPTIVE` | the identical all-condition bank | adaptive progressive | does progressive exposure improve the generalist? |
+
+No strict stage unlock, per-environment demotion, partial reset, reward
+curriculum, teacher, or old 12-map bank is part of this comparison.
+
+All arms freeze:
+
+- agent-neutral `relocation_progress_mult = 1.5`;
+- horizon 450, `DENSE`, trench absolute shaping off;
+- tracked single-excavator actions and observations;
+- scratch initialization;
+- medium E8 MLP with `resnet_spatial_8x8_se`, bf16 encoder and
+  `512,256` critic;
+- PPO and entropy settings supplied by the one shared entrypoint; and
+- one accepted-bank protocol hash.
+
+## 2. Accepted-bank input contract
+
+`--accepted-bank-root` is required. Its `dataset.json` must use
+`terra_curriculum_loader_bank_v1` and contain:
+
+- `environment_protocol = "environment_protocol.json"` plus its canonical
+  SHA-256;
+- `source_registry = "source_registry.jsonl"` plus its file SHA-256;
+- `train[]` entries with `condition_id`, `family`, `branch_depth`,
+  `maps_path`, and `map_count`;
+- exact MapsBuffer datasets under every training `maps_path`; and
+- `promotion`, `development`, and `sealed` evaluation panels.
+
+The caller must pass the exact immutable Terra revision recorded in the source
+archive manifest. Before JAX initialization, the loader:
+
+1. verifies the protocol receipt hash and equality with the protocol derived
+   from the imported Terra code plus that explicit revision, without consulting
+   `.git`;
+2. verifies the source-registry hash;
+3. verifies each training manifest is one condition with contiguous slots and
+   equal map count across the selected arm;
+4. verifies every evaluation panel path, count, condition count and contiguous
+   manifest; and
+5. recomputes each evaluation `episode_id` from `scenario_id`, `reset_seed`,
+   and the frozen protocol hash.
+
+This makes review-only banks, the legacy 12-map bank, stale Terra revisions,
+and inherited `DATASET_PATH` values invalid inputs.
+
+## 3. Adaptive sampler
+
+There is one small host-side sampler. Every map condition owns one Terra level;
+the trainer writes an explicit categorical level assignment for every
+environment.
+
+The uniform arm keeps `q = Uniform(conditions)`.
+
+Every 150 PPO updates, the adaptive arm computes a completion EMA for each
+condition with enough completed episodes, then:
+
+```text
+q = 0.20 * Uniform + 0.80 * Frontier
+```
+
+`Frontier` is a temperature-softmax over completion of conditions below the
+0.75 mastery threshold. A condition stuck at zero therefore cannot monopolize
+training; the most advanced unsolved conditions receive more exposure. A
+mastered condition remains in the uniform floor and re-enters automatically if
+its completion EMA falls below the threshold. Per-condition mass is capped at
+0.15.
+
+The receipt logs intended and realized condition, family, and branch-depth
+mass, competence, entropy, effective sample size, protocol hash, arm, root and
+map count.
+
+## 4. Fixed evaluation and comparison gate
+
+Use `eval_fixed_bank.py --accepted-panel` for the frozen `promotion`,
+`development`, or `sealed` panel. It consumes each row's frozen `reset_seed`
+and verifies that it selects the declared exact slot.
+
+Every checkpoint reports:
+
+- exact successes and rate;
+- condition-macro terminal absolute completion;
+- micro completion mean, median, p10 and p25;
+- worst condition and its completion; and
+- per-family and per-condition results.
+
+For each checkpoint after the first, the evaluator writes a comparison to the
+previous checkpoint. The gate passes only when integrity is clean and:
+
+```text
+progress =
+    at least one additional exact-success map
+    OR condition-macro completion gain >= 0.01
+
+guards =
+    micro p10 delta >= -0.05
+    AND worst-condition delta >= -0.05
+```
+
+The exact-rate quantum is recorded as `1 / panel_size`. There are no
+`26/32`, `6/8`, or other panel-size-specific counts.
+
+## 5. Entrypoints
+
+The four YAML config names are the arm names themselves. A single non-Slurm
+entrypoint keeps architecture and PPO arguments shared:
+
+```bash
+export TERRA_ROOT=/path/to/source-archive/terra
+export TERRA_REVISION="$(cat /path/to/source-archive/terra/REVISION)"
+export RUN_ROOT=/path/to/run-artifacts
+export PYTHON_BIN=/path/to/python
+export SEED=0
+
+scripts/run_accepted_bank_screen.sh \
+  G-UNIFORM /path/to/accepted-bank p5-g-uniform-s0 2000
+```
+
+`NUM_DEVICES`, `NUM_ENVS_PER_DEVICE`, and `NUM_STEPS` are environment
+parameters; their defaults are `1`, `1024`, and `32`. The script computes
+`total_timesteps` from those values and the required update count. `SEED` is
+required and must match between paired `G-UNIFORM` and `G-ADAPTIVE` runs.
+The production PPO shape is frozen at 2 update epochs, 32 minibatches and
+learning rate `3e-4`; inline evaluation is disabled, and numbered checkpoints
+are retained every 500 updates. `FINITE_CHECK_INTERVAL` defaults to 10 for
+2k/20k runs; set it to 1 for an update-1 smoke. The script neither submits a
+job nor chooses an Euler partition.
+
+Example fixed evaluation:
+
+```bash
+python eval_fixed_bank.py \
+  --checkpoint /path/to/checkpoint.pkl \
+  --bank-root /path/to/accepted-bank \
+  --accepted-panel development \
+  --terra-revision "$TERRA_REVISION" \
+  --expect-completion-contract exact_visible_dump_v1 \
+  --output /path/to/development_eval.json
+```
+
+## 6. Implementation checklist
+
+- [x] reject legacy/review-only/stale bank roots before JAX;
+- [x] select foundation anchors, trench anchors, or all accepted conditions
+  from descriptor fields rather than directory-name conventions;
+- [x] port only the global uniform/adaptive sampler, not the old M3 bank or
+  strict staged scheduler;
+- [x] freeze reward and horizon across condition levels;
+- [x] disable the per-environment Terra ratchet;
+- [x] log intended and realized condition/family/depth exposure;
+- [x] add the four parameterized configs and one shared local/allocation
+  entrypoint;
+- [x] freeze and test the production PPO shape, explicit seed, checkpoint
+  cadence, and finite-check cadence in that entrypoint;
+- [x] add condition-macro, micro-p10 and worst-condition evaluation;
+- [x] replace fixed panel counts with a continuous, map-count-aware comparison
+  gate;
+- [x] use frozen evaluation reset seeds and episode identities;
+- [x] validate archive runs from an explicit frozen Terra revision without
+  requiring `.git`;
+- [x] pass the full terra-baselines CPU suite against the paired Terra commit
+  (`201 passed`);
+- [ ] complete one local or allocated-GPU first-update smoke per arm;
+- [ ] submit the bounded screens only after the accepted bank is frozen.
+
+The last two items are execution gates, not authorization to train from this
+implementation commit alone.

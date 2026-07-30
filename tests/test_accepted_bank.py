@@ -1,0 +1,220 @@
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from utils import accepted_bank as accepted_bank_module
+from utils.accepted_bank import SCHEMA, load_accepted_bank
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_level(root: Path, condition: str, family: str, depth: str) -> dict:
+    relative = Path("train") / condition
+    directory = root / relative
+    directory.mkdir(parents=True)
+    (directory / "dataset.json").write_text("{}\n")
+    rows = [
+        {
+            "slot_index": index,
+            "map_id": f"{condition}-{index}",
+            "family": family,
+            "primary_cell": condition,
+        }
+        for index in (1, 2)
+    ]
+    (directory / "manifest.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows)
+    )
+    return {
+        "condition_id": condition,
+        "family": family,
+        "branch_depth": depth,
+        "maps_path": relative.as_posix(),
+        "map_count": 2,
+    }
+
+
+def _protocol(revision="terra-test-revision") -> dict:
+    payload = {
+        "schema": "terra_environment_protocol_v1",
+        "terra_revision": revision,
+    }
+    return {
+        **payload,
+        "environment_protocol_sha256": (
+            accepted_bank_module._canonical_json_sha256(payload)
+        ),
+    }
+
+
+@pytest.fixture(autouse=True)
+def _freeze_current_protocol(monkeypatch):
+    monkeypatch.setattr(
+        accepted_bank_module,
+        "_environment_protocol_for_revision",
+        _protocol,
+    )
+
+
+def _write_bank(root: Path) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    protocol = _protocol()
+    (root / "environment_protocol.json").write_text(
+        json.dumps(protocol) + "\n"
+    )
+    registry = root / "source_registry.jsonl"
+    registry.write_text('{"source_id": "s0", "split": "train"}\n')
+    train = [
+        _write_level(root, "f-anchor", "foundation", "Anchor"),
+        _write_level(root, "t-anchor", "trench", "Anchor"),
+        _write_level(root, "f-axis", "foundation", "One-axis"),
+        _write_level(root, "t-composed", "trench", "Composed"),
+    ]
+    evaluation_panels = {}
+    for panel_name in ("promotion", "development", "sealed"):
+        directory = root / panel_name
+        directory.mkdir()
+        (directory / "dataset.json").write_text("{}\n")
+        rows = []
+        for slot, entry in enumerate(train, start=1):
+            scenario_id = f"{slot:064x}"
+            episode_id = accepted_bank_module._canonical_json_sha256(
+                {
+                    "schema": "terra_episode_id_v1",
+                    "scenario_id": scenario_id,
+                    "reset_seed": slot,
+                    "environment_protocol_sha256": (
+                        protocol["environment_protocol_sha256"]
+                    ),
+                }
+            )
+            rows.append(
+                {
+                    "slot_index": slot,
+                    "map_id": f"{panel_name}-{slot}",
+                    "family": entry["family"],
+                    "primary_cell": entry["condition_id"],
+                    "scenario_id": scenario_id,
+                    "reset_seed": slot,
+                    "episode_id": episode_id,
+                    "environment_protocol_sha256": (
+                        protocol["environment_protocol_sha256"]
+                    ),
+                }
+            )
+        (directory / "manifest.jsonl").write_text(
+            "".join(json.dumps(row) + "\n" for row in rows)
+        )
+        evaluation_panels[panel_name] = {
+            "maps_path": panel_name,
+            "slot_count": len(rows),
+            "conditions": len(rows),
+        }
+    (root / "dataset.json").write_text(
+        json.dumps(
+            {
+                "schema": SCHEMA,
+                "environment_protocol": "environment_protocol.json",
+                "environment_protocol_sha256": (
+                    protocol["environment_protocol_sha256"]
+                ),
+                "source_registry": "source_registry.jsonl",
+                "source_registry_sha256": _sha256(registry),
+                "train": train,
+                "evaluation_panels": evaluation_panels,
+            }
+        )
+        + "\n"
+    )
+    return root
+
+
+@pytest.mark.parametrize(
+    ("arm", "conditions"),
+    [
+        ("F-ANCHOR", ["f-anchor"]),
+        ("T-ANCHOR", ["t-anchor"]),
+        ("G-UNIFORM", ["f-anchor", "f-axis", "t-anchor", "t-composed"]),
+        ("G-ADAPTIVE", ["f-anchor", "f-axis", "t-anchor", "t-composed"]),
+    ],
+)
+def test_arm_selection_is_explicit(tmp_path, arm, conditions):
+    bank = load_accepted_bank(
+        _write_bank(tmp_path),
+        arm,
+        "terra-test-revision",
+    )
+    assert [level.condition_id for level in bank.levels] == conditions
+    assert bank.map_count_per_condition == 2
+    assert bank.terra_revision == "terra-test-revision"
+
+
+def test_legacy_or_unfrozen_roots_fail_loudly(tmp_path):
+    root = _write_bank(tmp_path)
+    index_path = root / "dataset.json"
+    index = json.loads(index_path.read_text())
+    index["schema"] = "terra_curriculum_m3_training_dataset_v1"
+    index_path.write_text(json.dumps(index) + "\n")
+    with pytest.raises(ValueError, match="terra_curriculum_loader_bank_v1"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
+
+
+def test_stale_environment_protocol_is_rejected(tmp_path):
+    root = _write_bank(tmp_path)
+    with pytest.raises(ValueError, match="Terra revision mismatch"):
+        load_accepted_bank(root, "G-UNIFORM", "different-terra-revision")
+
+
+def test_archive_without_git_uses_explicit_frozen_revision(tmp_path, monkeypatch):
+    archive = tmp_path / "source-archive"
+    root = _write_bank(archive / "accepted-bank")
+    assert not (archive / ".git").exists()
+    monkeypatch.chdir(archive)
+    bank = load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
+    assert bank.environment_protocol_sha256 == _protocol()[
+        "environment_protocol_sha256"
+    ]
+
+
+def test_registry_hash_and_manifest_condition_are_verified(tmp_path):
+    root = _write_bank(tmp_path)
+    (root / "source_registry.jsonl").write_text("changed\n")
+    with pytest.raises(ValueError, match="registry hash mismatch"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
+
+    root = _write_bank(tmp_path / "second")
+    manifest = root / "train" / "f-anchor" / "manifest.jsonl"
+    rows = [json.loads(line) for line in manifest.read_text().splitlines()]
+    rows[0]["primary_cell"] = "wrong"
+    manifest.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    with pytest.raises(ValueError, match="primary_cell"):
+        load_accepted_bank(root, "F-ANCHOR", "terra-test-revision")
+
+
+def test_unequal_level_counts_are_rejected(tmp_path):
+    root = _write_bank(tmp_path)
+    index_path = root / "dataset.json"
+    index = json.loads(index_path.read_text())
+    t_level = root / "train" / "t-composed"
+    rows = [json.loads(line) for line in (t_level / "manifest.jsonl").read_text().splitlines()]
+    rows.append(
+        {
+            "slot_index": 3,
+            "map_id": "t-composed-3",
+            "family": "trench",
+            "primary_cell": "t-composed",
+        }
+    )
+    (t_level / "manifest.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows)
+    )
+    next(
+        entry for entry in index["train"] if entry["condition_id"] == "t-composed"
+    )["map_count"] = 3
+    index_path.write_text(json.dumps(index) + "\n")
+    with pytest.raises(ValueError, match="unequal per-condition map counts"):
+        load_accepted_bank(root, "G-ADAPTIVE", "terra-test-revision")

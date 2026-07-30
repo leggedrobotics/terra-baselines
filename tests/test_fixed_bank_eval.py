@@ -5,13 +5,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import jax
 import numpy as np
 
 from eval_fixed_bank import (
     LEGACY_COMPLETION_CONTRACT,
+    comparison_gate,
     environment_completion_contract,
     exact_reset_keys,
     grouped_results,
+    manifest_reset_keys,
     selected_map_indices,
     verify_exact_reset,
 )
@@ -21,6 +24,26 @@ class FixedBankEvalTest(unittest.TestCase):
     def test_reset_keys_enumerate_every_slot_once(self):
         keys = exact_reset_keys(64)
         np.testing.assert_array_equal(selected_map_indices(keys, 64), np.arange(64))
+
+    def test_manifest_reset_keys_pin_the_protocol_and_slot(self):
+        keys = exact_reset_keys(4)
+        seeds = [int(key[1]) for key in np.asarray(keys)]
+        for seed, expected in zip(seeds, np.asarray(keys)):
+            np.testing.assert_array_equal(jax.random.PRNGKey(seed), expected)
+        protocol = "a" * 64
+        rows = [
+            {
+                "slot_index": index + 1,
+                "reset_seed": seed,
+                "environment_protocol_sha256": protocol,
+            }
+            for index, seed in enumerate(seeds)
+        ]
+        observed = manifest_reset_keys(rows, 4, protocol)
+        np.testing.assert_array_equal(selected_map_indices(observed, 4), np.arange(4))
+        rows[0]["environment_protocol_sha256"] = "b" * 64
+        with self.assertRaisesRegex(ValueError, "stale protocol"):
+            manifest_reset_keys(rows, 4, protocol)
 
     def test_grouping_preserves_family_and_primary_cells(self):
         rows = []
@@ -41,7 +64,8 @@ class FixedBankEvalTest(unittest.TestCase):
         per_map, summary = grouped_results(rows, successes, terminations, lengths)
         self.assertEqual(len(per_map), 64)
         self.assertEqual(summary["by_family"]["foundation"]["successes"], 32)
-        self.assertTrue(summary["mastery_gate"]["passed"])
+        self.assertTrue(summary["integrity"]["passed"])
+        self.assertFalse(summary["graded"]["available"])
 
     def test_grouping_separates_success_timeout_and_completion(self):
         rows = [
@@ -119,10 +143,109 @@ class FixedBankEvalTest(unittest.TestCase):
             np.ones(count, dtype=np.int32),
             integrity_metrics=integrity,
         )
-        self.assertTrue(summary["mastery_gate"]["performance_passed"])
-        self.assertFalse(summary["mastery_gate"]["integrity_passed"])
-        self.assertFalse(summary["mastery_gate"]["passed"])
         self.assertEqual(summary["integrity"]["failure_count"], 1)
+        self.assertFalse(summary["integrity"]["passed"])
+
+    def test_graded_metrics_are_condition_macro_not_map_weighted(self):
+        rows = [
+            {
+                "slot_index": index + 1,
+                "map_id": f"easy-{index}",
+                "family": "foundation",
+                "primary_cell": "easy",
+            }
+            for index in range(9)
+        ]
+        rows.append(
+            {
+                "slot_index": 10,
+                "map_id": "hard-0",
+                "family": "trench",
+                "primary_cell": "hard",
+            }
+        )
+        completion = np.asarray([1.0] * 9 + [0.0], dtype=np.float32)
+        _, summary = grouped_results(
+            rows,
+            completion == 1.0,
+            np.ones(10, dtype=bool),
+            np.ones(10, dtype=np.int32),
+            completion_metrics={"terminal_absolute": completion},
+        )
+        graded = summary["graded"]
+        self.assertEqual(graded["micro"]["mean"], 0.9)
+        self.assertEqual(graded["macro_completion"], 0.5)
+        self.assertEqual(graded["family_macro_completion"], 0.5)
+        self.assertEqual(graded["by_family"]["foundation"]["macro_completion"], 1.0)
+        self.assertEqual(graded["by_family"]["trench"]["macro_completion"], 0.0)
+        self.assertEqual(graded["worst_condition"], "hard")
+        self.assertEqual(graded["worst_condition_completion"], 0.0)
+
+    def test_comparison_gate_uses_one_map_or_continuous_macro_progress(self):
+        rows = []
+        for condition in ("a", "b"):
+            for index in range(5):
+                rows.append(
+                    {
+                        "slot_index": len(rows) + 1,
+                        "map_id": f"{condition}-{index}",
+                        "family": "foundation",
+                        "primary_cell": condition,
+                    }
+                )
+
+        def summary(completion):
+            completion = np.asarray(completion, dtype=np.float32)
+            _, result = grouped_results(
+                rows,
+                completion == 1.0,
+                np.ones(10, dtype=bool),
+                np.ones(10, dtype=np.int32),
+                completion_metrics={"terminal_absolute": completion},
+            )
+            return result
+
+        reference = summary([0.50] * 10)
+        macro_candidate = summary([0.52] * 10)
+        gate = comparison_gate(reference, macro_candidate)
+        self.assertEqual(gate["exact_map_gain"], 0)
+        self.assertAlmostEqual(gate["exact_rate_quantum"], 0.1)
+        self.assertTrue(gate["progress_passed"])
+        self.assertTrue(gate["passed"])
+
+        exact_candidate = summary([1.0] + [0.50] * 9)
+        gate = comparison_gate(reference, exact_candidate)
+        self.assertEqual(gate["exact_map_gain"], 1)
+        self.assertTrue(gate["passed"])
+
+    def test_comparison_gate_blocks_lower_tail_regression(self):
+        rows = [
+            {
+                "slot_index": index + 1,
+                "map_id": f"map-{index}",
+                "family": "foundation",
+                "primary_cell": f"condition-{index // 2}",
+            }
+            for index in range(8)
+        ]
+
+        def summary(completion):
+            completion = np.asarray(completion, dtype=np.float32)
+            _, result = grouped_results(
+                rows,
+                completion == 1.0,
+                np.ones(8, dtype=bool),
+                np.ones(8, dtype=np.int32),
+                completion_metrics={"terminal_absolute": completion},
+            )
+            return result
+
+        reference = summary([0.5] * 8)
+        candidate = summary([1.0, 1.0, 0.6, 0.6, 0.6, 0.6, 0.0, 0.0])
+        gate = comparison_gate(reference, candidate)
+        self.assertTrue(gate["progress_passed"])
+        self.assertFalse(gate["guards_passed"])
+        self.assertFalse(gate["passed"])
 
     def test_exact_reset_verifies_all_layers_and_metadata(self):
         with tempfile.TemporaryDirectory() as temporary:

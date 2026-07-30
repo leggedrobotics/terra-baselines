@@ -24,6 +24,7 @@ from train_mixed import (
     _validate_checkpoint_architecture,
     make_mixed_agent_states,
 )
+from utils.accepted_bank import load_accepted_bank
 from utils.helpers import load_pkl_object
 
 sys.modules["__main__"].TrainConfig = TrainConfig
@@ -76,6 +77,40 @@ def exact_reset_keys(count: int) -> jax.Array:
     return result
 
 
+def manifest_reset_keys(
+    rows: list[dict],
+    count: int,
+    environment_protocol_sha256: str,
+) -> jax.Array:
+    """Load the frozen episode reset seeds and verify exact slot selection."""
+    if len(rows) != count:
+        raise ValueError("manifest row count does not match the panel slot count")
+    seeds = []
+    for row in rows:
+        seed = row.get("reset_seed")
+        if (
+            not isinstance(seed, int)
+            or isinstance(seed, bool)
+            or not 0 <= seed <= 2**32 - 1
+        ):
+            raise ValueError(
+                f"manifest slot {row.get('slot_index')} has invalid reset_seed"
+            )
+        if row.get("environment_protocol_sha256") != (
+            environment_protocol_sha256
+        ):
+            raise ValueError(
+                f"manifest slot {row.get('slot_index')} has a stale protocol"
+            )
+        seeds.append(seed)
+    keys = jax.vmap(jax.random.PRNGKey)(
+        jnp.asarray(seeds, dtype=jnp.uint32)
+    )
+    actual = selected_map_indices(keys, count)
+    np.testing.assert_array_equal(actual, np.arange(count))
+    return keys
+
+
 def load_manifest(directory: Path) -> list[dict]:
     path = directory / "manifest.jsonl"
     rows = [json.loads(line) for line in path.read_text().splitlines()]
@@ -113,6 +148,8 @@ def configure_for_bank(train_config, relative_path: str, count: int):
     config.curriculum_increase_level_threshold = 3
     config.curriculum_decrease_level_threshold = 3
     config.curriculum_last_level_type = "none"
+    config.pooled_sampler = None
+    config.accepted_bank = None
     config.single_map_path = None
     config.replay_map_count = 0
     config.target_map_repeat = 0
@@ -237,6 +274,187 @@ def verify_exact_reset(
     }
 
 
+GRADED_FIELD = "terminal_absolute"
+PROMOTION_MACRO_GAIN = 0.01
+PROMOTION_GUARD_TOLERANCE = 0.05
+
+
+def _completion_stats(values: np.ndarray) -> dict:
+    return {
+        "episodes": int(values.size),
+        "mean": float(values.mean()),
+        "median": float(np.median(values)),
+        "p10": float(np.percentile(values, 10)),
+        "p25": float(np.percentile(values, 25)),
+        "min": float(values.min()),
+        "max": float(values.max()),
+    }
+
+
+def graded_summary(per_map: list[dict]) -> dict:
+    """Condition-balanced terminal completion and lower-tail guards."""
+    if not per_map or any(GRADED_FIELD not in row for row in per_map):
+        return {
+            "available": False,
+            "reason": f"{GRADED_FIELD} is absent from at least one rollout",
+        }
+    completion = np.asarray(
+        [float(row[GRADED_FIELD]) for row in per_map],
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(completion)):
+        raise ValueError("terminal absolute completion contains non-finite values")
+    if np.any(completion < -1e-6) or np.any(completion > 1.0 + 1e-6):
+        raise ValueError("terminal absolute completion must be in [0, 1]")
+
+    by_condition: dict[str, list[float]] = {}
+    condition_family: dict[str, str] = {}
+    by_family_values: dict[str, list[float]] = {}
+    for row, value in zip(per_map, completion):
+        condition = row["primary_cell"]
+        family = row["family"]
+        previous_family = condition_family.setdefault(condition, family)
+        if previous_family != family:
+            raise ValueError(
+                f"condition {condition!r} appears in multiple families"
+            )
+        by_condition.setdefault(condition, []).append(float(value))
+        by_family_values.setdefault(family, []).append(float(value))
+    condition_stats = {
+        condition: _completion_stats(np.asarray(values, dtype=np.float64))
+        for condition, values in sorted(by_condition.items())
+    }
+    condition_means = np.asarray(
+        [statistics["mean"] for statistics in condition_stats.values()],
+        dtype=np.float64,
+    )
+    worst_condition, worst_statistics = min(
+        condition_stats.items(),
+        key=lambda item: item[1]["mean"],
+    )
+    by_family = {}
+    for family, values in sorted(by_family_values.items()):
+        family_conditions = [
+            condition
+            for condition, condition_value in condition_family.items()
+            if condition_value == family
+        ]
+        family_condition_means = np.asarray(
+            [
+                condition_stats[condition]["mean"]
+                for condition in family_conditions
+            ],
+            dtype=np.float64,
+        )
+        family_worst = min(
+            family_conditions,
+            key=lambda condition: condition_stats[condition]["mean"],
+        )
+        by_family[family] = {
+            **_completion_stats(np.asarray(values, dtype=np.float64)),
+            "condition_count": len(family_conditions),
+            "macro_completion": float(family_condition_means.mean()),
+            "worst_condition": family_worst,
+            "worst_condition_completion": float(
+                condition_stats[family_worst]["mean"]
+            ),
+        }
+    family_macro_completion = float(
+        np.mean(
+            [
+                family_statistics["macro_completion"]
+                for family_statistics in by_family.values()
+            ]
+        )
+    )
+    return {
+        "available": True,
+        "field": GRADED_FIELD,
+        "macro_completion": float(condition_means.mean()),
+        "family_macro_completion": family_macro_completion,
+        "condition_count": len(condition_stats),
+        "worst_condition": worst_condition,
+        "worst_condition_completion": float(worst_statistics["mean"]),
+        "micro": _completion_stats(completion),
+        "by_family": by_family,
+        "by_primary_cell": condition_stats,
+    }
+
+
+def comparison_gate(reference: dict, candidate: dict) -> dict:
+    """Compare two evaluations of the same bank without panel-size constants."""
+    reference_overall = reference["overall"]
+    candidate_overall = candidate["overall"]
+    reference_episodes = int(reference_overall["episodes"])
+    candidate_episodes = int(candidate_overall["episodes"])
+    if reference_episodes != candidate_episodes:
+        raise ValueError(
+            "fixed-bank comparison requires equal episode counts; "
+            f"got {reference_episodes} and {candidate_episodes}"
+        )
+    if set(reference["by_primary_cell"]) != set(candidate["by_primary_cell"]):
+        raise ValueError(
+            "fixed-bank comparison requires identical condition identities"
+        )
+
+    reference_graded = reference["graded"]
+    candidate_graded = candidate["graded"]
+    graded_available = bool(
+        reference_graded.get("available")
+        and candidate_graded.get("available")
+    )
+    exact_map_gain = (
+        int(candidate_overall["successes"])
+        - int(reference_overall["successes"])
+    )
+    exact_rate_quantum = 1.0 / candidate_episodes
+    macro_gain = (
+        float(candidate_graded["macro_completion"])
+        - float(reference_graded["macro_completion"])
+        if graded_available
+        else None
+    )
+    micro_p10_delta = (
+        float(candidate_graded["micro"]["p10"])
+        - float(reference_graded["micro"]["p10"])
+        if graded_available
+        else None
+    )
+    worst_condition_delta = (
+        float(candidate_graded["worst_condition_completion"])
+        - float(reference_graded["worst_condition_completion"])
+        if graded_available
+        else None
+    )
+    progress_passed = exact_map_gain >= 1 or (
+        graded_available and macro_gain >= PROMOTION_MACRO_GAIN
+    )
+    guards_passed = bool(
+        graded_available
+        and micro_p10_delta >= -PROMOTION_GUARD_TOLERANCE
+        and worst_condition_delta >= -PROMOTION_GUARD_TOLERANCE
+    )
+    integrity_passed = bool(candidate["integrity"]["passed"])
+    return {
+        "schema": "terra_fixed_bank_comparison_gate_v1",
+        "reference_episodes": reference_episodes,
+        "candidate_episodes": candidate_episodes,
+        "exact_map_gain": exact_map_gain,
+        "exact_rate_gain": exact_map_gain * exact_rate_quantum,
+        "exact_rate_quantum": exact_rate_quantum,
+        "required_exact_map_gain": 1,
+        "macro_completion_gain": macro_gain,
+        "required_macro_completion_gain": PROMOTION_MACRO_GAIN,
+        "micro_p10_delta": micro_p10_delta,
+        "worst_condition_delta": worst_condition_delta,
+        "guard_tolerance": PROMOTION_GUARD_TOLERANCE,
+        "progress_passed": bool(progress_passed),
+        "guards_passed": guards_passed,
+        "integrity_passed": integrity_passed,
+        "passed": bool(progress_passed and guards_passed and integrity_passed),
+    }
+
+
 def grouped_results(
     rows: list[dict],
     successes: np.ndarray,
@@ -324,10 +542,6 @@ def grouped_results(
         "by_family": summarize("family"),
         "by_primary_cell": summarize("primary_cell"),
     }
-    family_gate = all(item["successes"] >= 26 for item in summary["by_family"].values())
-    subtype_gate = all(
-        item["successes"] >= 6 for item in summary["by_primary_cell"].values()
-    )
     integrity_failure_count = sum(
         int(row["integrity_failure"]) for row in per_map
     )
@@ -360,16 +574,14 @@ def grouped_results(
             for row in per_map
         ),
     }
-    summary["mastery_gate"] = {
-        "family_26_of_32": family_gate,
-        "primary_cell_6_of_8": subtype_gate,
-        "performance_passed": family_gate and subtype_gate,
-        "integrity_passed": summary["integrity"]["passed"],
-        "passed": (
-            family_gate
-            and subtype_gate
-            and summary["integrity"]["passed"]
-        ),
+    summary["graded"] = graded_summary(per_map)
+    summary["comparison_gate_contract"] = {
+        "requires_reference_evaluation": True,
+        "exact_progress": "at least one additional map",
+        "macro_completion_gain": PROMOTION_MACRO_GAIN,
+        "micro_p10_max_regression": PROMOTION_GUARD_TOLERANCE,
+        "worst_condition_max_regression": PROMOTION_GUARD_TOLERANCE,
+        "integrity_required": True,
     }
     summary["termination_reasons"] = {
         reason: sum(
@@ -412,8 +624,24 @@ def main() -> None:
     parser.add_argument(
         "--strata",
         nargs="+",
-        default=("M0", "M1", "M2"),
+        default=None,
         help="stratum directories under --split (e.g. 'M0 M1 M2', or 'all')",
+    )
+    parser.add_argument(
+        "--accepted-panel",
+        choices=("promotion", "development", "sealed"),
+        help=(
+            "Evaluate one panel directly from a "
+            "terra_curriculum_loader_bank_v1 root. Uses the manifest's frozen "
+            "reset_seed and episode_id; incompatible with --strata."
+        ),
+    )
+    parser.add_argument(
+        "--terra-revision",
+        help=(
+            "Exact immutable Terra revision bound into an accepted bank. "
+            "Required with --accepted-panel; no Git metadata is consulted."
+        ),
     )
     parser.add_argument("--horizon", type=int, default=450)
     parser.add_argument("--seed", type=int, default=20260724)
@@ -441,6 +669,38 @@ def main() -> None:
             f"{args.expect_completion_contract}, imported {completion_contract}"
         )
 
+    accepted_bank = None
+    if args.accepted_panel is not None:
+        if args.strata is not None:
+            raise ValueError("--accepted-panel is incompatible with --strata")
+        if args.terra_revision is None:
+            raise ValueError("--accepted-panel requires --terra-revision")
+        accepted_bank = load_accepted_bank(
+            bank_root,
+            "G-UNIFORM",
+            args.terra_revision,
+        )
+        panel = next(
+            panel
+            for panel in accepted_bank.evaluation_panels
+            if panel.name == args.accepted_panel
+        )
+        targets = [
+            (
+                args.accepted_panel,
+                "all",
+                panel.maps_path,
+            )
+        ]
+    else:
+        if args.terra_revision is not None:
+            raise ValueError("--terra-revision requires --accepted-panel")
+        strata = args.strata or ("M0", "M1", "M2")
+        targets = [
+            (args.split, stratum, f"{args.split}/{stratum}")
+            for stratum in strata
+        ]
+
     paths = checkpoint_paths(args)
     checkpoints = [(path, load_pkl_object(str(path))) for path in paths]
     checkpoints.sort(
@@ -456,8 +716,7 @@ def main() -> None:
         _validate_checkpoint_architecture(checkpoint, reference_train_config)
 
     records = []
-    for stratum in args.strata:
-        relative_path = f"{args.split}/{stratum}"
+    for split_name, stratum, relative_path in targets:
         directory = bank_root / relative_path
         rows = load_manifest(directory)
         count = len(rows)
@@ -466,7 +725,15 @@ def main() -> None:
         config = configure_for_bank(reference_train_config, relative_path, count)
         _, env, env_params, initialized_state = make_mixed_agent_states(config)
         env_params = jax.tree_util.tree_map(lambda value: value[0], env_params)
-        reset_keys = exact_reset_keys(count)
+        reset_keys = (
+            manifest_reset_keys(
+                rows,
+                count,
+                accepted_bank.environment_protocol_sha256,
+            )
+            if accepted_bank is not None
+            else exact_reset_keys(count)
+        )
         reset_verification = verify_exact_reset(
             env,
             env_params,
@@ -475,6 +742,8 @@ def main() -> None:
             count,
         )
         model = SimpleNamespace(apply=initialized_state.apply_fn)
+        previous_summary = None
+        previous_checkpoint = None
 
         for checkpoint_path, checkpoint in checkpoints:
             _, stats, _ = rollout_episode(
@@ -566,14 +835,36 @@ def main() -> None:
                 },
                 integrity_metrics=integrity_metrics,
             )
+            comparison_to_previous = (
+                None
+                if previous_summary is None
+                else {
+                    "reference_checkpoint": str(previous_checkpoint),
+                    **comparison_gate(previous_summary, summary),
+                }
+            )
             record = {
-                "schema": "terra_fixed_bank_eval_v3",
+                "schema": "terra_fixed_bank_eval_v4",
                 "completion_contract": completion_contract,
                 "checkpoint": str(checkpoint_path),
                 "checkpoint_sha256": sha256_file(checkpoint_path),
                 "checkpoint_update": int(checkpoint.get("next_update", 0)),
                 "bank_root": str(bank_root),
-                "split": args.split,
+                "accepted_bank": (
+                    None
+                    if accepted_bank is None
+                    else {
+                        "schema": "terra_curriculum_loader_bank_v1",
+                        "terra_revision": accepted_bank.terra_revision,
+                        "environment_protocol_sha256": (
+                            accepted_bank.environment_protocol_sha256
+                        ),
+                        "source_registry_sha256": (
+                            accepted_bank.source_registry_sha256
+                        ),
+                    }
+                ),
+                "split": split_name,
                 "stratum": stratum,
                 "manifest": str(directory / "manifest.jsonl"),
                 "manifest_sha256": sha256_file(directory / "manifest.jsonl"),
@@ -586,6 +877,7 @@ def main() -> None:
                 "exact_manifest_enumeration": True,
                 "reset_verification": reset_verification,
                 "summary": summary,
+                "comparison_to_previous": comparison_to_previous,
                 "per_map": per_map,
             }
             records.append(record)
@@ -593,10 +885,23 @@ def main() -> None:
                 json.dump(records, handle, indent=2, sort_keys=True)
                 handle.write("\n")
             overall = summary["overall"]
-            print(
-                f"{checkpoint_path.name} {args.split}/{stratum}: "
-                f"{overall['successes']}/{overall['episodes']} success"
-            )
+            graded = summary["graded"]
+            if graded.get("available"):
+                print(
+                    f"{checkpoint_path.name} {split_name}/{stratum}: "
+                    f"macro={graded['macro_completion']:.3f}, "
+                    f"micro_p10={graded['micro']['p10']:.3f}, "
+                    f"worst={graded['worst_condition_completion']:.3f}, "
+                    f"exact={overall['successes']}/{overall['episodes']}"
+                )
+            else:
+                print(
+                    f"{checkpoint_path.name} {split_name}/{stratum}: "
+                    f"exact={overall['successes']}/{overall['episodes']} "
+                    f"({graded['reason']})"
+                )
+            previous_summary = summary
+            previous_checkpoint = checkpoint_path
 
 
 if __name__ == "__main__":

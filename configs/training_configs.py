@@ -44,6 +44,21 @@ class CurriculumSettings:
 
 
 @dataclass
+class PooledSamplerSettings:
+    """One explicit probability vector over map conditions."""
+
+    enabled: bool = False
+    rule: str = "uniform"
+    update_interval: int = 150
+    uniform_floor: float = 0.20
+    mastery_threshold: float = 0.75
+    temperature: float = 0.25
+    min_episodes: int = 20
+    competence_ema: float = 0.30
+    max_mass: float = 0.15
+
+
+@dataclass
 class TrainingConfig:
     """Complete training configuration for a named setup."""
 
@@ -57,6 +72,10 @@ class TrainingConfig:
     # Map configuration (curriculum levels)
     maps: List[MapLevel] = field(default_factory=list)
     curriculum: CurriculumSettings = field(default_factory=CurriculumSettings)
+    pooled_sampler: PooledSamplerSettings = field(
+        default_factory=PooledSamplerSettings
+    )
+    accepted_bank_arm: Optional[str] = None
 
     # Agent-neutral relocation reward
     relocation_progress_mult: float = 1.5
@@ -120,6 +139,18 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             decrease_level_threshold=cur_data.get("decrease_level_threshold", 80),
             last_level_type=cur_data.get("last_level_type", "random"),
         )
+        sampler_data = cfg.get("pooled_sampler", {})
+        pooled_sampler = PooledSamplerSettings(
+            enabled=sampler_data.get("enabled", False),
+            rule=sampler_data.get("rule", "uniform"),
+            update_interval=sampler_data.get("update_interval", 150),
+            uniform_floor=sampler_data.get("uniform_floor", 0.20),
+            mastery_threshold=sampler_data.get("mastery_threshold", 0.75),
+            temperature=sampler_data.get("temperature", 0.25),
+            min_episodes=sampler_data.get("min_episodes", 20),
+            competence_ema=sampler_data.get("competence_ema", 0.30),
+            max_mass=sampler_data.get("max_mass", 0.15),
+        )
 
         # Create TrainingConfig
         _TRAINING_CONFIGS[name] = TrainingConfig(
@@ -129,6 +160,8 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             action_types=tuple(cfg.get("action_types", [0])),
             maps=maps,
             curriculum=curriculum,
+            pooled_sampler=pooled_sampler,
+            accepted_bank_arm=cfg.get("accepted_bank_arm"),
             relocation_progress_mult=cfg.get("relocation_progress_mult", 1.5),
             truck_capacity=cfg.get("truck_capacity"),
             skidsteer_capacity=cfg.get("skidsteer_capacity"),

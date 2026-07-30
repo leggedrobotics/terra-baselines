@@ -616,3 +616,80 @@ m2_dose_fast:
       max_steps: 450
       rewards_type: DENSE
       apply_trench_rewards: false
+
+# -----------------------------------------------------------------------------
+# P5 accepted-bank screen.
+#
+# These presets contain no map paths. `--accepted-bank-root` must point at a
+# frozen terra_curriculum_loader_bank_v1 index, from which train_mixed.py
+# selects one exact MapsBuffer directory per condition. This makes the root a
+# required run parameter and prevents an old 12-map bank from being selected by
+# an inherited DATASET_PATH.
+#
+# All four arms share reward, horizon, observations, actions, dynamics and PPO.
+# The only G-UNIFORM/G-ADAPTIVE difference is whether the explicit condition
+# probability vector moves.
+# -----------------------------------------------------------------------------
+
+F-ANCHOR:
+  description: Accepted foundation anchors, uniform condition mass, scratch
+  accepted_bank_arm: F-ANCHOR
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
+T-ANCHOR:
+  description: Accepted trench anchors, uniform condition mass, scratch
+  accepted_bank_arm: T-ANCHOR
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
+G-UNIFORM:
+  description: All accepted conditions, uniform condition mass, scratch
+  accepted_bank_arm: G-UNIFORM
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
+G-ADAPTIVE:
+  description: All accepted conditions, adaptive-progressive condition mass, scratch
+  accepted_bank_arm: G-ADAPTIVE
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: adaptive
+    update_interval: 150
+    uniform_floor: 0.20
+    mastery_threshold: 0.75
+    temperature: 0.25
+    min_episodes: 20
+    competence_ema: 0.30
+    max_mass: 0.15

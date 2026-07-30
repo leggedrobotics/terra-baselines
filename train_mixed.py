@@ -118,6 +118,9 @@ from utils.episode_aggregates import (
     reduce_episode_aggregate,
     update_episode_aggregate,
 )
+from utils.accepted_bank import ARMS as ACCEPTED_BANK_ARMS
+from utils.accepted_bank import AcceptedBank, load_accepted_bank
+from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
 import json
 import os
 import shutil
@@ -827,6 +830,65 @@ def _build_mixed_dataset_pool(
     return mixed_levels, str(temp_root), mixed_pool_size
 
 
+PER_ENV_RATCHET_DISABLED_THRESHOLD = 1_000_000
+
+
+def pooled_sampler_settings(config) -> SamplerSettings | None:
+    raw = getattr(config, "pooled_sampler", None)
+    if not raw or not raw.get("enabled", False):
+        return None
+    values = {
+        field: raw[field]
+        for field in SamplerSettings.__dataclass_fields__
+        if field in raw
+    }
+    return SamplerSettings(**values)
+
+
+def _assert_pooled_level_contract(
+    curriculum_levels: list[dict],
+    increase_threshold: int,
+    decrease_threshold: int,
+) -> None:
+    """Keep condition selection from silently changing the environment task."""
+    if not curriculum_levels:
+        raise ValueError("pooled sampler needs at least one condition level")
+    contracts = {
+        (
+            int(level["max_steps_in_episode"]),
+            int(level["rewards_type"]),
+            bool(level["apply_trench_rewards"]),
+        )
+        for level in curriculum_levels
+    }
+    if contracts != {(450, 0, False)}:
+        raise ValueError(
+            "accepted-bank condition levels must all use horizon=450, DENSE, "
+            f"apply_trench_rewards=false; observed {sorted(contracts)}"
+        )
+    if min(int(increase_threshold), int(decrease_threshold)) < (
+        PER_ENV_RATCHET_DISABLED_THRESHOLD
+    ):
+        raise ValueError(
+            "the global sampler owns condition assignment; Terra's per-env "
+            "ratchet must be disabled with thresholds >= "
+            f"{PER_ENV_RATCHET_DISABLED_THRESHOLD}"
+        )
+
+
+def assign_curriculum_levels(env_cfg, levels: np.ndarray):
+    current = jnp.asarray(env_cfg.curriculum.level)
+    assigned = jnp.asarray(levels, dtype=current.dtype)
+    if assigned.shape != current.shape:
+        raise ValueError(
+            f"condition assignment shape {assigned.shape} != env shape "
+            f"{current.shape}"
+        )
+    return env_cfg._replace(
+        curriculum=env_cfg.curriculum._replace(level=assigned)
+    )
+
+
 @dataclass
 class MixedAgentTrainConfig:
     """Configuration for training mixed agent environments
@@ -911,6 +973,8 @@ class MixedAgentTrainConfig:
     curriculum_increase_level_threshold: int | None = None
     curriculum_decrease_level_threshold: int | None = None
     curriculum_last_level_type: str | None = None
+    pooled_sampler: dict | None = None
+    accepted_bank: AcceptedBank | None = None
     # Optional single-map training path. When set, map loading uses this path directly
     # and does not rely on DATASET_PATH / DATASET_SIZE.
     single_map_path: str | None = None
@@ -1308,6 +1372,18 @@ def make_mixed_agent_states(
             if config.curriculum_last_level_type is not None
             else CurriculumGlobalConfig.last_level_type
         )
+        sampler_settings = pooled_sampler_settings(config)
+        if sampler_settings is not None:
+            if single_map_path is not None:
+                raise ValueError(
+                    "the pooled condition sampler cannot be combined with "
+                    "--map_path"
+                )
+            _assert_pooled_level_contract(
+                curriculum_levels,
+                increase_th,
+                decrease_th,
+            )
 
         class CustomCurriculumGlobalConfig(CurriculumGlobalConfig):
             levels = curriculum_levels
@@ -1316,13 +1392,25 @@ def make_mixed_agent_states(
             last_level_type = last_level
 
         batch_cfg = BatchConfig(curriculum_global=CustomCurriculumGlobalConfig())
-        print(
-            f"📍 Using maps from config: {[lvl['maps_path'] for lvl in curriculum_levels]}"
-        )
-        print(
-            f"📍 Curriculum: promote after {increase_th} task success(es), "
-            f"demote after {decrease_th} failure(s), last_level_type={last_level!r}"
-        )
+        level_paths = [level["maps_path"] for level in curriculum_levels]
+        if len(level_paths) > 8:
+            print(
+                f"📍 Using {len(level_paths)} condition levels: "
+                f"{level_paths[0]} .. {level_paths[-1]}"
+            )
+        else:
+            print(f"📍 Using maps from config: {level_paths}")
+        if sampler_settings is None:
+            print(
+                f"📍 Curriculum: promote after {increase_th} task success(es), "
+                f"demote after {decrease_th} failure(s), "
+                f"last_level_type={last_level!r}"
+            )
+        else:
+            print(
+                "📍 Global condition sampler owns levels; per-env ratchet "
+                f"disabled at {increase_th}/{decrease_th}"
+            )
     else:
         batch_cfg = BatchConfig()
         print("📍 Using default maps from config.py")
@@ -1626,9 +1714,32 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
     else:
         tags.append(f"gpus:{_tag_value(config.num_devices)}")
 
+    sampler_config = config.pooled_sampler or {}
+    if sampler_config.get("enabled", False):
+        tags.append(
+            f"sampler:{_tag_value(sampler_config.get('rule', 'uniform'))}"
+        )
+    if config.accepted_bank is not None:
+        tags.extend(
+            (
+                f"accepted-arm:{_tag_value(config.accepted_bank.arm)}",
+                (
+                    "terra-revision:"
+                    f"{_tag_value(config.accepted_bank.terra_revision[:12])}"
+                ),
+                "bank:terra-curriculum-loader-v1",
+                "init:scratch",
+            )
+        )
+
     if config.curriculum_levels_override:
-        for level in config.curriculum_levels_override:
-            tags.append(f"map:{_tag_value(level['maps_path'])}")
+        if len(config.curriculum_levels_override) > 8:
+            tags.append(
+                f"map:per-condition-x{len(config.curriculum_levels_override)}"
+            )
+        else:
+            for level in config.curriculum_levels_override:
+                tags.append(f"map:{_tag_value(level['maps_path'])}")
     else:
         tags.append("map:default")
 
@@ -1970,6 +2081,46 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         num_families = len(family_names)
         num_primary_cells = len(primary_cell_names)
         aggregate_group_count = num_stages * num_families * num_primary_cells * 4
+        sampler_settings = pooled_sampler_settings(config)
+        pooled_sampler = None
+        if sampler_settings is not None:
+            if config.accepted_bank is None:
+                raise ValueError(
+                    "pooled condition sampling is supported only through "
+                    "--accepted-bank-root"
+                )
+            bank = config.accepted_bank
+            level_paths = tuple(
+                level["maps_path"]
+                for level in env.batch_cfg.curriculum_global.levels
+            )
+            expected_paths = tuple(level.maps_path for level in bank.levels)
+            if level_paths != expected_paths:
+                raise ValueError(
+                    "accepted-bank level order changed between validation and "
+                    "environment construction"
+                )
+            labels = {
+                level.condition_id: {
+                    "family": level.family,
+                    "branch_depth": level.branch_depth,
+                }
+                for level in bank.levels
+            }
+            pooled_sampler = PooledConditionSampler(
+                [level.condition_id for level in bank.levels],
+                sampler_settings,
+                maps_per_condition=[
+                    level.map_count for level in bank.levels
+                ],
+                labels=labels,
+            )
+            print(
+                "📊 Condition sampler: "
+                f"{sampler_settings.rule}, {len(bank.levels)} conditions, "
+                f"{bank.map_count_per_condition} maps/condition",
+                flush=True,
+            )
 
         def train(rng: jax.Array, train_state: TrainState):
             # INIT ENV
@@ -1980,6 +2131,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             reset_rng = reset_rng.reshape(
                 (config.num_devices, config.num_envs_per_device, -1)
             )
+
+            reset_env_params = env_params
+            if pooled_sampler is not None:
+                reset_env_params = assign_curriculum_levels(
+                    env_params,
+                    pooled_sampler.sample_levels(
+                        (config.num_devices, config.num_envs_per_device)
+                    ),
+                )
 
             # TERRA: Reset envs
             (
@@ -1993,7 +2153,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 dumpability_mask_init,
                 action_maps,
                 distance_maps,
-            ) = env.prepare_reset(env_params, reset_rng)
+            ) = env.prepare_reset(reset_env_params, reset_rng)
             reset_fn_p = jax.pmap(env.reset_prepared, axis_name="devices")
             timestep = reset_fn_p(
                 env_params_reset,
@@ -2445,7 +2605,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     and i % config.finite_check_interval == 0
                 )
                 need_episode_flush = (
-                    need_train_log or need_checkpoint or need_final_state
+                    need_train_log
+                    or need_checkpoint
+                    or need_final_state
+                    or pooled_sampler is not None
                 )
                 need_host_state = need_episode_flush or need_eval or need_finite_check
                 f = min(1.0, i / ent_T) if ent_T > 0 else 1.0
@@ -2482,6 +2645,22 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     [need_episode_flush] * config.num_devices,
                     dtype=jnp.bool_,
                 )
+                if pooled_sampler is not None:
+                    pooled_sampler.start(i)
+                    if pooled_sampler.due(i):
+                        pooled_sampler.refresh(i)
+                    next_env_cfg = assign_curriculum_levels(
+                        runner_state[2].env_cfg,
+                        pooled_sampler.sample_levels(
+                            (config.num_devices, config.num_envs_per_device)
+                        ),
+                    )
+                    runner_state = (
+                        runner_state[0],
+                        runner_state[1],
+                        runner_state[2]._replace(env_cfg=next_env_cfg),
+                        *runner_state[3:],
+                    )
                 start_time = time.time()
                 (
                     runner_state,
@@ -2524,10 +2703,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         run_name=config.name,
                     )
                     assert_aggregate_integrity(episode_payload)
-                    _write_episode_aggregate_receipt(
-                        config,
-                        episode_payload,
-                    )
+                    if need_train_log or need_checkpoint or need_final_state:
+                        _write_episode_aggregate_receipt(
+                            config,
+                            episode_payload,
+                        )
+                    if pooled_sampler is not None:
+                        pooled_sampler.observe_episode_payload(episode_payload)
 
                 if config.fail_on_nonfinite and (
                     need_finite_check or need_checkpoint or need_final_state
@@ -2578,6 +2760,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         **loss_info_single,
                         **_episode_aggregate_wandb_metrics(episode_payload),
                     }
+                    if pooled_sampler is not None:
+                        log_dict.update(pooled_sampler.telemetry())
                     # F7: log the annealed kickstart coefficients (loss terms
                     # kickstart/kl and kickstart/value_mse arrive via loss_info).
                     if teacher_apply_fn is not None:
@@ -2625,6 +2809,34 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         checkpoint,
                         str(Path(config.checkpoint_dir) / checkpoint_name),
                     )
+                    if pooled_sampler is not None:
+                        receipt = pooled_sampler.receipt()
+                        receipt.update(
+                            {
+                                "update": i + 1,
+                                "run_name": config.name,
+                                "accepted_bank_arm": config.accepted_bank.arm,
+                                "terra_revision": (
+                                    config.accepted_bank.terra_revision
+                                ),
+                                "accepted_bank_root": str(
+                                    config.accepted_bank.root
+                                ),
+                                "environment_protocol_sha256": (
+                                    config.accepted_bank.environment_protocol_sha256
+                                ),
+                            }
+                        )
+                        receipt_dir = (
+                            Path(config.checkpoint_dir) / "pooled_sampler"
+                        )
+                        receipt_dir.mkdir(parents=True, exist_ok=True)
+                        receipt_path = receipt_dir / (
+                            f"{config.name}_update_{i + 1:06d}.json"
+                        )
+                        receipt_path.write_text(
+                            json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+                        )
 
                 if need_eval:
                     # Reuse the training reset shape regime and keep only the
@@ -3225,6 +3437,40 @@ if __name__ == "__main__":
         "Run 'python configs/training_configs.py' to see available presets.",
     )
     parser.add_argument(
+        "--accepted-bank-root",
+        type=Path,
+        default=None,
+        help=(
+            "Required by F-ANCHOR, T-ANCHOR, G-UNIFORM and G-ADAPTIVE. "
+            "Must contain a frozen terra_curriculum_loader_bank_v1 dataset.json."
+        ),
+    )
+    parser.add_argument(
+        "--terra-revision",
+        type=str,
+        default=None,
+        help=(
+            "Exact immutable Terra revision bound into the accepted bank. "
+            "Required by accepted-bank configs because source archives do not "
+            "contain .git metadata."
+        ),
+    )
+    parser.add_argument(
+        "--pooled-sampler-interval",
+        type=int,
+        default=None,
+        help="Override the adaptive sampler refresh interval for a smoke only.",
+    )
+    parser.add_argument(
+        "--pooled-sampler-min-episodes",
+        type=int,
+        default=None,
+        help=(
+            "Override the minimum completed episodes per condition/window for "
+            "a smoke only."
+        ),
+    )
+    parser.add_argument(
         "--map_path",
         type=str,
         default=None,
@@ -3344,6 +3590,9 @@ if __name__ == "__main__":
     curriculum_increase_level_threshold = None
     curriculum_decrease_level_threshold = None
     curriculum_last_level_type = None
+    pooled_sampler_override = None
+    accepted_bank_arm = None
+    accepted_bank = None
 
     if args.config is not None:
         try:
@@ -3358,6 +3607,19 @@ if __name__ == "__main__":
             action_types_override = preset.action_types
 
             relocation_progress_mult = preset.relocation_progress_mult
+            accepted_bank_arm = preset.accepted_bank_arm
+            sampler = preset.pooled_sampler
+            pooled_sampler_override = {
+                field: getattr(sampler, field)
+                for field in sampler.__dataclass_fields__
+            }
+            curriculum_increase_level_threshold = (
+                preset.curriculum.increase_level_threshold
+            )
+            curriculum_decrease_level_threshold = (
+                preset.curriculum.decrease_level_threshold
+            )
+            curriculum_last_level_type = preset.curriculum.last_level_type
 
             # Apply capacity overrides from preset
             truck_capacity = preset.truck_capacity
@@ -3387,14 +3649,6 @@ if __name__ == "__main__":
                             "apply_trench_rewards": map_level.apply_trench_rewards,
                         }
                     )
-                curriculum_increase_level_threshold = (
-                    preset.curriculum.increase_level_threshold
-                )
-                curriculum_decrease_level_threshold = (
-                    preset.curriculum.decrease_level_threshold
-                )
-                curriculum_last_level_type = preset.curriculum.last_level_type
-
         except ImportError as e:
             print(f"⚠️  Failed to import training configs: {e}")
             print("   Make sure configs/training_configs.py exists")
@@ -3460,8 +3714,112 @@ if __name__ == "__main__":
             "Set both --replay_map_count and --target_map_repeat to use mixed target-map replay."
         )
 
+    if accepted_bank_arm is None:
+        if args.accepted_bank_root is not None:
+            raise ValueError(
+                "--accepted-bank-root requires one of the accepted-bank configs: "
+                + ", ".join(ACCEPTED_BANK_ARMS)
+            )
+        if (
+            args.pooled_sampler_interval is not None
+            or args.pooled_sampler_min_episodes is not None
+        ):
+            raise ValueError(
+                "--pooled-sampler-* overrides require an accepted-bank config"
+            )
+        if args.terra_revision is not None:
+            raise ValueError(
+                "--terra-revision requires an accepted-bank config"
+            )
+    else:
+        if accepted_bank_arm not in ACCEPTED_BANK_ARMS:
+            raise ValueError(
+                f"config {args.config!r} names unknown accepted-bank arm "
+                f"{accepted_bank_arm!r}"
+            )
+        if args.accepted_bank_root is None:
+            raise ValueError(
+                f"--config {args.config} requires --accepted-bank-root"
+            )
+        if args.terra_revision is None:
+            raise ValueError(
+                f"--config {args.config} requires --terra-revision"
+            )
+        if curriculum_levels_override:
+            raise ValueError(
+                "accepted-bank configs must not hard-code map paths"
+            )
+        if args.map_path is not None:
+            raise ValueError(
+                "accepted-bank configs cannot be combined with --map_path"
+            )
+        if args.resume_from is not None or args.warm_start_from is not None:
+            raise ValueError(
+                "the declared accepted-bank screens start from scratch; "
+                "resume and warm-start are not supported"
+            )
+        accepted_bank = load_accepted_bank(
+            args.accepted_bank_root,
+            accepted_bank_arm,
+            args.terra_revision,
+        )
+        os.environ["DATASET_PATH"] = str(accepted_bank.root)
+        os.environ["DATASET_SIZE"] = str(
+            accepted_bank.map_count_per_condition
+        )
+        from terra.config import RewardsType
+
+        curriculum_levels_override = [
+            {
+                "maps_path": level.maps_path,
+                "max_steps_in_episode": 450,
+                "rewards_type": RewardsType.DENSE,
+                "apply_trench_rewards": False,
+            }
+            for level in accepted_bank.levels
+        ]
+        if not pooled_sampler_override or not pooled_sampler_override.get(
+            "enabled", False
+        ):
+            raise ValueError(
+                f"accepted-bank config {args.config} must enable the pooled sampler"
+            )
+        expected_rule = (
+            "adaptive" if accepted_bank_arm == "G-ADAPTIVE" else "uniform"
+        )
+        if pooled_sampler_override.get("rule") != expected_rule:
+            raise ValueError(
+                f"{accepted_bank_arm} requires sampler rule {expected_rule!r}"
+            )
+        if expected_rule == "uniform" and (
+            args.pooled_sampler_interval is not None
+            or args.pooled_sampler_min_episodes is not None
+        ):
+            raise ValueError(
+                "sampler refresh overrides do not apply to a uniform arm"
+            )
+        if args.pooled_sampler_interval is not None:
+            pooled_sampler_override["update_interval"] = (
+                args.pooled_sampler_interval
+            )
+        if args.pooled_sampler_min_episodes is not None:
+            pooled_sampler_override["min_episodes"] = (
+                args.pooled_sampler_min_episodes
+            )
+        pooled_sampler_override["seed"] = int(args.seed)
+        print(
+            f"📦 Accepted bank: {accepted_bank.root} | "
+            f"{accepted_bank_arm} | {len(accepted_bank.levels)} conditions x "
+            f"{accepted_bank.map_count_per_condition} maps",
+            flush=True,
+        )
+
     if args.relocation_progress_mult is not None:
         relocation_progress_mult = args.relocation_progress_mult
+    if accepted_bank_arm is not None and relocation_progress_mult != 1.5:
+        raise ValueError(
+            "accepted-bank map comparisons freeze relocation_progress_mult=1.5"
+        )
 
     # F15: CLI capacity overrides take precedence over the preset values.
     if args.truck_capacity is not None:
@@ -3564,6 +3922,8 @@ if __name__ == "__main__":
         curriculum_increase_level_threshold=curriculum_increase_level_threshold,
         curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,
         curriculum_last_level_type=curriculum_last_level_type,
+        pooled_sampler=pooled_sampler_override,
+        accepted_bank=accepted_bank,
         single_map_path=args.map_path,
         replay_map_count=args.replay_map_count,
         target_map_repeat=args.target_map_repeat,
