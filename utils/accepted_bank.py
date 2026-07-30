@@ -14,6 +14,13 @@ ARMS = ("F-ANCHOR", "T-ANCHOR", "G-UNIFORM", "G-ADAPTIVE")
 FAMILIES = ("foundation", "trench")
 BRANCH_DEPTHS = ("Anchor", "One-axis", "Composed")
 TRAIN_MAPS_PER_CONDITION = 64
+RESET_ARRAY_FOLDERS = (
+    "images",
+    "occupancy",
+    "dumpability",
+    "actions",
+    "distance",
+)
 
 
 def _sha256_file(path: Path) -> str:
@@ -173,6 +180,81 @@ def _validate_level(root: Path, entry: dict) -> AcceptedLevel:
         maps_path=maps_path,
         map_count=map_count,
     )
+
+
+def validate_staged_training_bank(root: str | Path) -> int:
+    """Validate the complete 64-map training payload before it is uploaded."""
+    root_path = Path(root).expanduser().resolve()
+    index_path = root_path / "dataset.json"
+    try:
+        index = json.loads(index_path.read_text())
+    except FileNotFoundError:
+        raise
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{index_path}: invalid JSON: {exc}") from exc
+    train = index.get("train") if isinstance(index, dict) else None
+    if not isinstance(train, list) or not train:
+        raise ValueError(f"{index_path}: train must be a nonempty list")
+
+    levels = []
+    for entry in train:
+        if not isinstance(entry, dict):
+            raise ValueError(f"{index_path}: every train entry must be an object")
+        if entry.get("map_count") != TRAIN_MAPS_PER_CONDITION:
+            raise ValueError(
+                f"{index_path}: {entry.get('condition_id')!r} must declare "
+                f"exactly {TRAIN_MAPS_PER_CONDITION} train maps"
+            )
+        level = _validate_level(root_path, entry)
+        directory = root_path / level.maps_path
+
+        metadata_path = directory / "dataset.json"
+        try:
+            metadata = json.loads(metadata_path.read_text())
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{metadata_path}: invalid JSON: {exc}") from exc
+        if not isinstance(metadata, dict):
+            raise ValueError(f"{metadata_path}: expected a JSON object")
+        for count_field in ("slot_count", "num_maps"):
+            count = metadata.get(count_field)
+            if count_field in metadata and (
+                not isinstance(count, int)
+                or isinstance(count, bool)
+                or count != TRAIN_MAPS_PER_CONDITION
+            ):
+                raise ValueError(
+                    f"{metadata_path}: {count_field} must be "
+                    f"{TRAIN_MAPS_PER_CONDITION}"
+                )
+
+        expected_names = {
+            f"img_{slot}.npy"
+            for slot in range(1, TRAIN_MAPS_PER_CONDITION + 1)
+        }
+        for folder in RESET_ARRAY_FOLDERS:
+            array_directory = directory / folder
+            if not array_directory.is_dir() or array_directory.is_symlink():
+                raise ValueError(
+                    f"{array_directory}: expected a real reset-array directory"
+                )
+            entries = tuple(array_directory.iterdir())
+            actual_names = {path.name for path in entries}
+            if actual_names != expected_names or any(
+                not path.is_file() or path.is_symlink() for path in entries
+            ):
+                raise ValueError(
+                    f"{array_directory}: must contain exactly "
+                    f"img_1.npy..img_{TRAIN_MAPS_PER_CONDITION}.npy"
+                )
+        levels.append(level)
+
+    condition_ids = [level.condition_id for level in levels]
+    maps_paths = [level.maps_path for level in levels]
+    if len(condition_ids) != len(set(condition_ids)):
+        raise ValueError(f"{index_path}: train repeats a condition_id")
+    if len(maps_paths) != len(set(maps_paths)):
+        raise ValueError(f"{index_path}: train repeats a maps_path")
+    return TRAIN_MAPS_PER_CONDITION
 
 
 def _validate_evaluation_panels(

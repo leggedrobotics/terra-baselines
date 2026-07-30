@@ -149,21 +149,10 @@ for marker in NON_ADMISSION.md REVIEW_ONLY.md; do
 done
 
 BANK_MAPS_PER_CONDITION="$(
-    python3 -c '
-import json, sys
-train = json.load(open(sys.argv[1])).get("train")
-if not isinstance(train, list) or not train:
-    raise SystemExit("staged bank train must be a nonempty list")
-counts = {entry.get("map_count") for entry in train}
-if len(counts) != 1 or any(
-    not isinstance(value, int) or isinstance(value, bool) or value <= 0
-    for value in counts
-):
-    raise SystemExit(
-        f"staged bank must declare one positive map_count, got {sorted(counts, key=str)}"
-    )
-print(next(iter(counts)))
-' "$BANK_STAGE/dataset.json"
+    PYTHONPATH="$STAGE/campaign/source/terra-baselines" \
+        python3 \
+        "$STAGE/campaign/source/terra-baselines/scripts/euler_accepted_bank_v1/validate_training_bank.py" \
+        "$BANK_STAGE"
 )"
 test "$BANK_MAPS_PER_CONDITION" = "$EXPECTED_TRAIN_MAPS_PER_CONDITION" || {
     echo "smoke/screen banks require exactly $EXPECTED_TRAIN_MAPS_PER_CONDITION train maps per condition; staged bank has $BANK_MAPS_PER_CONDITION" >&2

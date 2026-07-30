@@ -1,5 +1,7 @@
 import json
+import os
 import subprocess
+import sys
 from collections import namedtuple
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +17,91 @@ from scripts.euler_accepted_bank_v1.select_promotion import (
     verify_smoke,
 )
 from utils.helpers import save_pkl_object
+
+
+RESET_ARRAY_FOLDERS = (
+    "images",
+    "occupancy",
+    "dumpability",
+    "actions",
+    "distance",
+)
+
+
+def _write_prepare_bank(
+    root,
+    *,
+    declared_count=64,
+    manifest_count=None,
+    array_count=None,
+):
+    manifest_count = declared_count if manifest_count is None else manifest_count
+    array_count = declared_count if array_count is None else array_count
+    level = root / "train" / "condition"
+    level.mkdir(parents=True)
+    (root / "dataset.json").write_text(
+        json.dumps(
+            {
+                "train": [
+                    {
+                        "condition_id": "condition",
+                        "family": "foundation",
+                        "branch_depth": "Anchor",
+                        "maps_path": "train/condition",
+                        "map_count": declared_count,
+                    }
+                ]
+            }
+        )
+        + "\n"
+    )
+    (level / "dataset.json").write_text(
+        json.dumps(
+            {
+                "slot_count": declared_count,
+                "num_maps": declared_count,
+            }
+        )
+        + "\n"
+    )
+    rows = [
+        {
+            "slot_index": slot,
+            "map_id": f"map-{slot}",
+            "family": "foundation",
+            "primary_cell": "condition",
+        }
+        for slot in range(1, manifest_count + 1)
+    ]
+    (level / "manifest.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows)
+    )
+    for folder in RESET_ARRAY_FOLDERS:
+        directory = level / folder
+        directory.mkdir()
+        for slot in range(1, array_count + 1):
+            (directory / f"img_{slot}.npy").write_bytes(b"test")
+    return root
+
+
+def _run_prepare_validator(bank_root):
+    root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root)
+    return subprocess.run(
+        [
+            sys.executable,
+            str(
+                root
+                / "scripts/euler_accepted_bank_v1/validate_training_bank.py"
+            ),
+            str(bank_root),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
 
 
 def _record(arm, update, *, passed=True, macro=0.4, exact=2, worst=0.1):
@@ -243,6 +330,7 @@ def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
     assert "NUM_ENVS_PER_DEVICE=1024" in sbatch
     assert "NUM_STEPS=32" in sbatch
     assert "EXPECTED_TRAIN_MAPS_PER_CONDITION=64" in prepare
+    assert "validate_training_bank.py" in prepare
     assert (
         '"train_maps_per_condition": int(train_maps_per_condition)'
         in prepare
@@ -263,6 +351,49 @@ def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
     assert sbatch.index("compare-reset-hashes") < sbatch.index(
         '"${TRAIN_COMMAND[@]}"'
     )
+
+
+def test_prepare_validator_accepts_complete_64_map_bank(tmp_path):
+    result = _run_prepare_validator(_write_prepare_bank(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "64"
+
+
+def test_prepare_validator_rejects_wrong_declaration(tmp_path):
+    result = _run_prepare_validator(
+        _write_prepare_bank(tmp_path, declared_count=63)
+    )
+    assert result.returncode != 0
+    assert "must declare exactly 64 train maps" in result.stderr
+
+
+def test_prepare_validator_rejects_64_declared_63_manifest(tmp_path):
+    result = _run_prepare_validator(
+        _write_prepare_bank(
+            tmp_path,
+            declared_count=64,
+            manifest_count=63,
+            array_count=64,
+        )
+    )
+    assert result.returncode != 0
+    assert "declares 64 maps" in result.stderr
+    assert "contains 63" in result.stderr
+
+
+def test_prepare_validator_rejects_missing_or_extra_reset_array(tmp_path):
+    bank = _write_prepare_bank(tmp_path)
+    last_array = bank / "train/condition/images/img_64.npy"
+    last_array.unlink()
+    result = _run_prepare_validator(bank)
+    assert result.returncode != 0
+    assert "must contain exactly img_1.npy..img_64.npy" in result.stderr
+
+    last_array.write_bytes(b"test")
+    (bank / "train/condition/images/img_65.npy").write_bytes(b"test")
+    result = _run_prepare_validator(bank)
+    assert result.returncode != 0
+    assert "must contain exactly img_1.npy..img_64.npy" in result.stderr
 
 
 def test_promote_phase_fails_before_reading_paths():
