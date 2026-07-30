@@ -102,6 +102,7 @@ from terra.config import (
     Rewards,
     CurriculumGlobalConfig,
     RewardsType,
+    check_relocation_multipliers,
 )
 from flax.training.train_state import TrainState
 import optax
@@ -892,6 +893,11 @@ class MixedAgentTrainConfig:
     # writes. Default off preserves historical runs; E9+ smoke/prod jobs enable it.
     fail_on_nonfinite: bool = False
     finite_check_interval: int = 0
+    # reward-v2 launch gate. When set, a run whose EFFECTIVE env config has
+    # excavator_relocate_dumped_mult >= excavator_relocate_dug_dirt_mult (i.e.
+    # the re-dig discount is off, the reward-v1 configuration M1-B exploited)
+    # refuses to start. Off by default so the M1 arms stay reproducible.
+    require_reward_v2: bool = False
 
     # Checkpoint loading
     resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
@@ -1451,6 +1457,28 @@ def make_mixed_agent_states(
                     print(
                         f"   transport_relocate_mult: {config.transport_relocate_mult}"
                     )
+
+    # REVIEW_V6 R-2: the reward-v2 guard used to be dead code. Report the
+    # EFFECTIVE multipliers (after preset, CLI and checkpoint precedence) on
+    # every run, from both branches above, so a reward-v1 launch is visible in
+    # the first page of the log instead of in the readout.
+    print(
+        "🪣 Relocation multipliers (effective): "
+        f"excavator_relocate_dumped_mult={float(env_params.excavator_relocate_dumped_mult)}, "
+        f"excavator_relocate_dug_dirt_mult={float(env_params.excavator_relocate_dug_dirt_mult)}, "
+        f"transport_relocate_mult={float(env_params.transport_relocate_mult)}"
+    )
+    _relocation_warning = check_relocation_multipliers(env_params)
+    if _relocation_warning:
+        print(f"⚠️  {_relocation_warning}", flush=True)
+        if config.require_reward_v2:
+            raise ValueError(
+                _relocation_warning
+                + " --require_reward_v2 is set, refusing to launch."
+            )
+    else:
+        print("✅ reward-v2 active: the excavator re-dig discount is a discount.")
+
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
 
@@ -3260,6 +3288,16 @@ if __name__ == "__main__":
             "--fail_on_nonfinite is set, which checks every update."
         ),
     )
+    parser.add_argument(
+        "--require_reward_v2",
+        action="store_true",
+        help=(
+            "Refuse to launch unless the effective config has "
+            "excavator_relocate_dumped_mult < excavator_relocate_dug_dirt_mult "
+            "(the re-dig discount is on). Set on the M2 arms; leave off to "
+            "reproduce the reward-v1 M1 arms."
+        ),
+    )
 
     # Named configuration preset
     parser.add_argument(
@@ -3633,6 +3671,7 @@ if __name__ == "__main__":
         action_types_override=action_types_override,
         debug=args.debug,
         fail_on_nonfinite=args.fail_on_nonfinite,
+        require_reward_v2=args.require_reward_v2,
         finite_check_interval=args.finite_check_interval,
         config_name=args.config,
         dump_bonus_mult=dump_bonus_mult,

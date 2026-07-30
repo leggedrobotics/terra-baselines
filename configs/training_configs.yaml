@@ -549,3 +549,200 @@ map_curriculum_staged_v1:
       max_steps: 450
       rewards_type: DENSE
       apply_trench_rewards: false
+
+# -----------------------------------------------------------------------------
+# M1 v5-main curriculum screen (2026-07-30). Bank: map-curriculum-v5-main;
+# materialize with scripts/build_v5m_dataset.py and point DATASET_PATH at the
+# resulting curriculum_v5m/ root, DATASET_SIZE at the level size (864).
+# max_steps is set on EVERY level because terra/curriculum.py rewrites
+# EnvConfig.max_steps_in_episode from this table on both reset and update.
+#
+# REWARD-V1, ON PURPOSE. All three M1 presets pin
+# excavator_relocate_dumped_mult == excavator_relocate_dug_dirt_mult == 1.5,
+# which disables the excavator re-dig discount: this is what jobs
+# 9046454/9046455/9046456 actually ran, and M1-B's staging farm is a result of
+# it. Do NOT "fix" these values — they are the M1 record and
+# tests/test_m2_presets.py asserts them. Reward-v2 (0.2 / 1.5) is opted into by
+# the M2 presets below.
+# -----------------------------------------------------------------------------
+
+curriculum_v5m_a_t0:
+  description: A_t0-baseline - the 8 v5-main T0 anchors only, 50/50 family balance
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L0
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+curriculum_v5m_b_uniform:
+  description: B_uniform-full - all 29 v5-main conditions, uniform, 50/50 family balance
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L3
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+curriculum_v5m_c_waves:
+  description: C_curriculum - cumulative admission waves L0->L1->L2->L3 (per-env, 3/3/none)
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 1.5
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L0
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L1
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L2
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L3
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+# -----------------------------------------------------------------------------
+# M2 dose-curriculum campaign (CURRICULUM_SPEC_V6.md section 4). Three arms,
+# 8,000 updates each, scratch init, E8 template arch, 4 x 1024 x 32.
+#
+# REWARD-V2 IS ACTIVE ON ALL THREE ARMS: excavator_relocate_dumped_mult 0.2 <
+# excavator_relocate_dug_dirt_mult 1.5, so lifting one's own spoil pays 0.2/1.5
+# = 1/7.5 of fresh work. Measured end to end (tests/test_m2_presets.py): the
+# stage-on-legal-ground loop drops from -2.32 to -49.56 against the direct loop.
+# Consequence, pre-registered in docs/EXPERIMENTS.md: completion is comparable
+# to M1, RETURN IS NOT (M1 ran reward-v1 at 1.5 / 1.5).
+#
+# Bank per arm. DATASET_PATH must match the arm; DATASET_SIZE is 864 for both
+# banks (terra/maps_buffer.py requires one slot count for every level):
+#   m2_wave_long -> terra_data/curriculum_v5m  (M1-C's own materialization)
+#   m2_dose      -> terra_data/curriculum_v6m  (dose levels, spec section 3)
+#   m2_dose_fast -> terra_data/curriculum_v6m
+#
+# m2_dose_fast is 2-consecutive-exact ONLY. Spec section 4 also asked for a
+# "rolling graded >= 0.8 over the last 3 episodes" disjunct; terra's
+# CurriculumConfig carries no graded history (level, consecutive_failures,
+# consecutive_successes) so that half is not expressible without new per-env
+# state. Descoped on 2026-07-30 (REVIEW_V6 M2-1); prediction 2 is restated to
+# the >= 1.5x form because the manipulation is now 2-vs-3 consecutive.
+# -----------------------------------------------------------------------------
+
+m2_wave_long:
+  description: M2-wave-long - M1-C's wave recipe at 8k updates on curriculum_v5m, reward-v2 (budget control)
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 0.2
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L0
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L1
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L2
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L3
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+m2_dose:
+  description: M2-dose - dose levels L0p->L3p on curriculum_v6m, 3-consecutive-exact promotion, reward-v2
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 0.2
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L0p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L1p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L2p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L3p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+m2_dose_fast:
+  description: M2-dose-fast - dose levels L0p->L3p on curriculum_v6m, 2-consecutive-exact promotion, reward-v2
+  agent_types: [0]
+  action_types: [0]
+  reward_multipliers:
+    dump_bonus_mult: 0.5
+    excavator_relocate_dumped_mult: 0.2
+    excavator_relocate_dug_dirt_mult: 1.5
+  curriculum:
+    increase_level_threshold: 2
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L0p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L1p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L2p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L3p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
