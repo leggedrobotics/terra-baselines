@@ -45,6 +45,13 @@ def _write_prepare_bank(
         json.dumps(
             {
                 "schema": "terra-accepted-condition-set-v1",
+                "release": "map-curriculum-diverse64-visual-review-20260730",
+                "manifest_sha256": (
+                    "39f7cd2e8ce565bd384de214da5f2eee5e76764cb554e149c0ba675d815d6d51"
+                ),
+                "review_data_sha256": (
+                    "8404fcaa9a6b66949ade2b0225d3e7800968951953d2b6363aabffe38100cc0b"
+                ),
                 "accepted_conditions": ["condition"],
             }
         )
@@ -410,6 +417,29 @@ def test_prepare_validator_rejects_review_hash_or_condition_mismatch(tmp_path):
     result = _run_prepare_validator(bank)
     assert result.returncode != 0
     assert "do not match train condition IDs" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["release", "manifest_sha256", "review_data_sha256"],
+)
+def test_prepare_validator_rejects_stale_review_identity(tmp_path, field):
+    bank = _write_prepare_bank(tmp_path)
+    receipt_path = bank / "review_admission.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt[field] = "stale"
+    receipt_path.write_text(json.dumps(receipt) + "\n")
+    index_path = bank / "dataset.json"
+    index = json.loads(index_path.read_text())
+    index["review_admission_sha256"] = hashlib.sha256(
+        receipt_path.read_bytes()
+    ).hexdigest()
+    index_path.write_text(json.dumps(index) + "\n")
+    result = _run_prepare_validator(bank)
+    assert result.returncode != 0
+    assert f"{field} must match the pinned diverse-64 review release" in (
+        result.stderr
+    )
 
 
 def test_prepare_validator_rejects_wrong_declaration(tmp_path):

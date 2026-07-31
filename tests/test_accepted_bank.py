@@ -89,6 +89,13 @@ def _write_bank(root: Path, map_count: int = 64) -> Path:
         json.dumps(
             {
                 "schema": "terra-accepted-condition-set-v1",
+                "release": "map-curriculum-diverse64-visual-review-20260730",
+                "manifest_sha256": (
+                    "39f7cd2e8ce565bd384de214da5f2eee5e76764cb554e149c0ba675d815d6d51"
+                ),
+                "review_data_sha256": (
+                    "8404fcaa9a6b66949ade2b0225d3e7800968951953d2b6363aabffe38100cc0b"
+                ),
                 "accepted_conditions": sorted(
                     entry["condition_id"] for entry in train
                 ),
@@ -265,6 +272,27 @@ def test_review_admission_schema_hash_and_conditions_are_verified(tmp_path):
     index["review_admission_sha256"] = _sha256(receipt_path)
     index_path.write_text(json.dumps(index) + "\n")
     with pytest.raises(ValueError, match="do not match train condition IDs"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["release", "manifest_sha256", "review_data_sha256"],
+)
+def test_stale_review_admission_identity_is_rejected(tmp_path, field):
+    root = _write_bank(tmp_path)
+    receipt_path = root / "review_admission.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt[field] = "stale"
+    receipt_path.write_text(json.dumps(receipt) + "\n")
+    index_path = root / "dataset.json"
+    index = json.loads(index_path.read_text())
+    index["review_admission_sha256"] = _sha256(receipt_path)
+    index_path.write_text(json.dumps(index) + "\n")
+    with pytest.raises(
+        ValueError,
+        match=rf"{field} must match the pinned diverse-64 review release",
+    ):
         load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
 
 

@@ -22,7 +22,9 @@ The bank must also contain `review_admission.json` with schema
 `terra-accepted-condition-set-v1`. Root `dataset.json` names and hashes that
 file, and its sorted `accepted_conditions` must equal the training condition
 IDs exactly. A review receipt cannot admit a superset, subset, or different
-condition set.
+condition set. The validator also pins the release, manifest, and review-data
+hashes of `map-curriculum-diverse64-visual-review-20260730`; a structurally
+valid receipt from another or stale review release is rejected.
 Every smoke/screen condition must contain exactly 64 training maps. Banks
 containing `NON_ADMISSION.md` or `REVIEW_ONLY.md` are rejected.
 Before an archive can be uploaded, the stdlib-only staged-bank validator checks

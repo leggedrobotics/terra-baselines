@@ -11,6 +11,13 @@ from pathlib import Path
 SCHEMA = "terra_curriculum_loader_bank_v1"
 SCENARIO_IDENTITY_CONTRACT = "terra_reset_arrays_sha256_v1"
 REVIEW_ADMISSION_SCHEMA = "terra-accepted-condition-set-v1"
+REVIEW_RELEASE = "map-curriculum-diverse64-visual-review-20260730"
+REVIEW_MANIFEST_SHA256 = (
+    "39f7cd2e8ce565bd384de214da5f2eee5e76764cb554e149c0ba675d815d6d51"
+)
+REVIEW_DATA_SHA256 = (
+    "8404fcaa9a6b66949ade2b0225d3e7800968951953d2b6363aabffe38100cc0b"
+)
 ARMS = ("F-ANCHOR", "T-ANCHOR", "G-UNIFORM", "G-ADAPTIVE")
 FAMILIES = ("foundation", "trench")
 BRANCH_DEPTHS = ("Anchor", "One-axis", "Composed")
@@ -219,6 +226,18 @@ def _validate_review_admission(
         raise ValueError(
             f"{receipt_path}: schema must be {REVIEW_ADMISSION_SCHEMA!r}"
         )
+    pinned_identity = {
+        "release": REVIEW_RELEASE,
+        "manifest_sha256": REVIEW_MANIFEST_SHA256,
+        "review_data_sha256": REVIEW_DATA_SHA256,
+    }
+    for field, expected in pinned_identity.items():
+        if receipt.get(field) != expected:
+            raise ValueError(
+                f"{receipt_path}: {field} must match the pinned diverse-64 "
+                f"review release: expected {expected!r}, got "
+                f"{receipt.get(field)!r}"
+            )
     accepted = receipt.get("accepted_conditions")
     if (
         not isinstance(accepted, list)
