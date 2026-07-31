@@ -84,6 +84,18 @@ def _write_bank(root: Path, map_count: int = 64) -> Path:
         _write_level(root, "f-axis", "foundation", "One-axis", map_count),
         _write_level(root, "t-composed", "trench", "Composed", map_count),
     ]
+    review_admission = root / "review_admission.json"
+    review_admission.write_text(
+        json.dumps(
+            {
+                "schema": "terra-accepted-condition-set-v1",
+                "accepted_conditions": sorted(
+                    entry["condition_id"] for entry in train
+                ),
+            }
+        )
+        + "\n"
+    )
     evaluation_panels = {}
     for panel_name in ("promotion", "development", "sealed"):
         directory = root / panel_name
@@ -135,6 +147,8 @@ def _write_bank(root: Path, map_count: int = 64) -> Path:
                 ),
                 "source_registry": "source_registry.jsonl",
                 "source_registry_sha256": _sha256(registry),
+                "review_admission": "review_admission.json",
+                "review_admission_sha256": _sha256(review_admission),
                 "train": train,
                 "evaluation_panels": evaluation_panels,
             }
@@ -162,6 +176,9 @@ def test_arm_selection_is_explicit(tmp_path, arm, conditions):
     assert [level.condition_id for level in bank.levels] == conditions
     assert bank.map_count_per_condition == 64
     assert bank.terra_revision == "terra-test-revision"
+    assert bank.review_admission_sha256 == _sha256(
+        tmp_path / "review_admission.json"
+    )
 
 
 def test_legacy_or_unfrozen_roots_fail_loudly(tmp_path):
@@ -218,6 +235,37 @@ def test_registry_hash_and_manifest_condition_are_verified(tmp_path):
     manifest.write_text("".join(json.dumps(row) + "\n" for row in rows))
     with pytest.raises(ValueError, match="primary_cell"):
         load_accepted_bank(root, "F-ANCHOR", "terra-test-revision")
+
+
+def test_review_admission_schema_hash_and_conditions_are_verified(tmp_path):
+    root = _write_bank(tmp_path / "schema")
+    receipt_path = root / "review_admission.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["schema"] = "wrong"
+    receipt_path.write_text(json.dumps(receipt) + "\n")
+    index_path = root / "dataset.json"
+    index = json.loads(index_path.read_text())
+    index["review_admission_sha256"] = _sha256(receipt_path)
+    index_path.write_text(json.dumps(index) + "\n")
+    with pytest.raises(ValueError, match="terra-accepted-condition-set-v1"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
+
+    root = _write_bank(tmp_path / "hash")
+    (root / "review_admission.json").write_text("{}\n")
+    with pytest.raises(ValueError, match="review admission hash mismatch"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
+
+    root = _write_bank(tmp_path / "conditions")
+    receipt_path = root / "review_admission.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["accepted_conditions"] = receipt["accepted_conditions"][:-1]
+    receipt_path.write_text(json.dumps(receipt) + "\n")
+    index_path = root / "dataset.json"
+    index = json.loads(index_path.read_text())
+    index["review_admission_sha256"] = _sha256(receipt_path)
+    index_path.write_text(json.dumps(index) + "\n")
+    with pytest.raises(ValueError, match="do not match train condition IDs"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
 
 
 def test_unequal_level_counts_are_rejected(tmp_path):

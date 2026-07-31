@@ -90,6 +90,7 @@ test -f "$MANIFEST"
 test -f "$BASELINES/train_mixed.py"
 test -f "$TERRA/terra/benchmark_state.py"
 test -f "$BANK/dataset.json"
+test -f "$BANK/review_admission.json"
 test -f "$RUNTIME_CHECK"
 test -f "$GATE_TOOL"
 
@@ -105,6 +106,9 @@ MANIFEST_IDENTITY_CONTRACT="$(manifest_value scenario_identity_contract)"
 MANIFEST_TRAIN_MAPS_PER_CONDITION="$(
     manifest_value train_maps_per_condition
 )"
+MANIFEST_REVIEW_ADMISSION_SHA="$(
+    manifest_value bank_review_admission_sha256
+)"
 MANIFEST_VENV_LEDGER="$(manifest_value venv_ledger)"
 MANIFEST_VENV_LEDGER_SHA="$(manifest_value venv_ledger_sha256)"
 test "$MANIFEST_ADMISSION" = frozen
@@ -112,6 +116,11 @@ test "$MANIFEST_IDENTITY_CONTRACT" = terra_reset_arrays_sha256_v1
 test "$MANIFEST_TRAIN_MAPS_PER_CONDITION" = 64 || {
     echo "smoke/screen campaign requires exactly 64 train maps per condition" >&2
     exit 46
+}
+test "$(sha256sum "$BANK/review_admission.json" | awk '{print $1}')" = \
+    "$MANIFEST_REVIEW_ADMISSION_SHA" || {
+    echo "review admission SHA mismatch" >&2
+    exit 47
 }
 test ! -e "$BANK/NON_ADMISSION.md"
 test ! -e "$BANK/REVIEW_ONLY.md"

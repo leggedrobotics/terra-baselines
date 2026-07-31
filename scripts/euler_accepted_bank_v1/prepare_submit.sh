@@ -67,6 +67,7 @@ done
 for required in \
     "$BANK_ROOT/dataset.json" \
     "$BANK_ROOT/environment_protocol.json" \
+    "$BANK_ROOT/review_admission.json" \
     "$BANK_ROOT/source_registry.jsonl" \
     "$RUNTIME_CHECK"; do
     test -f "$required" || {
@@ -166,6 +167,9 @@ BANK_TREE_SHA="$(
         | sha256sum | awk '{print $1}'
 )"
 DATASET_SHA="$(sha256sum "$BANK_STAGE/dataset.json" | awk '{print $1}')"
+REVIEW_ADMISSION_SHA="$(
+    sha256sum "$BANK_STAGE/review_admission.json" | awk '{print $1}'
+)"
 PROTOCOL_SHA="$(
     sha256sum "$BANK_STAGE/environment_protocol.json" | awk '{print $1}'
 )"
@@ -177,7 +181,7 @@ python3 -c '
 import json, pathlib, sys
 (
     output, terra_revision, baselines_revision, bank_tree_sha,
-    dataset_sha, protocol_sha, registry_sha, runtime_sha,
+    dataset_sha, review_admission_sha, protocol_sha, registry_sha, runtime_sha,
     venv, ledger, ledger_sha, identity_contract, admission,
     train_maps_per_condition
 ) = sys.argv[1:]
@@ -188,6 +192,7 @@ payload = {
     "terra_baselines_revision": baselines_revision,
     "bank_tree_sha256": bank_tree_sha,
     "bank_dataset_sha256": dataset_sha,
+    "bank_review_admission_sha256": review_admission_sha,
     "bank_environment_protocol_file_sha256": protocol_sha,
     "bank_source_registry_file_sha256": registry_sha,
     "scenario_identity_contract": identity_contract,
@@ -221,6 +226,7 @@ pathlib.Path(output).write_text(
     "$BASELINES_REVISION" \
     "$BANK_TREE_SHA" \
     "$DATASET_SHA" \
+    "$REVIEW_ADMISSION_SHA" \
     "$PROTOCOL_SHA" \
     "$REGISTRY_SHA" \
     "$RUNTIME_SHA" \

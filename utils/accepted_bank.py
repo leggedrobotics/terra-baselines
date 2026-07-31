@@ -10,6 +10,7 @@ from pathlib import Path
 
 SCHEMA = "terra_curriculum_loader_bank_v1"
 SCENARIO_IDENTITY_CONTRACT = "terra_reset_arrays_sha256_v1"
+REVIEW_ADMISSION_SCHEMA = "terra-accepted-condition-set-v1"
 ARMS = ("F-ANCHOR", "T-ANCHOR", "G-UNIFORM", "G-ADAPTIVE")
 FAMILIES = ("foundation", "trench")
 BRANCH_DEPTHS = ("Anchor", "One-axis", "Composed")
@@ -109,6 +110,7 @@ class AcceptedBank:
     map_count_per_condition: int
     environment_protocol_sha256: str
     source_registry_sha256: str
+    review_admission_sha256: str
 
 
 @dataclass(frozen=True)
@@ -180,6 +182,59 @@ def _validate_level(root: Path, entry: dict) -> AcceptedLevel:
         maps_path=maps_path,
         map_count=map_count,
     )
+
+
+def _validate_review_admission(
+    root: Path,
+    index: dict,
+    condition_ids: list[str],
+) -> str:
+    index_path = root / "dataset.json"
+    if index.get("review_admission") != "review_admission.json":
+        raise ValueError(
+            f"{index_path}: review_admission must be "
+            "'review_admission.json'"
+        )
+    expected_sha256 = _sha256_field(
+        index,
+        "review_admission_sha256",
+        index_path,
+    )
+    receipt_path = root / "review_admission.json"
+    if not receipt_path.is_file() or receipt_path.is_symlink():
+        raise FileNotFoundError(receipt_path)
+    actual_sha256 = _sha256_file(receipt_path)
+    if actual_sha256 != expected_sha256:
+        raise ValueError(
+            "accepted-bank review admission hash mismatch: "
+            f"expected {expected_sha256}, got {actual_sha256}"
+        )
+    try:
+        receipt = json.loads(receipt_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{receipt_path}: invalid JSON: {exc}") from exc
+    if not isinstance(receipt, dict):
+        raise ValueError(f"{receipt_path}: expected a JSON object")
+    if receipt.get("schema") != REVIEW_ADMISSION_SCHEMA:
+        raise ValueError(
+            f"{receipt_path}: schema must be {REVIEW_ADMISSION_SCHEMA!r}"
+        )
+    accepted = receipt.get("accepted_conditions")
+    if (
+        not isinstance(accepted, list)
+        or not all(isinstance(value, str) and value for value in accepted)
+        or accepted != sorted(set(accepted))
+    ):
+        raise ValueError(
+            f"{receipt_path}: accepted_conditions must be unique and sorted"
+        )
+    expected_conditions = sorted(condition_ids)
+    if accepted != expected_conditions:
+        raise ValueError(
+            f"{receipt_path}: accepted_conditions do not match train "
+            f"condition IDs: accepted={accepted}, train={expected_conditions}"
+        )
+    return expected_sha256
 
 
 def validate_staged_training_bank(root: str | Path) -> int:
@@ -263,6 +318,7 @@ def validate_staged_training_bank(root: str | Path) -> int:
         raise ValueError(f"{index_path}: train repeats a condition_id")
     if len(maps_paths) != len(set(maps_paths)):
         raise ValueError(f"{index_path}: train repeats a maps_path")
+    _validate_review_admission(root_path, index, condition_ids)
     return TRAIN_MAPS_PER_CONDITION
 
 
@@ -481,6 +537,11 @@ def load_accepted_bank(
         raise ValueError(f"{index_path}: train repeats a condition_id")
     if len(paths) != len(set(paths)):
         raise ValueError(f"{index_path}: train repeats a maps_path")
+    review_admission_sha256 = _validate_review_admission(
+        root_path,
+        index,
+        condition_ids,
+    )
 
     selected = tuple(
         sorted(
@@ -513,4 +574,5 @@ def load_accepted_bank(
         map_count_per_condition=map_count_per_condition,
         environment_protocol_sha256=protocol_sha256,
         source_registry_sha256=registry_sha256,
+        review_admission_sha256=review_admission_sha256,
     )

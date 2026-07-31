@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -39,9 +40,23 @@ def _write_prepare_bank(
     array_count = declared_count if array_count is None else array_count
     level = root / "train" / "condition"
     level.mkdir(parents=True)
+    review_admission = root / "review_admission.json"
+    review_admission.write_text(
+        json.dumps(
+            {
+                "schema": "terra-accepted-condition-set-v1",
+                "accepted_conditions": ["condition"],
+            }
+        )
+        + "\n"
+    )
     (root / "dataset.json").write_text(
         json.dumps(
             {
+                "review_admission": "review_admission.json",
+                "review_admission_sha256": hashlib.sha256(
+                    review_admission.read_bytes()
+                ).hexdigest(),
                 "train": [
                     {
                         "condition_id": "condition",
@@ -330,6 +345,8 @@ def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
     assert "NUM_ENVS_PER_DEVICE=1024" in sbatch
     assert "NUM_STEPS=32" in sbatch
     assert "EXPECTED_TRAIN_MAPS_PER_CONDITION=64" in prepare
+    assert '"$BANK_ROOT/review_admission.json"' in prepare
+    assert '"bank_review_admission_sha256": review_admission_sha' in prepare
     assert "validate_training_bank.py" in prepare
     assert (
         '"train_maps_per_condition": int(train_maps_per_condition)'
@@ -345,6 +362,8 @@ def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
     assert sbatch.index(
         'test "$MANIFEST_TRAIN_MAPS_PER_CONDITION" = 64'
     ) < sbatch.index("module load stack/2024-06")
+    assert "bank_review_admission_sha256" in sbatch
+    assert "review admission SHA mismatch" in sbatch
     assert '/$PHASE/s$SEED"' in prepare
     assert 'RUN_DIR="$RUN_PARENT/$ARM"' in prepare
     assert "/$PHASE/s$SEED/$ARM" in sbatch
@@ -357,6 +376,40 @@ def test_prepare_validator_accepts_complete_64_map_bank(tmp_path):
     result = _run_prepare_validator(_write_prepare_bank(tmp_path))
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "64"
+
+
+def test_prepare_validator_requires_review_admission(tmp_path):
+    bank = _write_prepare_bank(tmp_path)
+    (bank / "review_admission.json").unlink()
+    result = _run_prepare_validator(bank)
+    assert result.returncode != 0
+    assert "review_admission.json" in result.stderr
+
+
+def test_prepare_validator_rejects_review_hash_or_condition_mismatch(tmp_path):
+    bank = _write_prepare_bank(tmp_path / "hash")
+    receipt_path = bank / "review_admission.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["note"] = "changed after the descriptor was written"
+    receipt_path.write_text(json.dumps(receipt) + "\n")
+    result = _run_prepare_validator(bank)
+    assert result.returncode != 0
+    assert "review admission hash mismatch" in result.stderr
+
+    bank = _write_prepare_bank(tmp_path / "conditions")
+    receipt_path = bank / "review_admission.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["accepted_conditions"] = ["different"]
+    receipt_path.write_text(json.dumps(receipt) + "\n")
+    index_path = bank / "dataset.json"
+    index = json.loads(index_path.read_text())
+    index["review_admission_sha256"] = hashlib.sha256(
+        receipt_path.read_bytes()
+    ).hexdigest()
+    index_path.write_text(json.dumps(index) + "\n")
+    result = _run_prepare_validator(bank)
+    assert result.returncode != 0
+    assert "do not match train condition IDs" in result.stderr
 
 
 def test_prepare_validator_rejects_wrong_declaration(tmp_path):
