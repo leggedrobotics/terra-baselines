@@ -22,8 +22,8 @@ Every smoke/screen condition must contain exactly 64 training maps. Banks
 containing `NON_ADMISSION.md` or `REVIEW_ONLY.md` are rejected.
 Before an archive can be uploaded, the stdlib-only staged-bank validator checks
 safe relative paths, the 64-row `1..64` manifest, condition consistency, local
-count metadata, and exact `img_1.npy..img_64.npy` file sets in all five
-reset-array directories.
+`slot_count=64` (`num_maps=64` when present), and exact
+`img_1.npy..img_64.npy` file sets in all five reset-array directories.
 
 The preparation output is one deterministic `campaign-<sha>.tar.zst` with:
 

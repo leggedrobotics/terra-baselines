@@ -381,6 +381,17 @@ def test_prepare_validator_rejects_64_declared_63_manifest(tmp_path):
     assert "contains 63" in result.stderr
 
 
+def test_prepare_validator_requires_local_slot_count(tmp_path):
+    bank = _write_prepare_bank(tmp_path)
+    metadata_path = bank / "train/condition/dataset.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata.pop("slot_count")
+    metadata_path.write_text(json.dumps(metadata) + "\n")
+    result = _run_prepare_validator(bank)
+    assert result.returncode != 0
+    assert "slot_count must be 64" in result.stderr
+
+
 def test_prepare_validator_rejects_missing_or_extra_reset_array(tmp_path):
     bank = _write_prepare_bank(tmp_path)
     last_array = bank / "train/condition/images/img_64.npy"

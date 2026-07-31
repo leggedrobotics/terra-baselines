@@ -62,8 +62,9 @@ archive manifest. Before JAX initialization, the loader:
    `.git`;
 2. verifies the source-registry hash;
 3. verifies every staged training path declares exactly 64 maps, has one
-   condition with contiguous manifest slots `1..64`, and contains exactly
-   `img_1.npy..img_64.npy` in each of the five reset-array directories;
+   condition with contiguous manifest slots `1..64`, requires local
+   `slot_count = 64`, and contains exactly `img_1.npy..img_64.npy` in each of
+   the five reset-array directories;
 4. verifies every evaluation panel path, count, condition count and contiguous
    manifest; and
 5. recomputes each evaluation `episode_id` from `scenario_id`, `reset_seed`,
@@ -201,7 +202,7 @@ future-20k boundary are documented in
 - [x] fail closed on P6 until the separate 256-train-layouts/condition bank
   exists; retain the generalist selection receipt as the future P6 gate;
 - [x] pass the full terra-baselines CPU suite against the paired Terra commit
-  (`222 passed`);
+  (`223 passed`);
 - [ ] complete one local or allocated-GPU first-update smoke per arm;
 - [ ] submit the bounded screens only after the accepted bank is frozen.
 

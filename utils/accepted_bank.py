@@ -215,17 +215,26 @@ def validate_staged_training_bank(root: str | Path) -> int:
             raise ValueError(f"{metadata_path}: invalid JSON: {exc}") from exc
         if not isinstance(metadata, dict):
             raise ValueError(f"{metadata_path}: expected a JSON object")
-        for count_field in ("slot_count", "num_maps"):
-            count = metadata.get(count_field)
-            if count_field in metadata and (
-                not isinstance(count, int)
-                or isinstance(count, bool)
-                or count != TRAIN_MAPS_PER_CONDITION
-            ):
-                raise ValueError(
-                    f"{metadata_path}: {count_field} must be "
-                    f"{TRAIN_MAPS_PER_CONDITION}"
-                )
+        slot_count = metadata.get("slot_count")
+        if (
+            not isinstance(slot_count, int)
+            or isinstance(slot_count, bool)
+            or slot_count != TRAIN_MAPS_PER_CONDITION
+        ):
+            raise ValueError(
+                f"{metadata_path}: slot_count must be "
+                f"{TRAIN_MAPS_PER_CONDITION}"
+            )
+        num_maps = metadata.get("num_maps")
+        if "num_maps" in metadata and (
+            not isinstance(num_maps, int)
+            or isinstance(num_maps, bool)
+            or num_maps != TRAIN_MAPS_PER_CONDITION
+        ):
+            raise ValueError(
+                f"{metadata_path}: num_maps must be "
+                f"{TRAIN_MAPS_PER_CONDITION}"
+            )
 
         expected_names = {
             f"img_{slot}.npy"
