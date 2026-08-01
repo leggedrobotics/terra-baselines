@@ -36,6 +36,10 @@ RESET_ARRAY_FOLDERS = (
     "actions",
     "distance",
 )
+RESET_PRNG_CONTRACT = {
+    "jax_default_prng_impl": "threefry2x32",
+    "jax_threefry_partitionable": True,
+}
 
 
 def _sha256_file(path: Path) -> str:
@@ -529,6 +533,12 @@ def load_accepted_bank(
             "accepted-bank Terra revision mismatch: "
             f"bank={protocol.get('terra_revision')!r}, "
             f"runtime={terra_revision!r}"
+        )
+    if protocol.get("reset_prng") != RESET_PRNG_CONTRACT:
+        raise ValueError(
+            "accepted-bank reset PRNG contract mismatch: "
+            f"expected {RESET_PRNG_CONTRACT!r}, got "
+            f"{protocol.get('reset_prng')!r}"
         )
     current_protocol = _environment_protocol_for_revision(terra_revision)
     if protocol != current_protocol:

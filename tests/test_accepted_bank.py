@@ -52,6 +52,7 @@ def _protocol(revision="terra-test-revision") -> dict:
     payload = {
         "schema": "terra_environment_protocol_v1",
         "terra_revision": revision,
+        "reset_prng": accepted_bank_module.RESET_PRNG_CONTRACT,
     }
     return {
         **payload,
@@ -244,6 +245,31 @@ def test_stale_environment_protocol_is_rejected(tmp_path):
     root = _write_bank(tmp_path)
     with pytest.raises(ValueError, match="Terra revision mismatch"):
         load_accepted_bank(root, "G-UNIFORM", "different-terra-revision")
+
+
+def test_reset_prng_contract_is_required(tmp_path):
+    root = _write_bank(tmp_path)
+    protocol_path = root / "environment_protocol.json"
+    protocol = json.loads(protocol_path.read_text())
+    protocol.pop("reset_prng")
+    payload = {
+        key: value
+        for key, value in protocol.items()
+        if key != "environment_protocol_sha256"
+    }
+    protocol["environment_protocol_sha256"] = (
+        accepted_bank_module._canonical_json_sha256(payload)
+    )
+    protocol_path.write_text(json.dumps(protocol) + "\n")
+    index_path = root / "dataset.json"
+    index = json.loads(index_path.read_text())
+    index["environment_protocol_sha256"] = protocol[
+        "environment_protocol_sha256"
+    ]
+    index_path.write_text(json.dumps(index) + "\n")
+
+    with pytest.raises(ValueError, match="reset PRNG contract mismatch"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
 
 
 def test_archive_without_git_uses_explicit_frozen_revision(tmp_path, monkeypatch):

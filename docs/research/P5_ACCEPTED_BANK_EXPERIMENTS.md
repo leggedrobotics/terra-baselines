@@ -1,6 +1,6 @@
 # P5 Accepted-Bank Experiment Implementation
 
-- Status: local/Euler implementation complete; validation pending
+- Status: implementation complete; PRNG-bound bank rebuild and allocated validation pending
 - Date: 2026-07-30
 - Canonical authority:
   [`D5_D7_IMPLEMENTATION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_simple_mapbank_reward_20260730/D5_D7_IMPLEMENTATION_PLAN.md)
@@ -61,6 +61,8 @@ All six arms freeze:
 
 - `environment_protocol = "environment_protocol.json"` plus its canonical
   SHA-256;
+- `reset_prng = {jax_default_prng_impl: threefry2x32,
+  jax_threefry_partitionable: true}` inside that hashed protocol;
 - `scenario_identity_contract = "terra_reset_arrays_sha256_v1"` at the bank
   root, as emitted and enforced by the paired Terra commit;
 - `source_registry = "source_registry.jsonl"` plus its file SHA-256;
@@ -75,14 +77,16 @@ archive manifest. Before JAX initialization, the loader:
 1. verifies the protocol receipt hash and equality with the protocol derived
    from the imported Terra code plus that explicit revision, without consulting
    `.git`;
-2. verifies the source-registry hash;
-3. verifies every staged training path declares exactly 64 maps, has one
+2. rejects a missing or different reset-PRNG contract before constructing an
+   environment;
+3. verifies the source-registry hash;
+4. verifies every staged training path declares exactly 64 maps, has one
    condition with contiguous manifest slots `1..64`, requires local
    `slot_count = 64`, and contains exactly `img_1.npy..img_64.npy` in each of
    the five reset-array directories;
-4. verifies every evaluation panel path, count, condition count and contiguous
+5. verifies every evaluation panel path, count, condition count and contiguous
    manifest; and
-5. recomputes each evaluation `episode_id` from `scenario_id`, `reset_seed`,
+6. recomputes each evaluation `episode_id` from `scenario_id`, `reset_seed`,
    and the frozen protocol hash.
 
 This makes review-only banks, the legacy 12-map bank, stale Terra revisions,
@@ -119,7 +123,10 @@ closed window; completed-episode mass is never labelled as realized exposure.
 
 Use `eval_fixed_bank.py --accepted-panel` for the frozen `promotion`,
 `development`, or `sealed` panel. It consumes each row's frozen `reset_seed`
-and verifies that it selects the declared exact slot.
+and verifies that it selects the declared exact slot. Seed-to-slot mapping is
+part of the executable protocol: the evaluator asserts partitionable
+`threefry2x32` before deriving reset keys, so an import-order or JAX-config
+change fails rather than silently shuffling or duplicating panel slots.
 
 Every checkpoint reports:
 
@@ -226,6 +233,8 @@ future-20k boundary are documented in
 - [x] replace fixed panel counts with a continuous, map-count-aware comparison
   gate;
 - [x] use frozen evaluation reset seeds and episode identities;
+- [x] bind the JAX reset-PRNG mode into the protocol and reject runtime/config
+  disagreement before fixed-panel reset;
 - [x] validate archive runs from an explicit frozen Terra revision without
   requiring `.git`;
 - [x] require reset-array scenario identity before JAX;
@@ -235,9 +244,25 @@ future-20k boundary are documented in
 - [x] fail closed on P6 until the separate 256-train-layouts/condition bank
   exists; retain the generalist selection receipt as the future P6 gate;
 - [x] pass the full terra-baselines CPU suite against the paired Terra commit
-  (`245 passed`);
+  (`249 passed`);
 - [ ] complete one local or allocated-GPU first-update smoke per arm;
 - [ ] submit the bounded screens only after the accepted bank is frozen.
 
 The unchecked items are execution gates, not evidence supplied by this
 implementation commit alone.
+
+## 7. 2026-08-01 allocated-gate finding
+
+The first content-addressed six-arm smoke completed update 1 and passed its
+checkpoint receipts. The following screen attempt stopped before W&B or PPO in
+the CPU/GPU reset-parity gate: the loader had generated scalar reset seeds with
+legacy `jax_threefry_partitionable=false`, while `train.py` and
+`train_mixed.py` explicitly run with `true`. Under the real runtime the
+512-slot promotion panel selected only 319 unique slots.
+
+The accepted correction is to preserve all reviewed maps and source-disjoint
+splits, pin partitionable Threefry in the hashed environment protocol,
+regenerate only evaluation reset seeds and episode IDs, and rerun the six
+smokes and screens. Forcing the evaluator back to the legacy mode is rejected
+because it would create a different stochastic environment contract from the
+trainer.

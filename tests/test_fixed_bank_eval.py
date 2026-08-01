@@ -27,6 +27,21 @@ class FixedBankEvalTest(unittest.TestCase):
         keys = exact_reset_keys(64)
         np.testing.assert_array_equal(selected_map_indices(keys, 64), np.arange(64))
 
+    def test_reset_keys_use_the_frozen_partitionable_threefry_mapping(self):
+        self.assertEqual(str(jax.config.jax_default_prng_impl), "threefry2x32")
+        self.assertTrue(jax.config.jax_threefry_partitionable)
+        keys = exact_reset_keys(4)
+        self.assertEqual([int(key[1]) for key in np.asarray(keys)], [1, 3, 0, 2])
+        np.testing.assert_array_equal(selected_map_indices(keys, 4), np.arange(4))
+
+    def test_manifest_reset_keys_reject_a_runtime_prng_mode_mismatch(self):
+        try:
+            jax.config.update("jax_threefry_partitionable", False)
+            with self.assertRaisesRegex(RuntimeError, "reset PRNG contract"):
+                manifest_reset_keys([], 0, "a" * 64)
+        finally:
+            jax.config.update("jax_threefry_partitionable", True)
+
     def test_manifest_reset_keys_pin_the_protocol_and_slot(self):
         keys = exact_reset_keys(4)
         seeds = [int(key[1]) for key in np.asarray(keys)]

@@ -191,6 +191,26 @@ def manifest_reset_keys(
     environment_protocol_sha256: str,
 ) -> jax.Array:
     """Load the frozen episode reset seeds and verify exact slot selection."""
+    from terra.benchmark_protocol import BENCHMARK_JAX_DEFAULT_PRNG_IMPL
+    from terra.benchmark_protocol import BENCHMARK_JAX_THREEFRY_PARTITIONABLE
+
+    runtime_contract = {
+        "jax_default_prng_impl": str(jax.config.jax_default_prng_impl),
+        "jax_threefry_partitionable": bool(
+            jax.config.jax_threefry_partitionable
+        ),
+    }
+    expected_contract = {
+        "jax_default_prng_impl": BENCHMARK_JAX_DEFAULT_PRNG_IMPL,
+        "jax_threefry_partitionable": (
+            BENCHMARK_JAX_THREEFRY_PARTITIONABLE
+        ),
+    }
+    if runtime_contract != expected_contract:
+        raise RuntimeError(
+            "fixed-bank reset PRNG contract mismatch: "
+            f"runtime={runtime_contract!r}, expected={expected_contract!r}"
+        )
     if len(rows) != count:
         raise ValueError("manifest row count does not match the panel slot count")
     seeds = []
