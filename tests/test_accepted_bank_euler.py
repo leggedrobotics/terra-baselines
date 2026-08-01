@@ -339,6 +339,7 @@ def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
     assert prepare.index('if [ "$SUBMIT" = 0 ]') < prepare.index(
         'ssh "$REMOTE_HOST"'
     )
+    assert "export PYTHONDONTWRITEBYTECODE=1" in prepare
     assert "NON_ADMISSION.md" in prepare
     assert "REVIEW_ONLY.md" in prepare
     assert '"smoke": {"partition": "gpuhe.4h", "updates": 1}' in prepare

@@ -3,6 +3,7 @@
 # Build one immutable accepted-bank campaign and optionally submit one phase.
 set -euo pipefail
 umask 022
+export PYTHONDONTWRITEBYTECODE=1
 
 usage() {
     echo "usage: prepare_submit.sh PHASE TERRA_REPO BANK_ROOT [SEED]" >&2
