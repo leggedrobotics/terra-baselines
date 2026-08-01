@@ -55,6 +55,7 @@ REMOTE_RUN_BASE="/cluster/scratch/lterenzi/codex_terra_edge_runs/accepted_bank_v
 VENV="/cluster/project/rsl/lterenzi/terra_curriculum_20260730_c14bd7d_3ce0e84_py312_jax0426"
 VENV_LEDGER="$VENV/provenance/artifact-hashes.sha256"
 VENV_LEDGER_SHA="853871aef55efe34a64474660109673c0d48b9a34cba333e368600a11b126d5c"
+EXCLUDED_NODES="eu-g6-064"
 IDENTITY_CONTRACT="terra_reset_arrays_sha256_v1"
 EXPECTED_TRAIN_MAPS_PER_CONDITION=64
 ARMS=(
@@ -193,7 +194,7 @@ import json, pathlib, sys
     output, terra_revision, baselines_revision, bank_tree_sha,
     dataset_sha, review_admission_sha, protocol_sha, registry_sha, runtime_sha,
     venv, ledger, ledger_sha, identity_contract, admission,
-    train_maps_per_condition, arms_csv
+    train_maps_per_condition, arms_csv, excluded_nodes
 ) = sys.argv[1:]
 payload = {
     "schema": "terra_accepted_bank_euler_campaign_v2",
@@ -209,6 +210,7 @@ payload = {
     "scenario_identity_contract": identity_contract,
     "train_maps_per_condition": int(train_maps_per_condition),
     "runtime_check_sha256": runtime_sha,
+    "excluded_nodes": excluded_nodes.split(",") if excluded_nodes else [],
     "venv": venv,
     "venv_ledger": ledger,
     "venv_ledger_sha256": ledger_sha,
@@ -247,7 +249,8 @@ pathlib.Path(output).write_text(
     "$IDENTITY_CONTRACT" \
     "$ADMISSION" \
     "$BANK_MAPS_PER_CONDITION" \
-    "$ARMS_CSV"
+    "$ARMS_CSV" \
+    "$EXCLUDED_NODES"
 
 ARCHIVE_TMP="$STAGE/campaign.tar.zst"
 tar --sort=name --mtime='UTC 1970-01-01' \
@@ -340,6 +343,7 @@ for ARM in "${ARMS[@]}"; do
                 sbatch --parsable \
                     --partition='$PARTITION' \
                     --time='$WALLTIME' \
+                    --exclude='$EXCLUDED_NODES' \
                     --job-name='terra-ab-${PHASE}-${ARM}' \
                     --output='$RUN_DIR/slurm_%j.out' \
                     --export='$EXPORTS'

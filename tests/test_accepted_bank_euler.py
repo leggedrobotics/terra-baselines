@@ -358,6 +358,12 @@ def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
     assert "NUM_ENVS_PER_DEVICE=1024" in sbatch
     assert "NUM_STEPS=32" in sbatch
     assert "EXPECTED_PARTITION=gpuhe.4h" in sbatch
+    assert 'EXCLUDED_NODES="eu-g6-064"' in prepare
+    assert '"excluded_nodes": excluded_nodes.split' in prepare
+    assert "--exclude='$EXCLUDED_NODES'" in prepare
+    assert "find_single_checkpoint" in sbatch
+    assert '"${RUN_NAME}-euler-*_update_000001.pkl"' in sbatch
+    assert '"${RUN_NAME}-euler-*_FINAL.pkl"' in sbatch
     assert "EXPECTED_TRAIN_MAPS_PER_CONDITION=64" in prepare
     for arm in ARMS:
         assert arm in prepare

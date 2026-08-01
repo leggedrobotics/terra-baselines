@@ -50,6 +50,21 @@ case "$PHASE" in
         ;;
     *) echo "unsupported PHASE=$PHASE" >&2; exit 2 ;;
 esac
+
+find_single_checkpoint() {
+    local directory="$1"
+    local pattern="$2"
+    local -a matches
+    mapfile -t matches < <(
+        find "$directory" -maxdepth 1 -type f -name "$pattern" -print | sort
+    )
+    if [ "${#matches[@]}" -ne 1 ]; then
+        echo "expected one checkpoint matching $pattern, found ${#matches[@]}" >&2
+        return 1
+    fi
+    printf '%s\n' "${matches[0]}"
+}
+
 test "${SLURM_JOB_PARTITION:-}" = "$EXPECTED_PARTITION" || {
     echo "phase $PHASE requires $EXPECTED_PARTITION, got ${SLURM_JOB_PARTITION:-unset}" >&2
     exit 40
@@ -307,10 +322,17 @@ fi
 "${TRAIN_COMMAND[@]}"
 
 if [ "$PHASE" = smoke ]; then
-    PERIODIC="$RUN_DIR/checkpoints/${RUN_NAME}_update_000001.pkl"
-    FINAL="$RUN_DIR/checkpoints/${RUN_NAME}_FINAL.pkl"
-    test -f "$PERIODIC"
-    test -f "$FINAL"
+    PERIODIC="$(
+        find_single_checkpoint \
+            "$RUN_DIR/checkpoints" \
+            "${RUN_NAME}-euler-*_update_000001.pkl"
+    )"
+    FINAL="$(
+        find_single_checkpoint \
+            "$RUN_DIR/checkpoints" \
+            "${RUN_NAME}-euler-*_FINAL.pkl"
+    )"
+    test "${PERIODIC%_update_000001.pkl}_FINAL.pkl" = "$FINAL"
     JAX_PLATFORMS=cpu "$PYTHON" "$GATE_TOOL" verify-smoke \
         --arm "$ARM" \
         --periodic "$PERIODIC" \
@@ -319,9 +341,21 @@ if [ "$PHASE" = smoke ]; then
 else
     EVAL_UPDATES=(500 1000 2000)
     CHECKPOINT_ARGS=()
+    CHECKPOINT_PREFIX=""
     for UPDATE in "${EVAL_UPDATES[@]}"; do
-        CHECKPOINT="$RUN_DIR/checkpoints/${RUN_NAME}_update_$(printf '%06d' "$UPDATE").pkl"
-        test -f "$CHECKPOINT"
+        UPDATE_TOKEN="$(printf '%06d' "$UPDATE")"
+        CHECKPOINT="$(
+            find_single_checkpoint \
+                "$RUN_DIR/checkpoints" \
+                "${RUN_NAME}-euler-*_update_${UPDATE_TOKEN}.pkl"
+        )"
+        CHECKPOINT_SUFFIX="_update_${UPDATE_TOKEN}.pkl"
+        THIS_PREFIX="${CHECKPOINT%"$CHECKPOINT_SUFFIX"}"
+        if [ -z "$CHECKPOINT_PREFIX" ]; then
+            CHECKPOINT_PREFIX="$THIS_PREFIX"
+        else
+            test "$CHECKPOINT_PREFIX" = "$THIS_PREFIX"
+        fi
         CHECKPOINT_ARGS+=(--checkpoint "$CHECKPOINT")
     done
     for PANEL in promotion development; do

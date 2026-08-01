@@ -69,6 +69,9 @@ Every allocation requires exactly four RTX 4090 GPUs, four CPUs, and the
 artifact ledger are checked before JAX. Non-smoke jobs also require
 an `api.wandb.ai` credential in Euler's private `~/.netrc`; W&B is disabled
 for smoke.
+Euler node `eu-g6-064` is excluded because Slurm allocated four GPUs there but
+JAX exposed only three during the 2026-08-01 smoke; the four-device runtime
+gate remains strict on every admitted node.
 The v2 campaign manifest records the exact six-arm matrix and the
 review-admission file hash. The campaign manifest, run contract, and v2 final
 receipt each record
