@@ -11,6 +11,7 @@ from train_mixed import (
     _assert_pooled_level_contract,
     assign_curriculum_levels,
     pooled_sampler_settings,
+    reset_exposure_histogram,
 )
 from utils.accepted_bank import ARMS
 
@@ -78,6 +79,21 @@ def test_pooled_settings_are_read_from_the_effective_training_config():
     assert settings.rule == "adaptive"
     assert settings.seed == 11
     assert settings.uniform_floor == 0.20
+
+
+def test_reset_exposure_histogram_uses_each_transition_level():
+    done = jnp.asarray(
+        [[False, True, False], [True, False, True]], dtype=jnp.bool_
+    )
+    levels = jnp.asarray([[0, 1, 2], [2, 2, 0]], dtype=jnp.int16)
+
+    np.testing.assert_array_equal(
+        reset_exposure_histogram(done, levels, num_stages=3),
+        np.asarray([1, 1, 1], dtype=np.int32),
+    )
+
+    with pytest.raises(ValueError, match="identical"):
+        reset_exposure_histogram(done, levels[:, :2], num_stages=3)
 
 
 def test_level_contract_accepts_any_condition_count_but_no_protocol_changes():

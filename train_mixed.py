@@ -155,6 +155,7 @@ def kickstart_coef_schedule(
 class Transition(struct.PyTreeNode):
     done: jax.Array
     task_done: jax.Array
+    curriculum_level: jax.Array
     action: jax.Array
     value: jax.Array
     reward: jax.Array
@@ -886,6 +887,23 @@ def assign_curriculum_levels(env_cfg, levels: np.ndarray):
         )
     return env_cfg._replace(
         curriculum=env_cfg.curriculum._replace(level=assigned)
+    )
+
+
+def reset_exposure_histogram(
+    done: jax.Array,
+    curriculum_level: jax.Array,
+    num_stages: int,
+) -> jax.Array:
+    """Count completed episodes by the level active on each transition."""
+    if done.shape != curriculum_level.shape:
+        raise ValueError(
+            "done and curriculum_level must have identical [step, env] shapes"
+        )
+    return (
+        jnp.zeros((num_stages,), dtype=jnp.int32)
+        .at[curriculum_level.reshape(-1)]
+        .add(done.reshape(-1).astype(jnp.int32))
     )
 
 
@@ -2335,6 +2353,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     transition = Transition(
                         done=timestep.done,
                         task_done=timestep.info["task_done"],
+                        curriculum_level=timestep.env_cfg.curriculum.level,
                         action=action,
                         value=value,
                         reward=timestep.reward,
@@ -2406,14 +2425,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "devices",
                     ),
                 }
-                reset_levels = jnp.broadcast_to(
-                    timestep.env_cfg.curriculum.level[None, :],
-                    transitions.done.shape,
-                )
                 reset_exposure_count = jax.lax.psum(
-                    jnp.zeros((num_stages,), dtype=jnp.int32)
-                    .at[reset_levels.reshape(-1)]
-                    .add(transitions.done.reshape(-1).astype(jnp.int32)),
+                    reset_exposure_histogram(
+                        transitions.done,
+                        transitions.curriculum_level,
+                        num_stages,
+                    ),
                     "devices",
                 )
 
