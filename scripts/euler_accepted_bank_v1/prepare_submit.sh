@@ -217,7 +217,7 @@ payload = {
         "num_steps": 32,
     },
     "phases": {
-        "smoke": {"partition": "gpuhe.24h", "updates": 1},
+        "smoke": {"partition": "gpuhe.4h", "updates": 1},
         "screen": {"partition": "gpuhe.24h", "updates": 2000},
     },
     "future_p6": {
@@ -280,7 +280,8 @@ if [ "$SUBMIT" = 0 ]; then
         "$REMOTE_HOST" \
         "$(
             case "$PHASE" in
-                smoke|screen) echo gpuhe.24h ;;
+                smoke) echo gpuhe.4h ;;
+                screen) echo gpuhe.24h ;;
             esac
         )"
     exit 0
@@ -323,7 +324,7 @@ if [ "$PHASE" = screen ]; then
 fi
 
 case "$PHASE" in
-    smoke) PARTITION=gpuhe.24h; WALLTIME=04:00:00 ;;
+    smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00 ;;
     screen) PARTITION=gpuhe.24h; WALLTIME=08:00:00 ;;
 esac
 for ARM in "${ARMS[@]}"; do

@@ -341,6 +341,9 @@ def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
     )
     assert "NON_ADMISSION.md" in prepare
     assert "REVIEW_ONLY.md" in prepare
+    assert '"smoke": {"partition": "gpuhe.4h", "updates": 1}' in prepare
+    assert "smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00" in prepare
+    assert "smoke) echo gpuhe.4h" in prepare
     assert "gpuhe.24h" in prepare
     assert "gpuhe.120h" in prepare
     assert "separate 256-train-maps/condition bank is not implemented" in (
@@ -353,6 +356,7 @@ def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
     assert "NUM_DEVICES=4" in sbatch
     assert "NUM_ENVS_PER_DEVICE=1024" in sbatch
     assert "NUM_STEPS=32" in sbatch
+    assert "EXPECTED_PARTITION=gpuhe.4h" in sbatch
     assert "EXPECTED_TRAIN_MAPS_PER_CONDITION=64" in prepare
     for arm in ARMS:
         assert arm in prepare

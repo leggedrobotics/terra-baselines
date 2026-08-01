@@ -60,7 +60,7 @@ or Slurm mutation. A marked pilot bank can be exercised only with
 
 | Phase | Jobs | Partition | Updates | Admission |
 |---|---:|---|---:|---|
-| `smoke` | six arms | `gpuhe.24h` | 1 | finite periodic + FINAL model, optimizer and loss; clean transition integrity |
+| `smoke` | six arms | `gpuhe.4h` | 1 | finite periodic + FINAL model, optimizer and loss; clean transition integrity |
 | `screen` | six arms | `gpuhe.24h` | 2,000 | all six smoke receipts pass |
 | future P6 | selected generalist only | `gpuhe.120h` | 20,000 from scratch | separate 256-train-layouts/condition bank plus a passing generalist decision |
 

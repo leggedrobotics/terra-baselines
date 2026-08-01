@@ -31,7 +31,7 @@ case "$ARM" in
 esac
 case "$PHASE" in
     smoke)
-        EXPECTED_PARTITION=gpuhe.24h
+        EXPECTED_PARTITION=gpuhe.4h
         UPDATES=1
         CHECKPOINT_INTERVAL=1
         LOG_TRAIN_INTERVAL=1
