@@ -626,7 +626,7 @@ m2_dose_fast:
 # required run parameter and prevents an old 12-map bank from being selected by
 # an inherited DATASET_PATH.
 #
-# All four arms share reward, horizon, observations, actions, dynamics and PPO.
+# All six arms share reward, horizon, observations, actions, dynamics and PPO.
 # The only G-UNIFORM/G-ADAPTIVE difference is whether the explicit condition
 # probability vector moves.
 # -----------------------------------------------------------------------------
@@ -645,9 +645,37 @@ F-ANCHOR:
     enabled: true
     rule: uniform
 
+F-SPECIALIST:
+  description: Every accepted foundation condition, uniform condition mass, scratch
+  accepted_bank_arm: F-SPECIALIST
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
 T-ANCHOR:
   description: Accepted trench anchors, uniform condition mass, scratch
   accepted_bank_arm: T-ANCHOR
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
+T-SPECIALIST:
+  description: Every accepted trench condition, uniform condition mass, scratch
+  accepted_bank_arm: T-SPECIALIST
   agent_types: [0]
   action_types: [0]
   relocation_progress_mult: 1.5

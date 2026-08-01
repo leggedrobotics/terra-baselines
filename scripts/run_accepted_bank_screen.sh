@@ -13,7 +13,7 @@ if [ "$#" -ne 4 ]; then
 fi
 
 case "$ARM" in
-    F-ANCHOR|T-ANCHOR|G-UNIFORM|G-ADAPTIVE) ;;
+    F-ANCHOR|F-SPECIALIST|T-ANCHOR|T-SPECIALIST|G-UNIFORM|G-ADAPTIVE) ;;
     *) echo "unknown arm '$ARM'" >&2; exit 2 ;;
 esac
 

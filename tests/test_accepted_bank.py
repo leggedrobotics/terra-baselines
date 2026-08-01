@@ -169,7 +169,9 @@ def _write_bank(root: Path, map_count: int = 64) -> Path:
     ("arm", "conditions"),
     [
         ("F-ANCHOR", ["f-anchor"]),
+        ("F-SPECIALIST", ["f-anchor", "f-axis"]),
         ("T-ANCHOR", ["t-anchor"]),
+        ("T-SPECIALIST", ["t-anchor", "t-composed"]),
         ("G-UNIFORM", ["f-anchor", "f-axis", "t-anchor", "t-composed"]),
         ("G-ADAPTIVE", ["f-anchor", "f-axis", "t-anchor", "t-composed"]),
     ],
@@ -186,6 +188,32 @@ def test_arm_selection_is_explicit(tmp_path, arm, conditions):
     assert bank.review_admission_sha256 == _sha256(
         tmp_path / "review_admission.json"
     )
+
+
+@pytest.mark.parametrize(
+    ("arm", "family"),
+    (("F-SPECIALIST", "foundation"), ("T-SPECIALIST", "trench")),
+)
+def test_specialist_rejects_anchor_only_family(tmp_path, arm, family):
+    root = _write_bank(tmp_path)
+    index_path = root / "dataset.json"
+    index = json.loads(index_path.read_text())
+    index["train"] = [
+        entry
+        for entry in index["train"]
+        if entry["family"] != family or entry["branch_depth"] == "Anchor"
+    ]
+    receipt_path = root / "review_admission.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["accepted_conditions"] = sorted(
+        entry["condition_id"] for entry in index["train"]
+    )
+    receipt_path.write_text(json.dumps(receipt) + "\n")
+    index["review_admission_sha256"] = _sha256(receipt_path)
+    index_path.write_text(json.dumps(index) + "\n")
+
+    with pytest.raises(ValueError, match="duplicate the family anchor control"):
+        load_accepted_bank(root, arm, "terra-test-revision")
 
 
 def test_legacy_or_unfrozen_roots_fail_loudly(tmp_path):

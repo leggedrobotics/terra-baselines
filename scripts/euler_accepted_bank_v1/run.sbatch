@@ -26,7 +26,7 @@ umask 002
 : "${TMPDIR:?Euler allocation did not provide TMPDIR}"
 
 case "$ARM" in
-    F-ANCHOR|T-ANCHOR|G-UNIFORM|G-ADAPTIVE) ;;
+    F-ANCHOR|F-SPECIALIST|T-ANCHOR|T-SPECIALIST|G-UNIFORM|G-ADAPTIVE) ;;
     *) echo "unsupported ARM=$ARM" >&2; exit 2 ;;
 esac
 case "$PHASE" in
@@ -101,7 +101,13 @@ manifest_value() {
 }
 TERRA_REVISION="$(manifest_value terra_revision)"
 BASELINES_REVISION="$(manifest_value terra_baselines_revision)"
+MANIFEST_SCHEMA="$(manifest_value schema)"
 MANIFEST_ADMISSION="$(manifest_value admission)"
+MANIFEST_ARMS="$(
+    python3 -c \
+        'import json,sys; print(",".join(json.load(open(sys.argv[1]))["arms"]))' \
+        "$MANIFEST"
+)"
 MANIFEST_IDENTITY_CONTRACT="$(manifest_value scenario_identity_contract)"
 MANIFEST_TRAIN_MAPS_PER_CONDITION="$(
     manifest_value train_maps_per_condition
@@ -111,6 +117,15 @@ MANIFEST_REVIEW_ADMISSION_SHA="$(
 )"
 MANIFEST_VENV_LEDGER="$(manifest_value venv_ledger)"
 MANIFEST_VENV_LEDGER_SHA="$(manifest_value venv_ledger_sha256)"
+EXPECTED_ARMS="F-ANCHOR,F-SPECIALIST,T-ANCHOR,T-SPECIALIST,G-UNIFORM,G-ADAPTIVE"
+test "$MANIFEST_SCHEMA" = terra_accepted_bank_euler_campaign_v2 || {
+    echo "unsupported campaign schema: $MANIFEST_SCHEMA" >&2
+    exit 49
+}
+test "$MANIFEST_ARMS" = "$EXPECTED_ARMS" || {
+    echo "campaign arm matrix mismatch: $MANIFEST_ARMS" >&2
+    exit 48
+}
 test "$MANIFEST_ADMISSION" = frozen
 test "$MANIFEST_IDENTITY_CONTRACT" = terra_reset_arrays_sha256_v1
 test "$MANIFEST_TRAIN_MAPS_PER_CONDITION" = 64 || {
@@ -189,8 +204,10 @@ mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/eval" "$RUN_DIR/parity"
 if [ "$PHASE" = screen ]; then
     SMOKE_DIR="$RUN_BASE/$CAMPAIGN_SHA/smoke/s$SEED/$ARM"
     test -f "$SMOKE_DIR/receipt.env"
+    grep -qx "schema=terra_accepted_bank_euler_receipt_v2" "$SMOKE_DIR/receipt.env"
     grep -qx "status=PASSED" "$SMOKE_DIR/receipt.env"
     grep -qx "campaign_sha256=$CAMPAIGN_SHA" "$SMOKE_DIR/receipt.env"
+    grep -qx "campaign_arms=$MANIFEST_ARMS" "$SMOKE_DIR/receipt.env"
     grep -qx "phase=smoke" "$SMOKE_DIR/receipt.env"
     grep -qx "arm=$ARM" "$SMOKE_DIR/receipt.env"
     grep -qx "seed=$SEED" "$SMOKE_DIR/receipt.env"
@@ -216,6 +233,8 @@ nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
 cp "$MANIFEST" "$RUN_DIR/campaign_manifest.json"
 printf '%s  %s\n' "$CAMPAIGN_SHA" "$CAMPAIGN_ARCHIVE" > "$RUN_DIR/campaign_archive.sha256"
 printf '%s\n' \
+    "campaign_schema=$MANIFEST_SCHEMA" \
+    "campaign_arms=$MANIFEST_ARMS" \
     "phase=$PHASE" \
     "arm=$ARM" \
     "seed=$SEED" \
@@ -326,9 +345,10 @@ if [ -f "$RUN_DIR/smoke_validation.json" ]; then
 fi
 RECEIPT_TMP="$RUN_DIR/.receipt.env.$SLURM_JOB_ID"
 printf '%s\n' \
-    "schema=terra_accepted_bank_euler_receipt_v1" \
+    "schema=terra_accepted_bank_euler_receipt_v2" \
     "status=PASSED" \
     "campaign_sha256=$CAMPAIGN_SHA" \
+    "campaign_arms=$MANIFEST_ARMS" \
     "campaign_archive=$CAMPAIGN_ARCHIVE" \
     "terra_revision=$TERRA_REVISION" \
     "terra_baselines_revision=$BASELINES_REVISION" \

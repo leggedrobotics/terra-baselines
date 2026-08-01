@@ -17,6 +17,7 @@ from scripts.euler_accepted_bank_v1.select_promotion import (
     slice_agent_batch,
     verify_smoke,
 )
+from utils.accepted_bank import ARMS
 from utils.helpers import save_pkl_object
 
 
@@ -127,7 +128,7 @@ def _run_prepare_validator(bank_root):
 
 
 def _record(arm, update, *, passed=True, macro=0.4, exact=2, worst=0.1):
-    rule = "uniform" if arm == "G-UNIFORM" else "adaptive"
+    rule = "adaptive" if arm == "G-ADAPTIVE" else "uniform"
     return {
         "schema": "terra_fixed_bank_eval_v4",
         "completion_contract": "exact_visible_dump_v1",
@@ -237,7 +238,7 @@ def test_promotion_rejects_wrong_arm_or_panel_identity(tmp_path):
     with pytest.raises(ValueError, match="identical promotion panel"):
         select_promotion(uniform, adaptive)
 
-    _write_screen(adaptive, "T-ANCHOR")
+    _write_screen(adaptive, "F-SPECIALIST")
     with pytest.raises(ValueError, match="expected treatment arm"):
         select_promotion(uniform, adaptive)
 
@@ -301,8 +302,9 @@ def test_agent_batch_slice_preserves_scalar_leaves():
     np.testing.assert_array_equal(selected.batched, np.array([3, 4]))
 
 
-def test_smoke_validation_checks_update_finiteness_and_integrity(tmp_path):
-    bank = SimpleNamespace(arm="G-UNIFORM")
+@pytest.mark.parametrize("arm", ARMS)
+def test_smoke_validation_checks_update_finiteness_and_integrity(tmp_path, arm):
+    bank = SimpleNamespace(arm=arm)
     config = SimpleNamespace(accepted_bank=bank)
     checkpoint = {
         "next_update": 1,
@@ -320,12 +322,12 @@ def test_smoke_validation_checks_update_finiteness_and_integrity(tmp_path):
     final = tmp_path / "final.pkl"
     save_pkl_object(checkpoint, str(periodic))
     save_pkl_object(checkpoint, str(final))
-    assert verify_smoke("G-UNIFORM", periodic, final)["passed"]
+    assert verify_smoke(arm, periodic, final)["passed"]
 
     checkpoint["model"] = {"w": jnp.asarray([np.nan])}
     save_pkl_object(checkpoint, str(final))
     with pytest.raises(ValueError, match="non-finite model"):
-        verify_smoke("G-UNIFORM", periodic, final)
+        verify_smoke(arm, periodic, final)
 
 
 def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
@@ -352,6 +354,14 @@ def test_launch_scripts_keep_dry_run_before_any_remote_mutation():
     assert "NUM_ENVS_PER_DEVICE=1024" in sbatch
     assert "NUM_STEPS=32" in sbatch
     assert "EXPECTED_TRAIN_MAPS_PER_CONDITION=64" in prepare
+    for arm in ARMS:
+        assert arm in prepare
+        assert arm in sbatch
+    assert '"schema": "terra_accepted_bank_euler_campaign_v2"' in prepare
+    assert '"arms": arms_csv.split(",")' in prepare
+    assert "terra_accepted_bank_euler_receipt_v2" in prepare
+    assert "terra_accepted_bank_euler_receipt_v2" in sbatch
+    assert "campaign arm matrix mismatch" in sbatch
     assert '"$BANK_ROOT/review_admission.json"' in prepare
     assert '"bank_review_admission_sha256": review_admission_sha' in prepare
     assert "validate_training_bank.py" in prepare

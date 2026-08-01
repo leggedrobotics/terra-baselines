@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 
+from utils.accepted_bank import ARMS as ACCEPTED_BANK_ARMS
+
 
 SCREEN_UPDATES = (500, 1000, 2000)
 GENERALIST_ARMS = ("G-UNIFORM", "G-ADAPTIVE")
@@ -335,7 +337,7 @@ def verify_smoke(
 
     sys.modules["__main__"].TrainConfig = TrainConfig
     sys.modules["__main__"].MixedAgentTrainConfig = MixedAgentTrainConfig
-    if arm not in ("F-ANCHOR", "T-ANCHOR", "G-UNIFORM", "G-ADAPTIVE"):
+    if arm not in ACCEPTED_BANK_ARMS:
         raise ValueError(f"unsupported smoke arm {arm!r}")
     checkpoints = {
         "periodic": load_pkl_object(str(periodic_path.resolve())),

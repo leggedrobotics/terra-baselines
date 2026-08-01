@@ -18,7 +18,14 @@ REVIEW_MANIFEST_SHA256 = (
 REVIEW_DATA_SHA256 = (
     "8404fcaa9a6b66949ade2b0225d3e7800968951953d2b6363aabffe38100cc0b"
 )
-ARMS = ("F-ANCHOR", "T-ANCHOR", "G-UNIFORM", "G-ADAPTIVE")
+ARMS = (
+    "F-ANCHOR",
+    "F-SPECIALIST",
+    "T-ANCHOR",
+    "T-SPECIALIST",
+    "G-UNIFORM",
+    "G-ADAPTIVE",
+)
 FAMILIES = ("foundation", "trench")
 BRANCH_DEPTHS = ("Anchor", "One-axis", "Composed")
 TRAIN_MAPS_PER_CONDITION = 64
@@ -447,8 +454,12 @@ def _validate_evaluation_panels(
 def _selected(level: AcceptedLevel, arm: str) -> bool:
     if arm == "F-ANCHOR":
         return level.family == "foundation" and level.branch_depth == "Anchor"
+    if arm == "F-SPECIALIST":
+        return level.family == "foundation"
     if arm == "T-ANCHOR":
         return level.family == "trench" and level.branch_depth == "Anchor"
+    if arm == "T-SPECIALIST":
+        return level.family == "trench"
     return True
 
 
@@ -570,6 +581,19 @@ def load_accepted_bank(
     )
     if not selected:
         raise ValueError(f"{index_path}: arm {arm} selects no accepted conditions")
+    if arm in ("F-SPECIALIST", "T-SPECIALIST"):
+        family = "foundation" if arm == "F-SPECIALIST" else "trench"
+        anchor_ids = {
+            level.condition_id
+            for level in all_levels
+            if level.family == family and level.branch_depth == "Anchor"
+        }
+        selected_ids = {level.condition_id for level in selected}
+        if selected_ids == anchor_ids:
+            raise ValueError(
+                f"{index_path}: arm {arm} has no accepted non-anchor conditions; "
+                "running it would duplicate the family anchor control"
+            )
     map_counts = {level.map_count for level in selected}
     if len(map_counts) != 1:
         raise ValueError(

@@ -12,9 +12,7 @@ from train_mixed import (
     assign_curriculum_levels,
     pooled_sampler_settings,
 )
-
-
-ARMS = ("F-ANCHOR", "T-ANCHOR", "G-UNIFORM", "G-ADAPTIVE")
+from utils.accepted_bank import ARMS
 
 
 @pytest.mark.parametrize("arm", ARMS)
@@ -50,6 +48,24 @@ def test_generalist_arms_differ_only_in_sampler_rule():
     assert uniform_sampler.pop("rule") == "uniform"
     assert adaptive_sampler.pop("rule") == "adaptive"
     assert uniform_sampler == adaptive_sampler
+
+
+@pytest.mark.parametrize("arm", ("F-SPECIALIST", "T-SPECIALIST"))
+def test_family_specialists_use_the_frozen_uniform_treatment(arm):
+    specialist = get_config(arm)
+    generalist = get_config("G-UNIFORM")
+    ignored = {"name", "description", "accepted_bank_arm"}
+    specialist_treatment = {
+        key: value
+        for key, value in vars(specialist).items()
+        if key not in ignored
+    }
+    generalist_treatment = {
+        key: value
+        for key, value in vars(generalist).items()
+        if key not in ignored
+    }
+    assert specialist_treatment == generalist_treatment
 
 
 def test_pooled_settings_are_read_from_the_effective_training_config():
@@ -137,4 +153,6 @@ def test_shared_launcher_freezes_production_ppo_contract():
         'if [ "$#" -ne 4 ]',
     ):
         assert argument in script
+    for arm in ARMS:
+        assert arm in script
     assert '"$@"' not in script

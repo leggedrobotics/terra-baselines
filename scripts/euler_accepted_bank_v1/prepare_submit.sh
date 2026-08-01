@@ -56,6 +56,15 @@ VENV_LEDGER="$VENV/provenance/artifact-hashes.sha256"
 VENV_LEDGER_SHA="853871aef55efe34a64474660109673c0d48b9a34cba333e368600a11b126d5c"
 IDENTITY_CONTRACT="terra_reset_arrays_sha256_v1"
 EXPECTED_TRAIN_MAPS_PER_CONDITION=64
+ARMS=(
+    F-ANCHOR
+    F-SPECIALIST
+    T-ANCHOR
+    T-SPECIALIST
+    G-UNIFORM
+    G-ADAPTIVE
+)
+ARMS_CSV="$(IFS=,; printf '%s' "${ARMS[*]}")"
 
 for repository in "$REPO" "$TERRA_REPO"; do
     git -C "$repository" rev-parse --is-inside-work-tree >/dev/null
@@ -183,10 +192,11 @@ import json, pathlib, sys
     output, terra_revision, baselines_revision, bank_tree_sha,
     dataset_sha, review_admission_sha, protocol_sha, registry_sha, runtime_sha,
     venv, ledger, ledger_sha, identity_contract, admission,
-    train_maps_per_condition
+    train_maps_per_condition, arms_csv
 ) = sys.argv[1:]
 payload = {
-    "schema": "terra_accepted_bank_euler_campaign_v1",
+    "schema": "terra_accepted_bank_euler_campaign_v2",
+    "arms": arms_csv.split(","),
     "admission": admission,
     "terra_revision": terra_revision,
     "terra_baselines_revision": baselines_revision,
@@ -235,7 +245,8 @@ pathlib.Path(output).write_text(
     "$VENV_LEDGER_SHA" \
     "$IDENTITY_CONTRACT" \
     "$ADMISSION" \
-    "$BANK_MAPS_PER_CONDITION"
+    "$BANK_MAPS_PER_CONDITION" \
+    "$ARMS_CSV"
 
 ARCHIVE_TMP="$STAGE/campaign.tar.zst"
 tar --sort=name --mtime='UTC 1970-01-01' \
@@ -294,14 +305,15 @@ ssh "$REMOTE_HOST" "
     mkdir -p '$REMOTE_RUN_BASE'
 "
 
-ARMS=(F-ANCHOR T-ANCHOR G-UNIFORM G-ADAPTIVE)
 if [ "$PHASE" = screen ]; then
     for ARM in "${ARMS[@]}"; do
         SMOKE="$REMOTE_RUN_BASE/$CAMPAIGN_SHA/smoke/s$SEED/$ARM"
         ssh "$REMOTE_HOST" "
             set -e
+            grep -qx 'schema=terra_accepted_bank_euler_receipt_v2' '$SMOKE/receipt.env'
             grep -qx 'status=PASSED' '$SMOKE/receipt.env'
             grep -qx 'campaign_sha256=$CAMPAIGN_SHA' '$SMOKE/receipt.env'
+            grep -qx 'campaign_arms=$ARMS_CSV' '$SMOKE/receipt.env'
             grep -qx 'phase=smoke' '$SMOKE/receipt.env'
             grep -qx 'arm=$ARM' '$SMOKE/receipt.env'
             grep -qx 'seed=$SEED' '$SMOKE/receipt.env'

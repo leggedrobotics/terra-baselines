@@ -16,19 +16,34 @@ or implementation details.
 
 ## 1. Question and minimal matrix
 
-The initial screen has four scratch-trained arms:
+The initial screen has six scratch-trained arms:
 
 | Arm | Training conditions | Condition sampler | Question |
 |---|---|---|---|
 | `F-ANCHOR` | accepted foundation `Anchor` conditions | uniform | are the new foundation anchors learnable? |
+| `F-SPECIALIST` | every accepted foundation condition | uniform | can a foundation-only policy learn the full foundation distribution? |
 | `T-ANCHOR` | accepted trench `Anchor` conditions | uniform | are the new trench anchors learnable? |
+| `T-SPECIALIST` | every accepted trench condition | uniform | can a trench-only policy learn the full trench distribution? |
 | `G-UNIFORM` | every accepted condition | uniform | can one generalist learn the target distribution directly? |
 | `G-ADAPTIVE` | the identical all-condition bank | adaptive progressive | does progressive exposure improve the generalist? |
+
+The anchor controls and family specialists are feasibility diagnostics. They
+do not enter the causal curriculum ablation or promotion decision, which
+compares only `G-UNIFORM` and `G-ADAPTIVE`.
+
+They are not clean negative-transfer A/B comparisons with the generalist.
+With the frozen 18-foundation/14-trench/32-total condition set, uniform sampling
+gives each `F-SPECIALIST` condition `1/18` of assignments and each
+`T-SPECIALIST` condition `1/14`, versus `1/32` in `G-UNIFORM`: respectively
+`1.78x` and `2.29x` more dose per condition. The specialists answer whether a
+family is learnable under concentrated family-only compute. A specialist is
+invalid when its accepted family contains only anchors, because that would
+duplicate the anchor control; the loader rejects this before JAX starts.
 
 No strict stage unlock, per-environment demotion, partial reset, reward
 curriculum, teacher, or old 12-map bank is part of this comparison.
 
-All arms freeze:
+All six arms freeze:
 
 - agent-neutral `relocation_progress_mult = 1.5`;
 - horizon 450, `DENSE`, trench absolute shaping off;
@@ -130,9 +145,26 @@ guards =
 The exact-rate quantum is recorded as `1 / panel_size`. There are no
 `26/32`, `6/8`, or other panel-size-specific counts.
 
+The two specialist policies still evaluate the complete frozen panel so their
+cross-family behavior remains visible, but their primary diagnostic fields are
+the trained family's values:
+
+- exact successes in `summary.by_family[family]`;
+- macro completion, micro p10 and worst-condition completion in
+  `summary.graded.by_family[family]`; and
+- clean global `summary.integrity`.
+
+The untrained family's scores are transfer diagnostics. The evaluator's global
+`comparison_to_previous` gate is not a specialist feasibility gate: its macro
+and worst-condition terms include the untrained family. The bounded specialist
+screen is interpreted as progress when trained-family exact success increases
+by at least one map or trained-family macro completion increases by at least
+`0.01`, while that family's p10 and worst-condition completion each regress by
+no more than `0.05`. These diagnostics never select the generalist promotion.
+
 ## 5. Entrypoints
 
-The four YAML config names are the arm names themselves. A single non-Slurm
+The six YAML config names are the arm names themselves. A single non-Slurm
 entrypoint keeps architecture and PPO arguments shared:
 
 ```bash
@@ -177,15 +209,16 @@ future-20k boundary are documented in
 ## 6. Implementation checklist
 
 - [x] reject legacy/review-only/stale bank roots before JAX;
-- [x] select foundation anchors, trench anchors, or all accepted conditions
-  from descriptor fields rather than directory-name conventions;
+- [x] select foundation anchors, all foundations, trench anchors, all trenches,
+  or all accepted conditions from descriptor fields rather than directory-name
+  conventions;
 - [x] port only the global uniform/adaptive sampler, not the old M3 bank or
   strict staged scheduler;
 - [x] freeze reward and horizon across condition levels;
 - [x] disable the per-environment Terra ratchet;
 - [x] log intended mass, sampled assignments, reset exposure and completed
   episodes without conflating them;
-- [x] add the four parameterized configs and one shared local/allocation
+- [x] add the six parameterized configs and one shared local/allocation
   entrypoint;
 - [x] freeze and test the production PPO shape, explicit seed, checkpoint
   cadence, and finite-check cadence in that entrypoint;
@@ -202,7 +235,7 @@ future-20k boundary are documented in
 - [x] fail closed on P6 until the separate 256-train-layouts/condition bank
   exists; retain the generalist selection receipt as the future P6 gate;
 - [x] pass the full terra-baselines CPU suite against the paired Terra commit
-  (`223 passed`);
+  (`245 passed`);
 - [ ] complete one local or allocated-GPU first-update smoke per arm;
 - [ ] submit the bounded screens only after the accepted bank is frozen.
 

@@ -60,8 +60,8 @@ or Slurm mutation. A marked pilot bank can be exercised only with
 
 | Phase | Jobs | Partition | Updates | Admission |
 |---|---:|---|---:|---|
-| `smoke` | four arms | `gpuhe.24h` | 1 | finite periodic + FINAL model, optimizer and loss; clean transition integrity |
-| `screen` | four arms | `gpuhe.24h` | 2,000 | all four smoke receipts pass |
+| `smoke` | six arms | `gpuhe.24h` | 1 | finite periodic + FINAL model, optimizer and loss; clean transition integrity |
+| `screen` | six arms | `gpuhe.24h` | 2,000 | all six smoke receipts pass |
 | future P6 | selected generalist only | `gpuhe.120h` | 20,000 from scratch | separate 256-train-layouts/condition bank plus a passing generalist decision |
 
 Every allocation requires exactly four RTX 4090 GPUs, four CPUs, and the
@@ -69,8 +69,9 @@ Every allocation requires exactly four RTX 4090 GPUs, four CPUs, and the
 artifact ledger are checked before JAX. Non-smoke jobs also require
 an `api.wandb.ai` credential in Euler's private `~/.netrc`; W&B is disabled
 for smoke.
-The campaign manifest records the review-admission file hash. The campaign
-manifest, run contract, and final receipt each record
+The v2 campaign manifest records the exact six-arm matrix and the
+review-admission file hash. The campaign manifest, run contract, and v2 final
+receipt each record
 `train_maps_per_condition=64`; every run receipt is transitively bound to the
 review admission through the immutable campaign archive hash.
 
@@ -85,8 +86,18 @@ Agent slot with Terra's tested `terra.benchmark_state.agent_state_sha256`
 codec and requires the ordered CPU/GPU hashes, episode identities, layer
 verification and bank identities to match byte for byte.
 
-`F-ANCHOR` and `T-ANCHOR` are feasibility screens only. The 20k selection
-compares `G-UNIFORM` and `G-ADAPTIVE` on the identical full promotion panel:
+`F-ANCHOR` and `T-ANCHOR` are easy-family feasibility controls.
+`F-SPECIALIST` and `T-SPECIALIST` train uniformly on every accepted condition
+of their respective family. They receive `32/18 = 1.78x` and
+`32/14 = 2.29x` the per-condition assignment dose of `G-UNIFORM`, so they are
+concentrated-compute feasibility diagnostics rather than clean negative-transfer
+A/Bs. Their primary results are the trained-family exact and graded summaries;
+the untrained family is a transfer diagnostic, and the evaluator's global
+comparison gate is not their feasibility gate. The loader rejects a specialist
+whose family contains only anchors, because that run would duplicate its anchor
+control. All four diagnostic arms never enter promotion.
+The causal curriculum comparison and 20k selection use only `G-UNIFORM` and
+`G-ADAPTIVE` on the identical full promotion panel:
 
 1. require an update-1,000 to update-2,000 comparison gate pass;
 2. rank passing arms by final macro completion, exact successes, then
@@ -113,7 +124,7 @@ SUBMIT=0 scripts/euler_accepted_bank_v1/prepare_submit.sh \
 ```
 
 After explicit authorization, set `SUBMIT=1` for `smoke`, then `screen`.
-`screen` verifies all four immutable smoke receipts, including campaign, arm
+`screen` verifies all six immutable smoke receipts, including campaign, arm
 and seed. Each exact run leaf is reserved with one atomic `mkdir`; duplicate
 submission fails instead of sharing outputs. Direct `sbatch` use bypasses the
 content-addressed admission path and is unsupported.

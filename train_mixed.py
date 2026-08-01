@@ -3464,7 +3464,8 @@ if __name__ == "__main__":
         type=Path,
         default=None,
         help=(
-            "Required by F-ANCHOR, T-ANCHOR, G-UNIFORM and G-ADAPTIVE. "
+            "Required by F-ANCHOR, F-SPECIALIST, T-ANCHOR, T-SPECIALIST, "
+            "G-UNIFORM and G-ADAPTIVE. "
             "Must contain a frozen terra_curriculum_loader_bank_v1 dataset.json."
         ),
     )
