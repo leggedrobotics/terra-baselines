@@ -68,11 +68,13 @@ both had `2,441,223` parameters. The likely recipe mismatch is P5b entropy
 decline when KL reached zero. This is the P5c hypothesis, not a post-hoc claim
 that entropy caused the decline.
 
-## Next frozen campaign: P5c (`PREP`)
+## Next frozen campaign: P5c (`SMOKE QUEUED`)
 
-P5c has no Slurm job IDs yet. It freezes five 4,000-update arms with evaluation
-every 500 updates: medium adaptive, medium uniform, deep uniform, foundation
-medium-uniform, and trench medium-uniform. All share entropy
+P5c freezes five 4,000-update arms with evaluation every 500 updates: medium
+adaptive, medium uniform, deep uniform, foundation medium-uniform, and trench
+medium-uniform. Allocated update-1 smoke jobs `9458568`, `9458581`, `9458585`,
+`9458616`, and `9458619` were submitted on 2026-08-03; the screens remain
+blocked until all five contracts pass. All share entropy
 `0.02 -> 0.005 / 10,000` and the common P5 parent/teacher. The specialists are
 family dose ceilings; they do not enter the causal sampler/depth comparison.
 Every checkpoint must be evaluated on constrained promotion/development and

@@ -415,7 +415,10 @@ Allocated execution receipt (2026-08-02):
   medium/adaptive, deep/adaptive, and medium/uniform respectively; and
 - screen jobs `9378174`, `9378175`, and `9378176`: all `COMPLETED 0:0` with
   final `status=PASSED`, 2,000 updates, and complete fixed-panel evaluations.
-- P5c has no Slurm job IDs yet; its state is `PREP`, not `RUNNING`.
+- P5c allocated update-1 smokes were submitted on 2026-08-03 as jobs
+  `9458568`, `9458581`, `9458585`, `9458616`, and `9458619`. They were queued
+  at the time of this receipt; screen submission remains gated on all five
+  explicit smoke contracts passing.
 
 ## 10. Completion evidence
 

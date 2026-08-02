@@ -12,17 +12,18 @@ current scheduler state.
 
 ## Current production jobs
 
-There are no P5c production Slurm job IDs yet. The five-arm campaign is
-`PREP`, not `RUNNING`; allocated update-1 smokes must pass before screen
-submission.
+The five allocated P5c update-1 smokes were submitted on 2026-08-03. They are
+runtime admission only: the 4,000-update screens remain blocked until every
+smoke exits `0:0`, writes `status=PASSED`, and passes the explicit checkpoint
+verifier.
 
-| Planned P5c arm | Support | Sampler | Architecture | Budget | State |
-|---|---|---|---|---:|---|
-| `G-MEDIUM-ADAPTIVE-WARM` | all 32 | adaptive | medium | 4,000 updates | PREP |
-| `G-MEDIUM-UNIFORM-WARM` | all 32 | uniform | medium | 4,000 updates | PREP |
-| `G-DEEP-UNIFORM-WARM` | all 32 | uniform | deep | 4,000 updates | PREP |
-| `F-MEDIUM-UNIFORM-WARM` | 18 foundations | uniform | medium | 4,000 updates | PREP |
-| `T-MEDIUM-UNIFORM-WARM` | 14 trenches | uniform | medium | 4,000 updates | PREP |
+| Planned P5c arm | Support | Sampler | Architecture | Budget | Smoke | State |
+|---|---|---|---|---:|---:|---|
+| `G-MEDIUM-ADAPTIVE-WARM` | all 32 | adaptive | medium | 4,000 updates | `9458568` | QUEUED |
+| `G-MEDIUM-UNIFORM-WARM` | all 32 | uniform | medium | 4,000 updates | `9458581` | QUEUED |
+| `G-DEEP-UNIFORM-WARM` | all 32 | uniform | deep | 4,000 updates | `9458585` | QUEUED |
+| `F-MEDIUM-UNIFORM-WARM` | 18 foundations | uniform | medium | 4,000 updates | `9458616` | QUEUED |
+| `T-MEDIUM-UNIFORM-WARM` | 14 trenches | uniform | medium | 4,000 updates | `9458619` | QUEUED |
 
 All five use the same P5 parent/teacher and low entropy
 `0.02 -> 0.005 / 10,000`. Fixed evaluations are due every 500 updates on

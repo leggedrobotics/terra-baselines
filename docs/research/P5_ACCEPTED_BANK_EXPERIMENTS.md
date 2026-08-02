@@ -383,5 +383,6 @@ evaluations: constrained promotion, constrained development, diagnostic
 all-free promotion, and diagnostic all-free development. The long-run gate
 requires improvement across multiple checkpoints, confirmation on both public
 panels, no material family or bottom-tail regression, and stable or improving
-capability-floor results. P5c is `PREP` until allocated update-1 smokes pass;
-no production job IDs are recorded yet.
+capability-floor results. P5c allocated update-1 smokes were submitted on
+2026-08-03 as jobs `9458568`, `9458581`, `9458585`, `9458616`, and `9458619`.
+The screen remains blocked until all five smoke contracts pass.
