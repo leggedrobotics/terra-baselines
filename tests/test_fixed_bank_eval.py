@@ -352,6 +352,16 @@ class FixedBankEvalTest(unittest.TestCase):
             )["sha256"],
         )
 
+        changed_depth = SimpleNamespace(**vars(config))
+        changed_depth.resnet_stage_channels = (24, 48, 64, 96)
+        changed_depth.resnet_blocks_per_stage = (2, 2, 3, 3)
+        self.assertNotEqual(
+            baseline["sha256"],
+            checkpoint_treatment_fingerprint(
+                {"train_config": changed_depth}
+            )["sha256"],
+        )
+
     def test_checkpoint_sequence_rejects_duplicate_updates_and_mixed_runs(self):
         config = SimpleNamespace(name="run-a", seed=1)
         checkpoints = [
@@ -368,6 +378,25 @@ class FixedBankEvalTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "mixes treatment"):
             validate_checkpoint_sequence(checkpoints)
+
+    def test_checkpoint_sequence_accepts_explicit_update_zero_only(self):
+        config = SimpleNamespace(name="initialization", seed=1)
+        validate_checkpoint_sequence(
+            [(Path("initial.pkl"), {"next_update": 0, "train_config": config})]
+        )
+        with self.assertRaisesRegex(ValueError, "must declare next_update"):
+            validate_checkpoint_sequence(
+                [(Path("missing.pkl"), {"train_config": config})]
+            )
+        with self.assertRaisesRegex(ValueError, "nonnegative"):
+            validate_checkpoint_sequence(
+                [
+                    (
+                        Path("negative.pkl"),
+                        {"next_update": -1, "train_config": config},
+                    )
+                ]
+            )
 
     def test_exact_reset_verifies_all_layers_and_metadata(self):
         with tempfile.TemporaryDirectory() as temporary:

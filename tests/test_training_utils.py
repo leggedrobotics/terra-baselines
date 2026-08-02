@@ -34,10 +34,13 @@ from train_mixed import (
     _validate_checkpoint_history_width,
     _validate_resume_update,
     _checkpoint_load_mode,
+    _restore_pooled_sampler_checkpoint,
     _teacher_model_env_from_checkpoint,
+    _wandb_tags_for_config,
 )
 from utils.helpers import checkpoint_batch_config, replicate_checkpoint_env_config
 from utils.models import get_model_ready
+from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
 from utils.utils_ppo import obs_to_model_input
 
 
@@ -208,6 +211,24 @@ class TrainingAccountingTest(unittest.TestCase):
         self.assertEqual(standard.num_updates, 3)
         self.assertEqual(standard.actual_total_timesteps, 96)
 
+    def test_accepted_bank_wandb_tag_records_initialization_mode(self):
+        bank = SimpleNamespace(arm="G-ADAPTIVE", terra_revision="a" * 40)
+        scratch = MixedAgentTrainConfig(name="scratch", accepted_bank=bank)
+        warm = MixedAgentTrainConfig(
+            name="warm",
+            accepted_bank=bank,
+            warm_start_from="parent.pkl",
+        )
+        resume = MixedAgentTrainConfig(
+            name="resume",
+            accepted_bank=bank,
+            resume_from="checkpoint.pkl",
+        )
+
+        self.assertIn("init:scratch", _wandb_tags_for_config(scratch))
+        self.assertIn("init:params-only-warm", _wandb_tags_for_config(warm))
+        self.assertIn("init:resume", _wandb_tags_for_config(resume))
+
     def test_checkpoint_batch_config_restores_saved_map_curriculum(self):
         config = SimpleNamespace(
             curriculum_levels_override=[
@@ -377,6 +398,45 @@ class CheckpointCompatibilityTest(unittest.TestCase):
                     resume_update=12,
                 )
             )
+
+    def test_pooled_sampler_state_is_resume_only_and_fail_closed(self):
+        names = ["a", "b", "c", "d", "e", "f", "g"]
+        settings = SamplerSettings(rule="adaptive", min_episodes=1, seed=11)
+        labels = {name: {"family": "foundation"} for name in names}
+
+        source = PooledConditionSampler(
+            names,
+            settings,
+            maps_per_condition=[64] * len(names),
+            labels=labels,
+        )
+        source.start(0)
+        source.sample_levels((128,))
+        checkpoint = {"pooled_sampler_state": source.state_dict()}
+
+        resumed = PooledConditionSampler(
+            names,
+            settings,
+            maps_per_condition=[64] * len(names),
+            labels=labels,
+        )
+        _restore_pooled_sampler_checkpoint(resumed, checkpoint, "resume")
+        self.assertEqual(resumed.state_dict(), source.state_dict())
+
+        warm = PooledConditionSampler(
+            names,
+            settings,
+            maps_per_condition=[64] * len(names),
+            labels=labels,
+        )
+        fresh_state = warm.state_dict()
+        _restore_pooled_sampler_checkpoint(warm, checkpoint, "warm_start")
+        self.assertEqual(warm.state_dict(), fresh_state)
+
+        with self.assertRaisesRegex(ValueError, "requires checkpoint field"):
+            _restore_pooled_sampler_checkpoint(resumed, {}, "resume")
+        with self.assertRaisesRegex(ValueError, "no pooled sampler"):
+            _restore_pooled_sampler_checkpoint(None, checkpoint, "resume")
 
     def test_checkpoint_env_axis_keeps_agent_vectors(self):
         class MiniEnvConfig(NamedTuple):

@@ -846,6 +846,35 @@ def pooled_sampler_settings(config) -> SamplerSettings | None:
     return SamplerSettings(**values)
 
 
+def _restore_pooled_sampler_checkpoint(
+    sampler: PooledConditionSampler | None,
+    checkpoint: dict | None,
+    checkpoint_mode: str | None,
+) -> None:
+    """Restore sampler history only for a true ``--resume_from`` load."""
+    if checkpoint_mode != "resume":
+        return
+
+    saved_state = (
+        checkpoint.get("pooled_sampler_state")
+        if checkpoint is not None
+        else None
+    )
+    if sampler is None:
+        if saved_state is not None:
+            raise ValueError(
+                "resume checkpoint contains pooled sampler state, but the "
+                "current run has no pooled sampler"
+            )
+        return
+    if saved_state is None:
+        raise ValueError(
+            "resume with a pooled sampler requires checkpoint field "
+            "'pooled_sampler_state'; use --warm_start_from for a fresh sampler"
+        )
+    sampler.restore_state_dict(saved_state)
+
+
 def _assert_pooled_level_contract(
     curriculum_levels: list[dict],
     increase_threshold: int,
@@ -1738,6 +1767,12 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
             f"sampler:{_tag_value(sampler_config.get('rule', 'uniform'))}"
         )
     if config.accepted_bank is not None:
+        if config.warm_start_from is not None:
+            initialization = "params-only-warm"
+        elif config.resume_from is not None:
+            initialization = "resume"
+        else:
+            initialization = "scratch"
         tags.extend(
             (
                 f"accepted-arm:{_tag_value(config.accepted_bank.arm)}",
@@ -1746,7 +1781,7 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
                     f"{_tag_value(config.accepted_bank.terra_revision[:12])}"
                 ),
                 "bank:terra-curriculum-loader-v1",
-                "init:scratch",
+                f"init:{initialization}",
             )
         )
 
@@ -2139,6 +2174,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 f"{bank.map_count_per_condition} maps/condition",
                 flush=True,
             )
+        _restore_pooled_sampler_checkpoint(
+            pooled_sampler,
+            checkpoint,
+            checkpoint_mode,
+        )
+        if pooled_sampler is not None and checkpoint_mode == "resume":
+            print("📊 Restored pooled condition sampler state.", flush=True)
 
         def train(rng: jax.Array, train_state: TrainState):
             # INIT ENV
@@ -2842,6 +2884,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             for key, value in (transition_integrity_single.items())
                         },
                     }
+                    if pooled_sampler is not None:
+                        checkpoint["pooled_sampler_state"] = (
+                            pooled_sampler.state_dict()
+                        )
                     checkpoint_name = f"{config.name}.pkl"
                     if config.keep_checkpoint_history:
                         checkpoint_name = f"{config.name}_update_{i + 1:06d}.pkl"
@@ -3010,6 +3056,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     key: int(np.asarray(value))
                     for key, value in transition_integrity_single.items()
                 },
+                "pooled_sampler_state": (
+                    pooled_sampler.state_dict()
+                    if pooled_sampler is not None
+                    else None
+                ),
             }
 
         return train
@@ -3102,6 +3153,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             "training_duration": elapsed_time,
             "final_reward": train_info.get("final_reward", None),
         }
+        if train_info["pooled_sampler_state"] is not None:
+            final_checkpoint["pooled_sampler_state"] = train_info[
+                "pooled_sampler_state"
+            ]
         final_path = Path(config.checkpoint_dir) / f"{config.name}_FINAL.pkl"
         helpers.save_pkl_object(final_checkpoint, str(final_path))
         print(f"💾 Final mixed agent model saved to {final_path}")
@@ -3794,11 +3849,11 @@ if __name__ == "__main__":
             raise ValueError(
                 "accepted-bank configs cannot be combined with --map_path"
             )
-        if args.resume_from is not None or args.warm_start_from is not None:
-            raise ValueError(
-                "the declared accepted-bank screens start from scratch; "
-                "resume and warm-start are not supported"
-            )
+        # Checkpoint mode is an explicit treatment input. Parameters-only warm
+        # starts keep a fresh optimizer and sampler. Resume restores compatible
+        # optimizer and pooled-sampler state but cannot restore the exact JAX
+        # environment trajectory, RNG, or action history.
+        # Those invariants are validated by the common checkpoint-loading path.
         accepted_bank = load_accepted_bank(
             args.accepted_bank_root,
             accepted_bank_arm,

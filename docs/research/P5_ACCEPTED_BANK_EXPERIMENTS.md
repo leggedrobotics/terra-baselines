@@ -1,6 +1,6 @@
 # P5 Accepted-Bank Experiment Implementation
 
-- Status: implementation complete; PRNG-bound bank rebuild and allocated validation pending
+- Status: P5 complete; `G-ADAPTIVE` selected; matched P5b follow-up in progress
 - Date: 2026-07-30
 - Canonical authority:
   [`D5_D7_IMPLEMENTATION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_simple_mapbank_reward_20260730/D5_D7_IMPLEMENTATION_PLAN.md)
@@ -13,6 +13,12 @@
 This document is the executable terra-baselines side of the canonical P5a
 plan. The canonical plan should link here rather than duplicate these commands
 or implementation details.
+
+Final P5 evidence, the standardized condition leaderboard, and the frozen
+three-arm warm-start depth/sampler screen are recorded in
+[`P5_RESULTS_ANALYSIS.md`](P5_RESULTS_ANALYSIS.md) and
+[`P5_FOLLOWUP_GOAL.md`](P5_FOLLOWUP_GOAL.md). Those documents do not change the
+P5 treatment after the fact.
 
 ## 1. Question and minimal matrix
 
@@ -245,8 +251,8 @@ future-20k boundary are documented in
   exists; retain the generalist selection receipt as the future P6 gate;
 - [x] pass the full terra-baselines CPU suite against the paired Terra commit
   (`249 passed`);
-- [ ] complete one local or allocated-GPU first-update smoke per arm;
-- [ ] submit the bounded screens only after the accepted bank is frozen.
+- [x] complete one local or allocated-GPU first-update smoke per arm;
+- [x] submit the bounded screens only after the accepted bank is frozen.
 
 The unchecked items are execution gates, not evidence supplied by this
 implementation commit alone.
@@ -266,3 +272,14 @@ regenerate only evaluation reset seeds and episode IDs, and rerun the six
 smokes and screens. Forcing the evaluator back to the legacy mode is rejected
 because it would create a different stochastic environment contract from the
 trainer.
+
+## 8. Final P5 execution result
+
+The PRNG-corrected six-arm campaign
+`f8aac348d64c7f71ee65273e6729ad142828731598ce383b2ac0331e225ebaaa`
+completed on 2026-08-02. Every job produced a passing receipt, 2,000 updates,
+262,144,000 transitions, and exact deterministic promotion/development
+evaluation. The formal selector chose `G-ADAPTIVE` because it alone passed the
+update-1,000 to update-2,000 promotion-retention gate. This is one paired seed,
+not a general scheduler-superiority claim. P6 remains fail-closed until the
+separate 256-training-layouts-per-condition bank exists.

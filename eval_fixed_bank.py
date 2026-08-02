@@ -141,6 +141,8 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
                 "attention_compute_dtype",
                 "token_mixer_residual_init_scale",
                 "critic_hidden_dims",
+                "resnet_stage_channels",
+                "resnet_blocks_per_stage",
                 "loaded_max",
             )
         },
@@ -751,12 +753,11 @@ def validate_checkpoint_sequence(
     checkpoints: list[tuple[Path, dict]],
 ) -> dict:
     """Require one strictly ordered treatment before any environment setup."""
-    updates = [
-        int(checkpoint.get("next_update", 0))
-        for _, checkpoint in checkpoints
-    ]
-    if any(update <= 0 for update in updates):
-        raise ValueError("checkpoint next_update must be a positive integer")
+    if any("next_update" not in checkpoint for _, checkpoint in checkpoints):
+        raise ValueError("checkpoint must declare next_update")
+    updates = [int(checkpoint["next_update"]) for _, checkpoint in checkpoints]
+    if any(update < 0 for update in updates):
+        raise ValueError("checkpoint next_update must be a nonnegative integer")
     if any(current >= following for current, following in zip(updates, updates[1:])):
         raise ValueError(
             "fixed-bank checkpoint updates must be strictly increasing and unique"

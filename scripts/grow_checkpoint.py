@@ -726,12 +726,22 @@ def main():
 
     # F2: a grown network restarts optimization from scratch, so drop any
     # optimizer/step bookkeeping carried by the source checkpoint.
-    stale_keys = ["optimizer_state", "train_state_step", "update", "next_update"]
+    stale_keys = [
+        "optimizer_state",
+        "train_state_step",
+        "pooled_sampler_state",
+        "update",
+        "next_update",
+    ]
     dropped = [key for key in stale_keys if key in out_checkpoint]
     for key in dropped:
         del out_checkpoint[key]
     if dropped:
         print(f"Stripped stale optimization state (fresh restart): {', '.join(dropped)}")
+    # This artifact is a policy initialization, not a completed PPO update.
+    # A literal zero lets fixed-bank evaluation measure transplant damage while
+    # --warm_start_from still creates a fresh optimizer/update schedule.
+    out_checkpoint["next_update"] = 0
 
     helpers.save_pkl_object(out_checkpoint, args.out)
     print(f"\n✅ Grown checkpoint written to {args.out}")
