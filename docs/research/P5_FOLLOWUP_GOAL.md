@@ -1,6 +1,6 @@
 # P5 Follow-up: Condition-Level Diagnosis and Matched Improvements
 
-- Status: active design; no follow-up jobs launched yet
+- Status: active execution; P5b screens launched
 - Date: 2026-08-02
 - Owner: Codex with Lorenzo review
 - P5 implementation contract:
@@ -246,8 +246,8 @@ bounded diagnostic for the zero-completion/no-effect-action tail.
 - [x] Complete same-runtime parent/depth update-zero parity on both panels.
 - [x] Freeze the minimal matched follow-up matrix in this document.
 - [x] Implement and test only the support required by that matrix.
-- [ ] Pass CPU, local CUDA, and allocated update-1 admission gates.
-- [ ] Launch the bounded Euler screens.
+- [x] Pass CPU, local CUDA, and allocated update-1 admission gates.
+- [x] Launch the bounded Euler screens.
 - [ ] Evaluate every numbered checkpoint on promotion and development.
 - [ ] Update the standardized leaderboard and record a promote/extend/stop
   decision for every treatment.
@@ -262,8 +262,20 @@ Current admission evidence:
   optimizer reset, and versioned pooled-sampler state;
 - local smoke artifacts:
   `/home/lorenzo/moleworks/.artifacts/terra_p5b_local_smoke_20260802.TwbRgP/`;
-- exact-shape allocated smokes remain required for all three arms before the
-  screens are submitted.
+- exact-shape allocated smokes passed for all three arms before screen
+  submission.
+
+Allocated execution receipt (2026-08-02):
+
+- immutable terra-baselines run revision:
+  `6c56610ea5af1d029b736b2c4c1a8c2be3f5bc36`;
+- smoke jobs `9377609`, `9377610`, and `9377611`: all `COMPLETED 0:0`,
+  explicit verifier `passed=true`, update 1, and `status=PASSED`;
+- smoke throughput: `304.81`, `293.10`, and `307.11` steps/s for
+  medium/adaptive, deep/adaptive, and medium/uniform respectively; and
+- screen jobs `9378174`, `9378175`, and `9378176`: submitted from the same
+  immutable revision and running with four RTX 4090 GPUs each. `RUNNING` is not
+  a training result; promotion/development evaluation remains pending.
 
 ## 7. Completion evidence
 
