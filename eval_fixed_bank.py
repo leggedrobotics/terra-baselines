@@ -96,9 +96,7 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
         },
         "bank": {
             "terra_revision": _field(bank, "terra_revision"),
-            "environment_protocol_sha256": _field(
-                bank, "environment_protocol_sha256"
-            ),
+            "environment_protocol_sha256": _field(bank, "environment_protocol_sha256"),
             "source_registry_sha256": _field(bank, "source_registry_sha256"),
         },
         "ppo": {
@@ -125,9 +123,7 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
         "reward_action": {
             "agent_types": _jsonable(_field(config, "agent_types_override")),
             "action_types": _jsonable(_field(config, "action_types_override")),
-            "relocation_progress_mult": _field(
-                config, "relocation_progress_mult"
-            ),
+            "relocation_progress_mult": _field(config, "relocation_progress_mult"),
             "curriculum_levels": _jsonable(curriculum),
         },
         "sampler": _jsonable(_field(config, "pooled_sampler")),
@@ -198,15 +194,11 @@ def manifest_reset_keys(
 
     runtime_contract = {
         "jax_default_prng_impl": str(jax.config.jax_default_prng_impl),
-        "jax_threefry_partitionable": bool(
-            jax.config.jax_threefry_partitionable
-        ),
+        "jax_threefry_partitionable": bool(jax.config.jax_threefry_partitionable),
     }
     expected_contract = {
         "jax_default_prng_impl": BENCHMARK_JAX_DEFAULT_PRNG_IMPL,
-        "jax_threefry_partitionable": (
-            BENCHMARK_JAX_THREEFRY_PARTITIONABLE
-        ),
+        "jax_threefry_partitionable": (BENCHMARK_JAX_THREEFRY_PARTITIONABLE),
     }
     if runtime_contract != expected_contract:
         raise RuntimeError(
@@ -226,16 +218,12 @@ def manifest_reset_keys(
             raise ValueError(
                 f"manifest slot {row.get('slot_index')} has invalid reset_seed"
             )
-        if row.get("environment_protocol_sha256") != (
-            environment_protocol_sha256
-        ):
+        if row.get("environment_protocol_sha256") != (environment_protocol_sha256):
             raise ValueError(
                 f"manifest slot {row.get('slot_index')} has a stale protocol"
             )
         seeds.append(seed)
-    keys = jax.vmap(jax.random.PRNGKey)(
-        jnp.asarray(seeds, dtype=jnp.uint32)
-    )
+    keys = jax.vmap(jax.random.PRNGKey)(jnp.asarray(seeds, dtype=jnp.uint32))
     actual = selected_map_indices(keys, count)
     np.testing.assert_array_equal(actual, np.arange(count))
     return keys
@@ -322,9 +310,7 @@ def verify_exact_reset(
     }
     for index in range(count):
         for field, subdirectory in source_directories.items():
-            expected = np.load(
-                directory / subdirectory / f"img_{index + 1}.npy"
-            )
+            expected = np.load(directory / subdirectory / f"img_{index + 1}.npy")
             observed = np.squeeze(observed_fields[field][index])
             equal = (
                 np.allclose(observed, expected, rtol=0.0, atol=1e-7)
@@ -332,9 +318,7 @@ def verify_exact_reset(
                 else np.array_equal(observed, expected)
             )
             if not equal:
-                raise RuntimeError(
-                    f"exact reset {field} mismatch at slot {index + 1}"
-                )
+                raise RuntimeError(f"exact reset {field} mismatch at slot {index + 1}")
 
         expected_metadata = {
             "trench_axes": np.asarray(env.maps_buffer.trench_axes[0, index]),
@@ -358,9 +342,7 @@ def verify_exact_reset(
         }
         for field, expected in expected_metadata.items():
             if not np.array_equal(observed_metadata[field], expected):
-                raise RuntimeError(
-                    f"exact reset {field} mismatch at slot {index + 1}"
-                )
+                raise RuntimeError(f"exact reset {field} mismatch at slot {index + 1}")
 
     env_steps = np.asarray(state.env_steps)
     if env_steps.shape != (count,) or np.any(env_steps != 0):
@@ -376,13 +358,9 @@ def verify_exact_reset(
         digest = hashlib.sha256()
         for index in range(1, count + 1):
             filename = (
-                f"trench_{index}.json"
-                if field == "metadata"
-                else f"img_{index}.npy"
+                f"trench_{index}.json" if field == "metadata" else f"img_{index}.npy"
             )
-            digest.update(
-                (directory / subdirectory / filename).read_bytes()
-            )
+            digest.update((directory / subdirectory / filename).read_bytes())
         layer_hashes[field] = digest.hexdigest()
     return {
         "passed": True,
@@ -445,9 +423,7 @@ def graded_summary(per_map: list[dict]) -> dict:
         family = row["family"]
         previous_family = condition_family.setdefault(condition, family)
         if previous_family != family:
-            raise ValueError(
-                f"condition {condition!r} appears in multiple families"
-            )
+            raise ValueError(f"condition {condition!r} appears in multiple families")
         by_condition.setdefault(condition, []).append(float(value))
         by_family_values.setdefault(family, []).append(float(value))
     condition_stats = {
@@ -470,10 +446,7 @@ def graded_summary(per_map: list[dict]) -> dict:
             if condition_value == family
         ]
         family_condition_means = np.asarray(
-            [
-                condition_stats[condition]["mean"]
-                for condition in family_conditions
-            ],
+            [condition_stats[condition]["mean"] for condition in family_conditions],
             dtype=np.float64,
         )
         family_worst = min(
@@ -485,9 +458,7 @@ def graded_summary(per_map: list[dict]) -> dict:
             "condition_count": len(family_conditions),
             "macro_completion": float(family_condition_means.mean()),
             "worst_condition": family_worst,
-            "worst_condition_completion": float(
-                condition_stats[family_worst]["mean"]
-            ),
+            "worst_condition_completion": float(condition_stats[family_worst]["mean"]),
         }
     family_macro_completion = float(
         np.mean(
@@ -530,12 +501,10 @@ def comparison_gate(reference: dict, candidate: dict) -> dict:
     reference_graded = reference["graded"]
     candidate_graded = candidate["graded"]
     graded_available = bool(
-        reference_graded.get("available")
-        and candidate_graded.get("available")
+        reference_graded.get("available") and candidate_graded.get("available")
     )
-    exact_map_gain = (
-        int(candidate_overall["successes"])
-        - int(reference_overall["successes"])
+    exact_map_gain = int(candidate_overall["successes"]) - int(
+        reference_overall["successes"]
     )
     exact_rate_quantum = 1.0 / candidate_episodes
     macro_gain = (
@@ -566,9 +535,7 @@ def comparison_gate(reference: dict, candidate: dict) -> dict:
     )
     reference_integrity_passed = bool(reference["integrity"]["passed"])
     candidate_integrity_passed = bool(candidate["integrity"]["passed"])
-    integrity_passed = (
-        reference_integrity_passed and candidate_integrity_passed
-    )
+    integrity_passed = reference_integrity_passed and candidate_integrity_passed
     return {
         "schema": "terra_fixed_bank_comparison_gate_v1",
         "reference_episodes": reference_episodes,
@@ -608,9 +575,7 @@ def grouped_results(
         zip(rows, successes, terminations, lengths)
     ):
         timed_out = bool(
-            terminated
-            and horizon is not None
-            and int(length) >= int(horizon)
+            terminated and horizon is not None and int(length) >= int(horizon)
         )
         if bool(success) and timed_out:
             termination_reason = "task_done_and_timeout"
@@ -678,15 +643,12 @@ def grouped_results(
         "by_family": summarize("family"),
         "by_primary_cell": summarize("primary_cell"),
     }
-    integrity_failure_count = sum(
-        int(row["integrity_failure"]) for row in per_map
-    )
+    integrity_failure_count = sum(int(row["integrity_failure"]) for row in per_map)
     summary["integrity"] = {
         "passed": integrity_failure_count == 0,
         "failure_count": integrity_failure_count,
         "mass_residual_failures": sum(
-            int(int(row.get("maximum_mass_residual", 0)) != 0)
-            for row in per_map
+            int(int(row.get("maximum_mass_residual", 0)) != 0) for row in per_map
         ),
         "target_mutations": sum(
             int(bool(row.get("target_mutation", False))) for row in per_map
@@ -698,16 +660,13 @@ def grouped_results(
             int(bool(row.get("nonfinite_state", False))) for row in per_map
         ),
         "termination_disagreements": sum(
-            int(bool(row.get("termination_disagreement", False)))
-            for row in per_map
+            int(bool(row.get("termination_disagreement", False))) for row in per_map
         ),
         "slot_index_disagreements": sum(
-            int(bool(row.get("slot_index_disagreement", False)))
-            for row in per_map
+            int(bool(row.get("slot_index_disagreement", False))) for row in per_map
         ),
         "unavailable": sum(
-            int(bool(row.get("integrity_unavailable", False)))
-            for row in per_map
+            int(bool(row.get("integrity_unavailable", False))) for row in per_map
         ),
     }
     summary["graded"] = graded_summary(per_map)
@@ -720,9 +679,7 @@ def grouped_results(
         "integrity_required": True,
     }
     summary["termination_reasons"] = {
-        reason: sum(
-            int(row["termination_reason"] == reason) for row in per_map
-        )
+        reason: sum(int(row["termination_reason"] == reason) for row in per_map)
         for reason in (
             "task_done",
             "timeout",
@@ -763,8 +720,7 @@ def validate_checkpoint_sequence(
             "fixed-bank checkpoint updates must be strictly increasing and unique"
         )
     treatment_fingerprints = [
-        checkpoint_treatment_fingerprint(checkpoint)
-        for _, checkpoint in checkpoints
+        checkpoint_treatment_fingerprint(checkpoint) for _, checkpoint in checkpoints
     ]
     reference_treatment = treatment_fingerprints[0]
     for (path, _), fingerprint in zip(
@@ -806,6 +762,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--diagnostic-panel",
+        choices=("promotion", "development", "sealed"),
+        help=(
+            "Evaluate one explicitly non-admitted diagnostic control panel. "
+            "This preserves frozen reset seeds but keeps the scores out of the "
+            "accepted-bank macro."
+        ),
+    )
+    parser.add_argument(
         "--terra-revision",
         help=(
             "Exact immutable Terra revision bound into an accepted bank. "
@@ -838,25 +803,29 @@ def main() -> None:
             f"{args.expect_completion_contract}, imported {completion_contract}"
         )
 
+    if args.accepted_panel is not None and args.diagnostic_panel is not None:
+        raise ValueError("choose only one of --accepted-panel and --diagnostic-panel")
+    panel_name = args.accepted_panel or args.diagnostic_panel
     accepted_bank = None
-    if args.accepted_panel is not None:
+    if panel_name is not None:
         if args.strata is not None:
-            raise ValueError("--accepted-panel is incompatible with --strata")
+            raise ValueError("fixed manifest panels are incompatible with --strata")
         if args.terra_revision is None:
-            raise ValueError("--accepted-panel requires --terra-revision")
+            raise ValueError("fixed manifest panels require --terra-revision")
         accepted_bank = load_accepted_bank(
             bank_root,
             "G-UNIFORM",
             args.terra_revision,
+            allow_diagnostic_control=args.diagnostic_panel is not None,
         )
         panel = next(
             panel
             for panel in accepted_bank.evaluation_panels
-            if panel.name == args.accepted_panel
+            if panel.name == panel_name
         )
         targets = [
             (
-                args.accepted_panel,
+                panel_name,
                 "all",
                 panel.maps_path,
             )
@@ -866,8 +835,7 @@ def main() -> None:
             raise ValueError("--terra-revision requires --accepted-panel")
         strata = args.strata or ("M0", "M1", "M2")
         targets = [
-            (args.split, stratum, f"{args.split}/{stratum}")
-            for stratum in strata
+            (args.split, stratum, f"{args.split}/{stratum}") for stratum in strata
         ]
 
     paths = checkpoint_paths(args)
@@ -1033,6 +1001,12 @@ def main() -> None:
                         "source_registry_sha256": (
                             accepted_bank.source_registry_sha256
                         ),
+                        "diagnostic_control": (
+                            accepted_bank.diagnostic_contract_sha256 is not None
+                        ),
+                        "diagnostic_contract_sha256": (
+                            accepted_bank.diagnostic_contract_sha256
+                        ),
                     }
                 ),
                 "split": split_name,
@@ -1041,9 +1015,7 @@ def main() -> None:
                 "manifest_sha256": sha256_file(directory / "manifest.jsonl"),
                 "horizon": args.horizon,
                 "deterministic": not args.stochastic,
-                "policy_mode": (
-                    "sampled" if args.stochastic else "deterministic"
-                ),
+                "policy_mode": ("sampled" if args.stochastic else "deterministic"),
                 "seed": args.seed,
                 "exact_manifest_enumeration": True,
                 "reset_verification": reset_verification,

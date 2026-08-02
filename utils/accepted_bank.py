@@ -7,17 +7,15 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-
 SCHEMA = "terra_curriculum_loader_bank_v1"
 SCENARIO_IDENTITY_CONTRACT = "terra_reset_arrays_sha256_v1"
 REVIEW_ADMISSION_SCHEMA = "terra-accepted-condition-set-v1"
+DIAGNOSTIC_CONTROL_SCHEMA = "terra_unconstrained_control_bank_v1"
 REVIEW_RELEASE = "map-curriculum-diverse64-visual-review-20260730"
 REVIEW_MANIFEST_SHA256 = (
     "39f7cd2e8ce565bd384de214da5f2eee5e76764cb554e149c0ba675d815d6d51"
 )
-REVIEW_DATA_SHA256 = (
-    "8404fcaa9a6b66949ade2b0225d3e7800968951953d2b6363aabffe38100cc0b"
-)
+REVIEW_DATA_SHA256 = "8404fcaa9a6b66949ade2b0225d3e7800968951953d2b6363aabffe38100cc0b"
 ARMS = (
     "F-ANCHOR",
     "F-SPECIALIST",
@@ -128,7 +126,8 @@ class AcceptedBank:
     map_count_per_condition: int
     environment_protocol_sha256: str
     source_registry_sha256: str
-    review_admission_sha256: str
+    review_admission_sha256: str | None
+    diagnostic_contract_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -149,9 +148,7 @@ def _validate_level(root: Path, entry: dict) -> AcceptedLevel:
     if family not in FAMILIES:
         raise ValueError(f"{condition_id}: family must be one of {FAMILIES}")
     if branch_depth not in BRANCH_DEPTHS:
-        raise ValueError(
-            f"{condition_id}: branch_depth must be one of {BRANCH_DEPTHS}"
-        )
+        raise ValueError(f"{condition_id}: branch_depth must be one of {BRANCH_DEPTHS}")
     if not isinstance(map_count, int) or isinstance(map_count, bool) or map_count <= 0:
         raise ValueError(f"{condition_id}: map_count must be a positive integer")
     maps_path, directory = _safe_relative_directory(root, entry.get("maps_path"))
@@ -210,8 +207,7 @@ def _validate_review_admission(
     index_path = root / "dataset.json"
     if index.get("review_admission") != "review_admission.json":
         raise ValueError(
-            f"{index_path}: review_admission must be "
-            "'review_admission.json'"
+            f"{index_path}: review_admission must be " "'review_admission.json'"
         )
     expected_sha256 = _sha256_field(
         index,
@@ -234,9 +230,7 @@ def _validate_review_admission(
     if not isinstance(receipt, dict):
         raise ValueError(f"{receipt_path}: expected a JSON object")
     if receipt.get("schema") != REVIEW_ADMISSION_SCHEMA:
-        raise ValueError(
-            f"{receipt_path}: schema must be {REVIEW_ADMISSION_SCHEMA!r}"
-        )
+        raise ValueError(f"{receipt_path}: schema must be {REVIEW_ADMISSION_SCHEMA!r}")
     pinned_identity = {
         "release": REVIEW_RELEASE,
         "manifest_sha256": REVIEW_MANIFEST_SHA256,
@@ -263,6 +257,63 @@ def _validate_review_admission(
         raise ValueError(
             f"{receipt_path}: accepted_conditions do not match train "
             f"condition IDs: accepted={accepted}, train={expected_conditions}"
+        )
+    return expected_sha256
+
+
+def _validate_diagnostic_control(
+    root: Path,
+    index: dict,
+    condition_ids: list[str],
+) -> str:
+    """Validate an evaluation-only control bank without admitting it to training."""
+    index_path = root / "dataset.json"
+    if index.get("control_schema") != DIAGNOSTIC_CONTROL_SCHEMA:
+        raise ValueError(
+            f"{index_path}: diagnostic control schema must be "
+            f"{DIAGNOSTIC_CONTROL_SCHEMA!r}"
+        )
+    if index.get("included_in_constrained_macro") is not False:
+        raise ValueError(
+            f"{index_path}: diagnostic controls must be excluded from the "
+            "constrained benchmark macro"
+        )
+    if index.get("control_contract") != "control_contract.json":
+        raise ValueError(
+            f"{index_path}: control_contract must be 'control_contract.json'"
+        )
+    expected_sha256 = _sha256_field(
+        index,
+        "control_contract_sha256",
+        index_path,
+    )
+    contract_path = root / "control_contract.json"
+    if not contract_path.is_file() or contract_path.is_symlink():
+        raise FileNotFoundError(contract_path)
+    actual_sha256 = _sha256_file(contract_path)
+    if actual_sha256 != expected_sha256:
+        raise ValueError(
+            "diagnostic control contract hash mismatch: "
+            f"expected {expected_sha256}, got {actual_sha256}"
+        )
+    try:
+        contract = json.loads(contract_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{contract_path}: invalid JSON: {exc}") from exc
+    if not isinstance(contract, dict) or contract.get("schema") != (
+        DIAGNOSTIC_CONTROL_SCHEMA
+    ):
+        raise ValueError(
+            f"{contract_path}: schema must be {DIAGNOSTIC_CONTROL_SCHEMA!r}"
+        )
+    if contract.get("included_in_constrained_macro") is not False:
+        raise ValueError(
+            f"{contract_path}: diagnostic controls must not enter the main macro"
+        )
+    conditions = contract.get("conditions")
+    if not isinstance(conditions, dict) or sorted(conditions) != sorted(condition_ids):
+        raise ValueError(
+            f"{contract_path}: conditions do not match train condition IDs"
         )
     return expected_sha256
 
@@ -307,8 +358,7 @@ def validate_staged_training_bank(root: str | Path) -> int:
             or slot_count != TRAIN_MAPS_PER_CONDITION
         ):
             raise ValueError(
-                f"{metadata_path}: slot_count must be "
-                f"{TRAIN_MAPS_PER_CONDITION}"
+                f"{metadata_path}: slot_count must be " f"{TRAIN_MAPS_PER_CONDITION}"
             )
         num_maps = metadata.get("num_maps")
         if "num_maps" in metadata and (
@@ -317,13 +367,11 @@ def validate_staged_training_bank(root: str | Path) -> int:
             or num_maps != TRAIN_MAPS_PER_CONDITION
         ):
             raise ValueError(
-                f"{metadata_path}: num_maps must be "
-                f"{TRAIN_MAPS_PER_CONDITION}"
+                f"{metadata_path}: num_maps must be " f"{TRAIN_MAPS_PER_CONDITION}"
             )
 
         expected_names = {
-            f"img_{slot}.npy"
-            for slot in range(1, TRAIN_MAPS_PER_CONDITION + 1)
+            f"img_{slot}.npy" for slot in range(1, TRAIN_MAPS_PER_CONDITION + 1)
         }
         for folder in RESET_ARRAY_FOLDERS:
             array_directory = directory / folder
@@ -391,12 +439,9 @@ def _validate_evaluation_panels(
                 f"evaluation panel {name} declares {slot_count} slots but "
                 f"contains {len(rows)}"
             )
-        if [row.get("slot_index") for row in rows] != list(
-            range(1, slot_count + 1)
-        ):
+        if [row.get("slot_index") for row in rows] != list(range(1, slot_count + 1)):
             raise ValueError(
-                f"evaluation panel {name} slots must be contiguous "
-                f"1..{slot_count}"
+                f"evaluation panel {name} slots must be contiguous " f"1..{slot_count}"
             )
         cells = {
             row.get("primary_cell")
@@ -416,18 +461,14 @@ def _validate_evaluation_panels(
                     or len(value) != 64
                     or any(character not in "0123456789abcdef" for character in value)
                 ):
-                    raise ValueError(
-                        f"evaluation panel {name} has invalid {field}"
-                    )
+                    raise ValueError(f"evaluation panel {name} has invalid {field}")
             reset_seed = row.get("reset_seed")
             if (
                 not isinstance(reset_seed, int)
                 or isinstance(reset_seed, bool)
                 or not 0 <= reset_seed <= 2**32 - 1
             ):
-                raise ValueError(
-                    f"evaluation panel {name} has invalid reset_seed"
-                )
+                raise ValueError(f"evaluation panel {name} has invalid reset_seed")
             if row.get("environment_protocol_sha256") != protocol_sha256:
                 raise ValueError(
                     f"evaluation panel {name} protocol does not match the bank"
@@ -441,9 +482,7 @@ def _validate_evaluation_panels(
                 }
             )
             if row["episode_id"] != expected_episode_id:
-                raise ValueError(
-                    f"evaluation panel {name} has an invalid episode_id"
-                )
+                raise ValueError(f"evaluation panel {name} has an invalid episode_id")
         validated.append(
             AcceptedPanel(
                 name=name,
@@ -471,6 +510,8 @@ def load_accepted_bank(
     root: str | Path,
     arm: str,
     terra_revision: str,
+    *,
+    allow_diagnostic_control: bool = False,
 ) -> AcceptedBank:
     """Validate the canonical index and select the levels owned by one arm."""
     if arm not in ARMS:
@@ -498,13 +539,10 @@ def load_accepted_bank(
             f"{SCENARIO_IDENTITY_CONTRACT!r}"
         )
 
-    protocol_sha256 = _sha256_field(
-        index, "environment_protocol_sha256", index_path
-    )
+    protocol_sha256 = _sha256_field(index, "environment_protocol_sha256", index_path)
     if index.get("environment_protocol") != "environment_protocol.json":
         raise ValueError(
-            f"{index_path}: environment_protocol must be "
-            "'environment_protocol.json'"
+            f"{index_path}: environment_protocol must be " "'environment_protocol.json'"
         )
     protocol_path = root_path / "environment_protocol.json"
     try:
@@ -577,11 +615,20 @@ def load_accepted_bank(
         raise ValueError(f"{index_path}: train repeats a condition_id")
     if len(paths) != len(set(paths)):
         raise ValueError(f"{index_path}: train repeats a maps_path")
-    review_admission_sha256 = _validate_review_admission(
-        root_path,
-        index,
-        condition_ids,
-    )
+    diagnostic_contract_sha256 = None
+    if allow_diagnostic_control:
+        review_admission_sha256 = None
+        diagnostic_contract_sha256 = _validate_diagnostic_control(
+            root_path,
+            index,
+            condition_ids,
+        )
+    else:
+        review_admission_sha256 = _validate_review_admission(
+            root_path,
+            index,
+            condition_ids,
+        )
 
     selected = tuple(
         sorted(
@@ -628,4 +675,5 @@ def load_accepted_bank(
         environment_protocol_sha256=protocol_sha256,
         source_registry_sha256=registry_sha256,
         review_admission_sha256=review_admission_sha256,
+        diagnostic_contract_sha256=diagnostic_contract_sha256,
     )

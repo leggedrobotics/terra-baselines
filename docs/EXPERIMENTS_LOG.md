@@ -1,6 +1,7 @@
-# Experiments — completed log (spatial-encoder line)
+# Experiments — completed log
 
-Chronological record of finished runs. Metrics: eval/positive_terminations /
+The first table is the historical spatial-encoder line. Metrics:
+eval/positive_terminations /
 eval/rewards (final), swhr = eval/success_within_horizon_rate, ep_len =
 eval/avg_positive_episode_length. Full incident trail:
 `docs/EXPERIMENTS_SPATIAL_V3_RUNS.md`.
@@ -35,3 +36,45 @@ Cross-run findings:
   compare finals or matched entropy phase only.
 - Episode length: E3 55.2 vs E1 59.2 steps — bigger warm-started net is also faster per
   episode; 300-step horizon (E6) exerts no pressure since episodes are ~55 steps.
+
+## Accepted-bank campaigns
+
+The metrics below are deterministic fixed-bank terminal absolute completion,
+not the legacy online spatial-run summaries above. Promotion and development
+remain separate. Exact is solved maps / evaluated maps.
+
+| Date | Campaign / arm | Slurm | Selected update | Macro P / D | Exact P / D | Verdict |
+|---|---|---:|---:|---:|---:|---|
+| 08-02 | P5 six-arm accepted-bank screen | — | 2,000 | generalists 0.574--0.588 / 0.574--0.577 | at most 1/512 | all six completed and passed; `G-ADAPTIVE` selected only by the predeclared retention gate, not as a general scheduler claim |
+| 08-02 | P5b `G-MEDIUM-ADAPTIVE-WARM` | `9378174` | 2,000 | 0.652 / 0.625 | 1/512 / 2/512 | completed 2,000, `PASSED`; strongest selected constrained distance axis |
+| 08-02 | P5b `G-DEEP-ADAPTIVE-WARM` | `9378175` | 1,000 | 0.653 / 0.628 | 2/512 / 2/512 | completed 2,000, `PASSED`; transient matched gain, not retained at 2,000 |
+| 08-02 | P5b `G-MEDIUM-UNIFORM-WARM` | `9378176` | 1,000 | 0.647 / 0.664 | 2/512 / 6/512 | completed 2,000, `PASSED`; best selected development family floor, transient at 2,000 |
+| 08-03 | all-free capability-floor evaluation | local fixed eval | selected P5/P5b checkpoints | 0.385--0.718 / 0.465--0.736 | generalists 0/32; trench specialist 1/32 promotion only | integrity-clean diagnostic; physically easier but target-mask OOD, excluded from constrained macro |
+
+P5b result root:
+`/home/lorenzo/moleworks/.artifacts/terra_p5b_results_20260802_6c56610e`.
+Standard leaderboard:
+`/home/lorenzo/moleworks/.artifacts/terra_p5b_leaderboard_20260802_6c56610e/LEADERBOARD.md`.
+Capability-floor results:
+`/home/lorenzo/moleworks/.artifacts/terra_unconstrained_control_eval_20260802`.
+The parameters-only current-protocol E8 compatibility replay scores
+`0.013/0.027` macro and `0/32` exact; its historical near-1 online `swhr` is a
+different evaluation contract and is not numerically comparable.
+
+P5b deep used function-preserving growth (`2,441,223 -> 2,699,117`), a fresh
+optimizer, and the frozen parent as KL/value teacher. E8 was not a larger E3:
+both had `2,441,223` parameters. The likely recipe mismatch is P5b entropy
+`0.15 -> 0.005 / 7,600`, still about `0.137` at the synchronized update-1,500
+decline when KL reached zero. This is the P5c hypothesis, not a post-hoc claim
+that entropy caused the decline.
+
+## Next frozen campaign: P5c (`PREP`)
+
+P5c has no Slurm job IDs yet. It freezes five 4,000-update arms with evaluation
+every 500 updates: medium adaptive, medium uniform, deep uniform, foundation
+medium-uniform, and trench medium-uniform. All share entropy
+`0.02 -> 0.005 / 10,000` and the common P5 parent/teacher. The specialists are
+family dose ceilings; they do not enter the causal sampler/depth comparison.
+Every checkpoint must be evaluated on constrained promotion/development and
+diagnostic all-free promotion/development. A long run remains gated on a
+positive multi-checkpoint result without family, tail, or control regression.

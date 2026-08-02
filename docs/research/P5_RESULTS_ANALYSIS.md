@@ -149,3 +149,123 @@ such.
 - Do not launch the 20,000-update P6 run on the 64-map training bank. A long run
   still requires the separately frozen 256-training-layouts-per-condition bank
   plus a passing P5b recipe gate.
+
+## 7. P5b terminal analysis (2026-08-03)
+
+P5b jobs `9378174`, `9378175`, and `9378176` all completed 2,000 updates with
+exit code zero and a final `PASSED` receipt. The immutable result bundle is
+`/home/lorenzo/moleworks/.artifacts/terra_p5b_results_20260802_6c56610e`;
+the standardized report is
+`/home/lorenzo/moleworks/.artifacts/terra_p5b_leaderboard_20260802_6c56610e/LEADERBOARD.md`
+(input digest
+`89d44919deef6240a9fcc71fcb1525766d1176584b514c877bb748dd1b8ddb42`).
+
+### Selected checkpoints
+
+| Arm | Selected update | Macro P / D | Foundation P / D | Trench P / D | Exact P / D |
+|---|---:|---:|---:|---:|---:|
+| Medium adaptive | 2,000 | 0.652 / 0.625 | 0.639 / 0.588 | 0.670 / 0.674 | 1/512 / 2/512 |
+| Deep adaptive | 1,000 | 0.653 / 0.628 | 0.625 / 0.571 | 0.689 / 0.702 | 2/512 / 2/512 |
+| Medium uniform | 1,000 | 0.647 / **0.664** | **0.625 / 0.630** | 0.675 / **0.708** | 2/512 / **6/512** |
+
+The selected table is descriptive because its updates differ. In the matched
+update-1,000 comparison, deep/adaptive beats medium/adaptive by
+`+0.023/+0.013` promotion/development macro, while medium/uniform beats it by
+`+0.017/+0.049`. Both treatments satisfy the predeclared same-update gates at
+that checkpoint. Neither retains its advantage through update 2,000:
+deep/adaptive is `-0.035/-0.018` and medium/uniform `-0.088/-0.089` relative to
+medium/adaptive. This is a transient recipe result, not a capacity or sampler
+promotion.
+
+The selected factor-axis macros show where the policies fail:
+
+| Axis | Medium adaptive P / D | Deep adaptive P / D | Medium uniform P / D |
+|---|---:|---:|---:|
+| Anchor | 0.718 / 0.706 | 0.731 / 0.713 | 0.740 / 0.765 |
+| Capacity | 0.766 / 0.673 | 0.738 / 0.644 | 0.722 / 0.711 |
+| Composed | 0.428 / 0.467 | 0.510 / 0.499 | 0.485 / 0.471 |
+| Distance | 0.361 / 0.435 | 0.264 / 0.310 | 0.330 / 0.364 |
+| Dump layout | 0.697 / 0.516 | 0.635 / 0.567 | 0.626 / 0.634 |
+| Geometry | 0.695 / 0.696 | 0.703 / 0.714 | 0.677 / 0.721 |
+| Site | 0.653 / 0.603 | 0.661 / 0.599 | 0.647 / 0.656 |
+
+Remote distance is the weakest shared axis and composed conditions are the
+next failure band. Foundations remain weaker than trenches. Uniform's selected
+checkpoint has the strongest development macro, family floor, anchor, dump,
+geometry, and site slices, but it is weaker on the constrained distance tail
+than medium/adaptive. Exact completion remains nearly absent under every
+recipe.
+
+### Teacher and entropy diagnosis
+
+The P5b deep run used the intended architecture-growth playbook. Its
+`2,699,117`-parameter policy is an exact function-preserving growth of the
+`2,441,223`-parameter P5 parent, resets optimizer state, and uses that frozen
+parent for KL (`1.0 -> 0` over 1,500 updates) and value (`0.5 -> 0` over 500
+updates) distillation. The mechanism is therefore not missing.
+
+The historical E8 comparison had been described incorrectly: E8 and E3 use
+the same `2,441,223`-parameter architecture. E8 was a multitask parameters-only
+warm start from E3 with E3 as teacher; it was not a bigger student. The earlier
+size jump was approximately `994,825 -> 2,441,223` parameters when growing the
+smaller policy into E3.
+
+A current-protocol replay also shows why E8's historical near-1 online `swhr`
+is not a valid capability baseline. Its serialized 33-field `EnvConfig` is
+incompatible with current Terra, so the 126 parameter leaves were extracted
+with the frozen historical source, verified shape-for-shape, and inserted into
+a current evaluation-only skeleton. On the all-free controls those parameters
+score only `0.013/0.027` promotion/development macro and `0/32` exact. This is
+a parameters-only compatibility replay, not a reproduction of E8's historical
+maps, resets, observation semantics, termination, or aggregation.
+
+All P5b arms drop together at update 1,500 as KL reaches zero, while P5b's
+entropy schedule is still about `0.137` because it decays from `0.15` to
+`0.005` over 7,600 updates. The synchronized timing makes excessive exploration
+after teacher handoff a credible hypothesis. It does not prove causality. P5c
+therefore changes the common entropy schedule to the historical
+`0.02 -> 0.005` over 10,000 updates and holds maps, rewards, teacher, PPO, and
+reset protocol fixed. P5b/P5c claims are valid only at matched checkpoints
+through update 2,000; later P5c checkpoints are learning-curve evidence only.
+
+### No-dump-constraint capability floor
+
+The accepted bank did not contain a true no-dump-constraint baseline. The new
+diagnostic panel uses `fnd-slab-allfree` and `trn-straight-allfree`, paired to
+existing source identities and excavation geometries while expanding only the
+visible dump mask to every legal non-dig cell. It is intentionally excluded
+from the constrained macro.
+
+| Generalist | Macro P / D | Foundation P / D | Trench P / D | Exact P / D |
+|---|---:|---:|---:|---:|
+| P5 parent | 0.385 / 0.465 | 0.423 / 0.493 | 0.347 / 0.436 | 0/32 / 0/32 |
+| Medium/adaptive @2,000 | 0.629 / 0.613 | 0.655 / 0.635 | 0.604 / 0.591 | 0/32 / 0/32 |
+| Deep/adaptive @1,000 | **0.718 / 0.736** | **0.770 / 0.757** | **0.666 / 0.715** | 0/32 / 0/32 |
+| Medium/uniform @1,000 | 0.484 / 0.540 | 0.452 / 0.459 | 0.517 / 0.622 | 0/32 / 0/32 |
+
+The P5 foundation specialist reaches `0.668/0.640` on its all-free foundation
+control with `0/16` exact on both panels. The P5 trench specialist reaches
+`0.556/0.606` on its all-free trench control, with `1/16` exact on promotion
+and `0/16` on development. The missing exact capability floor is therefore
+not explained by generalist interference alone.
+
+These controls are mechanically easier but visually out of distribution: the
+target mask is almost entirely accepted dump area, unlike the 32 constrained
+training conditions. Their zero exact rate cannot be read as a pure mechanics
+failure. P5c will report them at every checkpoint as a separate capability
+floor. Adding them to training would be a separately named 34-condition-bank
+treatment, never a silent mutation of P5c.
+
+### Revised decision
+
+- Run the five-arm, 4,000-update P5c matrix frozen in
+  [`P5_FOLLOWUP_GOAL.md`](P5_FOLLOWUP_GOAL.md): medium adaptive, medium
+  uniform, deep uniform, foundation medium-uniform, and trench medium-uniform.
+- Use the two specialists only as family dose ceilings. The causal generalist
+  comparisons are medium adaptive versus medium uniform, then medium uniform
+  versus deep uniform.
+- Evaluate every 500 updates on constrained promotion/development and both
+  all-free diagnostic panels.
+- Admit a long run only after positive multi-checkpoint evidence with no family,
+  bottom-tail, or capability-floor regression. One favorable checkpoint does
+  not justify a 120-hour queue.

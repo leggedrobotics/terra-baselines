@@ -74,9 +74,7 @@ def _freeze_current_protocol(monkeypatch):
 def _write_bank(root: Path, map_count: int = 64) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     protocol = _protocol()
-    (root / "environment_protocol.json").write_text(
-        json.dumps(protocol) + "\n"
-    )
+    (root / "environment_protocol.json").write_text(json.dumps(protocol) + "\n")
     registry = root / "source_registry.jsonl"
     registry.write_text('{"source_id": "s0", "split": "train"}\n')
     train = [
@@ -97,9 +95,7 @@ def _write_bank(root: Path, map_count: int = 64) -> Path:
                 "review_data_sha256": (
                     "8404fcaa9a6b66949ade2b0225d3e7800968951953d2b6363aabffe38100cc0b"
                 ),
-                "accepted_conditions": sorted(
-                    entry["condition_id"] for entry in train
-                ),
+                "accepted_conditions": sorted(entry["condition_id"] for entry in train),
             }
         )
         + "\n"
@@ -186,9 +182,7 @@ def test_arm_selection_is_explicit(tmp_path, arm, conditions):
     assert [level.condition_id for level in bank.levels] == conditions
     assert bank.map_count_per_condition == 64
     assert bank.terra_revision == "terra-test-revision"
-    assert bank.review_admission_sha256 == _sha256(
-        tmp_path / "review_admission.json"
-    )
+    assert bank.review_admission_sha256 == _sha256(tmp_path / "review_admission.json")
 
 
 @pytest.mark.parametrize(
@@ -263,9 +257,7 @@ def test_reset_prng_contract_is_required(tmp_path):
     protocol_path.write_text(json.dumps(protocol) + "\n")
     index_path = root / "dataset.json"
     index = json.loads(index_path.read_text())
-    index["environment_protocol_sha256"] = protocol[
-        "environment_protocol_sha256"
-    ]
+    index["environment_protocol_sha256"] = protocol["environment_protocol_sha256"]
     index_path.write_text(json.dumps(index) + "\n")
 
     with pytest.raises(ValueError, match="reset PRNG contract mismatch"):
@@ -278,9 +270,9 @@ def test_archive_without_git_uses_explicit_frozen_revision(tmp_path, monkeypatch
     assert not (archive / ".git").exists()
     monkeypatch.chdir(archive)
     bank = load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
-    assert bank.environment_protocol_sha256 == _protocol()[
-        "environment_protocol_sha256"
-    ]
+    assert (
+        bank.environment_protocol_sha256 == _protocol()["environment_protocol_sha256"]
+    )
 
 
 def test_registry_hash_and_manifest_condition_are_verified(tmp_path):
@@ -329,6 +321,65 @@ def test_review_admission_schema_hash_and_conditions_are_verified(tmp_path):
         load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
 
 
+def _convert_to_diagnostic_control(root: Path) -> Path:
+    index_path = root / "dataset.json"
+    index = json.loads(index_path.read_text())
+    conditions = {
+        entry["condition_id"]: {"family": entry["family"]} for entry in index["train"]
+    }
+    contract_path = root / "control_contract.json"
+    contract_path.write_text(
+        json.dumps(
+            {
+                "schema": "terra_unconstrained_control_bank_v1",
+                "included_in_constrained_macro": False,
+                "conditions": conditions,
+            }
+        )
+        + "\n"
+    )
+    index.pop("review_admission")
+    index.pop("review_admission_sha256")
+    (root / "review_admission.json").unlink()
+    index.update(
+        {
+            "control_schema": "terra_unconstrained_control_bank_v1",
+            "control_contract": "control_contract.json",
+            "control_contract_sha256": _sha256(contract_path),
+            "included_in_constrained_macro": False,
+        }
+    )
+    index_path.write_text(json.dumps(index) + "\n")
+    return root
+
+
+def test_diagnostic_control_requires_explicit_opt_in(tmp_path):
+    root = _convert_to_diagnostic_control(_write_bank(tmp_path))
+    with pytest.raises(ValueError, match="review_admission"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
+
+    bank = load_accepted_bank(
+        root,
+        "G-UNIFORM",
+        "terra-test-revision",
+        allow_diagnostic_control=True,
+    )
+    assert bank.review_admission_sha256 is None
+    assert bank.diagnostic_contract_sha256 == _sha256(root / "control_contract.json")
+
+
+def test_diagnostic_control_contract_is_hash_verified(tmp_path):
+    root = _convert_to_diagnostic_control(_write_bank(tmp_path))
+    (root / "control_contract.json").write_text("{}\n")
+    with pytest.raises(ValueError, match="control contract hash mismatch"):
+        load_accepted_bank(
+            root,
+            "G-UNIFORM",
+            "terra-test-revision",
+            allow_diagnostic_control=True,
+        )
+
+
 @pytest.mark.parametrize(
     "field",
     ["release", "manifest_sha256", "review_data_sha256"],
@@ -355,7 +406,10 @@ def test_unequal_level_counts_are_rejected(tmp_path):
     index_path = root / "dataset.json"
     index = json.loads(index_path.read_text())
     t_level = root / "train" / "t-composed"
-    rows = [json.loads(line) for line in (t_level / "manifest.jsonl").read_text().splitlines()]
+    rows = [
+        json.loads(line)
+        for line in (t_level / "manifest.jsonl").read_text().splitlines()
+    ]
     rows.append(
         {
             "slot_index": 65,
@@ -367,9 +421,9 @@ def test_unequal_level_counts_are_rejected(tmp_path):
     (t_level / "manifest.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in rows)
     )
-    next(
-        entry for entry in index["train"] if entry["condition_id"] == "t-composed"
-    )["map_count"] = 65
+    next(entry for entry in index["train"] if entry["condition_id"] == "t-composed")[
+        "map_count"
+    ] = 65
     index_path.write_text(json.dumps(index) + "\n")
     with pytest.raises(ValueError, match="unequal per-condition map counts"):
         load_accepted_bank(root, "G-ADAPTIVE", "terra-test-revision")

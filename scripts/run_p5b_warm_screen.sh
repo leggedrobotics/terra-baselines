@@ -14,10 +14,10 @@ RUN_NAME="$5"
 NUM_UPDATES="$6"
 
 case "$ARM" in
-    G-MEDIUM-ADAPTIVE-WARM|G-MEDIUM-UNIFORM-WARM)
+    G-MEDIUM-ADAPTIVE-WARM|G-MEDIUM-UNIFORM-WARM|F-MEDIUM-UNIFORM-WARM|T-MEDIUM-UNIFORM-WARM)
         ARCHITECTURE_ARGS=()
         ;;
-    G-DEEP-ADAPTIVE-WARM)
+    G-DEEP-ADAPTIVE-WARM|G-DEEP-UNIFORM-WARM)
         ARCHITECTURE_ARGS=(
             --resnet_stage_channels "24,48,64,96"
             --resnet_blocks_per_stage "2,2,3,3"
@@ -47,6 +47,9 @@ FINITE_CHECK_INTERVAL="${FINITE_CHECK_INTERVAL:-10}"
 LOG_TRAIN_INTERVAL="${LOG_TRAIN_INTERVAL:-10}"
 CACHE_CLEAR_INTERVAL="${CACHE_CLEAR_INTERVAL:-1000}"
 MACHINE="${MACHINE:-euler}"
+ENT_SCHEDULE_START="${ENT_SCHEDULE_START:-0.15}"
+ENT_SCHEDULE_END="${ENT_SCHEDULE_END:-0.005}"
+ENT_SCHEDULE_STEPS="${ENT_SCHEDULE_STEPS:-7600}"
 
 for value in \
     "$NUM_DEVICES" "$NUM_ENVS_PER_DEVICE" "$NUM_STEPS" \
@@ -57,6 +60,10 @@ for value in \
         exit 2
     }
 done
+[[ "$ENT_SCHEDULE_STEPS" =~ ^[1-9][0-9]*$ ]] || {
+    echo "ENT_SCHEDULE_STEPS must be a positive integer" >&2
+    exit 2
+}
 test "$NUM_DEVICES" -gt 0
 test "$NUM_ENVS_PER_DEVICE" -gt 0
 test "$NUM_STEPS" -gt 0
@@ -96,9 +103,9 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --kickstart_value_coef 0.5 \
     --kickstart_value_anneal_updates 500 \
     --kickstart_lr_warmup_updates 100 \
-    --ent_schedule_start 0.15 \
-    --ent_schedule_end 0.005 \
-    --ent_schedule_steps 7600 \
+    --ent_schedule_start "$ENT_SCHEDULE_START" \
+    --ent_schedule_end "$ENT_SCHEDULE_END" \
+    --ent_schedule_steps "$ENT_SCHEDULE_STEPS" \
     --no_value_clip \
     --flat_minibatch_shuffle \
     --no-load-env-from-checkpoint \

@@ -1,7 +1,7 @@
 # P5 Accepted-Bank Experiment Implementation
 
-- Status: P5 complete; `G-ADAPTIVE` selected; matched P5b follow-up in progress
-- Date: 2026-07-30
+- Status: P5 and P5b complete; P5c low-entropy follow-up in preparation
+- Date: 2026-08-03
 - Canonical authority:
   [`D5_D7_IMPLEMENTATION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_simple_mapbank_reward_20260730/D5_D7_IMPLEMENTATION_PLAN.md)
   §P5a
@@ -283,3 +283,105 @@ evaluation. The formal selector chose `G-ADAPTIVE` because it alone passed the
 update-1,000 to update-2,000 promotion-retention gate. This is one paired seed,
 not a general scheduler-superiority claim. P6 remains fail-closed until the
 separate 256-training-layouts-per-condition bank exists.
+
+## 9. P5b execution result
+
+The matched P5b jobs completed on 2026-08-02:
+
+| Arm | Slurm | Final state | Selected fixed checkpoint |
+|---|---:|---|---:|
+| `G-MEDIUM-ADAPTIVE-WARM` | `9378174` | `COMPLETED 0:0`, `PASSED` | 2,000 |
+| `G-DEEP-ADAPTIVE-WARM` | `9378175` | `COMPLETED 0:0`, `PASSED` | 1,000 |
+| `G-MEDIUM-UNIFORM-WARM` | `9378176` | `COMPLETED 0:0`, `PASSED` | 1,000 |
+
+The selected policies score promotion/development macro
+`0.652/0.625`, `0.653/0.628`, and `0.647/0.664`, respectively. These
+different-update selections are descriptive. At the matched update 1,000,
+deep/adaptive improves over medium/adaptive by `+0.023/+0.013` and
+medium/uniform by `+0.017/+0.049`; neither advantage survives to update 2,000.
+The full condition and factor tables are frozen in
+`/home/lorenzo/moleworks/.artifacts/terra_p5b_leaderboard_20260802_6c56610e/LEADERBOARD.md`.
+
+P5b deep used exact function-preserving growth from `2,441,223` to
+`2,699,117` parameters, a fresh optimizer, and the common frozen parent as KL
+and value teacher. That is the intended grow-and-teach implementation. E8 is
+not the historical bigger-network analogue: E8 and E3 both have `2,441,223`
+parameters; the historical growth step was the approximately `994,825`-
+parameter model to E3.
+
+All P5b arms show a synchronized fixed-evaluation decline at update 1,500 as
+KL reaches zero. Because P5b entropy remains about `0.137` at that point under
+its `0.15 -> 0.005` over 7,600-update schedule, the next matrix tests the common
+lower historical entropy schedule. This diagnosis is correlational. P5b/P5c
+entropy comparisons are interpreted only at matched checkpoints through
+update 2,000.
+
+## 10. Diagnostic capability-floor contract
+
+The two capability-floor conditions are:
+
+- `fnd-slab-allfree`, paired to `fnd-slab-ring3x`; and
+- `trn-straight-allfree`, paired to `trn-straight-side2`.
+
+The pairing freezes source group, pair slot, split, excavation mask, obstacle
+mask, reset seed, horizon, dynamics, and evaluation protocol. Only the target
+mask changes: every legal non-dig cell is an accepted visible dump cell. Each
+condition has 64 training, 16 promotion, 16 development, and 32 sealed maps.
+
+This bank uses an explicit diagnostic-control contract and is rejected by the
+ordinary accepted-bank path unless the evaluator opts into diagnostic mode.
+Its two conditions:
+
+- are excluded from all constrained 32-condition macro, family, factor, and
+  promotion computations;
+- are evaluated as their own promotion and development panels;
+- preserve frozen reset seeds and episode identities; and
+- cannot be used as P5c training support.
+
+The current bank and result roots are:
+
+- `/home/lorenzo/moleworks/.artifacts/terra_unconstrained_controls_20260802_0306c3cd`;
+- `/home/lorenzo/moleworks/.artifacts/terra_unconstrained_control_eval_20260802`.
+
+The P5 parent, P5b medium/adaptive @2,000, deep/adaptive @1,000, and
+medium/uniform @1,000 score promotion/development macro
+`0.385/0.465`, `0.629/0.613`, `0.718/0.736`, and `0.484/0.540` on these
+controls. Every evaluation is integrity-clean and exact is `0/32` on both
+panels. These maps are physically permissive but target-mask OOD. A future
+training-support treatment must create a versioned 34-condition successor
+whose original 32 conditions remain byte-identical; it must not mutate P5c.
+
+## 11. P5c low-entropy implementation contract
+
+P5c consists of five arms, each run for 4,000 added PPO updates and evaluated
+every 500 updates:
+
+| Arm | Accepted support | Sampler | Architecture |
+|---|---|---|---|
+| `G-MEDIUM-ADAPTIVE-WARM` | all 32 conditions | adaptive | medium SE |
+| `G-MEDIUM-UNIFORM-WARM` | all 32 conditions | uniform | medium SE |
+| `G-DEEP-UNIFORM-WARM` | all 32 conditions | uniform | depth-grown SE |
+| `F-MEDIUM-UNIFORM-WARM` | 18 foundation conditions | uniform | medium SE |
+| `T-MEDIUM-UNIFORM-WARM` | 14 trench conditions | uniform | medium SE |
+
+All arms share the P5 parent parameters, frozen P5 teacher, fresh optimizer,
+entropy `0.02 -> 0.005` over 10,000 updates, KL/value schedules, accepted-bank
+release, reward, horizon, observations, actions, PPO shape, full-reset
+distribution, and seed. Generalists select all 32 conditions; specialists
+select the existing family subset.
+The causal comparisons are:
+
+1. medium/adaptive versus medium/uniform for sampler choice; and
+2. medium/uniform versus deep/uniform for residual depth.
+
+The foundation and trench specialists are dose ceilings. Because they receive
+more assignments per condition, they do not select the generalist and cannot
+be used as negative-transfer evidence.
+
+Every numbered P5c checkpoint must produce four integrity-clean fixed
+evaluations: constrained promotion, constrained development, diagnostic
+all-free promotion, and diagnostic all-free development. The long-run gate
+requires improvement across multiple checkpoints, confirmation on both public
+panels, no material family or bottom-tail regression, and stable or improving
+capability-floor results. P5c is `PREP` until allocated update-1 smokes pass;
+no production job IDs are recorded yet.
