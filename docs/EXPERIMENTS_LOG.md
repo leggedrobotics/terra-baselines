@@ -75,7 +75,8 @@ adaptive, medium uniform, deep uniform, foundation medium-uniform, and trench
 medium-uniform. Allocated update-1 smoke jobs `9458568`, `9458581`, `9458585`,
 `9458616`, and `9458619` all completed `0:0` and passed. Screen jobs `9461489`,
 `9461500`, `9461504`, `9461507`, and `9461512` were then submitted from
-revision `3478af87950d3d35059344b078209d00785c8481`. All share entropy
+revision `3478af87950d3d35059344b078209d00785c8481` and crossed finite update
+1 with transition-integrity checks enabled. All share entropy
 `0.02 -> 0.005 / 10,000` and the common P5 parent/teacher. The specialists are
 family dose ceilings; they do not enter the causal sampler/depth comparison.
 Every checkpoint must be evaluated on constrained promotion/development and

@@ -15,8 +15,10 @@ current scheduler state.
 All five allocated P5c update-1 smokes completed `0:0`, wrote
 `status=PASSED`, and passed the explicit finite-checkpoint verifier. The five
 matched 4,000-update screens were then submitted from the exact smoke-tested
-revision and allocated on Euler. `RUNNING` is execution state, not a
-behavioral result.
+revision and allocated on Euler. All five crossed finite update 1 with the
+transition-integrity checks enabled. `RUNNING` is execution state, not a
+behavioral result; the first policy comparison is the fixed update-500
+evaluation.
 
 | P5c arm | Support | Sampler | Architecture | Budget | Smoke | Screen | State |
 |---|---|---|---|---:|---:|---:|---|

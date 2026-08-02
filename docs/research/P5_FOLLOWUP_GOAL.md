@@ -423,7 +423,8 @@ Allocated execution receipt (2026-08-02):
 - P5c screen jobs `9461489`, `9461500`, `9461504`, `9461507`, and `9461512`
   were submitted from immutable terra-baselines revision
   `3478af87950d3d35059344b078209d00785c8481`. All five were allocated and
-  running at this receipt; this is execution state, not a training result.
+  crossed finite update 1 with transition-integrity checks enabled. They
+  remain running; this is execution state, not a training result.
 
 ## 10. Completion evidence
 
