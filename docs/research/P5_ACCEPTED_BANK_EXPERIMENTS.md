@@ -1,6 +1,6 @@
 # P5 Accepted-Bank Experiment Implementation
 
-- Status: P5 and P5b complete; P5c low-entropy follow-up in preparation
+- Status: P5 and P5b complete; P5c low-entropy screens submitted
 - Date: 2026-08-03
 - Canonical authority:
   [`D5_D7_IMPLEMENTATION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_simple_mapbank_reward_20260730/D5_D7_IMPLEMENTATION_PLAN.md)
@@ -383,6 +383,8 @@ evaluations: constrained promotion, constrained development, diagnostic
 all-free promotion, and diagnostic all-free development. The long-run gate
 requires improvement across multiple checkpoints, confirmation on both public
 panels, no material family or bottom-tail regression, and stable or improving
-capability-floor results. P5c allocated update-1 smokes were submitted on
-2026-08-03 as jobs `9458568`, `9458581`, `9458585`, `9458616`, and `9458619`.
-The screen remains blocked until all five smoke contracts pass.
+capability-floor results. P5c allocated update-1 smoke jobs `9458568`,
+`9458581`, `9458585`, `9458616`, and `9458619` all completed `0:0` and passed
+their explicit contracts. Screen jobs `9461489`, `9461500`, `9461504`,
+`9461507`, and `9461512` were consequently submitted from the exact tested
+revision and allocated. Startup state is not a behavioral result.

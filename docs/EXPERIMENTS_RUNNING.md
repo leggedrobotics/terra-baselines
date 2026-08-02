@@ -12,18 +12,19 @@ current scheduler state.
 
 ## Current production jobs
 
-The five allocated P5c update-1 smokes were submitted on 2026-08-03. They are
-runtime admission only: the 4,000-update screens remain blocked until every
-smoke exits `0:0`, writes `status=PASSED`, and passes the explicit checkpoint
-verifier.
+All five allocated P5c update-1 smokes completed `0:0`, wrote
+`status=PASSED`, and passed the explicit finite-checkpoint verifier. The five
+matched 4,000-update screens were then submitted from the exact smoke-tested
+revision and allocated on Euler. `RUNNING` is execution state, not a
+behavioral result.
 
-| Planned P5c arm | Support | Sampler | Architecture | Budget | Smoke | State |
-|---|---|---|---|---:|---:|---|
-| `G-MEDIUM-ADAPTIVE-WARM` | all 32 | adaptive | medium | 4,000 updates | `9458568` | QUEUED |
-| `G-MEDIUM-UNIFORM-WARM` | all 32 | uniform | medium | 4,000 updates | `9458581` | QUEUED |
-| `G-DEEP-UNIFORM-WARM` | all 32 | uniform | deep | 4,000 updates | `9458585` | QUEUED |
-| `F-MEDIUM-UNIFORM-WARM` | 18 foundations | uniform | medium | 4,000 updates | `9458616` | QUEUED |
-| `T-MEDIUM-UNIFORM-WARM` | 14 trenches | uniform | medium | 4,000 updates | `9458619` | QUEUED |
+| P5c arm | Support | Sampler | Architecture | Budget | Smoke | Screen | State |
+|---|---|---|---|---:|---:|---:|---|
+| `G-MEDIUM-ADAPTIVE-WARM` | all 32 | adaptive | medium | 4,000 updates | `9458568` PASS | `9461489` | RUNNING |
+| `G-MEDIUM-UNIFORM-WARM` | all 32 | uniform | medium | 4,000 updates | `9458581` PASS | `9461500` | RUNNING |
+| `G-DEEP-UNIFORM-WARM` | all 32 | uniform | deep | 4,000 updates | `9458585` PASS | `9461504` | RUNNING |
+| `F-MEDIUM-UNIFORM-WARM` | 18 foundations | uniform | medium | 4,000 updates | `9458616` PASS | `9461507` | RUNNING |
+| `T-MEDIUM-UNIFORM-WARM` | 14 trenches | uniform | medium | 4,000 updates | `9458619` PASS | `9461512` | RUNNING |
 
 All five use the same P5 parent/teacher and low entropy
 `0.02 -> 0.005 / 10,000`. Fixed evaluations are due every 500 updates on

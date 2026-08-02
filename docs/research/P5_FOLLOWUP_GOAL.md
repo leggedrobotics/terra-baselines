@@ -1,6 +1,6 @@
 # P5 Follow-up: Condition-Level Diagnosis and Matched Improvements
 
-- Status: active execution; P5b complete, P5c low-entropy screen in preparation
+- Status: active execution; P5b complete, P5c low-entropy screens submitted
 - Date: 2026-08-03
 - Owner: Codex with Lorenzo review
 - P5 implementation contract:
@@ -388,15 +388,15 @@ online reward, or one favorable checkpoint is insufficient.
   the constrained macro.
 - [x] Evaluate the P5 parent and selected P5b checkpoints on both diagnostic
   panels.
-- [ ] Pass CPU, local CUDA, and allocated update-1 gates for all five P5c arms.
-- [ ] Launch and evaluate P5c every 500 updates on constrained and diagnostic
-  panels.
+- [x] Pass CPU, local CUDA, and allocated update-1 gates for all five P5c arms.
+- [x] Launch all five matched P5c screens from the smoke-tested revision.
+- [ ] Evaluate P5c every 500 updates on constrained and diagnostic panels.
 - [ ] If admitted, queue and monitor the long run through fixed evaluation;
   otherwise record why no long run was justified.
 
 Current admission evidence:
 
-- full CPU suite: `277 passed` against Terra `a6e6e5bc`;
+- full CPU suite: `280 passed` against Terra `a6e6e5bc`;
 - local CUDA update 1: medium/adaptive and depth/adaptive passed the existing
   smoke checkpoint verifier, including finite transition state, params-only
   optimizer reset, and versioned pooled-sampler state;
@@ -415,10 +415,15 @@ Allocated execution receipt (2026-08-02):
   medium/adaptive, deep/adaptive, and medium/uniform respectively; and
 - screen jobs `9378174`, `9378175`, and `9378176`: all `COMPLETED 0:0` with
   final `status=PASSED`, 2,000 updates, and complete fixed-panel evaluations.
-- P5c allocated update-1 smokes were submitted on 2026-08-03 as jobs
-  `9458568`, `9458581`, `9458585`, `9458616`, and `9458619`. They were queued
-  at the time of this receipt; screen submission remains gated on all five
-  explicit smoke contracts passing.
+- P5c allocated update-1 smoke jobs `9458568`, `9458581`, `9458585`,
+  `9458616`, and `9458619`: all `COMPLETED 0:0`, explicit verifier
+  `passed=true`, update 1, and `status=PASSED`;
+- smoke throughput: `314.35`, `317.18`, `294.87`, `314.31`, and `307.58`
+  steps/s in matrix order; and
+- P5c screen jobs `9461489`, `9461500`, `9461504`, `9461507`, and `9461512`
+  were submitted from immutable terra-baselines revision
+  `3478af87950d3d35059344b078209d00785c8481`. All five were allocated and
+  running at this receipt; this is execution state, not a training result.
 
 ## 10. Completion evidence
 
