@@ -11,6 +11,14 @@ SCHEMA = "terra_curriculum_loader_bank_v1"
 SCENARIO_IDENTITY_CONTRACT = "terra_reset_arrays_sha256_v1"
 REVIEW_ADMISSION_SCHEMA = "terra-accepted-condition-set-v1"
 DIAGNOSTIC_CONTROL_SCHEMA = "terra_unconstrained_control_bank_v1"
+TRAIN96_RELEASE_ID = "terra_v6main_capfloor34_train96_v1"
+TRAIN96_CAPABILITY_FLOOR_SCHEMA = "terra_train96_capability_floor_contract_v1"
+TRAIN96_MAPS_PER_CONDITION = 96
+TRAIN96_CONSTRAINED_CONDITION_COUNT = 32
+TRAIN96_CAPABILITY_FLOOR_IDS = (
+    "fnd-slab-allfree",
+    "trn-straight-allfree",
+)
 REVIEW_RELEASE = "map-curriculum-diverse64-visual-review-20260730"
 REVIEW_MANIFEST_SHA256 = (
     "39f7cd2e8ce565bd384de214da5f2eee5e76764cb554e149c0ba675d815d6d51"
@@ -128,6 +136,11 @@ class AcceptedBank:
     source_registry_sha256: str
     review_admission_sha256: str | None
     diagnostic_contract_sha256: str | None = None
+    release_id: str | None = None
+    capability_floor_contract_sha256: str | None = None
+    constrained_condition_ids: tuple[str, ...] = ()
+    capability_floor_condition_ids: tuple[str, ...] = ()
+    capability_floor_evaluation_panels: tuple["AcceptedPanel", ...] = ()
 
 
 @dataclass(frozen=True)
@@ -203,15 +216,16 @@ def _validate_review_admission(
     root: Path,
     index: dict,
     condition_ids: list[str],
+    *,
+    path_field: str = "review_admission",
+    sha256_field: str = "review_admission_sha256",
 ) -> str:
     index_path = root / "dataset.json"
-    if index.get("review_admission") != "review_admission.json":
-        raise ValueError(
-            f"{index_path}: review_admission must be " "'review_admission.json'"
-        )
+    if index.get(path_field) != "review_admission.json":
+        raise ValueError(f"{index_path}: {path_field} must be 'review_admission.json'")
     expected_sha256 = _sha256_field(
         index,
-        "review_admission_sha256",
+        sha256_field,
         index_path,
     )
     receipt_path = root / "review_admission.json"
@@ -318,8 +332,168 @@ def _validate_diagnostic_control(
     return expected_sha256
 
 
-def validate_staged_training_bank(root: str | Path) -> int:
-    """Validate the complete 64-map training payload before it is uploaded."""
+def _sorted_unique_strings(
+    payload: dict,
+    field: str,
+    source: Path,
+) -> tuple[str, ...]:
+    values = payload.get(field)
+    if (
+        not isinstance(values, list)
+        or not all(isinstance(value, str) and value for value in values)
+        or values != sorted(set(values))
+    ):
+        raise ValueError(f"{source}: {field} must be unique and sorted")
+    return tuple(values)
+
+
+def _panel_count_contract(panels: dict) -> dict:
+    return {
+        name: {
+            "conditions": panel.get("conditions"),
+            "slot_count": panel.get("slot_count"),
+        }
+        for name, panel in sorted(panels.items())
+    }
+
+
+def _validate_train96_release(
+    root: Path,
+    index: dict,
+    levels: list[AcceptedLevel],
+) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """Validate the one named 34-condition Train-96 map-support treatment."""
+    index_path = root / "dataset.json"
+    if index.get("release_id") != TRAIN96_RELEASE_ID:
+        raise ValueError(f"{index_path}: release_id must be {TRAIN96_RELEASE_ID!r}")
+    if index.get("train_maps_per_condition") != TRAIN96_MAPS_PER_CONDITION:
+        raise ValueError(
+            f"{index_path}: train_maps_per_condition must be "
+            f"{TRAIN96_MAPS_PER_CONDITION}"
+        )
+    if index.get("included_in_constrained_macro") is not False:
+        raise ValueError(
+            f"{index_path}: capability-floor scores must be excluded from "
+            "the constrained macro"
+        )
+
+    constrained_ids = _sorted_unique_strings(
+        index,
+        "constrained_condition_ids",
+        index_path,
+    )
+    capability_floor_ids = _sorted_unique_strings(
+        index,
+        "capability_floor_condition_ids",
+        index_path,
+    )
+    if len(constrained_ids) != TRAIN96_CONSTRAINED_CONDITION_COUNT:
+        raise ValueError(
+            f"{index_path}: constrained_condition_ids must contain exactly "
+            f"{TRAIN96_CONSTRAINED_CONDITION_COUNT} conditions"
+        )
+    if capability_floor_ids != TRAIN96_CAPABILITY_FLOOR_IDS:
+        raise ValueError(
+            f"{index_path}: capability_floor_condition_ids must be exactly "
+            f"{list(TRAIN96_CAPABILITY_FLOOR_IDS)!r}"
+        )
+    if set(constrained_ids) & set(capability_floor_ids):
+        raise ValueError(f"{index_path}: condition partitions must be disjoint")
+    level_ids = {level.condition_id for level in levels}
+    if level_ids != set(constrained_ids) | set(capability_floor_ids):
+        raise ValueError(
+            f"{index_path}: condition partitions must cover all train conditions"
+        )
+    capability_families = {
+        level.condition_id: level.family
+        for level in levels
+        if level.condition_id in capability_floor_ids
+    }
+    if capability_families != {
+        "fnd-slab-allfree": "foundation",
+        "trn-straight-allfree": "trench",
+    }:
+        raise ValueError(
+            f"{index_path}: capability-floor families do not match the frozen pair"
+        )
+
+    review_sha256 = _validate_review_admission(
+        root,
+        index,
+        list(constrained_ids),
+        path_field="constrained_review_admission",
+        sha256_field="constrained_review_admission_sha256",
+    )
+
+    if index.get("capability_floor_contract") != "capability_floor_contract.json":
+        raise ValueError(
+            f"{index_path}: capability_floor_contract must be "
+            "'capability_floor_contract.json'"
+        )
+    expected_contract_sha256 = _sha256_field(
+        index,
+        "capability_floor_contract_sha256",
+        index_path,
+    )
+    contract_path = root / "capability_floor_contract.json"
+    if not contract_path.is_file() or contract_path.is_symlink():
+        raise FileNotFoundError(contract_path)
+    actual_contract_sha256 = _sha256_file(contract_path)
+    if actual_contract_sha256 != expected_contract_sha256:
+        raise ValueError(
+            "Train-96 capability-floor contract hash mismatch: "
+            f"expected {expected_contract_sha256}, got {actual_contract_sha256}"
+        )
+    try:
+        contract = json.loads(contract_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{contract_path}: invalid JSON: {exc}") from exc
+    if not isinstance(contract, dict):
+        raise ValueError(f"{contract_path}: expected a JSON object")
+    expected_contract = {
+        "schema": TRAIN96_CAPABILITY_FLOOR_SCHEMA,
+        "release_id": TRAIN96_RELEASE_ID,
+        "included_in_constrained_macro": False,
+        "constrained_condition_ids": list(constrained_ids),
+        "capability_floor_condition_ids": list(capability_floor_ids),
+        "train_maps_per_condition": TRAIN96_MAPS_PER_CONDITION,
+        "evaluation_panels": {
+            "constrained": _panel_count_contract(index.get("evaluation_panels", {})),
+            "capability_floor": _panel_count_contract(
+                index.get("capability_floor_evaluation_panels", {})
+            ),
+        },
+    }
+    if contract != expected_contract:
+        raise ValueError(
+            f"{contract_path}: contract does not match the frozen Train-96 release"
+        )
+    return review_sha256, constrained_ids, capability_floor_ids
+
+
+def _train_maps_per_condition(index: dict, source: Path) -> int:
+    """Return the one explicitly supported train-bank slot contract."""
+    release_id = index.get("release_id")
+    if release_id is None:
+        return TRAIN_MAPS_PER_CONDITION
+    if release_id != TRAIN96_RELEASE_ID:
+        raise ValueError(f"{source}: unsupported release_id {release_id!r}")
+    count = index.get("train_maps_per_condition")
+    if count != TRAIN96_MAPS_PER_CONDITION:
+        raise ValueError(
+            f"{source}: {TRAIN96_RELEASE_ID} must declare "
+            f"train_maps_per_condition={TRAIN96_MAPS_PER_CONDITION}"
+        )
+    return TRAIN96_MAPS_PER_CONDITION
+
+
+def validate_staged_training_bank(
+    root: str | Path,
+    *,
+    expected_maps_per_condition: int | None = None,
+    expected_release_id: str | None = None,
+) -> int:
+    """Validate one complete, explicitly versioned training payload."""
     root_path = Path(root).expanduser().resolve()
     index_path = root_path / "dataset.json"
     try:
@@ -331,15 +505,30 @@ def validate_staged_training_bank(root: str | Path) -> int:
     train = index.get("train") if isinstance(index, dict) else None
     if not isinstance(train, list) or not train:
         raise ValueError(f"{index_path}: train must be a nonempty list")
+    maps_per_condition = _train_maps_per_condition(index, index_path)
+    if expected_maps_per_condition is not None and (
+        maps_per_condition != expected_maps_per_condition
+    ):
+        raise ValueError(
+            f"{index_path}: expected {expected_maps_per_condition} maps per "
+            f"condition, got {maps_per_condition}"
+        )
+    if expected_release_id is not None and index.get("release_id") != (
+        expected_release_id
+    ):
+        raise ValueError(
+            f"{index_path}: expected release_id {expected_release_id!r}, got "
+            f"{index.get('release_id')!r}"
+        )
 
     levels = []
     for entry in train:
         if not isinstance(entry, dict):
             raise ValueError(f"{index_path}: every train entry must be an object")
-        if entry.get("map_count") != TRAIN_MAPS_PER_CONDITION:
+        if entry.get("map_count") != maps_per_condition:
             raise ValueError(
                 f"{index_path}: {entry.get('condition_id')!r} must declare "
-                f"exactly {TRAIN_MAPS_PER_CONDITION} train maps"
+                f"exactly {maps_per_condition} train maps"
             )
         level = _validate_level(root_path, entry)
         directory = root_path / level.maps_path
@@ -355,23 +544,21 @@ def validate_staged_training_bank(root: str | Path) -> int:
         if (
             not isinstance(slot_count, int)
             or isinstance(slot_count, bool)
-            or slot_count != TRAIN_MAPS_PER_CONDITION
+            or slot_count != maps_per_condition
         ):
             raise ValueError(
-                f"{metadata_path}: slot_count must be " f"{TRAIN_MAPS_PER_CONDITION}"
+                f"{metadata_path}: slot_count must be {maps_per_condition}"
             )
         num_maps = metadata.get("num_maps")
         if "num_maps" in metadata and (
             not isinstance(num_maps, int)
             or isinstance(num_maps, bool)
-            or num_maps != TRAIN_MAPS_PER_CONDITION
+            or num_maps != maps_per_condition
         ):
-            raise ValueError(
-                f"{metadata_path}: num_maps must be " f"{TRAIN_MAPS_PER_CONDITION}"
-            )
+            raise ValueError(f"{metadata_path}: num_maps must be {maps_per_condition}")
 
         expected_names = {
-            f"img_{slot}.npy" for slot in range(1, TRAIN_MAPS_PER_CONDITION + 1)
+            f"img_{slot}.npy" for slot in range(1, maps_per_condition + 1)
         }
         for folder in RESET_ARRAY_FOLDERS:
             array_directory = directory / folder
@@ -386,7 +573,7 @@ def validate_staged_training_bank(root: str | Path) -> int:
             ):
                 raise ValueError(
                     f"{array_directory}: must contain exactly "
-                    f"img_1.npy..img_{TRAIN_MAPS_PER_CONDITION}.npy"
+                    f"img_1.npy..img_{maps_per_condition}.npy"
                 )
         levels.append(level)
 
@@ -396,8 +583,11 @@ def validate_staged_training_bank(root: str | Path) -> int:
         raise ValueError(f"{index_path}: train repeats a condition_id")
     if len(maps_paths) != len(set(maps_paths)):
         raise ValueError(f"{index_path}: train repeats a maps_path")
-    _validate_review_admission(root_path, index, condition_ids)
-    return TRAIN_MAPS_PER_CONDITION
+    if index.get("release_id") == TRAIN96_RELEASE_ID:
+        _validate_train96_release(root_path, index, levels)
+    else:
+        _validate_review_admission(root_path, index, condition_ids)
+    return maps_per_condition
 
 
 def _validate_evaluation_panels(
@@ -608,6 +798,14 @@ def load_accepted_bank(
         index.get("evaluation_panels"),
         protocol_sha256,
     )
+    release_id = index.get("release_id")
+    capability_floor_evaluation_panels = ()
+    if release_id == TRAIN96_RELEASE_ID:
+        capability_floor_evaluation_panels = _validate_evaluation_panels(
+            root_path,
+            index.get("capability_floor_evaluation_panels"),
+            protocol_sha256,
+        )
     all_levels = [_validate_level(root_path, entry) for entry in train]
     condition_ids = [level.condition_id for level in all_levels]
     paths = [level.maps_path for level in all_levels]
@@ -616,12 +814,31 @@ def load_accepted_bank(
     if len(paths) != len(set(paths)):
         raise ValueError(f"{index_path}: train repeats a maps_path")
     diagnostic_contract_sha256 = None
+    capability_floor_contract_sha256 = None
+    constrained_condition_ids: tuple[str, ...] = ()
+    capability_floor_condition_ids: tuple[str, ...] = ()
     if allow_diagnostic_control:
+        if release_id == TRAIN96_RELEASE_ID:
+            raise ValueError(
+                "Train-96 capability-floor conditions are training support; "
+                "use the separate diagnostic control bank for diagnostic panels"
+            )
         review_admission_sha256 = None
         diagnostic_contract_sha256 = _validate_diagnostic_control(
             root_path,
             index,
             condition_ids,
+        )
+    elif release_id == TRAIN96_RELEASE_ID:
+        (
+            review_admission_sha256,
+            constrained_condition_ids,
+            capability_floor_condition_ids,
+        ) = _validate_train96_release(root_path, index, all_levels)
+        capability_floor_contract_sha256 = _sha256_field(
+            index,
+            "capability_floor_contract_sha256",
+            index_path,
         )
     else:
         review_admission_sha256 = _validate_review_admission(
@@ -658,10 +875,11 @@ def load_accepted_bank(
             f"{sorted(map_counts)}; Terra levels must have one slot count"
         )
     map_count_per_condition = next(iter(map_counts))
-    if map_count_per_condition != TRAIN_MAPS_PER_CONDITION:
+    expected_maps_per_condition = _train_maps_per_condition(index, index_path)
+    if map_count_per_condition != expected_maps_per_condition:
         raise ValueError(
             f"{index_path}: arm {arm} must have exactly "
-            f"{TRAIN_MAPS_PER_CONDITION} train maps per condition, got "
+            f"{expected_maps_per_condition} train maps per condition, got "
             f"{map_count_per_condition}"
         )
 
@@ -676,4 +894,9 @@ def load_accepted_bank(
         source_registry_sha256=registry_sha256,
         review_admission_sha256=review_admission_sha256,
         diagnostic_contract_sha256=diagnostic_contract_sha256,
+        release_id=release_id,
+        capability_floor_contract_sha256=capability_floor_contract_sha256,
+        constrained_condition_ids=constrained_condition_ids,
+        capability_floor_condition_ids=capability_floor_condition_ids,
+        capability_floor_evaluation_panels=capability_floor_evaluation_panels,
     )

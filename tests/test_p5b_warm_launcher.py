@@ -93,7 +93,8 @@ def test_euler_launcher_is_three_arm_star_and_keeps_screen_contract():
 
     assert "#SBATCH --gpus=rtx_4090:4" in sbatch
     assert "home quota launch gate failed" in sbatch
-    assert 'test "$MAPS_PER_CONDITION" = 64' in sbatch
+    assert ': "${TRAIN_MAPS_PER_CONDITION:=64}"' in sbatch
+    assert 'test "$MAPS_PER_CONDITION" = "$TRAIN_MAPS_PER_CONDITION"' in sbatch
     assert "ACCEPTED_BANK_ARM=G-ADAPTIVE" in sbatch
     assert "ACCEPTED_BANK_ARM=G-UNIFORM" in sbatch
     assert 'for UPDATE in $(seq 500 500 "$UPDATES")' in sbatch
@@ -153,3 +154,49 @@ def test_p5c_wrapper_freezes_the_low_entropy_matrix_and_controls():
     assert "allow_diagnostic_control=True" in sbatch
     assert "diagnostic_control_archive_sha256" in submit
     assert "entropy_schedule=$ENT_SCHEDULE_START" in submit
+
+
+def test_train96_capability_floor_launcher_is_a_separate_fail_closed_treatment():
+    wrapper = (ROOT / "scripts/euler_train96_capfloor_v1/submit.sh").read_text()
+    readme = (ROOT / "scripts/euler_train96_capfloor_v1/README.md").read_text()
+    submit = (ROOT / "scripts/euler_p5b_warm_v1/submit.sh").read_text()
+    sbatch = (ROOT / "scripts/euler_p5b_warm_v1/run.sbatch").read_text()
+
+    assert "CAMPAIGN_ID=terra_v6main_capfloor34_train96_v1" in wrapper
+    assert "TRAIN_BANK_RELEASE_ID=terra_v6main_capfloor34_train96_v1" in wrapper
+    assert "TRAIN_MAPS_PER_CONDITION=96" in wrapper
+    assert "ENT_SCHEDULE_START=0.02" in wrapper
+    assert "ENT_SCHEDULE_END=0.005" in wrapper
+    assert "ENT_SCHEDULE_STEPS=10000" in wrapper
+    assert "SCREEN_UPDATES=4000" in wrapper
+    assert (
+        'ARMS_STRING="G-MEDIUM-ADAPTIVE-WARM G-MEDIUM-UNIFORM-WARM '
+        "G-DEEP-UNIFORM-WARM F-MEDIUM-UNIFORM-WARM "
+        'T-MEDIUM-UNIFORM-WARM"'
+    ) in wrapper
+    assert "before SUBMIT=1" in wrapper
+    assert "f802681f" in wrapper
+
+    assert "training bank archive SHA mismatch" in submit
+    assert "training bank dataset SHA mismatch" in submit
+    assert "bank/dataset.json" in submit
+    assert 'if [ "$SUBMIT" = 0 ]' in submit
+    assert submit.index('if [ "$SUBMIT" = 0 ]') < submit.index('ssh "$REMOTE_HOST"')
+    assert "TRAIN_BANK_ARCHIVE=$REMOTE_TRAIN_BANK" in submit
+
+    assert "terra_v6main_capfloor34_train96_v1)" in sbatch
+    assert "GENERALIST_CONDITIONS=34" in sbatch
+    assert "FOUNDATION_CONDITIONS=19" in sbatch
+    assert "TRENCH_CONDITIONS=15" in sbatch
+    assert '--expected-maps-per-condition "$TRAIN_MAPS_PER_CONDITION"' in sbatch
+    assert '--expected-release-id "$TRAIN_BANK_RELEASE_ID"' in sbatch
+    assert '"capability_floor_in_constrained_macro=false"' in sbatch
+    assert '--accepted-panel "$PANEL"' in sbatch
+    assert '--diagnostic-panel "$PANEL"' in sbatch
+    assert sbatch.count('"$BASELINES_ROOT/scripts/log_fixed_eval_wandb.py"') == 1
+    assert "diagnostic_${PANEL}.json" in sbatch
+
+    assert "does not mutate or rename" in readme
+    assert "excluded from the constrained 32-condition macro" in readme
+    assert "96 layouts per condition" in readme
+    assert "one top-level `bank/` tree" in readme

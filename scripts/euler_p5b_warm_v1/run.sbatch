@@ -28,6 +28,11 @@ umask 002
 : "${SCREEN_UPDATES:=2000}"
 : "${CONTROL_ARCHIVE:=}"
 : "${CONTROL_SHA:=}"
+: "${TRAIN_BANK_ARCHIVE:=}"
+: "${TRAIN_BANK_SHA:=}"
+: "${TRAIN_BANK_DATASET_SHA:=}"
+: "${TRAIN_BANK_RELEASE_ID:=}"
+: "${TRAIN_MAPS_PER_CONDITION:=64}"
 : "${SLURM_JOB_ID:?must run inside Slurm}"
 : "${TMPDIR:?Euler did not provide TMPDIR}"
 
@@ -45,6 +50,29 @@ if [ -n "$CONTROL_ARCHIVE" ] || [ -n "$CONTROL_SHA" ]; then
         exit 2
     fi
 fi
+[[ "$TRAIN_MAPS_PER_CONDITION" =~ ^[1-9][0-9]*$ ]] || {
+    echo "TRAIN_MAPS_PER_CONDITION must be a positive integer" >&2
+    exit 2
+}
+case "$TRAIN_BANK_RELEASE_ID" in
+    "")
+        test "$TRAIN_MAPS_PER_CONDITION" -eq 64
+        test -z "$TRAIN_BANK_ARCHIVE$TRAIN_BANK_SHA$TRAIN_BANK_DATASET_SHA"
+        GENERALIST_CONDITIONS=32
+        FOUNDATION_CONDITIONS=18
+        TRENCH_CONDITIONS=14
+        ;;
+    terra_v6main_capfloor34_train96_v1)
+        test "$TRAIN_MAPS_PER_CONDITION" -eq 96
+        test -n "$TRAIN_BANK_ARCHIVE"
+        test -n "$TRAIN_BANK_SHA"
+        test -n "$TRAIN_BANK_DATASET_SHA"
+        GENERALIST_CONDITIONS=34
+        FOUNDATION_CONDITIONS=19
+        TRENCH_CONDITIONS=15
+        ;;
+    *) echo "unsupported TRAIN_BANK_RELEASE_ID=$TRAIN_BANK_RELEASE_ID" >&2; exit 2 ;;
+esac
 
 P5_SHA="f8aac348d64c7f71ee65273e6729ad142828731598ce383b2ac0331e225ebaaa"
 P5_ARCHIVE="/cluster/work/rsl/lterenzi/terra_curriculum_campaigns/sha256-$P5_SHA/campaign.tar.zst"
@@ -60,28 +88,28 @@ case "$ARM" in
         CONDITION_SAMPLER=adaptive
         PRIMARY_FAMILY=generalist
         TRAINING_SUPPORT=all
-        EXPECTED_CONDITIONS=32
+        EXPECTED_CONDITIONS="$GENERALIST_CONDITIONS"
         ;;
     G-MEDIUM-UNIFORM-WARM|G-DEEP-UNIFORM-WARM)
         ACCEPTED_BANK_ARM=G-UNIFORM
         CONDITION_SAMPLER=uniform
         PRIMARY_FAMILY=generalist
         TRAINING_SUPPORT=all
-        EXPECTED_CONDITIONS=32
+        EXPECTED_CONDITIONS="$GENERALIST_CONDITIONS"
         ;;
     F-MEDIUM-UNIFORM-WARM)
         ACCEPTED_BANK_ARM=F-SPECIALIST
         CONDITION_SAMPLER=uniform
         PRIMARY_FAMILY=foundation
         TRAINING_SUPPORT=foundation
-        EXPECTED_CONDITIONS=18
+        EXPECTED_CONDITIONS="$FOUNDATION_CONDITIONS"
         ;;
     T-MEDIUM-UNIFORM-WARM)
         ACCEPTED_BANK_ARM=T-SPECIALIST
         CONDITION_SAMPLER=uniform
         PRIMARY_FAMILY=trench
         TRAINING_SUPPORT=trench
-        EXPECTED_CONDITIONS=14
+        EXPECTED_CONDITIONS="$TRENCH_CONDITIONS"
         ;;
     *) echo "unsupported ARM=$ARM" >&2; exit 2 ;;
 esac
@@ -116,10 +144,19 @@ awk -v used="$HOME_USED_GB" 'BEGIN { exit !(used < 45.0) }' || {
     exit 3
 }
 
-tar --zstd -xf "$P5_ARCHIVE" -C "$TMPDIR" \
-    campaign/source/terra campaign/bank campaign/runtime/check_jax_runtime.py
+if [ -n "$TRAIN_BANK_ARCHIVE" ]; then
+    tar --zstd -xf "$P5_ARCHIVE" -C "$TMPDIR" \
+        campaign/source/terra campaign/runtime/check_jax_runtime.py
+    test "$(sha256sum "$TRAIN_BANK_ARCHIVE" | awk '{print $1}')" = "$TRAIN_BANK_SHA"
+    tar --zstd -xf "$TRAIN_BANK_ARCHIVE" -C "$TMPDIR" bank
+    BANK="$TMPDIR/bank"
+    test "$(sha256sum "$BANK/dataset.json" | awk '{print $1}')" = "$TRAIN_BANK_DATASET_SHA"
+else
+    tar --zstd -xf "$P5_ARCHIVE" -C "$TMPDIR" \
+        campaign/source/terra campaign/bank campaign/runtime/check_jax_runtime.py
+    BANK="$TMPDIR/campaign/bank"
+fi
 TERRA="$TMPDIR/campaign/source/terra"
-BANK="$TMPDIR/campaign/bank"
 RUNTIME_CHECK="$TMPDIR/campaign/runtime/check_jax_runtime.py"
 CONTROL_BANK=""
 if [ -n "$CONTROL_ARCHIVE" ]; then
@@ -154,9 +191,16 @@ for GPU_NAME in "${GPU_NAMES[@]}"; do
 done
 export JAX_PLATFORMS=cuda
 "$PYTHON" "$RUNTIME_CHECK" --min-devices 4
-MAPS_PER_CONDITION="$(PYTHONPATH="$BASELINES_ROOT" "$PYTHON" "$BASELINES_ROOT/scripts/euler_accepted_bank_v1/validate_training_bank.py" "$BANK")"
-test "$MAPS_PER_CONDITION" = 64
-"$PYTHON" -c 'import sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], sys.argv[2], sys.argv[3]); assert len(b.levels) == int(sys.argv[4]) and b.map_count_per_condition == 64' "$BANK" "$ACCEPTED_BANK_ARM" "$TERRA_REVISION" "$EXPECTED_CONDITIONS"
+VALIDATE_BANK_ARGS=(
+    "$BANK"
+    --expected-maps-per-condition "$TRAIN_MAPS_PER_CONDITION"
+)
+if [ -n "$TRAIN_BANK_RELEASE_ID" ]; then
+    VALIDATE_BANK_ARGS+=(--expected-release-id "$TRAIN_BANK_RELEASE_ID")
+fi
+MAPS_PER_CONDITION="$(PYTHONPATH="$BASELINES_ROOT" "$PYTHON" "$BASELINES_ROOT/scripts/euler_accepted_bank_v1/validate_training_bank.py" "${VALIDATE_BANK_ARGS[@]}")"
+test "$MAPS_PER_CONDITION" = "$TRAIN_MAPS_PER_CONDITION"
+"$PYTHON" -c 'import sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], sys.argv[2], sys.argv[3]); assert len(b.levels) == int(sys.argv[4]) and b.map_count_per_condition == int(sys.argv[5]); assert (b.release_id or "") == sys.argv[6]' "$BANK" "$ACCEPTED_BANK_ARM" "$TERRA_REVISION" "$EXPECTED_CONDITIONS" "$TRAIN_MAPS_PER_CONDITION" "$TRAIN_BANK_RELEASE_ID"
 if [ -n "$CONTROL_BANK" ]; then
     "$PYTHON" -c 'import sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], "G-UNIFORM", sys.argv[2], allow_diagnostic_control=True); assert len(b.levels) == 2 and b.map_count_per_condition == 64 and b.diagnostic_contract_sha256' "$CONTROL_BANK" "$TERRA_REVISION"
 fi
@@ -235,6 +279,13 @@ printf '%s\n' \
     "initialization=params_only_warm" \
     "entropy_schedule=$ENT_SCHEDULE_START:$ENT_SCHEDULE_END:$ENT_SCHEDULE_STEPS" \
     "diagnostic_control_archive_sha256=${CONTROL_SHA:-none}" \
+    "training_bank_release_id=${TRAIN_BANK_RELEASE_ID:-legacy-p5}" \
+    "training_bank_archive_sha256=${TRAIN_BANK_SHA:-legacy-p5-campaign}" \
+    "training_bank_dataset_sha256=${TRAIN_BANK_DATASET_SHA:-legacy-p5-campaign}" \
+    "train_maps_per_condition=$TRAIN_MAPS_PER_CONDITION" \
+    "constrained_macro_condition_count=32" \
+    "capability_floor_condition_count=$((GENERALIST_CONDITIONS - 32))" \
+    "capability_floor_in_constrained_macro=false" \
     "slurm_job_id=$SLURM_JOB_ID" \
     "wandb_run_id=$WANDB_RUN_ID" > "$RUN_DIR/run_contract.env"
 "${TRAIN_COMMAND[@]}"

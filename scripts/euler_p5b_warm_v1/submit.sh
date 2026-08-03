@@ -32,6 +32,11 @@ ARMS_STRING="${ARMS_STRING:-G-MEDIUM-ADAPTIVE-WARM G-DEEP-ADAPTIVE-WARM G-MEDIUM
 read -r -a ARMS <<< "$ARMS_STRING"
 DIAGNOSTIC_CONTROL_ARCHIVE_LOCAL="${DIAGNOSTIC_CONTROL_ARCHIVE_LOCAL:-}"
 DIAGNOSTIC_CONTROL_SHA="${DIAGNOSTIC_CONTROL_SHA:-}"
+TRAIN_BANK_ARCHIVE_LOCAL="${TRAIN_BANK_ARCHIVE_LOCAL:-}"
+TRAIN_BANK_SHA="${TRAIN_BANK_SHA:-}"
+TRAIN_BANK_DATASET_SHA="${TRAIN_BANK_DATASET_SHA:-}"
+TRAIN_BANK_RELEASE_ID="${TRAIN_BANK_RELEASE_ID:-}"
+TRAIN_MAPS_PER_CONDITION="${TRAIN_MAPS_PER_CONDITION:-64}"
 REMOTE_WORK="/cluster/home/lterenzi/codex_terra_edge_validation/$CAMPAIGN_ID"
 REMOTE_INPUTS="/cluster/scratch/lterenzi/codex_terra_edge_runs/$CAMPAIGN_ID/inputs"
 REMOTE_RUNS="/cluster/scratch/lterenzi/codex_terra_edge_runs/$CAMPAIGN_ID"
@@ -66,12 +71,39 @@ if [ -n "$DIAGNOSTIC_CONTROL_ARCHIVE_LOCAL" ] || [ -n "$DIAGNOSTIC_CONTROL_SHA" 
         exit 3
     }
 fi
+if [ -n "$TRAIN_BANK_ARCHIVE_LOCAL" ] || [ -n "$TRAIN_BANK_SHA" ] || [ -n "$TRAIN_BANK_DATASET_SHA" ]; then
+    if [ -z "$TRAIN_BANK_ARCHIVE_LOCAL" ] || [ -z "$TRAIN_BANK_SHA" ] || [ -z "$TRAIN_BANK_DATASET_SHA" ]; then
+        echo "training bank archive, archive SHA, and dataset SHA must be supplied together" >&2
+        exit 3
+    fi
+    test -f "$TRAIN_BANK_ARCHIVE_LOCAL"
+    test "$(sha256sum "$TRAIN_BANK_ARCHIVE_LOCAL" | awk '{print $1}')" = "$TRAIN_BANK_SHA" || {
+        echo "training bank archive SHA mismatch" >&2
+        exit 3
+    }
+    test "$(tar --zstd -xOf "$TRAIN_BANK_ARCHIVE_LOCAL" bank/dataset.json | sha256sum | awk '{print $1}')" = "$TRAIN_BANK_DATASET_SHA" || {
+        echo "training bank dataset SHA mismatch" >&2
+        exit 3
+    }
+fi
+[[ "$TRAIN_MAPS_PER_CONDITION" =~ ^[1-9][0-9]*$ ]] || {
+    echo "TRAIN_MAPS_PER_CONDITION must be a positive integer" >&2
+    exit 3
+}
+if [ -n "$TRAIN_BANK_RELEASE_ID" ] && [ "$SUBMIT" = 1 ] && [ -z "$TRAIN_BANK_ARCHIVE_LOCAL" ]; then
+    echo "SUBMIT=1 for a named training-bank release requires the immutable local archive" >&2
+    exit 3
+fi
 
 REMOTE_SOURCE="$REMOTE_WORK/$BASELINES_REVISION/terra-baselines"
 REMOTE_DEEP="$REMOTE_INPUTS/g_adaptive_u2000_deep_se_grown-$DEEP_SHA.pkl"
 REMOTE_CONTROL=""
 if [ -n "$DIAGNOSTIC_CONTROL_SHA" ]; then
     REMOTE_CONTROL="$REMOTE_INPUTS/diagnostic-control-$DIAGNOSTIC_CONTROL_SHA.tar.zst"
+fi
+REMOTE_TRAIN_BANK=""
+if [ -n "$TRAIN_BANK_SHA" ]; then
+    REMOTE_TRAIN_BANK="$REMOTE_INPUTS/training-bank-$TRAIN_BANK_SHA.tar.zst"
 fi
 echo "phase=$PHASE seed=$SEED"
 echo "terra_revision=$TERRA_REVISION terra_repo=$TERRA_REPO"
@@ -82,6 +114,11 @@ echo "deep_checkpoint=$REMOTE_DEEP"
 echo "campaign=$CAMPAIGN_ID prefix=$EXPERIMENT_PREFIX"
 echo "entropy=$ENT_SCHEDULE_START:$ENT_SCHEDULE_END:$ENT_SCHEDULE_STEPS screen_updates=$SCREEN_UPDATES"
 echo "diagnostic_control=${REMOTE_CONTROL:-none}"
+echo "training_bank_release=${TRAIN_BANK_RELEASE_ID:-legacy-p5}"
+echo "training_bank_maps_per_condition=$TRAIN_MAPS_PER_CONDITION"
+echo "training_bank_archive=${REMOTE_TRAIN_BANK:-${TRAIN_BANK_ARCHIVE_LOCAL:-PENDING}}"
+echo "training_bank_archive_sha256=${TRAIN_BANK_SHA:-PENDING}"
+echo "training_bank_dataset_sha256=${TRAIN_BANK_DATASET_SHA:-PENDING}"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: no sync, scratch, W&B, or Slurm mutation"
     for ARM in "${ARMS[@]}"; do
@@ -115,6 +152,14 @@ if [ -n "$REMOTE_CONTROL" ]; then
     fi
     ssh "$REMOTE_HOST" "test \"\$(sha256sum '$REMOTE_CONTROL' | awk '{print \$1}')\" = '$DIAGNOSTIC_CONTROL_SHA'"
 fi
+if [ -n "$REMOTE_TRAIN_BANK" ]; then
+    if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_TRAIN_BANK'"; then
+        REMOTE_TRAIN_BANK_PARTIAL="$REMOTE_TRAIN_BANK.partial.$$"
+        scp -q "$TRAIN_BANK_ARCHIVE_LOCAL" "$REMOTE_HOST:$REMOTE_TRAIN_BANK_PARTIAL"
+        ssh "$REMOTE_HOST" "test \"\$(sha256sum '$REMOTE_TRAIN_BANK_PARTIAL' | awk '{print \$1}')\" = '$TRAIN_BANK_SHA' && mv '$REMOTE_TRAIN_BANK_PARTIAL' '$REMOTE_TRAIN_BANK'"
+    fi
+    ssh "$REMOTE_HOST" "test \"\$(sha256sum '$REMOTE_TRAIN_BANK' | awk '{print \$1}')\" = '$TRAIN_BANK_SHA'"
+fi
 
 if [ "$PHASE" = screen ]; then
     for ARM in "${ARMS[@]}"; do
@@ -128,6 +173,10 @@ if [ "$PHASE" = screen ]; then
             grep -qx 'seed=$SEED' '$SMOKE/run_contract.env'
             grep -qx 'entropy_schedule=$ENT_SCHEDULE_START:$ENT_SCHEDULE_END:$ENT_SCHEDULE_STEPS' '$SMOKE/run_contract.env'
             grep -qx 'diagnostic_control_archive_sha256=${DIAGNOSTIC_CONTROL_SHA:-none}' '$SMOKE/run_contract.env'
+            grep -qx 'training_bank_release_id=${TRAIN_BANK_RELEASE_ID:-legacy-p5}' '$SMOKE/run_contract.env'
+            grep -qx 'training_bank_archive_sha256=${TRAIN_BANK_SHA:-legacy-p5-campaign}' '$SMOKE/run_contract.env'
+            grep -qx 'training_bank_dataset_sha256=${TRAIN_BANK_DATASET_SHA:-legacy-p5-campaign}' '$SMOKE/run_contract.env'
+            grep -qx 'train_maps_per_condition=$TRAIN_MAPS_PER_CONDITION' '$SMOKE/run_contract.env'
         "
     done
 fi
@@ -140,7 +189,7 @@ for ARM in "${ARMS[@]}"; do
     RUN_PARENT="$REMOTE_RUNS/$BASELINES_REVISION/$PHASE/s$SEED"
     RUN_DIR="$RUN_PARENT/$ARM"
     ssh "$REMOTE_HOST" "mkdir -p '$RUN_PARENT' && mkdir '$RUN_DIR'"
-    EXPORTS="ALL,PHASE=$PHASE,ARM=$ARM,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,DEEP_CHECKPOINT=$REMOTE_DEEP,DEEP_SHA=$DEEP_SHA,SEED=$SEED,CAMPAIGN_ID=$CAMPAIGN_ID,EXPERIMENT_PREFIX=$EXPERIMENT_PREFIX,ENT_SCHEDULE_START=$ENT_SCHEDULE_START,ENT_SCHEDULE_END=$ENT_SCHEDULE_END,ENT_SCHEDULE_STEPS=$ENT_SCHEDULE_STEPS,SCREEN_UPDATES=$SCREEN_UPDATES,CONTROL_ARCHIVE=$REMOTE_CONTROL,CONTROL_SHA=$DIAGNOSTIC_CONTROL_SHA"
+    EXPORTS="ALL,PHASE=$PHASE,ARM=$ARM,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,DEEP_CHECKPOINT=$REMOTE_DEEP,DEEP_SHA=$DEEP_SHA,SEED=$SEED,CAMPAIGN_ID=$CAMPAIGN_ID,EXPERIMENT_PREFIX=$EXPERIMENT_PREFIX,ENT_SCHEDULE_START=$ENT_SCHEDULE_START,ENT_SCHEDULE_END=$ENT_SCHEDULE_END,ENT_SCHEDULE_STEPS=$ENT_SCHEDULE_STEPS,SCREEN_UPDATES=$SCREEN_UPDATES,CONTROL_ARCHIVE=$REMOTE_CONTROL,CONTROL_SHA=$DIAGNOSTIC_CONTROL_SHA,TRAIN_BANK_ARCHIVE=$REMOTE_TRAIN_BANK,TRAIN_BANK_SHA=$TRAIN_BANK_SHA,TRAIN_BANK_DATASET_SHA=$TRAIN_BANK_DATASET_SHA,TRAIN_BANK_RELEASE_ID=$TRAIN_BANK_RELEASE_ID,TRAIN_MAPS_PER_CONDITION=$TRAIN_MAPS_PER_CONDITION"
     JOB_ID="$(
         ssh "$REMOTE_HOST" "
             cat '$REMOTE_SOURCE/scripts/euler_p5b_warm_v1/run.sbatch' |

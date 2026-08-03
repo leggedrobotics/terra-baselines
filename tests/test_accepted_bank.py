@@ -353,6 +353,147 @@ def _convert_to_diagnostic_control(root: Path) -> Path:
     return root
 
 
+def _convert_to_train96_capability_floor(root: Path) -> Path:
+    index_path = root / "dataset.json"
+    index = json.loads(index_path.read_text())
+    constrained_ids = sorted(entry["condition_id"] for entry in index["train"])
+    controls = [
+        _write_level(root, "fnd-slab-allfree", "foundation", "Anchor", 96),
+        _write_level(root, "trn-straight-allfree", "trench", "Anchor", 96),
+    ]
+    for offset, entry in enumerate(controls, start=len(index["train"])):
+        entry["level_index"] = offset
+    index["train"].extend(controls)
+
+    protocol_sha256 = index["environment_protocol_sha256"]
+    capability_panels = {}
+    for panel_name in ("promotion", "development", "sealed"):
+        directory = root / f"capability_floor_{panel_name}"
+        directory.mkdir()
+        (directory / "dataset.json").write_text("{}\n")
+        rows = []
+        for slot, entry in enumerate(controls, start=1):
+            scenario_id = f"{100 + slot:064x}"
+            episode_id = accepted_bank_module._canonical_json_sha256(
+                {
+                    "schema": "terra_episode_id_v1",
+                    "scenario_id": scenario_id,
+                    "reset_seed": 100 + slot,
+                    "environment_protocol_sha256": protocol_sha256,
+                }
+            )
+            rows.append(
+                {
+                    "slot_index": slot,
+                    "map_id": f"capability-{panel_name}-{slot}",
+                    "family": entry["family"],
+                    "primary_cell": entry["condition_id"],
+                    "scenario_id": scenario_id,
+                    "reset_seed": 100 + slot,
+                    "episode_id": episode_id,
+                    "environment_protocol_sha256": protocol_sha256,
+                }
+            )
+        (directory / "manifest.jsonl").write_text(
+            "".join(json.dumps(row) + "\n" for row in rows)
+        )
+        capability_panels[panel_name] = {
+            "maps_path": directory.name,
+            "slot_count": len(rows),
+            "conditions": len(rows),
+        }
+
+    index.pop("review_admission")
+    index.pop("review_admission_sha256")
+    index.update(
+        {
+            "release_id": accepted_bank_module.TRAIN96_RELEASE_ID,
+            "included_in_constrained_macro": False,
+            "train_maps_per_condition": 96,
+            "constrained_condition_ids": constrained_ids,
+            "capability_floor_condition_ids": list(
+                accepted_bank_module.TRAIN96_CAPABILITY_FLOOR_IDS
+            ),
+            "constrained_review_admission": "review_admission.json",
+            "constrained_review_admission_sha256": _sha256(
+                root / "review_admission.json"
+            ),
+            "capability_floor_evaluation_panels": capability_panels,
+        }
+    )
+    contract = {
+        "schema": accepted_bank_module.TRAIN96_CAPABILITY_FLOOR_SCHEMA,
+        "release_id": accepted_bank_module.TRAIN96_RELEASE_ID,
+        "included_in_constrained_macro": False,
+        "constrained_condition_ids": constrained_ids,
+        "capability_floor_condition_ids": list(
+            accepted_bank_module.TRAIN96_CAPABILITY_FLOOR_IDS
+        ),
+        "train_maps_per_condition": 96,
+        "evaluation_panels": {
+            "constrained": accepted_bank_module._panel_count_contract(
+                index["evaluation_panels"]
+            ),
+            "capability_floor": accepted_bank_module._panel_count_contract(
+                capability_panels
+            ),
+        },
+    }
+    contract_path = root / "capability_floor_contract.json"
+    contract_path.write_text(json.dumps(contract) + "\n")
+    index["capability_floor_contract"] = "capability_floor_contract.json"
+    index["capability_floor_contract_sha256"] = _sha256(contract_path)
+    index_path.write_text(json.dumps(index) + "\n")
+    return root
+
+
+def test_train96_release_is_explicit_and_keeps_control_scores_separate(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        accepted_bank_module,
+        "TRAIN96_CONSTRAINED_CONDITION_COUNT",
+        4,
+    )
+    root = _convert_to_train96_capability_floor(_write_bank(tmp_path, map_count=96))
+    bank = load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
+
+    assert bank.release_id == accepted_bank_module.TRAIN96_RELEASE_ID
+    assert bank.map_count_per_condition == 96
+    assert len(bank.levels) == 6
+    assert bank.constrained_condition_ids == (
+        "f-anchor",
+        "f-axis",
+        "t-anchor",
+        "t-composed",
+    )
+    assert bank.capability_floor_condition_ids == (
+        "fnd-slab-allfree",
+        "trn-straight-allfree",
+    )
+    assert bank.capability_floor_contract_sha256 == _sha256(
+        root / "capability_floor_contract.json"
+    )
+    assert {panel.condition_count for panel in bank.evaluation_panels} == {4}
+    assert {
+        panel.condition_count for panel in bank.capability_floor_evaluation_panels
+    } == {2}
+    assert bank.diagnostic_contract_sha256 is None
+
+
+def test_train96_capability_floor_contract_is_hash_verified(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        accepted_bank_module,
+        "TRAIN96_CONSTRAINED_CONDITION_COUNT",
+        4,
+    )
+    root = _convert_to_train96_capability_floor(_write_bank(tmp_path, map_count=96))
+    (root / "capability_floor_contract.json").write_text("{}\n")
+    with pytest.raises(ValueError, match="capability-floor contract hash mismatch"):
+        load_accepted_bank(root, "G-UNIFORM", "terra-test-revision")
+
+
 def test_diagnostic_control_requires_explicit_opt_in(tmp_path):
     root = _convert_to_diagnostic_control(_write_bank(tmp_path))
     with pytest.raises(ValueError, match="review_admission"):
