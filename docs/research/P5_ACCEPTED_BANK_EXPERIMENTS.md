@@ -369,6 +369,10 @@ entropy `0.02 -> 0.005` over 10,000 updates, KL/value schedules, accepted-bank
 release, reward, horizon, observations, actions, PPO shape, full-reset
 distribution, and seed. Generalists select all 32 conditions; specialists
 select the existing family subset.
+All also freeze `enforce_foundation_border_alignment=false`; edge alignment is
+not part of the P5c completion or reward treatment. Any later straight-edge
+experiment is a separate per-map ablation and cannot silently change these
+results.
 The causal comparisons are:
 
 1. medium/adaptive versus medium/uniform for sampler choice; and

@@ -364,6 +364,19 @@ isolates residual depth. The two specialists are family dose ceilings, not evide
 specialized architecture is intrinsically better and not participants in the
 generalist promotion macro.
 
+### Edge-alignment boundary
+
+P5, P5b, and every P5c arm freeze
+`enforce_foundation_border_alignment=false`. Their graded and exact failures
+therefore cannot be attributed to the optional edge gate. Keep it disabled for
+the base curriculum and leaderboard. A future edge treatment must be a
+separately named ablation, first evaluated off versus on with the same policy
+and maps, and admitted only for validator-confirmed straight foundation edges.
+It must not apply to trenches, aliased/zig-zag raster boundaries, or irregular
+procedural/OSM outlines. If later used for training, reward, completion,
+action legality, termination, and evaluation must all use the same explicit
+per-map contract.
+
 A long 20,000-update/120-hour continuation is admitted only after P5c shows a
 positive trend at multiple fixed checkpoints, improvement on both public
 panels, no hidden foundation/trench or bottom-tail regression, and improvement
