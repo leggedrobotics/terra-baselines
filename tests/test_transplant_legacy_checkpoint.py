@@ -84,11 +84,24 @@ class LegacyCheckpointTransplantTest(unittest.TestCase):
             )
 
             source_sha256 = _file_sha256(source)
+            skeleton_sha256 = _file_sha256(skeleton)
+            with self.assertRaisesRegex(ValueError, "source_sha256 must be exactly"):
+                transplant_checkpoint(
+                    source=source,
+                    expected_source_sha256="not-a-digest",
+                    skeleton=skeleton,
+                    expected_skeleton_sha256=skeleton_sha256,
+                    output=output,
+                    source_revision="old",
+                    skeleton_revision="current",
+                    role="synthetic",
+                )
             with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
                 transplant_checkpoint(
                     source=source,
                     expected_source_sha256="0" * 64,
                     skeleton=skeleton,
+                    expected_skeleton_sha256=skeleton_sha256,
                     output=output,
                     source_revision="old",
                     skeleton_revision="current",
@@ -96,10 +109,53 @@ class LegacyCheckpointTransplantTest(unittest.TestCase):
                 )
             self.assertFalse(output.exists())
 
+            with self.assertRaisesRegex(ValueError, "skeleton_sha256 must be exactly"):
+                transplant_checkpoint(
+                    source=source,
+                    expected_source_sha256=source_sha256,
+                    skeleton=skeleton,
+                    expected_skeleton_sha256="not-a-digest",
+                    output=output,
+                    source_revision="old",
+                    skeleton_revision="current",
+                    role="synthetic",
+                )
+            with self.assertRaisesRegex(
+                ValueError, "skeleton checkpoint SHA-256 mismatch"
+            ):
+                transplant_checkpoint(
+                    source=source,
+                    expected_source_sha256=source_sha256,
+                    skeleton=skeleton,
+                    expected_skeleton_sha256="0" * 64,
+                    output=output,
+                    source_revision="old",
+                    skeleton_revision="current",
+                    role="synthetic",
+                )
+
+            with mock.patch.object(
+                helpers, "load_pkl_object", side_effect=RuntimeError("reload failed")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "reload failed"):
+                    transplant_checkpoint(
+                        source=source,
+                        expected_source_sha256=source_sha256,
+                        skeleton=skeleton,
+                        expected_skeleton_sha256=skeleton_sha256,
+                        output=output,
+                        source_revision="old",
+                        skeleton_revision="current",
+                        role="synthetic",
+                    )
+            self.assertFalse(output.exists())
+            self.assertEqual(list(root.glob(f".{output.name}.*.tmp")), [])
+
             receipt = transplant_checkpoint(
                 source=source,
                 expected_source_sha256=source_sha256,
                 skeleton=skeleton,
+                expected_skeleton_sha256=skeleton_sha256,
                 output=output,
                 source_revision="old",
                 skeleton_revision="current",
@@ -118,7 +174,10 @@ class LegacyCheckpointTransplantTest(unittest.TestCase):
                 },
             )
             self.assertEqual(loaded["next_update"], 73)
-            self.assertEqual(loaded["train_config"], {"current": True})
+            self.assertEqual(
+                loaded["train_config"],
+                {"current": True, "name": "synthetic", "config_name": "synthetic"},
+            )
             self.assertEqual(loaded["env_config"], {"current": True})
             np.testing.assert_array_equal(
                 loaded["model"]["params"]["kernel"],
@@ -127,12 +186,20 @@ class LegacyCheckpointTransplantTest(unittest.TestCase):
             self.assertEqual(receipt["schema"], RECEIPT_SCHEMA)
             self.assertEqual(receipt["source_checkpoint"]["raw_sha256"], source_sha256)
             self.assertEqual(receipt["source_checkpoint"]["next_update"], 73)
+            self.assertEqual(
+                receipt["train_config_presentation_overrides"],
+                {
+                    "name": {"from": None, "to": "synthetic"},
+                    "config_name": {"from": None, "to": "synthetic"},
+                },
+            )
             self.assertTrue(receipt["historical_state_discarded"])
             with self.assertRaises(FileExistsError):
                 transplant_checkpoint(
                     source=source,
                     expected_source_sha256=source_sha256,
                     skeleton=skeleton,
+                    expected_skeleton_sha256=skeleton_sha256,
                     output=output,
                     source_revision="old",
                     skeleton_revision="current",
@@ -158,6 +225,7 @@ class LegacyCheckpointTransplantTest(unittest.TestCase):
                 source=E8_SOURCE,
                 expected_source_sha256=E8_SOURCE_SHA256,
                 skeleton=E8_SKELETON,
+                expected_skeleton_sha256=E8_SKELETON_SHA256,
                 output=output,
                 source_revision="spatial-v3-e8",
                 skeleton_revision="current-legacy-easy-eval",
@@ -170,6 +238,10 @@ class LegacyCheckpointTransplantTest(unittest.TestCase):
         self.assertEqual(_file_sha256(E8_SOURCE), source_before)
         self.assertEqual(_file_sha256(E8_SKELETON), skeleton_before)
         self.assertEqual(loaded["next_update"], source_checkpoint["next_update"])
+        self.assertEqual(loaded["train_config"].name, "legacy-easy-e8-current-compat")
+        self.assertEqual(
+            loaded["train_config"].config_name, "legacy-easy-e8-current-compat"
+        )
         self.assertEqual(receipt["model_content_sha256"], source_model_sha256)
         self.assertEqual(
             receipt["evaluation_skeleton"]["raw_sha256"], E8_SKELETON_SHA256

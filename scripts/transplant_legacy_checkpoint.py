@@ -19,6 +19,7 @@ Example::
         --source old_E8.pkl \
         --source-sha256 f364a5db... \
         --skeleton current_eval_skeleton.pkl \
+        --skeleton-sha256 1a417c88... \
         --output E8_current_compat.pkl \
         --source-revision spatial-v3-3a21cd6 \
         --skeleton-revision 70d8099 \
@@ -28,10 +29,13 @@ Example::
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import io
 import json
 import pickle
+import re
+import tempfile
 from pathlib import Path
 
 import jax
@@ -60,6 +64,12 @@ class _HistoricalCheckpointUnpickler(pickle.Unpickler):
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _validated_sha256(label: str, digest: str) -> str:
+    if not isinstance(digest, str) or re.fullmatch(r"[0-9a-fA-F]{64}", digest) is None:
+        raise ValueError(f"{label} must be exactly 64 hexadecimal characters")
+    return digest.lower()
 
 
 def _read_bytes(path: Path) -> bytes:
@@ -143,11 +153,33 @@ def _require_exact_model_contract(source_model, skeleton_model) -> None:
     )
 
 
+def _presentation_train_config(train_config, role: str):
+    presented = copy.deepcopy(train_config)
+    if isinstance(presented, dict):
+        previous = {field: presented.get(field) for field in ("name", "config_name")}
+        presented["name"] = role
+        presented["config_name"] = role
+        return presented, previous
+
+    for field in ("name", "config_name"):
+        if not hasattr(presented, field):
+            raise TypeError(f"skeleton train_config has no {field}")
+    previous = {field: getattr(presented, field) for field in ("name", "config_name")}
+    presented.name = role
+    presented.config_name = role
+    return presented, previous
+
+
+def _config_value(config, field: str):
+    return config[field] if isinstance(config, dict) else getattr(config, field)
+
+
 def transplant_checkpoint(
     *,
     source: Path,
     expected_source_sha256: str,
     skeleton: Path,
+    expected_skeleton_sha256: str,
     output: Path,
     source_revision: str,
     skeleton_revision: str,
@@ -163,15 +195,24 @@ def transplant_checkpoint(
     if not source_revision or not skeleton_revision or not role:
         raise ValueError("source_revision, skeleton_revision, and role are required")
 
+    expected_source_sha256 = _validated_sha256("source_sha256", expected_source_sha256)
+    expected_skeleton_sha256 = _validated_sha256(
+        "skeleton_sha256", expected_skeleton_sha256
+    )
     source_bytes = _read_bytes(source)
     source_sha256 = _sha256(source_bytes)
-    if source_sha256 != expected_source_sha256.lower():
+    if source_sha256 != expected_source_sha256:
         raise ValueError(
             "source checkpoint SHA-256 mismatch: "
-            f"expected {expected_source_sha256.lower()}, got {source_sha256}"
+            f"expected {expected_source_sha256}, got {source_sha256}"
         )
     skeleton_bytes = _read_bytes(skeleton)
     skeleton_sha256 = _sha256(skeleton_bytes)
+    if skeleton_sha256 != expected_skeleton_sha256:
+        raise ValueError(
+            "skeleton checkpoint SHA-256 mismatch: "
+            f"expected {expected_skeleton_sha256}, got {skeleton_sha256}"
+        )
 
     source_checkpoint = _load_historical(source_bytes)
     skeleton_checkpoint = _load_current(skeleton_bytes)
@@ -196,6 +237,9 @@ def transplant_checkpoint(
         source_checkpoint["model"]
     )
     next_update = int(source_checkpoint["next_update"])
+    train_config, previous_presentation = _presentation_train_config(
+        skeleton_checkpoint["train_config"], role
+    )
     receipt = {
         "schema": RECEIPT_SCHEMA,
         "role": role,
@@ -215,11 +259,15 @@ def transplant_checkpoint(
         "model_parameter_count": parameter_count,
         "copied_from_source": ["model", "next_update"],
         "copied_from_skeleton": ["train_config", "env_config"],
+        "train_config_presentation_overrides": {
+            field: {"from": previous_presentation[field], "to": role}
+            for field in ("name", "config_name")
+        },
         "historical_state_discarded": True,
     }
     output_checkpoint = {
         "checkpoint_version": skeleton_checkpoint.get("checkpoint_version", 2),
-        "train_config": skeleton_checkpoint["train_config"],
+        "train_config": train_config,
         "env_config": skeleton_checkpoint["env_config"],
         "model": source_checkpoint["model"],
         "next_update": next_update,
@@ -227,15 +275,36 @@ def transplant_checkpoint(
     }
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("xb") as stream:
-        pickle.dump(output_checkpoint, stream, pickle.HIGHEST_PROTOCOL)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=output.parent,
+            prefix=f".{output.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary_path = Path(stream.name)
+            pickle.dump(output_checkpoint, stream, pickle.HIGHEST_PROTOCOL)
 
-    reloaded = helpers.load_pkl_object(str(output))
-    reloaded_sha256, _, _ = model_content_sha256(reloaded["model"])
-    if reloaded_sha256 != model_sha256:
-        raise RuntimeError("written model content differs from the historical source")
-    if int(reloaded["next_update"]) != next_update:
-        raise RuntimeError("written next_update differs from the historical source")
+        reloaded = helpers.load_pkl_object(str(temporary_path))
+        reloaded_sha256, _, _ = model_content_sha256(reloaded["model"])
+        if reloaded_sha256 != model_sha256:
+            raise RuntimeError(
+                "written model content differs from the historical source"
+            )
+        if int(reloaded["next_update"]) != next_update:
+            raise RuntimeError("written next_update differs from the historical source")
+        for field in ("name", "config_name"):
+            if _config_value(reloaded["train_config"], field) != role:
+                raise RuntimeError(f"written train_config.{field} differs from role")
+        if output.exists():
+            raise FileExistsError(output)
+        temporary_path.rename(output)
+        temporary_path = None
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
     return receipt
 
 
@@ -244,6 +313,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--source-sha256", required=True)
     parser.add_argument("--skeleton", type=Path, required=True)
+    parser.add_argument("--skeleton-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--skeleton-revision", required=True)
@@ -257,6 +327,7 @@ def main() -> None:
         source=args.source,
         expected_source_sha256=args.source_sha256,
         skeleton=args.skeleton,
+        expected_skeleton_sha256=args.skeleton_sha256,
         output=args.output,
         source_revision=args.source_revision,
         skeleton_revision=args.skeleton_revision,
