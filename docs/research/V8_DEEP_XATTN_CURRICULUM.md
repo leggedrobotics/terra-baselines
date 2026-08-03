@@ -61,15 +61,20 @@ than assuming the parent already solves the new distribution.
 ## Map curriculum
 
 The dataset defines support. A fixed sampler defines exposure within each
-checkpoint-bounded stage. There is no per-environment promotion or demotion.
+checkpoint-bounded stage. The gate verifies the exact ordered condition list
+and probability vector from every qualifying checkpoint's sampler state; a
+vector that merely sums to one is insufficient. There is no per-environment
+promotion or demotion.
 
 ### Stage A: capability
 
 - support: `fnd-slab-allfree` and `trn-straight-allfree`;
 - mass: 50% foundation, 50% trench;
+- ordered sampler contract SHA-256:
+  `a569e04eba1bc2ed7cff9d084ff75c7a09224df6d600a4ab647a7b28c15f8633`;
 - bounded screen: at most 2,000 updates;
 - promotion: each family condition reaches at least `12/16` exact on the
-  promotion panel at two consecutive scheduled checkpoints;
+  promotion panel at the latest two scheduled checkpoints;
 - development is reported but never used to promote.
 
 ### Stage B: nearby geometry
@@ -78,9 +83,12 @@ checkpoint-bounded stage. There is no per-environment promotion or demotion.
 - mass: 50% capability replay and 50% nearby core;
 - every slice remains 50/50 foundation/trench;
 - V7 geometry mass within each family follows the frozen V8 mixture;
+- ordered sampler contract SHA-256:
+  `a681e5e92562a322db2627825e607df2d7b8ece708f9bcd87d5d0d710b3ae398`;
 - bounded screen: at most 4,000 updates;
 - promotion: foundation nearby core at least `78/96`, trench nearby core at
-  least `91/112`, every cell at least `12/16`, twice consecutively;
+  least `91/112`, every cell at least `12/16`, at the latest two scheduled
+  checkpoints;
 - both capability controls must retain their Stage-A gate.
 
 ### Stage C: full V8
@@ -99,9 +107,15 @@ For every previously mastered 16-map condition, retention requires
 successes >= max(11, lower_of_two_mastery_counts - 1)
 ```
 
-Two consecutive retention failures stop that treatment and restore the last
-fully passing checkpoint. Training does not silently demote individual vector
-environments.
+Capability controls additionally retain the Stage-A mastery floor, so their
+threshold is `max(12, lower_of_two_mastery_counts - 1)`. Thresholds are frozen
+when the qualifying pair is recorded and never ratchet upward later.
+
+At each scheduled checkpoint, the treatment has a retention failure if any
+inherited condition falls below its frozen threshold. Any two adjacent
+retention-failing checkpoints in the full stage history stop that treatment and
+restore the last fully passing checkpoint, even if the final pair later
+recovers. Training does not silently demote individual vector environments.
 
 ## Architecture and PPO contract
 
@@ -119,6 +133,14 @@ environments.
 - learning-rate warmup: 100 updates;
 - no value clipping; flat minibatch shuffle;
 - fresh optimizer for both arms.
+
+Map-stage transitions are parameter-only warm starts from each arm's own
+promoted checkpoint. They reset the optimizer, update counter, entropy schedule,
+environment trajectory, and fixed sampler; Stage B and C disable teacher KL and
+value kickstart. This is a deliberate boundary between map distributions, not a
+nominal continuation. Only a same-stage full-V8 continuation uses
+`--resume_from` and restores the optimizer, update/schedule counter, and sampler
+state.
 
 The xattn graft must pass a real-checkpoint equality test before launch:
 identical observations produce exactly identical logits and values. The
@@ -185,9 +207,9 @@ being `RUNNING` are not behavioral outcomes.
 - [x] Deep→deep+xattn output-preserving graft implemented and verified.
 - [x] Fixed stage-weight sampler and V8 loader implemented.
 - [x] Capability-panel fixed evaluation added.
-- [x] Focused CPU contract tests, full 307-test suite, launcher syntax, and
+- [x] Focused CPU contract tests, full 314-test suite, launcher syntax, and
   ShellCheck pass.
-- [ ] Euler dry-run resolves only the two intended arms and immutable inputs.
+- [x] Euler dry-run resolves only the two intended arms and immutable inputs.
 - [ ] Both update-1 jobs pass finite parameters/losses, transition integrity,
   four-GPU runtime, and checkpoint verification.
 - [ ] Submit the two-arm Stage-A bounded screen.
@@ -207,6 +229,28 @@ Before Stage B or C is enabled, the launcher must require the prior-stage gate
 receipt and the exact promoted parent path and SHA-256; a later stage must not
 restart from the original P5c parent.
 
+Promotion receipts are per arm. The deep and deep+xattn policies each advance
+from their own latest gate-passing checkpoint. Automatic matched submission
+requires valid receipts for both arms; if only one arm passes, it is not copied
+into the other architecture or silently continued as a matched comparison. A
+single-arm feasibility continuation would require a separately named decision.
+
+## Runtime admission log
+
+- **Revision `b164d6b`, jobs `9546455`/`9546456`: failed admission, no policy
+  conclusion.** The deep arm completed its first PPO update with the expected
+  four RTX 4090 devices, CUDA/NCCL path, maps, parent, architecture, and finite
+  training path. It then failed the bounded W&B schema because the declared V8
+  branch depth `Nearby core` was emitted by `curriculum_metrics` but omitted
+  from `TRAINING_SCALAR_KEYS`. The xattn arm was still pending and was cancelled
+  before allocation because it shared the same deterministic instrumentation
+  failure.
+- **Recovery:** derive all allowed curriculum-population keys from the same
+  canonical `FAMILIES` and `BRANCH_DEPTHS` tuples used to validate the bank,
+  with a regression test requiring every declared label. This does not change
+  PPO, reward, observations, maps, or architecture. Both matched update-1
+  admissions must be rerun from the clean recovery revision.
+
 ## Decision log
 
 - **V8-XA-01, accepted 2026-08-03:** use the same trained deep checkpoint as
@@ -220,3 +264,10 @@ restart from the original P5c parent.
 - **V8-XA-05, accepted 2026-08-03:** keep the initial architecture campaign
   dense. Replace the requested informal fade with the specified
   checkpoint-bounded reward-v2 experiment only after high fixed completion.
+- **V8-XA-06, accepted 2026-08-03:** require the latest two scheduled
+  checkpoints, not a stale earlier pair, for map-stage promotion.
+- **V8-XA-07, accepted 2026-08-03:** issue immutable per-arm promotion receipts;
+  require both receipts for an automatic matched next-stage launch.
+- **V8-XA-08, accepted 2026-08-03:** use a fresh optimizer and sampler and no
+  teacher kickstart at map-stage boundaries; reserve true resume for unchanged
+  full-V8 continuation.

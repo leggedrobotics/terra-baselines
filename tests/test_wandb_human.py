@@ -5,7 +5,9 @@ import pytest
 
 from scripts.create_wandb_human_workspace import workspace_spec
 from utils.wandb_human import (
+    BRANCH_DEPTHS,
     CONDITION_COLUMNS,
+    FAMILIES,
     TRAINING_SCALAR_KEYS,
     condition_rows,
     curriculum_metrics,
@@ -137,6 +139,9 @@ def test_bounded_logging_schema_and_manual_workspace():
     assert not any(key.startswith("diagnostics/") for key in metrics)
 
     assert len(TRAINING_SCALAR_KEYS) <= 48
+    assert {
+        f"curriculum/population/{label}" for label in (*FAMILIES, *BRANCH_DEPTHS)
+    }.issubset(TRAINING_SCALAR_KEYS)
     banned = ("integrity/", "curriculum_levels", "sampler_q/", "diagnostics/")
     assert not any(key.startswith(banned) for key in TRAINING_SCALAR_KEYS)
 

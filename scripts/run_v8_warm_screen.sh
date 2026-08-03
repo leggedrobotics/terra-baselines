@@ -32,7 +32,12 @@ case "$STAGE" in capability|nearby|full) ;; *) echo "invalid V8 stage '$STAGE'" 
 : "${RUN_ROOT:?set RUN_ROOT to the scratch run directory}"
 : "${SEED:?set the paired training seed}"
 test -f "$INITIAL_CHECKPOINT"
-test -f "$TEACHER_CHECKPOINT"
+if [ "$STAGE" = capability ]; then
+    test "$TEACHER_CHECKPOINT" != none
+    test -f "$TEACHER_CHECKPOINT"
+else
+    test "$TEACHER_CHECKPOINT" = none
+fi
 [[ "$NUM_UPDATES" =~ ^[1-9][0-9]*$ ]] || {
     echo "NUM_UPDATES must be a positive integer" >&2
     exit 2
@@ -58,47 +63,54 @@ export PYTHONPATH="$TERRA_ROOT:$REPO${PYTHONPATH:+:$PYTHONPATH}"
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export WANDB_DIR="${WANDB_DIR:-$RUN_ROOT/wandb}"
 
-exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
-    --config G-V8-FIXED \
-    --machine "$MACHINE" \
-    --accepted-bank-root "$BANK_ROOT" \
-    --accepted-bank-stage "$STAGE" \
-    --terra-revision "$TERRA_REVISION" \
-    --name "$RUN_NAME" \
-    --seed "$SEED" \
-    --num_devices "$NUM_DEVICES" \
-    --num_envs_per_device "$NUM_ENVS_PER_DEVICE" \
-    --num_steps "$NUM_STEPS" \
-    --total_timesteps "$TOTAL_TIMESTEPS" \
-    --update_epochs 2 \
-    --num_minibatches 32 \
-    --lr 3e-4 \
-    --model_size medium \
-    --model_core mlp \
-    --map_encoder "$MAP_ENCODER" \
-    --encoder_compute_dtype bfloat16 \
-    --attention_compute_dtype "$ATTENTION_DTYPE" \
-    --critic_hidden_dims 512,256 \
-    --resnet_stage_channels 24,48,64,96 \
-    --resnet_blocks_per_stage 2,2,3,3 \
-    --warm_start_from "$INITIAL_CHECKPOINT" \
-    --teacher_checkpoint "$TEACHER_CHECKPOINT" \
-    --kickstart_kl_coef 1.0 \
-    --kickstart_kl_anneal_updates 1500 \
-    --kickstart_value_coef 0.5 \
-    --kickstart_value_anneal_updates 500 \
-    --kickstart_lr_warmup_updates 100 \
-    --ent_schedule_start "$ENT_SCHEDULE_START" \
-    --ent_schedule_end "$ENT_SCHEDULE_END" \
-    --ent_schedule_steps "$ENT_SCHEDULE_STEPS" \
-    --no_value_clip \
-    --flat_minibatch_shuffle \
-    --no-load-env-from-checkpoint \
-    --fail_on_nonfinite \
-    --finite_check_interval "$FINITE_CHECK_INTERVAL" \
-    --log_train_interval "$LOG_TRAIN_INTERVAL" \
-    --log_eval_interval 0 \
-    --checkpoint_interval "$CHECKPOINT_INTERVAL" \
-    --cache_clear_interval "$CACHE_CLEAR_INTERVAL" \
-    --keep_checkpoint_history \
+TRAIN_ARGS=(
+    --config G-V8-FIXED
+    --machine "$MACHINE"
+    --accepted-bank-root "$BANK_ROOT"
+    --accepted-bank-stage "$STAGE"
+    --terra-revision "$TERRA_REVISION"
+    --name "$RUN_NAME"
+    --seed "$SEED"
+    --num_devices "$NUM_DEVICES"
+    --num_envs_per_device "$NUM_ENVS_PER_DEVICE"
+    --num_steps "$NUM_STEPS"
+    --total_timesteps "$TOTAL_TIMESTEPS"
+    --update_epochs 2
+    --num_minibatches 32
+    --lr 3e-4
+    --model_size medium
+    --model_core mlp
+    --map_encoder "$MAP_ENCODER"
+    --encoder_compute_dtype bfloat16
+    --attention_compute_dtype "$ATTENTION_DTYPE"
+    --critic_hidden_dims "512,256"
+    --resnet_stage_channels "24,48,64,96"
+    --resnet_blocks_per_stage "2,2,3,3"
+    --warm_start_from "$INITIAL_CHECKPOINT"
+    --ent_schedule_start "$ENT_SCHEDULE_START"
+    --ent_schedule_end "$ENT_SCHEDULE_END"
+    --ent_schedule_steps "$ENT_SCHEDULE_STEPS"
+    --no_value_clip
+    --flat_minibatch_shuffle
+    --no-load-env-from-checkpoint
+    --fail_on_nonfinite
+    --finite_check_interval "$FINITE_CHECK_INTERVAL"
+    --log_train_interval "$LOG_TRAIN_INTERVAL"
+    --log_eval_interval 0
+    --checkpoint_interval "$CHECKPOINT_INTERVAL"
+    --cache_clear_interval "$CACHE_CLEAR_INTERVAL"
+    --keep_checkpoint_history
     --checkpoint_dir "$RUN_ROOT/checkpoints"
+)
+if [ "$TEACHER_CHECKPOINT" != none ]; then
+    TRAIN_ARGS+=(
+        --teacher_checkpoint "$TEACHER_CHECKPOINT"
+        --kickstart_kl_coef 1.0
+        --kickstart_kl_anneal_updates 1500
+        --kickstart_value_coef 0.5
+        --kickstart_value_anneal_updates 500
+        --kickstart_lr_warmup_updates 100
+    )
+fi
+
+exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" "${TRAIN_ARGS[@]}"

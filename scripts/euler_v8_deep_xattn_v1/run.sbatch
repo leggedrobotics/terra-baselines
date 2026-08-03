@@ -25,14 +25,24 @@ umask 002
 : "${BANK_RELEASE_ID:?missing BANK_RELEASE_ID}"
 : "${PARENT_CHECKPOINT:?missing PARENT_CHECKPOINT}"
 : "${PARENT_SHA:?missing PARENT_SHA}"
+: "${PRIOR_GATE_RECEIPT:?missing PRIOR_GATE_RECEIPT}"
+: "${PRIOR_GATE_SHA:?missing PRIOR_GATE_SHA}"
 : "${SLURM_JOB_ID:?must run inside Slurm}"
 : "${TMPDIR:?Euler did not provide TMPDIR}"
 
-test "$STAGE" = capability || {
-    echo "only capability is admitted by this launcher revision" >&2
-    exit 2
-}
-EXPECTED_CONDITIONS=2
+case "$STAGE" in
+    capability)
+        EXPECTED_CONDITIONS=2
+        test "$PRIOR_GATE_RECEIPT" = none
+        test "$PRIOR_GATE_SHA" = none
+        ;;
+    nearby)
+        EXPECTED_CONDITIONS=15
+        test "$PRIOR_GATE_RECEIPT" != none
+        test "$PRIOR_GATE_SHA" != none
+        ;;
+    *) echo "stage '$STAGE' is not enabled by this launcher revision" >&2; exit 2 ;;
+esac
 case "$PHASE" in
     smoke)
         test "${SLURM_JOB_PARTITION:-}" = gpuhe.4h
@@ -73,6 +83,9 @@ test "$BANK_RELEASE_ID" = "$EXPECTED_RELEASE"
 test "$(cat "$BASELINES_ROOT/REVISION")" = "$BASELINES_REVISION"
 test "$(sha256sum "$P5_ARCHIVE" | awk '{print $1}')" = "$P5_SHA"
 test "$(sha256sum "$PARENT_CHECKPOINT" | awk '{print $1}')" = "$PARENT_SHA"
+if [ "$STAGE" = nearby ]; then
+    test "$(sha256sum "$PRIOR_GATE_RECEIPT" | awk '{print $1}')" = "$PRIOR_GATE_SHA"
+fi
 test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_SHA"
 test "${SLURM_CPUS_PER_TASK:-}" = 4
 test -d "$RUN_DIR"
@@ -123,9 +136,15 @@ export JAX_PLATFORMS=cuda
 MAPS_PER_CONDITION="$(PYTHONPATH="$BASELINES_ROOT" "$PYTHON" "$BASELINES_ROOT/scripts/euler_accepted_bank_v1/validate_training_bank.py" "$BANK" --expected-maps-per-condition 96 --expected-release-id "$EXPECTED_RELEASE")"
 test "$MAPS_PER_CONDITION" = 96
 "$PYTHON" -c 'import sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], "G-UNIFORM", sys.argv[2], curriculum_stage=sys.argv[3]); assert len(b.levels)==int(sys.argv[4]); assert b.map_count_per_condition==96; assert abs(sum(b.sampling_probabilities)-1.0)<1e-12' "$BANK" "$TERRA_REVISION" "$STAGE" "$EXPECTED_CONDITIONS"
+if [ "$STAGE" = nearby ]; then
+    JAX_PLATFORMS=cpu "$PYTHON" "$BASELINES_ROOT/scripts/euler_v8_deep_xattn_v1/stage_gate.py" inspect \
+        --receipt "$PRIOR_GATE_RECEIPT" --stage capability --arm "$ARM" \
+        --expect-candidate "$PARENT_CHECKPOINT" \
+        --expect-candidate-sha256 "$PARENT_SHA" --verify-checkpoint >/dev/null
+fi
 
 INITIAL="$PARENT_CHECKPOINT"
-if [ "$ARM" = G-DEEP-XATTN-V8-DENSE-WARM ]; then
+if [ "$STAGE" = capability ] && [ "$ARM" = G-DEEP-XATTN-V8-DENSE-WARM ]; then
     INITIAL="$TMPDIR/deep_xattn_initial.pkl"
     JAX_PLATFORMS=cpu "$PYTHON" "$BASELINES_ROOT/scripts/grow_checkpoint.py" \
         --src "$PARENT_CHECKPOINT" \
@@ -139,6 +158,15 @@ if [ "$ARM" = G-DEEP-XATTN-V8-DENSE-WARM ]; then
         --resnet_blocks_per_stage 2,2,3,3
 fi
 INITIAL_SHA="$(sha256sum "$INITIAL" | awk '{print $1}')"
+if [ "$STAGE" = capability ]; then
+    TEACHER_CHECKPOINT="$PARENT_CHECKPOINT"
+    TEACHER_SHA="$PARENT_SHA"
+    INITIALIZATION=params_only_warm_fresh_optimizer
+else
+    TEACHER_CHECKPOINT=none
+    TEACHER_SHA=none
+    INITIALIZATION=params_only_stage_transition_fresh_optimizer
+fi
 
 mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/eval" "$RUN_DIR/wandb"
 export WANDB_ENTITY=aless-weber-eth
@@ -175,10 +203,13 @@ printf '%s\n' \
     "training_bank_release_id=$EXPECTED_RELEASE" \
     "training_bank_archive_sha256=$BANK_SHA" \
     "training_bank_dataset_sha256=$BANK_DATASET_SHA" \
+    "parent_checkpoint_path=$PARENT_CHECKPOINT" \
     "parent_checkpoint_sha256=$PARENT_SHA" \
     "initial_checkpoint_sha256=$INITIAL_SHA" \
-    "teacher_checkpoint_sha256=$PARENT_SHA" \
-    "initialization=params_only_warm_fresh_optimizer" \
+    "teacher_checkpoint_sha256=$TEACHER_SHA" \
+    "prior_gate_receipt=$PRIOR_GATE_RECEIPT" \
+    "prior_gate_receipt_sha256=$PRIOR_GATE_SHA" \
+    "initialization=$INITIALIZATION" \
     "trench_shaping=false" \
     "horizon=450" \
     "full_resets=true" \
@@ -199,7 +230,7 @@ export ENT_SCHEDULE_START=0.02
 export ENT_SCHEDULE_END=0.005
 export ENT_SCHEDULE_STEPS=10000
 if [ "$PHASE" = smoke ]; then export FINITE_CHECK_INTERVAL=1; fi
-TRAIN_COMMAND=("$BASELINES_ROOT/scripts/run_v8_warm_screen.sh" "$ARM" "$BANK" "$STAGE" "$INITIAL" "$PARENT_CHECKPOINT" "$RUN_NAME" "$UPDATES")
+TRAIN_COMMAND=("$BASELINES_ROOT/scripts/run_v8_warm_screen.sh" "$ARM" "$BANK" "$STAGE" "$INITIAL" "$TEACHER_CHECKPOINT" "$RUN_NAME" "$UPDATES")
 printf '%q ' "${TRAIN_COMMAND[@]}" > "$RUN_DIR/train_command.sh"
 printf '\n' >> "$RUN_DIR/train_command.sh"
 "${TRAIN_COMMAND[@]}"
@@ -237,6 +268,31 @@ else
             --expect-completion-contract exact_visible_dump_v1 \
             --output "$RUN_DIR/eval/${PANEL}.json"
     done
+    if [ "$STAGE" = nearby ]; then
+        for PANEL in promotion development; do
+            JAX_PLATFORMS=cuda "$PYTHON" "$BASELINES_ROOT/eval_fixed_bank.py" \
+                "${CHECKPOINT_ARGS[@]}" \
+                --bank-root "$BANK" --capability-panel "$PANEL" \
+                --terra-revision "$TERRA_REVISION" --horizon 450 --seed "$SEED" \
+                --expect-completion-contract exact_visible_dump_v1 \
+                --output "$RUN_DIR/eval/capability_${PANEL}.json"
+        done
+    fi
+    GATE_ARGS=(
+        promote --stage "$STAGE" --arm "$ARM" --bank-root "$BANK"
+        --promotion "$RUN_DIR/eval/promotion.json"
+        --run-contract "$RUN_DIR/run_contract.env"
+        --output "$RUN_DIR/stage_gate.json"
+    )
+    if [ "$STAGE" = nearby ]; then
+        GATE_ARGS+=(
+            --capability "$RUN_DIR/eval/capability_promotion.json"
+            --prior-receipt "$PRIOR_GATE_RECEIPT"
+        )
+    fi
+    JAX_PLATFORMS=cpu "$PYTHON" \
+        "$BASELINES_ROOT/scripts/euler_v8_deep_xattn_v1/stage_gate.py" \
+        "${GATE_ARGS[@]}"
 fi
 
 printf '%s\n' status=PASSED >> "$RUN_DIR/run_contract.env"

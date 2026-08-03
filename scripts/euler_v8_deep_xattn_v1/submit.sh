@@ -1,18 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 3 ]; then
-    echo "usage: submit.sh smoke|screen [capability] [SEED]" >&2
+if [ "$#" -lt 1 ] || [ "$#" -gt 5 ]; then
+    echo "usage: submit.sh smoke|screen capability [SEED]" >&2
+    echo "       submit.sh smoke|screen nearby SEED DEEP_GATE.json XATTN_GATE.json" >&2
     exit 2
 fi
 PHASE="$1"
 STAGE="${2:-capability}"
 SEED="${3:-20260730}"
 case "$PHASE" in smoke|screen) ;; *) echo "invalid phase '$PHASE'" >&2; exit 2 ;; esac
-if [ "$STAGE" != capability ]; then
-    echo "only capability is launchable until a prior-stage gate receipt and promoted parent are supplied" >&2
-    exit 2
-fi
+case "$STAGE" in
+    capability)
+        test "$#" -le 3 || { echo "capability does not accept gate receipts" >&2; exit 2; }
+        ;;
+    nearby)
+        test "$#" -eq 5 || { echo "nearby requires both Stage-A gate receipts" >&2; exit 2; }
+        ;;
+    *) echo "stage '$STAGE' is not enabled by this launcher revision" >&2; exit 2 ;;
+esac
 [[ "$SEED" =~ ^[0-9]+$ ]] || { echo "SEED must be nonnegative" >&2; exit 2; }
 SUBMIT="${SUBMIT:-0}"
 case "$SUBMIT" in 0|1) ;; *) echo "SUBMIT must be 0 or 1" >&2; exit 2 ;; esac
@@ -32,8 +38,40 @@ REMOTE_WORK=/cluster/home/lterenzi/codex_terra_edge_validation/$CAMPAIGN_ID
 REMOTE_INPUTS=/cluster/scratch/lterenzi/codex_terra_edge_runs/$CAMPAIGN_ID/inputs
 REMOTE_RUNS=/cluster/scratch/lterenzi/codex_terra_edge_runs/$CAMPAIGN_ID
 ARMS=(G-DEEP-V8-DENSE-WARM G-DEEP-XATTN-V8-DENSE-WARM)
+LOCAL_PYTHON="${LOCAL_PYTHON:-/home/lorenzo/moleworks/.venv-terra-uv/bin/python}"
+GATE_TOOL="$REPO/scripts/euler_v8_deep_xattn_v1/stage_gate.py"
+declare -A PARENTS PARENT_SHAS GATE_PATHS GATE_SHAS REMOTE_GATES
 
-SCREEN_UPDATES=2000
+if [ "$STAGE" = capability ]; then
+    for ARM in "${ARMS[@]}"; do
+        PARENTS[$ARM]="$PARENT"
+        PARENT_SHAS[$ARM]="$PARENT_SHA"
+        GATE_PATHS[$ARM]=none
+        GATE_SHAS[$ARM]=none
+        REMOTE_GATES[$ARM]=none
+    done
+else
+    test -x "$LOCAL_PYTHON"
+    GATE_ARGUMENTS=("$4" "$5")
+    for INDEX in "${!ARMS[@]}"; do
+        ARM="${ARMS[$INDEX]}"
+        GATE_PATH="${GATE_ARGUMENTS[$INDEX]}"
+        test -f "$GATE_PATH"
+        INFO="$($LOCAL_PYTHON "$GATE_TOOL" inspect \
+            --receipt "$GATE_PATH" --stage capability --arm "$ARM")"
+        read -r CANDIDATE CANDIDATE_SHA RECEIPT_SHA NEXT_STAGE <<< "$($LOCAL_PYTHON -c \
+            'import json,sys; d=json.load(sys.stdin); print(d["candidate_path"], d["candidate_sha256"], d["receipt_sha256"], d["next_stage"])' \
+            <<< "$INFO")"
+        test "$NEXT_STAGE" = nearby
+        PARENTS[$ARM]="$CANDIDATE"
+        PARENT_SHAS[$ARM]="$CANDIDATE_SHA"
+        GATE_PATHS[$ARM]="$GATE_PATH"
+        GATE_SHAS[$ARM]="$RECEIPT_SHA"
+        REMOTE_GATES[$ARM]="$REMOTE_INPUTS/gates/$RECEIPT_SHA.json"
+    done
+fi
+
+case "$STAGE" in capability) SCREEN_UPDATES=2000 ;; nearby) SCREEN_UPDATES=4000 ;; esac
 
 git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null
 test -z "$(git -C "$REPO" status --porcelain)" || {
@@ -58,16 +96,17 @@ echo "terra_baselines_revision=$BASELINES_REVISION"
 echo "release_id=$RELEASE_ID"
 echo "bank_archive_sha256=$BANK_SHA"
 echo "bank_dataset_sha256=$BANK_DATASET_SHA"
-echo "parent_checkpoint_sha256=$PARENT_SHA"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: no SSH, scratch, W&B, or Slurm mutation"
     for ARM in "${ARMS[@]}"; do
-        echo "future sbatch: phase=$PHASE stage=$STAGE arm=$ARM seed=$SEED"
+        echo "future sbatch: phase=$PHASE stage=$STAGE arm=$ARM seed=$SEED parent_sha=${PARENT_SHAS[$ARM]} gate_sha=${GATE_SHAS[$ARM]}"
     done
     exit 0
 fi
 
-ssh "$REMOTE_HOST" "test \"\$(sha256sum '$PARENT' | awk '{print \$1}')\" = '$PARENT_SHA'"
+for ARM in "${ARMS[@]}"; do
+    ssh "$REMOTE_HOST" "test \"\$(sha256sum '${PARENTS[$ARM]}' | awk '{print \$1}')\" = '${PARENT_SHAS[$ARM]}'"
+done
 if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_SOURCE/REVISION'"; then
     PARTIAL="$REMOTE_WORK/.${BASELINES_REVISION}.partial.$$"
     ssh "$REMOTE_HOST" "mkdir -p '$PARTIAL/terra-baselines'"
@@ -83,11 +122,23 @@ if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_BANK'"; then
     ssh "$REMOTE_HOST" "test \"\$(sha256sum '$PARTIAL' | awk '{print \$1}')\" = '$BANK_SHA' && mv '$PARTIAL' '$REMOTE_BANK'"
 fi
 ssh "$REMOTE_HOST" "test \"\$(sha256sum '$REMOTE_BANK' | awk '{print \$1}')\" = '$BANK_SHA'"
+if [ "$STAGE" = nearby ]; then
+    ssh "$REMOTE_HOST" "mkdir -p '$REMOTE_INPUTS/gates'"
+    for ARM in "${ARMS[@]}"; do
+        REMOTE_GATE="${REMOTE_GATES[$ARM]}"
+        if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_GATE'"; then
+            PARTIAL="$REMOTE_GATE.partial.$$"
+            scp -q "${GATE_PATHS[$ARM]}" "$REMOTE_HOST:$PARTIAL"
+            ssh "$REMOTE_HOST" "test \"\$(sha256sum '$PARTIAL' | awk '{print \$1}')\" = '${GATE_SHAS[$ARM]}' && mv '$PARTIAL' '$REMOTE_GATE'"
+        fi
+        ssh "$REMOTE_HOST" "test \"\$(sha256sum '$REMOTE_GATE' | awk '{print \$1}')\" = '${GATE_SHAS[$ARM]}'"
+    done
+fi
 
 if [ "$PHASE" = screen ]; then
     for ARM in "${ARMS[@]}"; do
         SMOKE="$REMOTE_RUNS/$BASELINES_REVISION/smoke/$STAGE/s$SEED/$ARM"
-        ssh "$REMOTE_HOST" "test -f '$SMOKE/smoke_validation.json' && python3 -c 'import json; assert json.load(open(\"$SMOKE/smoke_validation.json\"))[\"passed\"] is True' && grep -qx status=PASSED '$SMOKE/run_contract.env'"
+        ssh "$REMOTE_HOST" "test -f '$SMOKE/smoke_validation.json' && python3 -c 'import json; assert json.load(open(\"$SMOKE/smoke_validation.json\"))[\"passed\"] is True' && python3 '$REMOTE_SOURCE/scripts/euler_v8_deep_xattn_v1/stage_gate.py' check-smoke --run-contract '$SMOKE/run_contract.env' --stage '$STAGE' --arm '$ARM' --seed '$SEED' --parent-sha256 '${PARENT_SHAS[$ARM]}' --prior-gate-sha256 '${GATE_SHAS[$ARM]}' >/dev/null"
     done
 fi
 
@@ -99,7 +150,7 @@ for ARM in "${ARMS[@]}"; do
     RUN_PARENT="$REMOTE_RUNS/$BASELINES_REVISION/$PHASE/$STAGE/s$SEED"
     RUN_DIR="$RUN_PARENT/$ARM"
     ssh "$REMOTE_HOST" "mkdir -p '$RUN_PARENT' && mkdir '$RUN_DIR'"
-    EXPORTS="ALL,PHASE=$PHASE,STAGE=$STAGE,ARM=$ARM,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,SEED=$SEED,SCREEN_UPDATES=$SCREEN_UPDATES,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_RELEASE_ID=$RELEASE_ID,PARENT_CHECKPOINT=$PARENT,PARENT_SHA=$PARENT_SHA"
+    EXPORTS="ALL,PHASE=$PHASE,STAGE=$STAGE,ARM=$ARM,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,SEED=$SEED,SCREEN_UPDATES=$SCREEN_UPDATES,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_RELEASE_ID=$RELEASE_ID,PARENT_CHECKPOINT=${PARENTS[$ARM]},PARENT_SHA=${PARENT_SHAS[$ARM]},PRIOR_GATE_RECEIPT=${REMOTE_GATES[$ARM]},PRIOR_GATE_SHA=${GATE_SHAS[$ARM]}"
     JOB_ID="$(
         ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_deep_xattn_v1/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --exclude='eu-g6-064' --job-name='terra-v8-${PHASE}-${STAGE}-${ARM}' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'"
     )"

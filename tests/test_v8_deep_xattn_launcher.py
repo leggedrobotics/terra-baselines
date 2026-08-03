@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "scripts" / "euler_v8_deep_xattn_v1"
 
@@ -17,27 +16,40 @@ def test_v8_launcher_freezes_the_two_arm_warm_start_contract():
     assert "4d178c39443009cb4e57d83713421553689f6e3989da0be674184237c14d86cc" in submit
     assert "smoke_validation.json" in submit
     assert "gpuhe.4h" in submit and "gpuhe.24h" in submit
-    assert 'if [ "$STAGE" != capability ]' in submit
+    assert "nearby requires both Stage-A gate receipts" in submit
+    assert "stage '$STAGE' is not enabled by this launcher revision" in submit
+    assert "stage_gate.py" in submit
+    assert "check-smoke" in submit
+    assert "--parent-sha256 '${PARENT_SHAS[$ARM]}'" in submit
+    assert "--prior-gate-sha256 '${GATE_SHAS[$ARM]}'" in submit
+    assert "PARENTS[$ARM]" in submit
+    assert "GATE_SHAS[$ARM]" in submit
 
     assert "#SBATCH --gpus=rtx_4090:4" in sbatch
-    assert 'test "$STAGE" = capability' in sbatch
+    assert "EXPECTED_CONDITIONS=2" in sbatch
+    assert "EXPECTED_CONDITIONS=15" in sbatch
     assert 'test "${#GPU_NAMES[@]}" -eq 4' in sbatch
     assert "scripts/grow_checkpoint.py" in sbatch
     assert "resnet_spatial_8x8_se_xattn" in sbatch
     assert 'INITIAL="$PARENT_CHECKPOINT"' in sbatch
-    assert '"teacher_checkpoint_sha256=$PARENT_SHA"' in sbatch
-    assert '"initialization=params_only_warm_fresh_optimizer"' in sbatch
+    assert '"teacher_checkpoint_sha256=$TEACHER_SHA"' in sbatch
+    assert '"initialization=$INITIALIZATION"' in sbatch
+    assert "params_only_stage_transition_fresh_optimizer" in sbatch
+    assert "capability_promotion.json" in sbatch
+    assert "stage_gate.json" in sbatch
+    assert "--prior-receipt" in sbatch
     assert '"reward_type=DENSE"' in sbatch
     assert '"trench_shaping=false"' in sbatch
-    assert '--capability-panel' in sbatch
-    assert '--expect-completion-contract exact_visible_dump_v1' in sbatch
+    assert "--capability-panel" in sbatch
+    assert "--expect-completion-contract exact_visible_dump_v1" in sbatch
     assert "status=PASSED" in sbatch
 
     assert "--config G-V8-FIXED" in runner
     assert '--accepted-bank-stage "$STAGE"' in runner
     assert "--kickstart_kl_anneal_updates 1500" in runner
     assert "--kickstart_value_anneal_updates 500" in runner
-    assert "--resnet_blocks_per_stage 2,2,3,3" in runner
+    assert 'test "$TEACHER_CHECKPOINT" = none' in runner
+    assert '--resnet_blocks_per_stage "2,2,3,3"' in runner
     assert "--no_value_clip" in runner
     assert "--flat_minibatch_shuffle" in runner
     assert "sparse" not in runner.lower()
