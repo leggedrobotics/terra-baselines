@@ -415,7 +415,10 @@ def ppo_update_networks(
         else:
             value_loss = 0.5 * jnp.square(value - targets).mean()
 
-        ratio = jnp.exp(log_prob - transitions.log_prob)
+        log_ratio = log_prob - transitions.log_prob
+        ratio = jnp.exp(log_ratio)
+        approx_kl = ((ratio - 1.0) - log_ratio).mean()
+        clip_fraction = (jnp.abs(ratio - 1.0) > clip_eps).mean()
         actor_loss1 = advantages * ratio
         actor_loss2 = advantages * jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
         actor_loss = -jnp.minimum(actor_loss1, actor_loss2).mean()
@@ -437,6 +440,8 @@ def ppo_update_networks(
             value_loss,
             actor_loss,
             entropy,
+            approx_kl,
+            clip_fraction,
             kickstart_kl,
             kickstart_value_mse,
             rollout_finite,
@@ -474,6 +479,8 @@ def ppo_update_networks(
             vloss,
             aloss,
             entropy,
+            approx_kl,
+            clip_fraction,
             k_kl,
             k_vmse,
             rollout_finite,
@@ -510,6 +517,8 @@ def ppo_update_networks(
         vloss,
         aloss,
         entropy,
+        approx_kl,
+        clip_fraction,
         k_kl,
         k_vmse,
         rollout_finite,
@@ -546,6 +555,8 @@ def ppo_update_networks(
             vloss,
             aloss,
             entropy,
+            approx_kl,
+            clip_fraction,
             k_kl,
             k_vmse,
             rollout_finite,
@@ -588,6 +599,8 @@ def ppo_update_networks(
         "value_loss": vloss,
         "actor_loss": aloss,
         "entropy": entropy,
+        "approx_kl": approx_kl,
+        "clip_fraction": clip_fraction,
         "diagnostics/grad_global_norm": grad_global_norm,
         "diagnostics/grads_all_finite": grads_all_finite,
         "diagnostics/params_all_finite": params_all_finite,

@@ -274,6 +274,11 @@ else
                 --output "$RUN_DIR/eval/diagnostic_${PANEL}.json"
         fi
     done
+    WANDB_RESUME=must JAX_PLATFORMS=cpu "$PYTHON" \
+        "$BASELINES_ROOT/scripts/log_fixed_eval_wandb.py" \
+        --promotion "$RUN_DIR/eval/promotion.json" \
+        --development "$RUN_DIR/eval/development.json" \
+        --receipt "$RUN_DIR/eval/wandb_receipt.json"
 fi
 
 printf '%s\n' "status=PASSED" >> "$RUN_DIR/run_contract.env"

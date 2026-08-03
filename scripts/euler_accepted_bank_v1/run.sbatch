@@ -369,6 +369,11 @@ else
             --expect-completion-contract exact_visible_dump_v1 \
             --output "$RUN_DIR/eval/${PANEL}.json"
     done
+    WANDB_RESUME=must JAX_PLATFORMS=cpu "$PYTHON" \
+        "$BASELINES/scripts/log_fixed_eval_wandb.py" \
+        --promotion "$RUN_DIR/eval/promotion.json" \
+        --development "$RUN_DIR/eval/development.json" \
+        --receipt "$RUN_DIR/eval/wandb_receipt.json"
 fi
 
 find "$RUN_DIR/checkpoints" "$RUN_DIR/eval" "$RUN_DIR/parity" \

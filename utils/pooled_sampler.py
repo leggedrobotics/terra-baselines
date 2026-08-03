@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import re
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -12,13 +11,6 @@ import numpy as np
 
 RULES = ("uniform", "adaptive")
 STATE_SCHEMA = "terra_pooled_condition_sampler_state_v1"
-_TOKEN = re.compile(r"[^0-9A-Za-z._-]+")
-
-
-def metric_token(value: str) -> str:
-    return _TOKEN.sub("_", value)
-
-
 def entropy(probabilities: np.ndarray) -> float:
     positive = probabilities[probabilities > 0.0]
     return float(-(positive * np.log(positive)).sum()) if positive.size else 0.0
@@ -417,6 +409,10 @@ class PooledConditionSampler:
     def probabilities(self) -> np.ndarray:
         return self._probabilities.copy()
 
+    @property
+    def refreshes(self) -> int:
+        return self._refreshes
+
     def sample_levels(self, shape: tuple[int, ...]) -> np.ndarray:
         sample_count = int(np.prod(shape))
         samples = self._rng.choice(
@@ -518,107 +514,6 @@ class PooledConditionSampler:
         if total == 0:
             return np.full(self._count, np.nan, dtype=np.float64)
         return counts.astype(np.float64) / total
-
-    def _label_mass(
-        self, probabilities: np.ndarray, field: str
-    ) -> dict[str, float]:
-        result: dict[str, float] = {}
-        for index, name in enumerate(self.names):
-            value = self.labels.get(name, {}).get(field)
-            if value:
-                result[value] = result.get(value, 0.0) + float(
-                    probabilities[index]
-                )
-        return result
-
-    def telemetry(self) -> dict[str, float]:
-        metrics = {
-            "sampler/is_adaptive": float(self.settings.rule == "adaptive"),
-            "sampler/refreshes": float(self._refreshes),
-            "sampler/conditions": float(self._count),
-            "sampler/intended_entropy": entropy(self._probabilities),
-            "sampler/intended_ess": effective_sample_size(self._probabilities),
-            "sampler/intended_mass_min": float(self._probabilities.min()),
-            "sampler/intended_mass_max": float(self._probabilities.max()),
-            "sampler/mastered_conditions": float(
-                np.count_nonzero(
-                    np.nan_to_num(self._competence, nan=-1.0)
-                    >= self.settings.mastery_threshold
-                )
-            ),
-            "sampler/measured_conditions": float(
-                np.count_nonzero(~np.isnan(self._competence))
-            ),
-            "sampler/has_closed_window": float(self._has_closed_window),
-            "sampler/current_window_updates": float(self._window_updates),
-            "sampler/closed_window_updates": float(self._last_window_updates),
-        }
-        windows = (
-            (
-                "current",
-                self._episodes,
-                self._assignments,
-                self._reset_exposures,
-            ),
-            (
-                "closed",
-                self._last_episodes,
-                self._last_assignments,
-                self._last_reset_exposures,
-            ),
-        )
-        masses = {}
-        for window, episodes, assignments, reset_exposures in windows:
-            metrics[f"sampler/{window}_completed_episodes"] = float(
-                episodes.sum()
-            )
-            metrics[f"sampler/{window}_sampled_assignments"] = float(
-                assignments.sum()
-            )
-            metrics[f"sampler/{window}_reset_exposures"] = float(
-                reset_exposures.sum()
-            )
-            for measure, counts in (
-                ("completed_episode", episodes),
-                ("assignment", assignments),
-                ("reset_exposure", reset_exposures),
-            ):
-                mass = self._mass(counts)
-                masses[(window, measure)] = mass
-                if np.isfinite(mass).all():
-                    prefix = f"sampler/{window}_{measure}"
-                    metrics[f"{prefix}_entropy"] = entropy(mass)
-                    metrics[f"{prefix}_ess"] = effective_sample_size(mass)
-        for index, name in enumerate(self.names):
-            token = metric_token(name)
-            metrics[f"sampler_q/{token}"] = float(self._probabilities[index])
-            if not math.isnan(self._competence[index]):
-                metrics[f"sampler_competence/{token}"] = float(
-                    self._competence[index]
-                )
-            for (window, measure), mass in masses.items():
-                if np.isfinite(mass[index]):
-                    metrics[
-                        f"sampler_{measure}_{window}/{token}"
-                    ] = float(mass[index])
-        for field, prefix in (
-            ("family", "sampler_family"),
-            ("branch_depth", "sampler_depth"),
-        ):
-            for value, mass in self._label_mass(
-                self._probabilities, field
-            ).items():
-                metrics[f"{prefix}_q/{metric_token(value)}"] = mass
-            for (window, measure), distribution in masses.items():
-                if np.isfinite(distribution).all():
-                    for value, mass in self._label_mass(
-                        distribution, field
-                    ).items():
-                        metrics[
-                            f"{prefix}_{measure}_{window}/"
-                            f"{metric_token(value)}"
-                        ] = mass
-        return metrics
 
     def receipt(self) -> dict:
         def window_receipt(

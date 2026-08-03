@@ -1,7 +1,8 @@
 # Terra W&B logging design
 
 Status: design validated against the completed P5c foundation and trench
-specialists; implementation pending
+specialists; implementation complete and API-validated; rendered human review
+pending
 
 ## 1. Goal
 
@@ -61,7 +62,8 @@ per scalar.
    development. Always show both families when the fixed evaluation contains
    both; the run config identifies the trained family. This makes specialist
    transfer or regression visible instead of hiding it.
-4. **Online outcomes**: training success and timeout rates.
+4. **Online outcomes**: training success and timeout rates plus inline-evaluation
+   success and termination within the horizon when inline evaluation is enabled.
 
 Fixed evaluation uses `eval/update` as its own step metric. Evaluation may run
 after training; it must still plot against the checkpoint update rather than
@@ -92,11 +94,14 @@ are small and useful as curves.
 9. **Task progress**: mean absolute, dig, and legal-dump-volume completion over
    ended training episodes.
 10. **Dump quality**: dump purity and no-effect action rate.
-11. **Reward**: mean episode return plus dense-agent, terminal, trench, and
+11. **Action distribution**: the eight action fractions in one panel, retained
+    to expose policy collapse without creating eight standalone panels.
+12. **Reward**: mean episode return plus dense-agent, terminal, trench, and
     existence components per ended episode in one panel. Disabled components
     may be absent; they do not get standalone zero-valued panels.
-12. **Work efficiency**: mean episode length and productive workspace cycles
-    per episode.
+
+Mean episode length and productive workspace cycles remain available in the
+collapsed details section rather than consuming an overview panel.
 
 Reward curves diagnose learning incentives. They never promote a checkpoint.
 
@@ -121,6 +126,7 @@ intended scalar history is bounded; condition count must not create new scalar
 keys.
 
 ```text
+train/update
 train/episode_success_rate
 train/episode_timeout_rate
 train/ended_episodes
@@ -132,6 +138,14 @@ behavior/dump_purity
 behavior/no_effect_action_rate
 behavior/mean_episode_length
 behavior/productive_workspace_cycles_per_episode
+behavior/action_fraction/forward
+behavior/action_fraction/backward
+behavior/action_fraction/base_clockwise
+behavior/action_fraction/base_anticlockwise
+behavior/action_fraction/cabin_clockwise
+behavior/action_fraction/cabin_anticlockwise
+behavior/action_fraction/do
+behavior/action_fraction/no_op
 
 reward/episode_return
 reward/agent
@@ -181,6 +195,10 @@ eval/<split>/<family>_macro_completion
 
 `<split>` is `promotion` or `development`; `<family>` is `foundation` or
 `trench`. Per-condition evaluation belongs in one table, not scalar keys.
+
+Optional inline evaluation uses the same `train/update` x-axis and only three
+scalars: completed-episode success, success within the horizon, and termination
+within the horizon.
 
 ## 5. What leaves scalar history
 
@@ -239,15 +257,20 @@ The design is accepted only when all of the following pass:
    leaderboard inputs.
 3. An offline two-step W&B smoke contains no `integrity/*`,
    `curriculum_levels*`, `sampler_q/*`, or per-condition scalar keys.
-4. The scalar-key budget is at most forty training keys regardless of whether
+4. The scalar-key budget is at most forty-eight training keys regardless of whether
    the run has 14, 18, or 32 conditions.
-5. Formula tests cover zero-ended-episode NaN, success/timeout rates, family and
-   depth population normalization, reward-component per-episode means, and
-   fixed-evaluation macro-versus-micro aggregation.
+5. Four compact contract tests cover: episode formulas and zero-episode NaN;
+   curriculum population plus the condition table; fixed-evaluation
+   reconstruction; and the bounded schema plus manual workspace layout.
 6. A rendered desktop view puts fixed exact success in the first row, contains
    no single-panel constant flags, and keeps condition details in tables.
 7. Existing episode receipts, checkpoint contents, environment transitions,
    PPO settings, and fixed-evaluation semantics remain unchanged.
+
+This is research instrumentation, not a production observability platform. Do
+not add a test per helper or metric. During iteration run the four focused
+contracts; run the existing shared PPO/aggregate tests once before handoff, and
+use one two-step offline W&B smoke as the only new integration check.
 
 ## 9. Validation receipt
 
@@ -299,3 +322,35 @@ first row therefore needs exact, macro, and worst-condition curves together.
 The bounded scalar schema and sixteen-panel layout are accepted. Implementation
 may proceed, but the remaining gates in section 8 still apply to the code and
 rendered workspace. No training result is reinterpreted by this decision.
+
+### 9.4 Accepted review correction
+
+The first implementation draft removed the legacy per-action evaluation keys
+along with the noisy diagnostics. Review established that action distribution
+is useful for spotting collapse. The eight fractions are therefore retained as
+one grouped training panel. This raises the bounded schema from 39 to 47
+possible training scalars, including the explicit `train/update` x-axis; it
+does not reintroduce condition-dependent keys.
+
+### 9.5 Implementation receipt
+
+- The implemented training schema contains 47 possible scalar keys, independent
+  of condition count. Runtime rejects unknown keys or more than 48 scalars.
+- Four compact contract tests cover the load-bearing formulas, population and
+  condition accounting, bounded metric selection and workspace layout, and
+  fixed-evaluation reconstruction. They run with the existing sampler tests in
+  0.11 seconds; the shared aggregate/PPO tests passed once before handoff.
+- One two-update offline W&B smoke accepted the custom `train/update` step,
+  grouped action fractions, and bounded metric names without any banned noisy
+  prefix.
+- Real P5b promotion/development files validate at updates 500, 1000, 1500, and
+  2000 and produce 17 fixed-evaluation scalars plus condition tables.
+- The saved workspace is
+  <https://wandb.ai/aless-weber-eth/mixed-agents?nw=84ulh56rci5>. An API
+  round-trip confirms four open four-panel overview sections, one collapsed
+  four-panel details section, disabled automatic panel generation, fixed exact
+  success first, and grouped action distribution present.
+
+The remaining validation gate is Lorenzo's rendered browser review of panel
+readability. Existing P5c runs cannot retroactively populate metrics that were
+not logged; the v1 schema applies to future runs.

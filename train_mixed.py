@@ -121,6 +121,15 @@ from utils.episode_aggregates import (
 from utils.accepted_bank import ARMS as ACCEPTED_BANK_ARMS
 from utils.accepted_bank import AcceptedBank, load_accepted_bank
 from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
+from utils.wandb_human import (
+    CONDITION_COLUMNS,
+    LOGGING_SCHEMA,
+    TRAINING_SCALAR_KEYS,
+    condition_rows,
+    curriculum_metrics,
+    episode_metrics,
+    loss_metrics,
+)
 import json
 import os
 import shutil
@@ -129,7 +138,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 # Import the base training infrastructure
-from train import get_curriculum_levels, calculate_gae, ppo_update_networks
+from train import calculate_gae, ppo_update_networks
 
 jax.config.update("jax_threefry_partitionable", True)
 
@@ -177,26 +186,6 @@ class Transition(struct.PyTreeNode):
     prev_reward: jax.Array
 
 
-def safe_jax_to_python(value):
-    """Safely convert JAX arrays to Python scalars"""
-    if hasattr(value, "item"):
-        try:
-            return value.item()
-        except (ValueError, TypeError):
-            # If it's an array with multiple elements, take the first one
-            if hasattr(value, "shape") and value.shape:
-                return value.ravel()[0].item()
-            else:
-                return float(value)
-    elif hasattr(value, "__array__"):
-        try:
-            return float(value)
-        except (ValueError, TypeError):
-            return str(value)
-    else:
-        return value
-
-
 _REQUIRED_FINITE_LOSS_KEYS = (
     "total_loss",
     "value_loss",
@@ -204,6 +193,8 @@ _REQUIRED_FINITE_LOSS_KEYS = (
     "entropy",
 )
 _OPTIONAL_FINITE_LOSS_KEYS = (
+    "approx_kl",
+    "clip_fraction",
     "kickstart/kl",
     "kickstart/value_mse",
     "diagnostics/grad_global_norm",
@@ -581,51 +572,6 @@ def _write_episode_aggregate_receipt(
             pass
         raise
     return output_path
-
-
-def _episode_aggregate_wandb_metrics(payload: dict) -> dict[str, float]:
-    """Expose only bounded population totals and rates to W&B."""
-    totals = payload["totals"]
-    rates = payload["rates"]
-    episode_count = totals["episode_count"]
-    step_count = totals["step_count"]
-
-    def _per_episode(field: str) -> float:
-        if episode_count == 0:
-            return float("nan")
-        return float(totals[field]) / episode_count
-
-    return {
-        "episodes/count": episode_count,
-        "episodes/task_done_count": totals["task_done_count"],
-        "episodes/timeout_count": totals["timeout_count"],
-        "episodes/task_done_rate": (
-            float(rates["task_done_rate"])
-            if rates["task_done_rate"] is not None
-            else float("nan")
-        ),
-        "episodes/timeout_rate": (
-            float(rates["timeout_rate"])
-            if rates["timeout_rate"] is not None
-            else float("nan")
-        ),
-        "episodes/mean_return": _per_episode("episodic_return_sum"),
-        "episodes/mean_dig_completion": _per_episode("dig_completion_sum"),
-        "episodes/mean_dump_purity": _per_episode("dump_purity_sum"),
-        "episodes/mean_dump_volume_completion": _per_episode(
-            "dump_volume_completion_sum"
-        ),
-        "episodes/mean_combined_completion": _per_episode("combined_completion_sum"),
-        "episodes/productive_workspace_cycles": totals["productive_workspace_cycles"],
-        "episodes/no_effect_action_rate": (
-            totals["no_effect_action_count"] / step_count
-            if step_count
-            else float("nan")
-        ),
-        "episodes/maximum_mass_residual": totals["maximum_mass_residual"],
-        "episodes/episode_reward_drift_max": totals["maximum_reward_residual"],
-        "episodes/step_reward_residual_max": totals["maximum_step_reward_residual"],
-    }
 
 
 def _sorted_map_indices(images_dir: Path) -> list[int]:
@@ -1805,14 +1751,25 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
 def train_mixed_agents(config: MixedAgentTrainConfig):
     """Main training function for mixed agents - with full feature parity to original train.py"""
 
+    wandb_config = asdict(config)
+    wandb_config["logging_schema"] = LOGGING_SCHEMA
     run = wandb.init(
         project=config.project,
         group=config.group,
         name=config.name,
-        config=asdict(config),
+        config=wandb_config,
         save_code=True,
         tags=_wandb_tags_for_config(config),
     )
+    wandb.define_metric("train/update")
+    for metric in sorted(TRAINING_SCALAR_KEYS - {"train/update"}):
+        wandb.define_metric(metric, step_metric="train/update")
+    for metric in (
+        "online_eval/completed_episode_success_rate",
+        "online_eval/success_within_horizon_rate",
+        "online_eval/termination_within_horizon_rate",
+    ):
+        wandb.define_metric(metric, step_metric="train/update")
 
     # Log source files - same as original train.py
     train_py_path = os.path.abspath(__file__)
@@ -2089,39 +2046,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 flush=True,
             )
 
-    # Removed agent-type curriculum monitoring
-
-    def log_environment_metrics(timestep, update_num):
-        """Log environment metrics for all mixed agent training"""
-        try:
-            # Basic episode metrics
-            episode_done = timestep.done
-            completion_rate = safe_jax_to_python(jnp.mean(episode_done))
-
-            # Log the metrics - ensure step is always positive and increasing
-            if update_num > 0:  # Only log if we have a valid step number
-                wandb.log(
-                    {
-                        "progress/episode_completion_rate": completion_rate,
-                    },
-                    step=update_num,
-                )
-
-        except Exception as e:
-            # Log the error but don't crash the training
-            print(
-                f"⚠️  Warning: Failed to log environment metrics at step {update_num}: {e}"
-            )
-            # Optionally log a minimal set of metrics without step to avoid the warning
-            try:
-                wandb.log(
-                    {
-                        "progress/episode_completion_rate": 0.0,
-                    }
-                )
-            except:
-                pass  # If even this fails, just continue training
-
     def make_mixed_agent_train(
         env, env_params, config, teacher_apply_fn=None, teacher_params=None
     ):
@@ -2129,6 +2053,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         primary_cell_names = tuple(env.maps_buffer.primary_cell_names)
         stage_names = tuple(
             level["maps_path"] for level in env.batch_cfg.curriculum_global.levels
+        )
+        include_trench_reward = any(
+            bool(level["apply_trench_rewards"])
+            for level in env.batch_cfg.curriculum_global.levels
         )
         num_stages = len(stage_names)
         num_families = len(family_names)
@@ -2722,10 +2650,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     [need_episode_flush] * config.num_devices,
                     dtype=jnp.bool_,
                 )
+                sampler_refreshed = False
                 if pooled_sampler is not None:
                     pooled_sampler.start(i)
                     if pooled_sampler.due(i):
                         pooled_sampler.refresh(i)
+                        sampler_refreshed = True
                     next_env_cfg = assign_curriculum_levels(
                         runner_state[2].env_cfg,
                         pooled_sampler.sample_levels(
@@ -2756,16 +2686,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 )
                 transition_integrity_single = unreplicate(transition_integrity)
                 _assert_transition_integrity(transition_integrity_single)
+                reset_exposure_single = None
                 if pooled_sampler is not None:
-                    pooled_sampler.observe_reset_exposures(
-                        np.asarray(unreplicate(reset_exposure_count))
+                    reset_exposure_single = np.asarray(
+                        unreplicate(reset_exposure_count)
                     )
+                    pooled_sampler.observe_reset_exposures(reset_exposure_single)
                 end_time = time.time()
 
                 iteration_duration = end_time - start_time
                 iterations_per_second = 1 / iteration_duration
                 steps_per_second = iterations_per_second * config.env_steps_per_update
-                steps_per_second_per_gpu = steps_per_second / config.num_devices
 
                 tqdm.write(f"Steps/s: {steps_per_second:.2f}")
 
@@ -2798,62 +2729,72 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 ):
                     _assert_finite_loss_info(loss_info_single, i)
 
-                if need_train_log:
-                    # Keep the device axis: unreplicate() above is appropriate
-                    # for replicated params/losses, but curriculum level is
-                    # independent per environment on every device.
-                    curriculum_levels = get_curriculum_levels(
-                        runner_state[2].env_cfg,
-                        env.batch_cfg.curriculum_global.levels,
-                    )
-
-                    # Start with base metrics
-                    log_dict = {
-                        "performance/steps_per_second": steps_per_second,
-                        "performance/steps_per_second_per_gpu": steps_per_second_per_gpu,
-                        "performance/iterations_per_second": iterations_per_second,
-                        "performance/env_steps_per_update": config.env_steps_per_update,
-                        "performance/actual_env_steps": (i + 1)
-                        * config.env_steps_per_update,
-                        "integrity/maximum_transition_mass_residual": int(
-                            np.asarray(
-                                transition_integrity_single["maximum_mass_residual"]
-                            )
-                        ),
-                        "integrity/transition_target_mutation_count": int(
-                            np.asarray(
-                                transition_integrity_single["target_mutation_count"]
-                            )
-                        ),
-                        "integrity/transition_obstacle_mutation_count": int(
-                            np.asarray(
-                                transition_integrity_single["obstacle_mutation_count"]
-                            )
-                        ),
-                        "environment/effective_horizon_min": float(
-                            np.min(np.asarray(env_params_single.max_steps_in_episode))
-                        ),
-                        "environment/effective_horizon_max": float(
-                            np.max(np.asarray(env_params_single.max_steps_in_episode))
-                        ),
-                        "curriculum_levels": curriculum_levels,
-                        "lr": config.lr,
-                        "sched/entropy_coef": float(ent_coef_current),
-                        **loss_info_single,
-                        **_episode_aggregate_wandb_metrics(episode_payload),
-                    }
+                need_condition_snapshot = pooled_sampler is not None and (
+                    sampler_refreshed or need_checkpoint or need_final_state
+                )
+                if need_train_log or need_condition_snapshot:
+                    log_dict = {}
+                    active_levels = None
                     if pooled_sampler is not None:
-                        log_dict.update(pooled_sampler.telemetry())
-                    # F7: log the annealed kickstart coefficients (loss terms
-                    # kickstart/kl and kickstart/value_mse arrive via loss_info).
-                    if teacher_apply_fn is not None:
-                        log_dict["kickstart/kl_coef"] = float(kickstart_kl_coef_current)
-                        log_dict["kickstart/value_coef"] = float(
-                            kickstart_value_coef_current
+                        # Unlike replicated losses, each device owns different
+                        # environment assignments. Preserve that device axis.
+                        active_levels = np.asarray(
+                            jax.device_get(
+                                runner_state[2].env_cfg.curriculum.level
+                            )
+                        )
+                    if need_train_log:
+                        log_dict.update(
+                            {
+                                "train/update": i + 1,
+                                "system/steps_per_second": steps_per_second,
+                                "system/environment_steps": (i + 1)
+                                * config.env_steps_per_update,
+                                **episode_metrics(
+                                    episode_payload,
+                                    include_trench_reward=include_trench_reward,
+                                ),
+                                **loss_metrics(
+                                    loss_info_single,
+                                    entropy_coef=float(ent_coef_current),
+                                    teacher_enabled=teacher_apply_fn is not None,
+                                    kickstart_kl_coef=kickstart_kl_coef_current,
+                                    kickstart_value_coef=kickstart_value_coef_current,
+                                ),
+                            }
+                        )
+                        if pooled_sampler is not None:
+                            log_dict.update(
+                                curriculum_metrics(
+                                    active_levels,
+                                    names=pooled_sampler.names,
+                                    labels=pooled_sampler.labels,
+                                    probabilities=pooled_sampler.probabilities,
+                                    refreshes=pooled_sampler.refreshes,
+                                )
+                            )
+                    if need_condition_snapshot:
+                        log_dict["curriculum/conditions"] = wandb.Table(
+                            columns=list(CONDITION_COLUMNS),
+                            data=condition_rows(
+                                active_levels,
+                                reset_exposure_single,
+                                episode_payload,
+                                names=pooled_sampler.names,
+                                labels=pooled_sampler.labels,
+                                probabilities=pooled_sampler.probabilities,
+                            ),
                         )
 
-                    # Single consolidated wandb.log call
-                    wandb.log(log_dict, step=i)
+                    scalar_keys = set(log_dict) - {"curriculum/conditions"}
+                    unexpected = scalar_keys - TRAINING_SCALAR_KEYS
+                    if unexpected or len(scalar_keys) > 48:
+                        raise RuntimeError(
+                            "human W&B scalar contract violated: "
+                            f"unexpected={sorted(unexpected)}, "
+                            f"count={len(scalar_keys)}"
+                        )
+                    wandb.log(log_dict)
 
                 if need_checkpoint:
                     if config.fail_on_nonfinite:
@@ -2975,69 +2916,25 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         f"🧪 Finished pmapped step-wise eval at update {i}", flush=True
                     )
 
-                    # Total eval env steps that contributed to the sums.
-                    n = (
-                        config.num_devices
-                        * config.num_envs_per_device
-                        * eval_stats.length
-                    )
-                    avg_positive_episode_length = jnp.where(
-                        eval_stats.positive_terminations > 0,
-                        eval_stats.positive_terminations_steps
-                        / eval_stats.positive_terminations,
-                        jnp.zeros_like(eval_stats.positive_terminations_steps),
-                    )
                     total_eval_envs = config.num_devices * config.num_envs_per_device
-                    successful_episodes_per_env = (
-                        eval_stats.positive_terminations / total_eval_envs
-                    )
-                    completed_episodes_per_env = (
-                        eval_stats.terminations / total_eval_envs
-                    )
-                    loss_info_single.update(
+                    wandb.log(
                         {
-                            "eval/rewards": eval_stats.reward / n,
-                            "eval/max_reward": eval_stats.max_reward,
-                            "eval/min_reward": eval_stats.min_reward,
-                            "eval/lengths": eval_stats.length,
-                            "eval/FORWARD %": eval_stats.action_0 / n,
-                            "eval/BACKWARD %": eval_stats.action_1 / n,
-                            "eval/CLOCK %": eval_stats.action_2 / n,
-                            "eval/ANTICLOCK %": eval_stats.action_3 / n,
-                            "eval/CABIN_CLOCK %": eval_stats.action_4 / n,
-                            "eval/CABIN_ANTICLOCK %": eval_stats.action_5 / n,
-                            "eval/DO": eval_stats.action_6 / n,
-                            "eval/DO_NOTHING %": eval_stats.action_7 / n,
-                            # Legacy names are episodes per initial eval env,
-                            # so auto-reset makes them intentionally unbounded.
-                            "eval/positive_terminations": successful_episodes_per_env,
-                            "eval/total_terminations": completed_episodes_per_env,
-                            "eval/successful_episodes_per_env": successful_episodes_per_env,
-                            "eval/completed_episodes_per_env": completed_episodes_per_env,
-                            "eval/successful_episodes": eval_stats.positive_terminations,
-                            "eval/completed_episodes": eval_stats.terminations,
-                            "eval/completed_episode_success_rate": eval_ppo.episode_success_rate(
-                                eval_stats.positive_terminations,
-                                eval_stats.terminations,
+                            "train/update": i + 1,
+                            "online_eval/completed_episode_success_rate": (
+                                eval_ppo.episode_success_rate(
+                                    eval_stats.positive_terminations,
+                                    eval_stats.terminations,
+                                )
                             ),
-                            "eval/initial_episode_successes": (
-                                eval_stats.initial_episode_successes
-                            ),
-                            "eval/initial_episode_terminations": (
-                                eval_stats.initial_episode_terminations
-                            ),
-                            "eval/success_within_horizon_rate": (
+                            "online_eval/success_within_horizon_rate": (
                                 eval_stats.initial_episode_successes / total_eval_envs
                             ),
-                            "eval/initial_episode_completion_rate": (
+                            "online_eval/termination_within_horizon_rate": (
                                 eval_stats.initial_episode_terminations
                                 / total_eval_envs
                             ),
-                            "eval/avg_positive_episode_length": avg_positive_episode_length,
                         }
                     )
-
-                    wandb.log(loss_info_single)
 
                 # Clear JAX caches and run garbage collection to stabilize memory use
                 if (

@@ -7,7 +7,6 @@ import pytest
 from utils.pooled_sampler import (
     PooledConditionSampler,
     SamplerSettings,
-    effective_sample_size,
 )
 
 
@@ -95,10 +94,10 @@ def test_minimum_episode_count_blocks_thin_feedback():
     sampler.start(0)
     _observe(sampler, [1.0] * 8, episodes=3)
     sampler.refresh(1)
-    assert sampler.telemetry()["sampler/measured_conditions"] == 0.0
+    assert sampler.receipt()["competence"] == [None] * 8
 
 
-def test_sampling_and_telemetry_report_condition_and_branch_mass():
+def test_sampling_and_receipt_preserve_condition_exposure():
     sampler = _sampler(rule="uniform")
     drawn = sampler.sample_levels((4, 4096))
     counts = np.bincount(drawn.ravel(), minlength=8) / drawn.size
@@ -110,15 +109,7 @@ def test_sampling_and_telemetry_report_condition_and_branch_mass():
     )
     _observe(sampler, [0.2] * 8)
     sampler.refresh(1)
-    metrics = sampler.telemetry()
-    assert metrics["sampler/intended_ess"] == pytest.approx(
-        effective_sample_size(sampler.probabilities)
-    )
-    assert metrics["sampler_family_q/foundation"] == pytest.approx(0.5)
-    assert metrics["sampler_depth_q/Anchor"] == pytest.approx(0.5)
-    assert metrics["sampler/closed_completed_episodes"] == 80
-    assert metrics["sampler/closed_sampled_assignments"] == drawn.size
-    assert metrics["sampler/closed_reset_exposures"] == drawn.size
+    assert sampler.refreshes == 1
     receipt = json.loads(json.dumps(sampler.receipt()))
     assert receipt["schema"] == "terra_pooled_condition_sampler_v2"
     assert receipt["windows"]["current"]["completed_episode_mass"] == [
