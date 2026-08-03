@@ -342,3 +342,17 @@ single-arm feasibility continuation would require a separately named decision.
   finite model/optimizer, update, architecture, fixed sampler, and resume
   source, and bind every parent receipt to the exact run directory and contract
   hash. An independent blocker re-review found no remaining correctness issue.
+- **V8-XA-13, accepted 2026-08-03:** prepare, but do not yet launch, the
+  [`V8 10M scale-up`](V8_10M_SCALEUP.md). Its teacher must be the qualified
+  deep+xattn policy trained on the exact full-V8 distribution, passing three
+  scheduled high-completion promotion gates plus the same development
+  family/cell gate. The old P5c teacher is ineligible. Compare a 10M channel-
+  grown student with a teacher-sized rewarm control at matched transitions.
+- **V8-XA-14, accepted 2026-08-03:** postpone the actual 10M run until that
+  teacher exists, but make the experiment launch-ready now. Revalidate main
+  development plus both all-free capability controls, measure transplant damage
+  on all 720 exact promotion resets, and use a true 24-hour matched screen with
+  absolute target update 20,000. An `afterany` evaluator compares only the
+  longest common complete checkpoint prefix on all four panels and writes the
+  aggregate, family, and per-condition leaderboard. Preparation is not launch
+  authorization.
