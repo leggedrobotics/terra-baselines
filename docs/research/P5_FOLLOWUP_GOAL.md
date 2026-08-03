@@ -1,6 +1,6 @@
 # P5 Follow-up: Condition-Level Diagnosis and Matched Improvements
 
-- Status: active execution; P5b complete, P5c low-entropy screens submitted
+- Status: P5b and P5c complete; no checkpoint admitted for long continuation
 - Date: 2026-08-03
 - Owner: Codex with Lorenzo review
 - P5 implementation contract:
@@ -23,6 +23,10 @@
   `/home/lorenzo/moleworks/.artifacts/terra_unconstrained_controls_20260802_0306c3cd`
 - Capability-floor evaluations:
   `/home/lorenzo/moleworks/.artifacts/terra_unconstrained_control_eval_20260802`
+- P5c standardized leaderboard:
+  `/home/lorenzo/moleworks/.artifacts/terra_p5c_leaderboard_20260803_3478af8/LEADERBOARD.md`
+- Read-only P5c campaign archive:
+  `/cluster/work/rsl/lterenzi/terra_p5c_campaign_20260803_3478af87950d3d35059344b078209d00785c8481/`
 
 ## 1. Objective
 
@@ -403,9 +407,9 @@ online reward, or one favorable checkpoint is insufficient.
   panels.
 - [x] Pass CPU, local CUDA, and allocated update-1 gates for all five P5c arms.
 - [x] Launch all five matched P5c screens from the smoke-tested revision.
-- [ ] Evaluate P5c every 500 updates on constrained and diagnostic panels.
-- [ ] If admitted, queue and monitor the long run through fixed evaluation;
-  otherwise record why no long run was justified.
+- [x] Evaluate P5c every 500 updates on constrained and diagnostic panels.
+- [x] Apply the long-run gate: no arm passed at two consecutive checkpoints,
+  so preserve every run and do not launch a 120-hour continuation.
 
 Current admission evidence:
 
@@ -436,8 +440,16 @@ Allocated execution receipt (2026-08-02):
 - P5c screen jobs `9461489`, `9461500`, `9461504`, `9461507`, and `9461512`
   were submitted from immutable terra-baselines revision
   `3478af87950d3d35059344b078209d00785c8481`. All five were allocated and
-  crossed finite update 1 with transition-integrity checks enabled. They
-  remain running; this is execution state, not a training result.
+  crossed finite update 1 with transition-integrity checks enabled and
+  completed 4,000 updates. All 160 declared fixed evaluations passed their
+  integrity contract.
+
+Final P5c decision (2026-08-03): no formally selected checkpoint. Deep uniform
+at update 4,000 is the strongest descriptive endpoint at promotion/development
+macro `0.624/0.586` and exact `168/512` / `143/512`, but it supplied only one
+clean gate interval. Every other arm also supplied at most one; medium uniform
+supplied none. The full campaign archive payload-manifest SHA-256 is
+`605922d0965206f82e7fe54a10fac202e028b548de24454febcd2691709ff42f`.
 
 ## 10. Completion evidence
 

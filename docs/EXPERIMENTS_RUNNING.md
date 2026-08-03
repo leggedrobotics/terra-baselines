@@ -10,7 +10,15 @@ The older E1--E10 spatial-encoder run history is retained in
 [`EXPERIMENTS_SPATIAL_V3_RUNS.md`](EXPERIMENTS_SPATIAL_V3_RUNS.md). It is not
 current scheduler state.
 
-## Most recent production jobs (completed early screens)
+## Current scheduler decision
+
+No Terra PPO job from this campaign is currently authorized to continue. All
+five P5c screens and all declared fixed evaluations completed, but no arm
+passed the predeclared long-run gate at two consecutive checkpoints. The next
+bounded job is a fixed-policy evaluation on the separately frozen Terra
+Legacy-Easy v1 capability floor, not additional training.
+
+## Most recent production jobs (completed fixed-evaluation screens)
 
 All five allocated P5c update-1 smokes completed `0:0`, wrote
 `status=PASSED`, and passed the explicit finite-checkpoint verifier. The five
@@ -28,11 +36,26 @@ rising. They are early learning-curve screens, not convergence results.
 | `T-MEDIUM-UNIFORM-WARM` | 14 trenches | uniform | medium | 4,000 updates | `9458619` PASS | `9461512` | COMPLETE; 6.21 h early screen |
 
 All five use the same P5 parent/teacher and low entropy
-`0.02 -> 0.005 / 10,000`. Fixed evaluations are due every 500 updates on
+`0.02 -> 0.005 / 10,000`. Fixed evaluations were run every 500 updates on
 constrained promotion/development and the separate all-free
 promotion/development diagnostics. The specialists are family dose ceilings;
 the causal pairs are medium adaptive versus medium uniform, then medium
 uniform versus deep uniform.
+
+All 160 declared fixed evaluations are complete and integrity-clean. Latest
+generalist endpoints are:
+
+| Arm | Promotion macro | Development macro | Promotion exact | Development exact |
+|---|---:|---:|---:|---:|
+| `G-MEDIUM-ADAPTIVE-WARM` | 0.607 | 0.547 | 133/512 | 116/512 |
+| `G-MEDIUM-UNIFORM-WARM` | 0.565 | 0.565 | 115/512 | 94/512 |
+| `G-DEEP-UNIFORM-WARM` | 0.624 | 0.586 | 168/512 | 143/512 |
+
+Deep uniform at update 4,000 is the strongest descriptive checkpoint, not a
+selected checkpoint. The full condition leaderboard is
+`/home/lorenzo/moleworks/.artifacts/terra_p5c_leaderboard_20260803_3478af8/LEADERBOARD.md`.
+Every campaign checkpoint and receipt is preserved read-only at
+`/cluster/work/rsl/lterenzi/terra_p5c_campaign_20260803_3478af87950d3d35059344b078209d00785c8481/`.
 
 ## Most recent completed campaign: P5b
 

@@ -1,7 +1,7 @@
 # P5 Accepted-Bank Experiment Implementation
 
-- Status: P5, P5b, and the early P5c low-entropy screens complete;
-  checkpointed-duration continuation protocol accepted
+- Status: P5, P5b, and P5c fixed evaluations complete; no long continuation
+  admitted; checkpointed-duration continuation protocol accepted
 - Date: 2026-08-03
 - Canonical authority:
   [`D5_D7_IMPLEMENTATION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_simple_mapbank_reward_20260730/D5_D7_IMPLEMENTATION_PLAN.md)
@@ -412,6 +412,15 @@ held-out generalization. They were nevertheless still rising late in training,
 so the 4,000-update runs cannot be called converged or saturated. Their proper
 interpretation is promising but undertrained, with a possible train/test or
 condition-retention gap to measure using fixed evaluation.
+
+That fixed evaluation is now complete. No arm passed the predeclared
+improvement/retention gate at two consecutive checkpoints, so no P5c
+checkpoint is formally selected and no 120-hour continuation was launched.
+Deep uniform at update 4,000 is the strongest descriptive endpoint
+(`0.624/0.586` constrained promotion/development macro and `168/512` /
+`143/512` exact), but its preceding interval failed the family/tail retention
+requirements. This is an unstable-learning-curve result, not a saturation
+claim and not authorization to bypass the separate P6 bank gate.
 
 Future behavioral training uses this duration protocol:
 

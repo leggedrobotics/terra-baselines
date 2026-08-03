@@ -50,6 +50,7 @@ remain separate. Exact is solved maps / evaluated maps.
 | 08-02 | P5b `G-DEEP-ADAPTIVE-WARM` | `9378175` | 1,000 | 0.653 / 0.628 | 2/512 / 2/512 | completed 2,000, `PASSED`; transient matched gain, not retained at 2,000 |
 | 08-02 | P5b `G-MEDIUM-UNIFORM-WARM` | `9378176` | 1,000 | 0.647 / 0.664 | 2/512 / 6/512 | completed 2,000, `PASSED`; best selected development family floor, transient at 2,000 |
 | 08-03 | all-free capability-floor evaluation | local fixed eval | selected P5/P5b checkpoints | 0.385--0.718 / 0.465--0.736 | generalists 0/32; trench specialist 1/32 promotion only | integrity-clean diagnostic; physically easier but target-mask OOD, excluded from constrained macro |
+| 08-03 | P5c five-arm low-entropy screen | `9461489`, `9461500`, `9461504`, `9461507`, `9461512` | none | deep latest 0.624 / 0.586 | deep latest 168/512 / 143/512 | all fixed evaluations clean; no arm passed the long-run gate at two consecutive checkpoints |
 
 P5b result root:
 `/home/lorenzo/moleworks/.artifacts/terra_p5b_results_20260802_6c56610e`.
@@ -68,7 +69,7 @@ both had `2,441,223` parameters. The likely recipe mismatch is P5b entropy
 decline when KL reached zero. This is the P5c hypothesis, not a post-hoc claim
 that entropy caused the decline.
 
-## Completed early learning-curve screen: P5c
+## Completed fixed-evaluation screen: P5c
 
 P5c freezes five 4,000-update arms with evaluation every 500 updates: medium
 adaptive, medium uniform, deep uniform, foundation medium-uniform, and trench
@@ -80,11 +81,32 @@ revision `3478af87950d3d35059344b078209d00785c8481` and crossed finite update
 4,000 updates in 6.2--8.0 hours. All share entropy
 `0.02 -> 0.005 / 10,000` and the common P5 parent/teacher. The specialists are
 family dose ceilings; they do not enter the causal sampler/depth comparison.
-Every checkpoint must be evaluated on constrained promotion/development and
-diagnostic all-free promotion/development. Because online training success was
-still rising at the terminal checkpoint, these runs are not saturation
-evidence. Future behavioral screens receive at least 24 healthy hours with an
-oversized absolute update target; promising checkpoints continue with true
-resume state on the 120-hour queue. See
+All 40 numbered checkpoints were evaluated on constrained
+promotion/development and diagnostic all-free promotion/development: 160
+integrity-clean evaluations and 43,520 episodes with no integrity failure.
+Deep uniform at update 4,000 is the strongest descriptive endpoint:
+promotion/development macro `0.624/0.586`, foundation `0.556/0.533`, trench
+`0.711/0.654`, and exact `168/512` / `143/512`. Its checkpoint SHA-256 is
+`4d178c39443009cb4e57d83713421553689f6e3989da0be674184237c14d86cc`.
+
+This endpoint is not a formal selection. Foundation specialist had one clean
+interval at update 3,000, deep uniform one at 4,000, medium adaptive one at
+2,500, trench specialist one at 3,500, and medium uniform none. No arm passed
+the predeclared improvement/retention gate at two consecutive checkpoints.
+No 120-hour continuation or P6 training was launched. Online training success
+was still rising, so the result is also not saturation evidence; it says the
+current learning curve is unstable on fixed held-out panels.
+
+The condition-balanced leaderboard is frozen at
+`/home/lorenzo/moleworks/.artifacts/terra_p5c_leaderboard_20260803_3478af8/LEADERBOARD.md`
+with input digest
+`ac665b7088942b66159a52f7170c1484dc6e36175f2ec7decbd8c4383094c5ac`.
+The complete read-only campaign archive is
+`/cluster/work/rsl/lterenzi/terra_p5c_campaign_20260803_3478af87950d3d35059344b078209d00785c8481/`;
+its payload-manifest SHA-256 is
+`605922d0965206f82e7fe54a10fac202e028b548de24454febcd2691709ff42f`.
+Future behavioral screens receive at least 24 healthy hours with an oversized
+absolute update target; an admitted checkpoint continues with true resume
+state on the 120-hour queue. See
 [`research/P5_ACCEPTED_BANK_EXPERIMENTS.md`](research/P5_ACCEPTED_BANK_EXPERIMENTS.md)
 section 12.
