@@ -27,6 +27,8 @@ from train_mixed import (
     make_mixed_agent_states,
 )
 from utils.accepted_bank import load_accepted_bank
+from utils.explicit_episode_bank import ExplicitEpisodePanel
+from utils.explicit_episode_bank import load_explicit_episode_panel
 from utils.helpers import load_pkl_object
 
 sys.modules["__main__"].TrainConfig = TrainConfig
@@ -280,14 +282,93 @@ def configure_for_bank(train_config, relative_path: str, count: int):
     return config
 
 
+def prepare_explicit_episode_reset(
+    env,
+    env_params,
+    map_reset_keys,
+    panel: ExplicitEpisodePanel,
+):
+    """Reset one ordered map panel from its complete frozen Agent states."""
+    from terra.benchmark_state import validate_benchmark_initial_agent
+
+    count = panel.slot_count
+    if np.asarray(map_reset_keys).shape != (count, 2):
+        raise ValueError("map_reset_keys must contain one PRNG key per episode")
+
+    # prepare_reset owns a leading device axis; fixed evaluation operates on
+    # its sole device after map materialization.
+    device_env_params = jax.tree_util.tree_map(
+        lambda value: jnp.asarray(value)[None], env_params
+    )
+    prepared_device = env.prepare_reset(
+        device_env_params,
+        jnp.asarray(map_reset_keys)[None],
+    )
+    prepared = jax.tree_util.tree_map(lambda value: value[0], prepared_device)
+    (
+        prepared_env_params,
+        target_maps,
+        padding_masks,
+        trench_axes,
+        trench_type,
+        foundation_border_axes,
+        foundation_border_type,
+        dumpability_mask_init,
+        action_maps,
+        distance_maps,
+    ) = prepared
+
+    for index, agent in enumerate(panel.initial_agents):
+        env_cfg = jax.tree_util.tree_map(
+            lambda value: np.asarray(jax.device_get(value[index])),
+            prepared_env_params,
+        )
+        validate_benchmark_initial_agent(
+            agent,
+            env_cfg=env_cfg,
+            padding_mask=padding_masks[index],
+            action_map=action_maps[index],
+            dumpability_mask=dumpability_mask_init[index],
+        )
+
+    initial_agents = jax.tree_util.tree_map(
+        lambda *values: jnp.stack(values),
+        *panel.initial_agents,
+    )
+    state_keys = jax.vmap(jax.random.PRNGKey)(
+        jnp.asarray(panel.environment_reset_seeds, dtype=jnp.uint32)
+    )
+    timestep = env.reset_prepared(
+        prepared_env_params,
+        state_keys,
+        target_maps,
+        padding_masks,
+        trench_axes,
+        trench_type,
+        foundation_border_axes,
+        foundation_border_type,
+        dumpability_mask_init,
+        action_maps,
+        distance_maps,
+        initial_agents,
+    )
+    return timestep, prepared_env_params, state_keys
+
+
 def verify_exact_reset(
     env,
     env_params,
     reset_keys,
     directory: Path,
     count: int,
+    *,
+    timestep=None,
+    expected_initial_state_sha256: tuple[str, ...] | None = None,
+    expected_state_keys=None,
 ) -> dict:
-    timestep = env.reset(env_params, reset_keys)
+    explicit_reset = timestep is not None
+    if timestep is None:
+        timestep = env.reset(env_params, reset_keys)
     state = timestep.state
     observed_fields = {
         "target": np.asarray(state.world.target_map.map),
@@ -362,7 +443,7 @@ def verify_exact_reset(
             )
             digest.update((directory / subdirectory / filename).read_bytes())
         layer_hashes[field] = digest.hexdigest()
-    return {
+    result = {
         "passed": True,
         "slots": count,
         "env_steps_min": int(env_steps.min()),
@@ -380,6 +461,43 @@ def verify_exact_reset(
         ],
         "layer_sha256": layer_hashes,
     }
+    if explicit_reset:
+        from terra.benchmark_state import agent_state_sha256
+
+        if expected_initial_state_sha256 is None or expected_state_keys is None:
+            raise ValueError(
+                "explicit reset verification requires state hashes and state keys"
+            )
+        expected_hashes = tuple(expected_initial_state_sha256)
+        if len(expected_hashes) != count:
+            raise ValueError("expected state-hash count does not match panel")
+        observed_hashes = []
+        for index in range(count):
+            agent = jax.tree_util.tree_map(
+                lambda value: value[index],
+                state.agent,
+            )
+            observed_hashes.append(agent_state_sha256(agent))
+        if tuple(observed_hashes) != expected_hashes:
+            raise RuntimeError("explicit reset changed an initial Agent state")
+        observed_state_keys = np.asarray(state.key)
+        expected_state_keys_host = np.asarray(expected_state_keys)
+        if not np.array_equal(observed_state_keys, expected_state_keys_host):
+            raise RuntimeError("explicit reset changed an environment state key")
+        result["explicit_initial_state"] = {
+            "passed": True,
+            "slots": count,
+            "ordered_agent_state_sha256": hashlib.sha256(
+                json.dumps(
+                    expected_hashes,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest(),
+            "environment_state_keys_sha256": hashlib.sha256(
+                np.ascontiguousarray(expected_state_keys_host).tobytes()
+            ).hexdigest(),
+        }
+    return result
 
 
 GRADED_FIELD = "terminal_absolute"
@@ -771,6 +889,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--explicit-episode-panel",
+        choices=("train", "promotion", "development", "sealed"),
+        help=(
+            "Evaluate one diagnostic explicit-episode panel. Each episode "
+            "uses its frozen map, complete initial Agent state, environment "
+            "reset seed, and protocol hash. Incompatible with --strata and "
+            "the accepted/diagnostic map-panel options."
+        ),
+    )
+    parser.add_argument(
         "--terra-revision",
         help=(
             "Exact immutable Terra revision bound into an accepted bank. "
@@ -803,11 +931,40 @@ def main() -> None:
             f"{args.expect_completion_contract}, imported {completion_contract}"
         )
 
-    if args.accepted_panel is not None and args.diagnostic_panel is not None:
-        raise ValueError("choose only one of --accepted-panel and --diagnostic-panel")
+    selected_panel_modes = sum(
+        option is not None
+        for option in (
+            args.accepted_panel,
+            args.diagnostic_panel,
+            args.explicit_episode_panel,
+        )
+    )
+    if selected_panel_modes > 1:
+        raise ValueError(
+            "choose only one of --accepted-panel, --diagnostic-panel, and "
+            "--explicit-episode-panel"
+        )
     panel_name = args.accepted_panel or args.diagnostic_panel
     accepted_bank = None
-    if panel_name is not None:
+    explicit_episode_panel = None
+    if args.explicit_episode_panel is not None:
+        if args.strata is not None:
+            raise ValueError("explicit episode panels are incompatible with --strata")
+        if args.terra_revision is None:
+            raise ValueError("explicit episode panels require --terra-revision")
+        explicit_episode_panel = load_explicit_episode_panel(
+            bank_root,
+            args.explicit_episode_panel,
+            args.terra_revision,
+        )
+        targets = [
+            (
+                args.explicit_episode_panel,
+                "legacy_easy_capability_floor",
+                explicit_episode_panel.maps_path,
+            )
+        ]
+    elif panel_name is not None:
         if args.strata is not None:
             raise ValueError("fixed manifest panels are incompatible with --strata")
         if args.terra_revision is None:
@@ -832,7 +989,7 @@ def main() -> None:
         ]
     else:
         if args.terra_revision is not None:
-            raise ValueError("--terra-revision requires --accepted-panel")
+            raise ValueError("--terra-revision requires a fixed manifest panel option")
         strata = args.strata or ("M0", "M1", "M2")
         targets = [
             (args.split, stratum, f"{args.split}/{stratum}") for stratum in strata
@@ -856,29 +1013,77 @@ def main() -> None:
     records = []
     for split_name, stratum, relative_path in targets:
         directory = bank_root / relative_path
-        rows = load_manifest(directory)
+        rows = (
+            list(explicit_episode_panel.manifest_rows)
+            if explicit_episode_panel is not None
+            else load_manifest(directory)
+        )
         count = len(rows)
         os.environ["DATASET_PATH"] = str(bank_root)
         os.environ["DATASET_SIZE"] = str(count)
         config = configure_for_bank(reference_train_config, relative_path, count)
-        _, env, env_params, initialized_state = make_mixed_agent_states(config)
+        if explicit_episode_panel is None:
+            env_config_override = None
+        else:
+            from terra.benchmark_protocol import frozen_benchmark_protocol
+
+            env_config_override, _ = frozen_benchmark_protocol()
+        _, env, env_params, initialized_state = make_mixed_agent_states(
+            config,
+            env_params=env_config_override,
+        )
         env_params = jax.tree_util.tree_map(lambda value: value[0], env_params)
-        reset_keys = (
-            manifest_reset_keys(
-                rows,
+        if explicit_episode_panel is not None:
+            selection_rows = [
+                {
+                    "slot_index": row["slot_index"],
+                    "reset_seed": row["slot_selection_seed"],
+                    "environment_protocol_sha256": row["environment_protocol_sha256"],
+                }
+                for row in rows
+            ]
+            map_reset_keys = manifest_reset_keys(
+                selection_rows,
                 count,
-                accepted_bank.environment_protocol_sha256,
+                explicit_episode_panel.environment_protocol_sha256,
             )
-            if accepted_bank is not None
-            else exact_reset_keys(count)
-        )
-        reset_verification = verify_exact_reset(
-            env,
-            env_params,
-            reset_keys,
-            directory,
-            count,
-        )
+            initial_timestep, env_params, state_keys = prepare_explicit_episode_reset(
+                env,
+                env_params,
+                map_reset_keys,
+                explicit_episode_panel,
+            )
+            reset_keys = None
+            reset_verification = verify_exact_reset(
+                env,
+                env_params,
+                None,
+                directory,
+                count,
+                timestep=initial_timestep,
+                expected_initial_state_sha256=(
+                    explicit_episode_panel.initial_agent_state_sha256
+                ),
+                expected_state_keys=state_keys,
+            )
+        else:
+            initial_timestep = None
+            reset_keys = (
+                manifest_reset_keys(
+                    rows,
+                    count,
+                    accepted_bank.environment_protocol_sha256,
+                )
+                if accepted_bank is not None
+                else exact_reset_keys(count)
+            )
+            reset_verification = verify_exact_reset(
+                env,
+                env_params,
+                reset_keys,
+                directory,
+                count,
+            )
         model = SimpleNamespace(apply=initialized_state.apply_fn)
         previous_summary = None
         previous_checkpoint = None
@@ -898,6 +1103,7 @@ def main() -> None:
                 record_observations=False,
                 preserve_terminal_states=True,
                 expected_slot_indices=np.arange(count, dtype=np.int32),
+                initial_timestep=initial_timestep,
             )
             successes = np.asarray(stats["episode_done_once"], dtype=bool)
             terminations = np.asarray(stats["episode_terminated_once"], dtype=bool)
@@ -1023,6 +1229,8 @@ def main() -> None:
                 "comparison_to_previous": comparison_to_previous,
                 "per_map": per_map,
             }
+            if explicit_episode_panel is not None:
+                record["explicit_episode_bank"] = explicit_episode_panel.receipt()
             records.append(record)
             with output.open("w") as handle:
                 json.dump(records, handle, indent=2, sort_keys=True)

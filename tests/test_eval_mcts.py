@@ -85,8 +85,12 @@ def _config():
 
 
 class FakeRolloutEnv(FakeEnv):
+    def __init__(self):
+        self.reset_calls = 0
+
     def reset(self, env_cfgs, rng_keys):
         del env_cfgs, rng_keys
+        self.reset_calls += 1
         return _timestep()
 
     def step(self, timestep, action, rng_keys):
@@ -120,6 +124,51 @@ class FakeRolloutEnv(FakeEnv):
 
 
 class RolloutEpisodeAccountingTest(unittest.TestCase):
+    def test_explicit_timestep_skips_reset_without_changing_default_rollout(self):
+        config = _config()
+        config.num_prev_actions = 3
+        env_cfgs = SimpleNamespace(
+            tile_size=jnp.ones((BATCH_SIZE,)),
+            agent=SimpleNamespace(move_tiles=jnp.ones((BATCH_SIZE,))),
+        )
+        default_env = FakeRolloutEnv()
+        explicit_env = FakeRolloutEnv()
+        default_rewards, default_stats, _ = rollout_episode(
+            default_env,
+            FakeModel(),
+            None,
+            env_cfgs,
+            config,
+            max_frames=5,
+            deterministic=True,
+            seed=0,
+            use_mcts=False,
+            preserve_terminal_states=True,
+        )
+        explicit_rewards, explicit_stats, _ = rollout_episode(
+            explicit_env,
+            FakeModel(),
+            None,
+            env_cfgs,
+            config,
+            max_frames=5,
+            deterministic=True,
+            seed=0,
+            use_mcts=False,
+            preserve_terminal_states=True,
+            initial_timestep=_timestep(),
+        )
+
+        self.assertEqual(default_env.reset_calls, 1)
+        self.assertEqual(explicit_env.reset_calls, 0)
+        np.testing.assert_allclose(default_rewards, explicit_rewards)
+        for field in (
+            "episode_terminated_once",
+            "episode_done_once",
+            "episode_length",
+        ):
+            np.testing.assert_array_equal(default_stats[field], explicit_stats[field])
+
     def test_each_environment_contributes_only_its_first_episode(self):
         config = _config()
         config.num_prev_actions = 3

@@ -236,6 +236,7 @@ def rollout_episode(
     preserve_terminal_states=False,
     expected_slot_indices=None,
     record_completion=False,
+    initial_timestep=None,
 ):
     mode_str = (
         "MCTS"
@@ -244,14 +245,22 @@ def rollout_episode(
     )
     print(f"[eval_mcts] mode: {mode_str}, seed={seed}")
 
+    if initial_timestep is not None and use_mcts:
+        raise ValueError("an explicit initial timestep is not supported with MCTS")
+    if initial_timestep is not None and reset_keys is not None:
+        raise ValueError("pass either initial_timestep or reset_keys, not both")
+
     rng = jrandom.PRNGKey(seed)
     rng, _rng = jrandom.split(rng)
-    rng_reset = (
-        jrandom.split(_rng, rl_config.num_test_rollouts)
-        if reset_keys is None
-        else jnp.asarray(reset_keys)
-    )
-    timestep = env.reset(env_cfgs, rng_reset)
+    if initial_timestep is None:
+        rng_reset = (
+            jrandom.split(_rng, rl_config.num_test_rollouts)
+            if reset_keys is None
+            else jnp.asarray(reset_keys)
+        )
+        timestep = env.reset(env_cfgs, rng_reset)
+    else:
+        timestep = initial_timestep
     if preserve_terminal_states and use_mcts:
         raise ValueError(
             "preserve_terminal_states is only supported for direct policy evaluation"
