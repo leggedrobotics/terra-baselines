@@ -350,6 +350,15 @@ class ExplicitEpisodeBankTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "file hash mismatch"):
                 load_explicit_episode_panel(root, "development", TERRA_REVISION)
 
+    def test_loader_rejects_undeclared_nested_checksum_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _build_two_episode_bank(root)
+            (root / "development" / "files.sha256").write_text("undeclared\n")
+
+            with self.assertRaisesRegex(ValueError, "coverage differs"):
+                load_explicit_episode_panel(root, "development", TERRA_REVISION)
+
 
 if __name__ == "__main__":
     unittest.main()

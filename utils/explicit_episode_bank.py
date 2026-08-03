@@ -123,7 +123,7 @@ def _file_manifest(root: Path) -> tuple[dict[str, str], str]:
     for candidate in root.rglob("*"):
         if candidate.is_symlink():
             raise ValueError(f"episode bank cannot contain symlinks: {candidate}")
-        if candidate.is_file() and candidate.name != "files.sha256":
+        if candidate.is_file() and candidate != path:
             observed.add(candidate.relative_to(root).as_posix())
     if set(declared) != observed:
         raise ValueError(
