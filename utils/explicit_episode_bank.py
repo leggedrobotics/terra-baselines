@@ -118,6 +118,26 @@ def _file_manifest(root: Path) -> tuple[dict[str, str], str]:
         if candidate.is_absolute() or ".." in candidate.parts:
             raise ValueError(f"{path}: unsafe entry {relative!r}")
         declared[relative] = digest
+
+    observed: set[str] = set()
+    for candidate in root.rglob("*"):
+        if candidate.is_symlink():
+            raise ValueError(f"episode bank cannot contain symlinks: {candidate}")
+        if candidate.is_file() and candidate.name != "files.sha256":
+            observed.add(candidate.relative_to(root).as_posix())
+    if set(declared) != observed:
+        raise ValueError(
+            "files.sha256 coverage differs from the episode bank: "
+            f"undeclared={sorted(observed - set(declared))}, "
+            f"missing={sorted(set(declared) - observed)}"
+        )
+    for relative, expected in declared.items():
+        candidate = root / relative
+        actual = _sha256_file(candidate)
+        if actual != expected:
+            raise ValueError(
+                f"file hash mismatch for {relative}: expected {expected}, got {actual}"
+            )
     return declared, _sha256_file(path)
 
 

@@ -340,6 +340,16 @@ class ExplicitEpisodeBankTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid state hash"):
                 load_explicit_episode_panel(root, "development", TERRA_REVISION)
 
+    def test_loader_rejects_metadata_changed_after_manifest_freeze(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _build_two_episode_bank(root)
+            metadata = root / "development" / "metadata" / "trench_1.json"
+            _write_json(metadata, {"foundation_border_type": 2})
+
+            with self.assertRaisesRegex(ValueError, "file hash mismatch"):
+                load_explicit_episode_panel(root, "development", TERRA_REVISION)
+
 
 if __name__ == "__main__":
     unittest.main()
