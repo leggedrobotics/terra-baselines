@@ -371,12 +371,6 @@ def _validate_train96_release(
             f"{index_path}: train_maps_per_condition must be "
             f"{TRAIN96_MAPS_PER_CONDITION}"
         )
-    if index.get("included_in_constrained_macro") is not False:
-        raise ValueError(
-            f"{index_path}: capability-floor scores must be excluded from "
-            "the constrained macro"
-        )
-
     constrained_ids = _sorted_unique_strings(
         index,
         "constrained_condition_ids",
@@ -396,6 +390,11 @@ def _validate_train96_release(
         raise ValueError(
             f"{index_path}: capability_floor_condition_ids must be exactly "
             f"{list(TRAIN96_CAPABILITY_FLOOR_IDS)!r}"
+        )
+    if index.get("included_in_constrained_macro") != list(constrained_ids):
+        raise ValueError(
+            f"{index_path}: included_in_constrained_macro must list exactly "
+            "the constrained conditions"
         )
     if set(constrained_ids) & set(capability_floor_ids):
         raise ValueError(f"{index_path}: condition partitions must be disjoint")

@@ -408,7 +408,7 @@ def _convert_to_train96_capability_floor(root: Path) -> Path:
     index.update(
         {
             "release_id": accepted_bank_module.TRAIN96_RELEASE_ID,
-            "included_in_constrained_macro": False,
+            "included_in_constrained_macro": constrained_ids,
             "train_maps_per_condition": 96,
             "constrained_condition_ids": constrained_ids,
             "capability_floor_condition_ids": list(
