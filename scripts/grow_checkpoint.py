@@ -15,6 +15,10 @@ Growth rules (per-leaf, matched by parameter path):
                                        ``relu(0 + residual) = residual`` exactly
                                        (residual is post-relu >= 0), i.e. the
                                        added depth is function-preserving;
+  * non-attention -> cross-attention
+    readout                          -> move the source readout into the base
+                                       rows of the target readout and zero the
+                                       newly appended attention rows;
   * everything else that is new
     (SE params, added-block first
     conv / LayerNorms, ...)          -> fresh init.
@@ -179,6 +183,9 @@ def _leaf_map(params):
 
 
 _BLOCK_TOKEN = re.compile(r"ResidualMapBlock_(\d+)")
+_BASE_READOUT = "['params']['maps_net']['cnn']['Dense_1']"
+_XATTN_READOUT = "['params']['maps_net']['cnn']['Dense_3']"
+_XATTN_LATENTS = "['params']['maps_net']['cnn']['attn_latent_queries']"
 
 
 def _is_added_block_second_conv(key: str) -> bool:
@@ -223,6 +230,59 @@ def _is_attn_pos_embed(key: str) -> bool:
     interpolated on its 2D grid rather than sliced.
     """
     return key.rstrip("]'").endswith("attn_pos_embed")
+
+
+def _remap_non_xattn_readout(source_leaves, target_leaves):
+    """Map the SE encoder's final Dense onto the xattn encoder's final Dense.
+
+    The historical E4-prime implementation creates its attention modules before
+    the final readout. Flax therefore names the non-attention final projection
+    ``Dense_1`` and the xattn final projection ``Dense_3``. The latter consumes
+    ``[flatten_features, attention_features]``. Matching leaves only by their
+    literal paths would incorrectly feed the source final projection into the
+    target's agent-query projection and leave the actual final projection fresh.
+
+    Detect that one transition from the parameter topology, move the source
+    kernel/bias to the target's last top-level CNN Dense, and remove the old
+    paths. The caller zero-embeds the kernel so only the leading flatten-feature
+    rows are active initially. Existing xattn checkpoints are deliberately not
+    remapped.
+    """
+    source_has_xattn = _XATTN_LATENTS in source_leaves
+    target_has_xattn = _XATTN_LATENTS in target_leaves
+    if source_has_xattn or not target_has_xattn:
+        return source_leaves, set()
+
+    remapped = dict(source_leaves)
+    zero_embed_keys = set()
+    for leaf_name in ("kernel", "bias"):
+        source_key = f"{_BASE_READOUT}['{leaf_name}']"
+        target_key = f"{_XATTN_READOUT}['{leaf_name}']"
+        if source_key not in remapped or target_key not in target_leaves:
+            raise ValueError(
+                "Cannot grow non-attention encoder into xattn: expected "
+                f"readout leaf {source_key!r} -> {target_key!r}."
+            )
+        remapped[target_key] = remapped.pop(source_key)
+        if leaf_name == "kernel":
+            zero_embed_keys.add(target_key)
+    return remapped, zero_embed_keys
+
+
+def _zero_embed_xattn_readout(source_kernel, target_kernel):
+    """Copy the base readout and make the appended attention contribution zero."""
+    if source_kernel.ndim != 2 or target_kernel.ndim != 2:
+        raise ValueError("xattn readout kernels must both be rank 2")
+    if any(t < s for s, t in zip(source_kernel.shape, target_kernel.shape)):
+        raise ValueError(
+            "xattn target readout must contain the source readout, got "
+            f"source={source_kernel.shape}, target={target_kernel.shape}"
+        )
+    grown = jnp.zeros_like(target_kernel)
+    rows, cols = source_kernel.shape
+    return grown.at[:rows, :cols].set(
+        jnp.asarray(source_kernel, dtype=target_kernel.dtype)
+    )
 
 
 def _interp_pos_embed(source_leaf, target_leaf):
@@ -418,6 +478,14 @@ def grow_params(
     target_blocks_per_stage, target_stage_channels = target_stage_spec
 
     source_leaves = _leaf_map(source_params)
+    target_leaves = _leaf_map(target_params)
+
+    # E4-prime xattn appends its branch before the final readout. Preserve the
+    # source function by relocating the parent readout and explicitly zeroing
+    # only the newly added attention rows.
+    source_leaves, xattn_zero_embed_keys = _remap_non_xattn_readout(
+        source_leaves, target_leaves
+    )
 
     # F1a: stage-aware block relabeling, applied BEFORE any shape matching so a
     # non-final-stage depth increase does not slice mismatched blocks together.
@@ -442,7 +510,10 @@ def grow_params(
         key = jax.tree_util.keystr(path)
         source_leaf = source_leaves.get(key)
         if source_leaf is not None:
-            if source_leaf.shape == target_leaf.shape:
+            if key in xattn_zero_embed_keys:
+                category = "xattn-zero-embed"
+                grown = _zero_embed_xattn_readout(source_leaf, target_leaf)
+            elif source_leaf.shape == target_leaf.shape:
                 category = "copied"
                 grown = jnp.asarray(source_leaf, dtype=target_leaf.dtype)
             elif _is_attn_pos_embed(key) and source_leaf.shape[0] != target_leaf.shape[0]:
@@ -515,6 +586,7 @@ def print_report(
         "sliced": 0,
         "dense-embed": 0,
         "pos-interp": 0,
+        "xattn-zero-embed": 0,
         "zero-init": 0,
         "added-stage": 0,
         "fresh": 0,
@@ -531,6 +603,9 @@ def print_report(
     # Report genuinely unused source params against the post-remap key space so
     # relabeled ResidualMapBlocks are not spuriously flagged.
     effective_source = _leaf_map(source_params)
+    effective_source, _ = _remap_non_xattn_readout(
+        effective_source, _leaf_map(target_params)
+    )
     if source_stage_spec is not None and target_stage_spec is not None:
         source_blocks_per_stage = source_stage_spec[0]
         target_blocks_per_stage = target_stage_spec[0]

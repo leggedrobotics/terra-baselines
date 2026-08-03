@@ -45,6 +45,30 @@ def _dummy_env(maps_edge_length=64):
     )
 
 
+def _real_obs(batch_size, env, num_prev_actions=5):
+    """Full observation with an active agent and nontrivial global maps."""
+    edge = env.batch_cfg.maps_dims.maps_edge_length
+    angles_cabin = env.batch_cfg.agent.angles_cabin
+    num_state_obs = env.batch_cfg.agent.num_state_obs
+    obs = [
+        jnp.zeros((batch_size, 4, num_state_obs)).at[:, 0, :].set(1.0),
+        jnp.zeros((batch_size, 4), dtype=jnp.int8).at[:, 0].set(1),
+        jnp.ones((batch_size,), dtype=jnp.int32),
+    ]
+    obs += [jnp.zeros((batch_size, angles_cabin)) for _ in range(9)]
+    obs += [
+        jax.random.normal(jax.random.PRNGKey(20 + i), (batch_size, edge, edge))
+        for i in range(4)
+    ]
+    obs += [jnp.zeros((batch_size,), dtype=jnp.int32) for _ in range(2)]
+    obs += [
+        jax.random.normal(jax.random.PRNGKey(30 + i), (batch_size, edge, edge))
+        for i in range(3)
+    ]
+    obs += [jnp.zeros((batch_size, num_prev_actions), dtype=jnp.int32)]
+    return obs
+
+
 class GrowFunctionPreservationTest(unittest.TestCase):
     def test_v2_deepened_reproduces_source_output(self):
         # Only depth is added (one extra block appended to the last stage), so
@@ -222,6 +246,70 @@ class GrowFullModelTest(unittest.TestCase):
         # keeps the source's 7 input channels in the leading slice.
         sliced = [e for e in report if e["category"] == "sliced"]
         self.assertGreater(len(sliced), 0)
+
+    def test_deep_se_to_e4_xattn_is_output_preserving(self):
+        """The V8 deep+xattn warm start begins as the trained deep policy."""
+        deep = {
+            "resnet_stage_channels": (24, 48, 64, 96),
+            "resnet_blocks_per_stage": (2, 2, 3, 3),
+            "critic_hidden_dims": (512, 256),
+            "encoder_compute_dtype": "bfloat16",
+        }
+        source_config = _full_model_config("resnet_spatial_8x8_se", "medium", **deep)
+        target_config = _full_model_config(
+            "resnet_spatial_8x8_se_xattn",
+            "medium",
+            attention_compute_dtype="float32",
+            **deep,
+        )
+        env = _dummy_env()
+        source_model, source_params = get_model_ready(
+            jax.random.PRNGKey(0), source_config, env
+        )
+        target_model, target_params = get_model_ready(
+            jax.random.PRNGKey(1), target_config, env
+        )
+
+        grown_params, report = grow_params(source_params, target_params)
+
+        # The grown tree is exactly the E4-prime target: no self-attention mixer
+        # and no compatibility wrapper around the policy.
+        self.assertEqual(
+            jax.tree_util.tree_structure(grown_params),
+            jax.tree_util.tree_structure(target_params),
+        )
+        paths = set(_leaf_map(grown_params))
+        self.assertTrue(any("MultiHeadDotProductAttention" in key for key in paths))
+        self.assertFalse(any("token_mixer" in key for key in paths))
+
+        # Base readout rows are copied verbatim and the appended attention rows
+        # are exactly zero. This keeps logits and value identical while leaving
+        # those rows immediately learnable by PPO.
+        source_kernel = _leaf_map(source_params)[
+            "['params']['maps_net']['cnn']['Dense_1']['kernel']"
+        ]
+        target_kernel = _leaf_map(grown_params)[
+            "['params']['maps_net']['cnn']['Dense_3']['kernel']"
+        ]
+        rows, cols = source_kernel.shape
+        np.testing.assert_array_equal(
+            np.asarray(target_kernel[:rows, :cols]), np.asarray(source_kernel)
+        )
+        self.assertTrue(bool(jnp.all(target_kernel[rows:, :] == 0)))
+        self.assertEqual(
+            len([e for e in report if e["category"] == "xattn-zero-embed"]),
+            1,
+        )
+
+        obs = _real_obs(3, env)
+        source_value, source_logits = source_model.apply(source_params, obs)
+        target_value, target_logits = target_model.apply(grown_params, obs)
+        np.testing.assert_array_equal(
+            np.asarray(target_value), np.asarray(source_value)
+        )
+        np.testing.assert_array_equal(
+            np.asarray(target_logits), np.asarray(source_logits)
+        )
 
     def test_output_checkpoint_is_consumable(self):
         # Build a source checkpoint, grow it, and confirm the output pkl rebuilds
