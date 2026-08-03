@@ -1,6 +1,7 @@
 # P5 Accepted-Bank Experiment Implementation
 
-- Status: P5 and P5b complete; P5c low-entropy screens submitted
+- Status: P5, P5b, and the early P5c low-entropy screens complete;
+  checkpointed-duration continuation protocol accepted
 - Date: 2026-08-03
 - Canonical authority:
   [`D5_D7_IMPLEMENTATION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_simple_mapbank_reward_20260730/D5_D7_IMPLEMENTATION_PLAN.md)
@@ -390,5 +391,49 @@ panels, no material family or bottom-tail regression, and stable or improving
 capability-floor results. P5c allocated update-1 smoke jobs `9458568`,
 `9458581`, `9458585`, `9458616`, and `9458619` all completed `0:0` and passed
 their explicit contracts. Screen jobs `9461489`, `9461500`, `9461504`,
-`9461507`, and `9461512` were consequently submitted from the exact tested
-revision and allocated. Startup state is not a behavioral result.
+`9461507`, and `9461512` consequently completed 4,000 updates from the exact
+tested revision. They are early learning-curve screens, not convergence runs.
+
+## 12. Checkpointed-duration continuation contract
+
+The completed P5c W&B histories establish that the prior compute budget was
+too short for a saturation claim:
+
+| Arm | W&B runtime | Final logged online `episodes/task_done_rate` |
+|---|---:|---:|
+| `G-MEDIUM-ADAPTIVE-WARM` | 6.27 h | 0.422 |
+| `G-MEDIUM-UNIFORM-WARM` | 6.22 h | 0.394 |
+| `G-DEEP-UNIFORM-WARM` | 7.98 h | 0.611 |
+| `F-MEDIUM-UNIFORM-WARM` | 6.32 h | 0.522 |
+| `T-MEDIUM-UNIFORM-WARM` | 6.21 h | 0.796 |
+
+The online rates follow the sampled training distribution and do not prove
+held-out generalization. They were nevertheless still rising late in training,
+so the 4,000-update runs cannot be called converged or saturated. Their proper
+interpretation is promising but undertrained, with a possible train/test or
+condition-retention gap to measure using fixed evaluation.
+
+Future behavioral training uses this duration protocol:
+
+1. update-1/minute-scale jobs remain runtime smokes and provide no behavioral
+   conclusion;
+2. a research screen receives at least one healthy 24-hour allocation unless
+   it fails numerically or is explicitly declared a shorter diagnostic;
+3. configure an absolute update target above what the allocation can finish,
+   retain a validated rolling checkpoint every 100--500 updates, and treat a
+   wall-time exit with a valid checkpoint as `CONTINUABLE`;
+4. continue promising policies with true `--resume_from` state on the 120-hour
+   queue rather than restarting parameters or optimizer state;
+5. preserve architecture, bank, reward, horizon, PPO shape, schedule, global
+   update, and adaptive sampler state across segments; and
+6. stop only after fixed promotion/development exact, macro, and tail metrics
+   plateau across multiple checkpoints. Report matched updates/transitions and
+   GPU-hours as separate comparison axes.
+
+`total_timesteps` is the absolute final target, not the number of additional
+steps in the next segment. Terra restores model, optimizer, update/schedule,
+and pooled-sampler state, while RNG, live environment state, and action history
+restart at the boundary; continuation is statistically continuous, not
+bit-exact. If a hard timeout prevents the launcher from running evaluation,
+evaluate the latest complete checkpoint in a separate job before interpreting
+the segment.

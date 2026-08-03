@@ -16,6 +16,17 @@ same 32-condition bank; specialists select the existing 18-foundation or
 4,000 updates and evaluates every 500-update checkpoint on promotion and
 development.
 
+Those five screens completed in 6.2--8.0 hours and their online training
+success was still rising. They are therefore early learning-curve evidence,
+not saturation results. Successor runs must use an intentionally oversized
+absolute update target, checkpoint every 100--500 updates, receive at least a
+healthy 24-hour behavioral screen, and continue promising checkpoints with
+`--resume_from` on the 120-hour queue. A wall-time exit with a finite, loadable
+checkpoint is `CONTINUABLE`; fixed evaluation may run as a separate job after
+the timeout. The canonical contract is
+[`P5_ACCEPTED_BANK_EXPERIMENTS.md`](../../docs/research/P5_ACCEPTED_BANK_EXPERIMENTS.md)
+section 12.
+
 P5b-to-P5c entropy comparisons are causal only at matched checkpoints through
 update 2,000. P5c checkpoints after update 2,000 have no high-entropy control
 and are interpreted only as within-P5c learning curves. Specialist/generalist

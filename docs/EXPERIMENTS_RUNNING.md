@@ -10,23 +10,22 @@ The older E1--E10 spatial-encoder run history is retained in
 [`EXPERIMENTS_SPATIAL_V3_RUNS.md`](EXPERIMENTS_SPATIAL_V3_RUNS.md). It is not
 current scheduler state.
 
-## Current production jobs
+## Most recent production jobs (completed early screens)
 
 All five allocated P5c update-1 smokes completed `0:0`, wrote
 `status=PASSED`, and passed the explicit finite-checkpoint verifier. The five
 matched 4,000-update screens were then submitted from the exact smoke-tested
-revision and allocated on Euler. All five crossed finite update 1 with the
-transition-integrity checks enabled. `RUNNING` is execution state, not a
-behavioral result; the first policy comparison is the fixed update-500
-evaluation.
+revision and completed on Euler. They took 6.2--8.0 hours, crossed all finite
+and transition-integrity checks, and ended with online training success still
+rising. They are early learning-curve screens, not convergence results.
 
 | P5c arm | Support | Sampler | Architecture | Budget | Smoke | Screen | State |
 |---|---|---|---|---:|---:|---:|---|
-| `G-MEDIUM-ADAPTIVE-WARM` | all 32 | adaptive | medium | 4,000 updates | `9458568` PASS | `9461489` | RUNNING |
-| `G-MEDIUM-UNIFORM-WARM` | all 32 | uniform | medium | 4,000 updates | `9458581` PASS | `9461500` | RUNNING |
-| `G-DEEP-UNIFORM-WARM` | all 32 | uniform | deep | 4,000 updates | `9458585` PASS | `9461504` | RUNNING |
-| `F-MEDIUM-UNIFORM-WARM` | 18 foundations | uniform | medium | 4,000 updates | `9458616` PASS | `9461507` | RUNNING |
-| `T-MEDIUM-UNIFORM-WARM` | 14 trenches | uniform | medium | 4,000 updates | `9458619` PASS | `9461512` | RUNNING |
+| `G-MEDIUM-ADAPTIVE-WARM` | all 32 | adaptive | medium | 4,000 updates | `9458568` PASS | `9461489` | COMPLETE; 6.27 h early screen |
+| `G-MEDIUM-UNIFORM-WARM` | all 32 | uniform | medium | 4,000 updates | `9458581` PASS | `9461500` | COMPLETE; 6.22 h early screen |
+| `G-DEEP-UNIFORM-WARM` | all 32 | uniform | deep | 4,000 updates | `9458585` PASS | `9461504` | COMPLETE; 7.98 h early screen |
+| `F-MEDIUM-UNIFORM-WARM` | 18 foundations | uniform | medium | 4,000 updates | `9458616` PASS | `9461507` | COMPLETE; 6.32 h early screen |
+| `T-MEDIUM-UNIFORM-WARM` | 14 trenches | uniform | medium | 4,000 updates | `9458619` PASS | `9461512` | COMPLETE; 6.21 h early screen |
 
 All five use the same P5 parent/teacher and low entropy
 `0.02 -> 0.005 / 10,000`. Fixed evaluations are due every 500 updates on
@@ -71,7 +70,7 @@ dumping. They remain outside the constrained macro.
 
 The controls are physically permissive but target-mask OOD. E8's legacy
 near-1 online `swhr` used a different protocol and is not a counterexample.
-P5c will evaluate them separately at every checkpoint; adding them to training
+P5c evaluated them separately at every checkpoint; adding them to training
 would require a separate, versioned 34-condition treatment.
 
 Diagnostic roots:
@@ -81,7 +80,12 @@ Diagnostic roots:
 
 ## Long-run boundary
 
-Do not submit a 20,000-update/120-hour continuation from startup or one good
-checkpoint. It requires positive evidence across multiple fixed checkpoints,
-both constrained panels, both families, the condition tail, and both all-free
-controls. `RUNNING`, finite loss, and GPU activity are admission evidence only.
+Future behavioral screens receive at least one healthy 24-hour allocation.
+Configure more updates than can fit in that allocation, checkpoint every
+100--500 updates, and classify a wall-time exit with a valid checkpoint as
+`CONTINUABLE`. Promising policies continue with true `--resume_from` state on
+the 120-hour queue; they do not restart parameters, optimizer, schedules, or
+adaptive sampler state. Stop only after fixed held-out exact, macro, and tail
+metrics plateau across multiple checkpoints. The full contract is
+[`research/P5_ACCEPTED_BANK_EXPERIMENTS.md`](research/P5_ACCEPTED_BANK_EXPERIMENTS.md)
+section 12.

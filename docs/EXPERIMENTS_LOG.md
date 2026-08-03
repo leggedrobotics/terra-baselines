@@ -68,7 +68,7 @@ both had `2,441,223` parameters. The likely recipe mismatch is P5b entropy
 decline when KL reached zero. This is the P5c hypothesis, not a post-hoc claim
 that entropy caused the decline.
 
-## Active frozen campaign: P5c (`SCREEN RUNNING`)
+## Completed early learning-curve screen: P5c
 
 P5c freezes five 4,000-update arms with evaluation every 500 updates: medium
 adaptive, medium uniform, deep uniform, foundation medium-uniform, and trench
@@ -76,9 +76,15 @@ medium-uniform. Allocated update-1 smoke jobs `9458568`, `9458581`, `9458585`,
 `9458616`, and `9458619` all completed `0:0` and passed. Screen jobs `9461489`,
 `9461500`, `9461504`, `9461507`, and `9461512` were then submitted from
 revision `3478af87950d3d35059344b078209d00785c8481` and crossed finite update
-1 with transition-integrity checks enabled. All share entropy
+1 with transition-integrity checks enabled. All five subsequently completed
+4,000 updates in 6.2--8.0 hours. All share entropy
 `0.02 -> 0.005 / 10,000` and the common P5 parent/teacher. The specialists are
 family dose ceilings; they do not enter the causal sampler/depth comparison.
 Every checkpoint must be evaluated on constrained promotion/development and
-diagnostic all-free promotion/development. A long run remains gated on a
-positive multi-checkpoint result without family, tail, or control regression.
+diagnostic all-free promotion/development. Because online training success was
+still rising at the terminal checkpoint, these runs are not saturation
+evidence. Future behavioral screens receive at least 24 healthy hours with an
+oversized absolute update target; promising checkpoints continue with true
+resume state on the 120-hour queue. See
+[`research/P5_ACCEPTED_BANK_EXPERIMENTS.md`](research/P5_ACCEPTED_BANK_EXPERIMENTS.md)
+section 12.
