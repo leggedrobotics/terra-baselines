@@ -4,6 +4,7 @@ set -euo pipefail
 if [ "$#" -lt 1 ] || [ "$#" -gt 5 ]; then
     echo "usage: submit.sh smoke|screen capability [SEED]" >&2
     echo "       submit.sh smoke|screen nearby SEED DEEP_GATE.json XATTN_GATE.json" >&2
+    echo "       submit.sh smoke|screen full SEED DEEP_GATE.json XATTN_GATE.json" >&2
     exit 2
 fi
 PHASE="$1"
@@ -16,6 +17,11 @@ case "$STAGE" in
         ;;
     nearby)
         test "$#" -eq 5 || { echo "nearby requires both Stage-A gate receipts" >&2; exit 2; }
+        PRIOR_STAGE=capability
+        ;;
+    full)
+        test "$#" -eq 5 || { echo "full requires both Stage-B gate receipts" >&2; exit 2; }
+        PRIOR_STAGE=nearby
         ;;
     *) echo "stage '$STAGE' is not enabled by this launcher revision" >&2; exit 2 ;;
 esac
@@ -58,11 +64,11 @@ else
         GATE_PATH="${GATE_ARGUMENTS[$INDEX]}"
         test -f "$GATE_PATH"
         INFO="$($LOCAL_PYTHON "$GATE_TOOL" inspect \
-            --receipt "$GATE_PATH" --stage capability --arm "$ARM")"
+            --receipt "$GATE_PATH" --stage "$PRIOR_STAGE" --arm "$ARM")"
         read -r CANDIDATE CANDIDATE_SHA RECEIPT_SHA NEXT_STAGE <<< "$($LOCAL_PYTHON -c \
             'import json,sys; d=json.load(sys.stdin); print(d["candidate_path"], d["candidate_sha256"], d["receipt_sha256"], d["next_stage"])' \
             <<< "$INFO")"
-        test "$NEXT_STAGE" = nearby
+        test "$NEXT_STAGE" = "$STAGE"
         PARENTS[$ARM]="$CANDIDATE"
         PARENT_SHAS[$ARM]="$CANDIDATE_SHA"
         GATE_PATHS[$ARM]="$GATE_PATH"
@@ -71,7 +77,11 @@ else
     done
 fi
 
-case "$STAGE" in capability) SCREEN_UPDATES=2000 ;; nearby) SCREEN_UPDATES=4000 ;; esac
+case "$STAGE" in
+    capability) SCREEN_UPDATES=2000 ;;
+    nearby) SCREEN_UPDATES=4000 ;;
+    full) SCREEN_UPDATES=8000 ;;
+esac
 
 git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null
 test -z "$(git -C "$REPO" status --porcelain)" || {
@@ -100,6 +110,9 @@ if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: no SSH, scratch, W&B, or Slurm mutation"
     for ARM in "${ARMS[@]}"; do
         echo "future sbatch: phase=$PHASE stage=$STAGE arm=$ARM seed=$SEED parent_sha=${PARENT_SHAS[$ARM]} gate_sha=${GATE_SHAS[$ARM]}"
+        if [ "$PHASE" = screen ] && [ "$STAGE" = full ]; then
+            echo "future dependent tail evaluator: arm=$ARM dependency=afterany:PARENT_JOB_ID"
+        fi
     done
     exit 0
 fi
@@ -122,7 +135,7 @@ if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_BANK'"; then
     ssh "$REMOTE_HOST" "test \"\$(sha256sum '$PARTIAL' | awk '{print \$1}')\" = '$BANK_SHA' && mv '$PARTIAL' '$REMOTE_BANK'"
 fi
 ssh "$REMOTE_HOST" "test \"\$(sha256sum '$REMOTE_BANK' | awk '{print \$1}')\" = '$BANK_SHA'"
-if [ "$STAGE" = nearby ]; then
+if [ "$STAGE" != capability ]; then
     ssh "$REMOTE_HOST" "mkdir -p '$REMOTE_INPUTS/gates'"
     for ARM in "${ARMS[@]}"; do
         REMOTE_GATE="${REMOTE_GATES[$ARM]}"
@@ -155,4 +168,9 @@ for ARM in "${ARMS[@]}"; do
         ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_deep_xattn_v1/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --exclude='eu-g6-064' --job-name='terra-v8-${PHASE}-${STAGE}-${ARM}' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'"
     )"
     echo "$PHASE $STAGE $ARM $JOB_ID"
+    if [ "$PHASE" = screen ] && [ "$STAGE" = full ]; then
+        SUBMIT=1 REMOTE_HOST="$REMOTE_HOST" TERRA_REPO="$TERRA_REPO" \
+            "$REPO/scripts/euler_v8_deep_xattn_v1/submit_tail.sh" \
+            "$JOB_ID" "$ARM" "$SEED" "${GATE_PATHS[$ARM]}"
+    fi
 done

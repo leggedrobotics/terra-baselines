@@ -499,6 +499,15 @@ def _checkpoint_load_mode(config) -> str | None:
     return None
 
 
+def resolve_run_name(
+    requested_name: str, machine: str, timestamp: str, exact_run_name: bool
+) -> str:
+    """Keep a resumed treatment name stable when explicitly requested."""
+    if exact_run_name:
+        return requested_name
+    return f"{requested_name}-{machine}-{timestamp}"
+
+
 def _backfill_terminal_rewards(
     reward_seq: jax.Array,
     terminal_reward_seq: jax.Array,
@@ -3070,6 +3079,14 @@ if __name__ == "__main__":
         help="Experiment name",
     )
     parser.add_argument(
+        "--exact_run_name",
+        action="store_true",
+        help=(
+            "Use --name verbatim. Intended for a true resume whose fixed-bank "
+            "treatment identity must match its source checkpoint."
+        ),
+    )
+    parser.add_argument(
         "-m", "--machine", type=str, default="local", help="Machine identifier"
     )
     parser.add_argument(
@@ -3861,7 +3878,7 @@ if __name__ == "__main__":
             f"length (got {len(resnet_stage_channels)} vs {len(resnet_blocks_per_stage)})."
         )
 
-    name = f"{args.name}-{args.machine}-{DT}"
+    name = resolve_run_name(args.name, args.machine, DT, args.exact_run_name)
 
     config = MixedAgentTrainConfig(
         name=name,

@@ -38,6 +38,13 @@ case "$STAGE" in
         ;;
     nearby)
         EXPECTED_CONDITIONS=15
+        PRIOR_STAGE=capability
+        test "$PRIOR_GATE_RECEIPT" != none
+        test "$PRIOR_GATE_SHA" != none
+        ;;
+    full)
+        EXPECTED_CONDITIONS=47
+        PRIOR_STAGE=nearby
         test "$PRIOR_GATE_RECEIPT" != none
         test "$PRIOR_GATE_SHA" != none
         ;;
@@ -83,7 +90,7 @@ test "$BANK_RELEASE_ID" = "$EXPECTED_RELEASE"
 test "$(cat "$BASELINES_ROOT/REVISION")" = "$BASELINES_REVISION"
 test "$(sha256sum "$P5_ARCHIVE" | awk '{print $1}')" = "$P5_SHA"
 test "$(sha256sum "$PARENT_CHECKPOINT" | awk '{print $1}')" = "$PARENT_SHA"
-if [ "$STAGE" = nearby ]; then
+if [ "$STAGE" != capability ]; then
     test "$(sha256sum "$PRIOR_GATE_RECEIPT" | awk '{print $1}')" = "$PRIOR_GATE_SHA"
 fi
 test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_SHA"
@@ -136,9 +143,9 @@ export JAX_PLATFORMS=cuda
 MAPS_PER_CONDITION="$(PYTHONPATH="$BASELINES_ROOT" "$PYTHON" "$BASELINES_ROOT/scripts/euler_accepted_bank_v1/validate_training_bank.py" "$BANK" --expected-maps-per-condition 96 --expected-release-id "$EXPECTED_RELEASE")"
 test "$MAPS_PER_CONDITION" = 96
 "$PYTHON" -c 'import sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], "G-UNIFORM", sys.argv[2], curriculum_stage=sys.argv[3]); assert len(b.levels)==int(sys.argv[4]); assert b.map_count_per_condition==96; assert abs(sum(b.sampling_probabilities)-1.0)<1e-12' "$BANK" "$TERRA_REVISION" "$STAGE" "$EXPECTED_CONDITIONS"
-if [ "$STAGE" = nearby ]; then
+if [ "$STAGE" != capability ]; then
     JAX_PLATFORMS=cpu "$PYTHON" "$BASELINES_ROOT/scripts/euler_v8_deep_xattn_v1/stage_gate.py" inspect \
-        --receipt "$PRIOR_GATE_RECEIPT" --stage capability --arm "$ARM" \
+        --receipt "$PRIOR_GATE_RECEIPT" --stage "$PRIOR_STAGE" --arm "$ARM" \
         --expect-candidate "$PARENT_CHECKPOINT" \
         --expect-candidate-sha256 "$PARENT_SHA" --verify-checkpoint >/dev/null
 fi
@@ -235,6 +242,15 @@ printf '%q ' "${TRAIN_COMMAND[@]}" > "$RUN_DIR/train_command.sh"
 printf '\n' >> "$RUN_DIR/train_command.sh"
 "${TRAIN_COMMAND[@]}"
 
+# Full-stage and 120-hour allocations are evaluated in a separate `afterany`
+# job.  Keeping evaluation out of the training tail preserves every complete
+# checkpoint even when Slurm stops training at the wall-time boundary.
+if [ "$PHASE" = screen ] && [ "$STAGE" = full ]; then
+    printf '%s\n' status=TRAINING_FINISHED >> "$RUN_DIR/run_contract.env"
+    echo "V8_SCREEN_FULL_${ARM}_TRAINING_FINISHED"
+    exit 0
+fi
+
 find_one() {
     local pattern="$1"
     local -a matches
@@ -268,7 +284,7 @@ else
             --expect-completion-contract exact_visible_dump_v1 \
             --output "$RUN_DIR/eval/${PANEL}.json"
     done
-    if [ "$STAGE" = nearby ]; then
+    if [ "$STAGE" != capability ]; then
         for PANEL in promotion development; do
             JAX_PLATFORMS=cuda "$PYTHON" "$BASELINES_ROOT/eval_fixed_bank.py" \
                 "${CHECKPOINT_ARGS[@]}" \
@@ -284,7 +300,7 @@ else
         --run-contract "$RUN_DIR/run_contract.env"
         --output "$RUN_DIR/stage_gate.json"
     )
-    if [ "$STAGE" = nearby ]; then
+    if [ "$STAGE" != capability ]; then
         GATE_ARGS+=(
             --capability "$RUN_DIR/eval/capability_promotion.json"
             --prior-receipt "$PRIOR_GATE_RECEIPT"

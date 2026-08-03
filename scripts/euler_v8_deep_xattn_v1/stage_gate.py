@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import pickle
 import re
 import sys
@@ -43,13 +44,18 @@ CAPABILITY_IDS = ("fnd-slab-allfree", "trn-straight-allfree")
 STAGE_UPDATES = {
     "capability": tuple(range(500, 2001, 500)),
     "nearby": tuple(range(500, 4001, 500)),
+    "full": tuple(range(500, 8001, 500)),
 }
 STAGE_SAMPLING_SHA256 = {
     "capability": "a569e04eba1bc2ed7cff9d084ff75c7a09224df6d600a4ab647a7b28c15f8633",
     "nearby": "a681e5e92562a322db2627825e607df2d7b8ece708f9bcd87d5d0d710b3ae398",
+    "full": "2a457be780e086c02e0474489b2060d6c577fac0ac429c48ad1a7e1e5e011357",
 }
-NEXT_STAGE = {"capability": "nearby", "nearby": "full"}
-EXPECTED_CONDITIONS = {"capability": 2, "nearby": 15}
+NEXT_STAGE = {"capability": "nearby", "nearby": "full", "full": "continuation"}
+PRIOR_STAGE = {"nearby": "capability", "full": "nearby"}
+EXPECTED_CONDITIONS = {"capability": 2, "nearby": 15, "full": 47}
+FULL_PROGRESS_MIN_MACRO_GAIN = 0.001
+FULL_GUARD_MAX_REGRESSION = 0.05
 ARM_ARCHITECTURES = {
     "G-DEEP-V8-DENSE-WARM": {
         "label": "deep-se",
@@ -501,10 +507,17 @@ def validate_evaluation(
 ) -> list[dict]:
     records = _read_json(path, list)
     expected_updates = STAGE_UPDATES[stage]
-    if tuple(record.get("checkpoint_update") for record in records) != expected_updates:
+    observed_updates = tuple(record.get("checkpoint_update") for record in records)
+    valid_updates = (
+        len(observed_updates) >= 2
+        and observed_updates == expected_updates[: len(observed_updates)]
+        if stage == "full"
+        else observed_updates == expected_updates
+    )
+    if not valid_updates:
         raise ValueError(
-            f"{path}: expected checkpoints {expected_updates}, got "
-            f"{tuple(record.get('checkpoint_update') for record in records)}"
+            f"{path}: expected checkpoint prefix of {expected_updates}, got "
+            f"{observed_updates}"
         )
     reference_architecture = None
     reference_name = None
@@ -814,8 +827,27 @@ def validate_prior_receipt(path: Path, arm: str, expected_stage: str) -> dict:
         raise ValueError(f"{path}: prior receipt lacks its candidate")
     _require_sha256(candidate.get("checkpoint_sha256"), "prior candidate hash")
     _validate_remote_checkpoint_path(candidate.get("path"), arm)
+    scheduled_updates = list(STAGE_UPDATES[expected_stage])
+    if receipt.get("scheduled_updates") != scheduled_updates:
+        raise ValueError(f"{path}: prior scheduled updates changed")
+    if expected_stage == "full":
+        evaluated_updates = receipt.get("evaluated_updates")
+        if (
+            not isinstance(evaluated_updates, list)
+            or len(evaluated_updates) < 2
+            or evaluated_updates != scheduled_updates[: len(evaluated_updates)]
+        ):
+            raise ValueError(
+                f"{path}: full receipt lacks a contiguous evaluated prefix"
+            )
+        candidate_update = evaluated_updates[-1]
+        expected_pair = evaluated_updates[-2:]
+    else:
+        evaluated_updates = scheduled_updates
+        candidate_update = scheduled_updates[-1]
+        expected_pair = scheduled_updates[-2:]
     expected_candidate = {
-        "next_update": STAGE_UPDATES[expected_stage][-1],
+        "next_update": candidate_update,
         "architecture": ARM_ARCHITECTURES[arm]["label"],
         "map_encoder": ARM_ARCHITECTURES[arm]["map_encoder"],
         "curriculum_stage": expected_stage,
@@ -823,27 +855,41 @@ def validate_prior_receipt(path: Path, arm: str, expected_stage: str) -> dict:
     for field, value in expected_candidate.items():
         if candidate.get(field) != value:
             raise ValueError(f"{path}: prior candidate {field} must be {value!r}")
-    if receipt.get("scheduled_updates") != list(STAGE_UPDATES[expected_stage]):
-        raise ValueError(f"{path}: prior scheduled updates changed")
     sampling = receipt.get("sampling")
+    sampling_payload = (
+        {key: value for key, value in sampling.items() if key != "sha256"}
+        if isinstance(sampling, dict)
+        else None
+    )
+    sampling_digest = (
+        hashlib.sha256(
+            json.dumps(
+                sampling_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode()
+        ).hexdigest()
+        if sampling_payload is not None
+        else None
+    )
     if (
         not isinstance(sampling, dict)
         or sampling.get("stage") != expected_stage
         or sampling.get("sha256") != STAGE_SAMPLING_SHA256[expected_stage]
+        or sampling_digest != STAGE_SAMPLING_SHA256[expected_stage]
+        or sampling.get("maps_per_condition") != 96
+        or len(sampling.get("conditions", ())) != EXPECTED_CONDITIONS[expected_stage]
     ):
         raise ValueError(f"{path}: prior sampling contract changed")
-    if receipt.get("evaluated_pair") != list(STAGE_UPDATES[expected_stage][-2:]):
+    if receipt.get("evaluated_pair") != expected_pair:
         raise ValueError(f"{path}: prior gate did not use the latest checkpoint pair")
     thresholds = receipt.get("retention", {}).get("frozen_thresholds")
     mastery = receipt.get("mastery", {})
     if not isinstance(thresholds, dict) or not isinstance(mastery, dict):
         raise ValueError(f"{path}: prior receipt lacks frozen mastery thresholds")
-    if expected_stage == "capability" and set(mastery) != set(CAPABILITY_IDS):
-        raise ValueError(f"{path}: Stage-A mastery set changed")
-    if expected_stage == "nearby" and (
-        len(mastery) != 15 or not set(CAPABILITY_IDS).issubset(mastery)
-    ):
-        raise ValueError(f"{path}: Stage-B mastery set changed")
+    if set(mastery) != set(sampling["conditions"]):
+        raise ValueError(f"{path}: prior mastery set changed")
     if receipt.get("retention", {}).get("rollback_triggered") is not False:
         raise ValueError(f"{path}: rollback-triggered receipt cannot promote")
     if receipt.get("integrity_pair") != [True, True]:
@@ -860,7 +906,95 @@ def validate_prior_receipt(path: Path, arm: str, expected_stage: str) -> dict:
             raise ValueError(f"{path}: invalid mastery pair for {condition_id}")
         floor = 12 if condition_id in CAPABILITY_IDS else 11
         expected_thresholds[condition_id] = max(floor, min(values) - 1)
-    if thresholds != expected_thresholds:
+    if expected_stage == "full":
+        inherited = receipt.get("retention", {}).get("inherited_thresholds")
+        if (
+            not isinstance(inherited, dict)
+            or thresholds != inherited
+            or not set(thresholds).issubset(mastery)
+            or len(thresholds) != EXPECTED_CONDITIONS["nearby"]
+        ):
+            raise ValueError(f"{path}: full inherited retention thresholds changed")
+        qualification = receipt.get("continuation_qualification")
+        if (
+            not isinstance(qualification, dict)
+            or qualification.get("qualified_for_120h") is not True
+            or qualification.get("candidate_update") != candidate_update
+            or qualification.get("promotion", {}).get("progress_passed") is not True
+            or qualification.get("promotion", {}).get("guards_passed") is not True
+            or qualification.get("development", {}).get("guards_passed") is not True
+            or qualification.get("integrity_passed_all_panels") is not True
+            or qualification.get("inherited_retention_passed") is not True
+        ):
+            raise ValueError(f"{path}: full receipt is not qualified for continuation")
+        evaluated_checkpoints = receipt.get("evaluated_checkpoints")
+        if not isinstance(evaluated_checkpoints, list) or len(
+            evaluated_checkpoints
+        ) != len(evaluated_updates):
+            raise ValueError(
+                f"{path}: full receipt lacks evaluated checkpoint identities"
+            )
+        for update, checkpoint in zip(evaluated_updates, evaluated_checkpoints):
+            if (
+                not isinstance(checkpoint, dict)
+                or checkpoint.get("next_update") != update
+            ):
+                raise ValueError(f"{path}: full evaluated checkpoint order changed")
+            _validate_remote_checkpoint_path(checkpoint.get("path"), arm)
+            _require_sha256(
+                checkpoint.get("checkpoint_sha256"),
+                f"{path}: full evaluated checkpoint hash",
+            )
+        if evaluated_checkpoints[-1] != candidate:
+            raise ValueError(f"{path}: full candidate is not the evaluated tail")
+        checkpoints_by_update = {
+            checkpoint["next_update"]: checkpoint
+            for checkpoint in evaluated_checkpoints
+        }
+        reference_update = qualification.get("reference_update")
+        if (
+            reference_update not in checkpoints_by_update
+            or qualification.get("reference_checkpoint_sha256")
+            != checkpoints_by_update[reference_update]["checkpoint_sha256"]
+            or qualification.get("candidate_checkpoint_sha256")
+            != candidate["checkpoint_sha256"]
+        ):
+            raise ValueError(f"{path}: full continuation checkpoint identity changed")
+        parent_job = receipt.get("parent_slurm_job")
+        run_contract_input = receipt.get("inputs", {}).get("run_contract")
+        if (
+            not isinstance(parent_job, dict)
+            or parent_job.get("schema") != "terra_v8_parent_slurm_job_v1"
+            or parent_job.get("state") not in ("COMPLETED", "TIMEOUT")
+            or parent_job.get("checkpoint_updates") != evaluated_updates
+            or parent_job.get("partition") != "gpuhe.24h"
+            or parent_job.get("terra_baselines_revision")
+            != receipt.get("terra_baselines_revision")
+            or re.fullmatch(r"[0-9]+", str(parent_job.get("evaluator_job_id"))) is None
+            or not isinstance(run_contract_input, dict)
+            or parent_job.get("run_contract") != run_contract_input
+        ):
+            raise ValueError(f"{path}: full parent Slurm identity changed")
+        parent_run_dir = Path(str(parent_job.get("run_dir")))
+        if run_contract_input.get("path") != str(
+            parent_run_dir / "run_contract.env"
+        ) or len(parent_job.get("checkpoints", ())) != len(evaluated_checkpoints):
+            raise ValueError(f"{path}: full parent run-contract binding changed")
+        for parent_checkpoint, evaluated in zip(
+            parent_job["checkpoints"], evaluated_checkpoints
+        ):
+            expected_parent = {
+                "update": evaluated["next_update"],
+                "path": evaluated["path"],
+                "sha256": evaluated["checkpoint_sha256"],
+            }
+            if (
+                parent_checkpoint != expected_parent
+                or Path(parent_checkpoint["path"]).parent
+                != parent_run_dir / "checkpoints"
+            ):
+                raise ValueError(f"{path}: full parent checkpoint binding changed")
+    elif thresholds != expected_thresholds:
         raise ValueError(f"{path}: prior retention thresholds were modified")
     return receipt
 
@@ -901,6 +1035,44 @@ def decide_capability(records: list[dict]) -> dict:
     }
 
 
+def _retention_audit(
+    mastery_history: dict[str, list[int]],
+    inherited: dict[str, int],
+    updates: list[int],
+) -> dict:
+    if set(mastery_history) != set(inherited):
+        raise ValueError("retention history does not match inherited conditions")
+    if any(len(values) != len(updates) for values in mastery_history.values()):
+        raise ValueError("retention history length does not match evaluations")
+    failures = {
+        condition_id: [value < inherited[condition_id] for value in values]
+        for condition_id, values in mastery_history.items()
+    }
+    failure_history = [
+        any(values[index] for values in failures.values())
+        for index in range(len(updates))
+    ]
+    rollback_index = next(
+        (
+            index
+            for index in range(1, len(failure_history))
+            if failure_history[index - 1] and failure_history[index]
+        ),
+        None,
+    )
+    return {
+        "failures": failures,
+        "failure_history": failure_history,
+        "rollback_triggered": rollback_index is not None,
+        "rollback_updates": (
+            None
+            if rollback_index is None
+            else [updates[rollback_index - 1], updates[rollback_index]]
+        ),
+        "latest_pair_passed": [not failed for failed in failure_history[-2:]],
+    }
+
+
 def decide_nearby(
     records: list[dict],
     capability_records: list[dict],
@@ -930,30 +1102,10 @@ def decide_nearby(
         condition_id: values[-2:] for condition_id, values in capability_history.items()
     }
     inherited = prior_receipt["retention"]["frozen_thresholds"]
-    failures = {
-        condition_id: [value < inherited[condition_id] for value in values]
-        for condition_id, values in capability_history.items()
-    }
-    retention_failure_history = [
-        any(values[index] for values in failures.values())
-        for index in range(len(capability_records))
-    ]
-    rollback_index = next(
-        (
-            index
-            for index in range(1, len(retention_failure_history))
-            if retention_failure_history[index - 1] and retention_failure_history[index]
-        ),
-        None,
-    )
-    rollback = rollback_index is not None
-    rollback_updates = (
-        None
-        if rollback_index is None
-        else [
-            capability_records[rollback_index - 1]["checkpoint_update"],
-            capability_records[rollback_index]["checkpoint_update"],
-        ]
+    retention = _retention_audit(
+        capability_history,
+        inherited,
+        [record["checkpoint_update"] for record in capability_records],
     )
     core_pass = []
     family_totals = []
@@ -974,18 +1126,17 @@ def decide_nearby(
             and trench >= 91
             and all(values[index] >= 12 for values in core_mastery.values())
         )
-    capability_pass = [
-        all(
-            values[index] >= inherited[condition_id]
-            for condition_id, values in capability_mastery.items()
-        )
-        for index in range(2)
-    ]
+    capability_pass = retention["latest_pair_passed"]
     integrity = [
         _integrity_passed(main) and _integrity_passed(capability)
         for main, capability in zip(pair, capability_pair)
     ]
-    passed = all(core_pass) and all(capability_pass) and all(integrity) and not rollback
+    passed = (
+        all(core_pass)
+        and all(capability_pass)
+        and all(integrity)
+        and not retention["rollback_triggered"]
+    )
     new_thresholds = (
         {
             condition_id: max(11, min(values) - 1)
@@ -1009,11 +1160,292 @@ def decide_nearby(
         "inherited_thresholds": inherited,
         "new_thresholds": new_thresholds,
         "frozen_thresholds": frozen,
-        "failures": failures,
-        "retention_failure_history": retention_failure_history,
-        "rollback_updates": rollback_updates,
-        "rollback_triggered": rollback,
+        "failures": retention["failures"],
+        "retention_failure_history": retention["failure_history"],
+        "rollback_updates": retention["rollback_updates"],
+        "rollback_triggered": retention["rollback_triggered"],
     }
+
+
+def decide_full(
+    records: list[dict],
+    capability_records: list[dict],
+    prior_receipt: dict,
+    main_ids: tuple[str, ...],
+    family_by_condition: dict[str, str],
+) -> dict:
+    for main, capability in zip(records, capability_records):
+        if _checkpoint_identity(main) != _checkpoint_identity(capability):
+            raise ValueError(
+                "full main and capability panels name different checkpoints"
+            )
+    main_history = {
+        condition_id: [
+            _cell_counts(record, main_ids)[condition_id] for record in records
+        ]
+        for condition_id in main_ids
+    }
+    capability_history = {
+        condition_id: [
+            _cell_counts(record, CAPABILITY_IDS)[condition_id]
+            for record in capability_records
+        ]
+        for condition_id in CAPABILITY_IDS
+    }
+    all_history = {**capability_history, **main_history}
+    inherited = prior_receipt["retention"]["frozen_thresholds"]
+    inherited_history = {
+        condition_id: all_history[condition_id] for condition_id in inherited
+    }
+    updates = [record["checkpoint_update"] for record in records]
+    retention = _retention_audit(inherited_history, inherited, updates)
+    integrity_history = [
+        _integrity_passed(main) and _integrity_passed(capability)
+        for main, capability in zip(records, capability_records)
+    ]
+    latest_mastery = {
+        condition_id: values[-2:] for condition_id, values in all_history.items()
+    }
+    family_totals = []
+    for index in (-2, -1):
+        family_totals.append(
+            {
+                family: sum(
+                    values[index]
+                    for condition_id, values in main_history.items()
+                    if family_by_condition[condition_id] == family
+                )
+                for family in ("foundation", "trench")
+            }
+        )
+    passed = (
+        all(retention["latest_pair_passed"])
+        and not retention["rollback_triggered"]
+        and all(integrity_history)
+    )
+    return {
+        "passed": passed,
+        "reason": (
+            "full-V8 screen retains all inherited conditions without integrity loss"
+            if passed
+            else "full-V8 screen violates inherited retention or integrity"
+        ),
+        "mastery": latest_mastery,
+        "family_totals": family_totals,
+        "integrity_pair": integrity_history[-2:],
+        "integrity_history": integrity_history,
+        "inherited_thresholds": inherited,
+        "new_thresholds": {},
+        "frozen_thresholds": inherited,
+        "failures": retention["failures"],
+        "retention_failure_history": retention["failure_history"],
+        "rollback_updates": retention["rollback_updates"],
+        "rollback_triggered": retention["rollback_triggered"],
+    }
+
+
+def _full_progress_snapshot(record: dict, v6_ids: tuple[str, ...]) -> dict:
+    """Return the small set of fixed-bank metrics used to award long compute."""
+    try:
+        exact_cells = record["summary"]["by_primary_cell"]
+        graded = record["summary"]["graded"]
+        graded_cells = graded["by_primary_cell"]
+        by_family = graded["by_family"]
+        values = {
+            "v6_exact_successes": sum(
+                int(exact_cells[condition_id]["successes"]) for condition_id in v6_ids
+            ),
+            "v6_macro_completion": sum(
+                float(graded_cells[condition_id]["mean"]) for condition_id in v6_ids
+            )
+            / len(v6_ids),
+            "foundation_macro_completion": float(
+                by_family["foundation"]["macro_completion"]
+            ),
+            "trench_macro_completion": float(by_family["trench"]["macro_completion"]),
+            "micro_p10": float(graded["micro"]["p10"]),
+            "worst_condition_completion": float(graded["worst_condition_completion"]),
+        }
+    except (KeyError, TypeError, ValueError, ZeroDivisionError) as exc:
+        raise ValueError("full evaluation lacks graded V6 progress metrics") from exc
+    if graded.get("available") is not True or not all(
+        math.isfinite(value) for value in values.values()
+    ):
+        raise ValueError("full evaluation has unavailable or non-finite graded metrics")
+    return values
+
+
+def _full_progress_comparison(reference: dict, candidate: dict) -> dict:
+    deltas = {
+        key: candidate[key] - reference[key]
+        for key in (
+            "v6_exact_successes",
+            "v6_macro_completion",
+            "foundation_macro_completion",
+            "trench_macro_completion",
+            "micro_p10",
+            "worst_condition_completion",
+        )
+    }
+    progress_passed = (
+        deltas["v6_exact_successes"] >= 1
+        or deltas["v6_macro_completion"] >= FULL_PROGRESS_MIN_MACRO_GAIN
+    )
+    guards_passed = all(
+        deltas[key] >= -FULL_GUARD_MAX_REGRESSION
+        for key in (
+            "foundation_macro_completion",
+            "trench_macro_completion",
+            "micro_p10",
+            "worst_condition_completion",
+        )
+    )
+    return {
+        "reference": reference,
+        "candidate": candidate,
+        "deltas": deltas,
+        "required_v6_exact_gain": 1,
+        "required_v6_macro_gain": FULL_PROGRESS_MIN_MACRO_GAIN,
+        "max_guard_regression": FULL_GUARD_MAX_REGRESSION,
+        "progress_passed": progress_passed,
+        "guards_passed": guards_passed,
+    }
+
+
+def qualify_full_continuation(
+    promotion_records: list[dict],
+    development_records: list[dict],
+    capability_promotion_records: list[dict],
+    capability_development_records: list[dict],
+    main_ids: tuple[str, ...],
+    core_ids: tuple[str, ...],
+) -> dict:
+    """Apply a permissive, held-out, new-constraint gate for 120-hour compute."""
+    record_sets = (
+        promotion_records,
+        development_records,
+        capability_promotion_records,
+        capability_development_records,
+    )
+    update_sequences = [
+        [int(record["checkpoint_update"]) for record in records]
+        for records in record_sets
+    ]
+    if any(sequence != update_sequences[0] for sequence in update_sequences[1:]):
+        raise ValueError("full promotion/development checkpoint sequences differ")
+    for record in (*promotion_records, *development_records):
+        _cell_counts(record, main_ids)
+    for record in (
+        *capability_promotion_records,
+        *capability_development_records,
+    ):
+        _cell_counts(record, CAPABILITY_IDS)
+    for records in record_sets[1:]:
+        for main, other in zip(promotion_records, records):
+            if _checkpoint_identity(main) != _checkpoint_identity(other):
+                raise ValueError("full evaluation panels name different checkpoints")
+    v6_ids = tuple(
+        condition_id for condition_id in main_ids if condition_id not in core_ids
+    )
+    if len(v6_ids) != 32:
+        raise ValueError("full continuation gate expected exactly 32 V6 conditions")
+    candidate_index = len(promotion_records) - 1
+    reference_index = max(0, candidate_index - 2)
+    promotion_comparison = _full_progress_comparison(
+        _full_progress_snapshot(promotion_records[reference_index], v6_ids),
+        _full_progress_snapshot(promotion_records[candidate_index], v6_ids),
+    )
+    development_comparison = _full_progress_comparison(
+        _full_progress_snapshot(development_records[reference_index], v6_ids),
+        _full_progress_snapshot(development_records[candidate_index], v6_ids),
+    )
+    integrity_passed = all(
+        _integrity_passed(record) for records in record_sets for record in records
+    )
+    qualified = bool(
+        promotion_comparison["progress_passed"]
+        and promotion_comparison["guards_passed"]
+        and development_comparison["guards_passed"]
+        and integrity_passed
+    )
+    return {
+        "reference_update": update_sequences[0][reference_index],
+        "candidate_update": update_sequences[0][candidate_index],
+        "promotion": promotion_comparison,
+        "development": development_comparison,
+        "integrity_passed_all_panels": integrity_passed,
+        "qualified_for_120h": qualified,
+    }
+
+
+def validate_parent_job_receipt(
+    path: Path,
+    run_contract_path: Path,
+    run_contract: dict[str, str],
+    evaluated_updates: list[int],
+) -> dict:
+    receipt = _read_json(path, dict)
+    expected = {
+        "schema": "terra_v8_parent_slurm_job_v1",
+        "job_id": run_contract.get("slurm_job_id"),
+        "checkpoint_updates": evaluated_updates,
+    }
+    for field, value in expected.items():
+        if receipt.get(field) != value:
+            raise ValueError(f"{path}: parent job {field} must be {value!r}")
+    if receipt.get("state") not in ("COMPLETED", "TIMEOUT"):
+        raise ValueError(f"{path}: parent training job did not complete or time out")
+    state = receipt["state"]
+    exit_code = str(receipt.get("exit_code"))
+    if re.fullmatch(r"[0-9]+:[0-9]+", exit_code) is None:
+        raise ValueError(f"{path}: parent job lacks a Slurm exit code")
+    if state == "COMPLETED" and exit_code != "0:0":
+        raise ValueError(f"{path}: completed parent has a nonzero exit code")
+    if receipt.get("partition") != "gpuhe.24h":
+        raise ValueError(f"{path}: parent job partition changed")
+    if receipt.get("terra_baselines_revision") != run_contract.get(
+        "terra_baselines_revision"
+    ):
+        raise ValueError(f"{path}: parent job revision changed")
+    evaluator_job_id = str(receipt.get("evaluator_job_id"))
+    if re.fullmatch(r"[0-9]+", evaluator_job_id) is None:
+        raise ValueError(f"{path}: parent receipt lacks evaluator job identity")
+
+    expected_run_dir = (
+        REMOTE_RUN_ROOT
+        / run_contract["terra_baselines_revision"]
+        / "screen"
+        / "full"
+        / f"s{run_contract['seed']}"
+        / run_contract["arm"]
+    )
+    run_dir = receipt.get("run_dir")
+    if run_dir != str(expected_run_dir):
+        raise ValueError(f"{path}: parent run directory changed")
+    run_contract_path = run_contract_path.resolve()
+    if run_contract_path != expected_run_dir / "run_contract.env":
+        raise ValueError(f"{path}: run contract path changed campaign identity")
+    expected_contract = {
+        "path": str(run_contract_path),
+        "sha256": sha256_file(run_contract_path),
+    }
+    if receipt.get("run_contract") != expected_contract:
+        raise ValueError(f"{path}: parent run-contract identity changed")
+    generated = receipt.get("generated_at_utc")
+    if not isinstance(generated, str) or not generated:
+        raise ValueError(f"{path}: parent job receipt lacks generation time")
+    checkpoints = receipt.get("checkpoints")
+    if not isinstance(checkpoints, list) or len(checkpoints) != len(evaluated_updates):
+        raise ValueError(f"{path}: parent job lacks its checkpoint identities")
+    for update, checkpoint in zip(evaluated_updates, checkpoints):
+        if not isinstance(checkpoint, dict) or checkpoint.get("update") != update:
+            raise ValueError(f"{path}: parent checkpoint order changed")
+        checkpoint_path = Path(str(checkpoint.get("path")))
+        if checkpoint_path.parent != expected_run_dir / "checkpoints":
+            raise ValueError(f"{path}: parent checkpoint left the exact run directory")
+        _validate_remote_checkpoint_path(checkpoint.get("path"), run_contract["arm"])
+        _require_sha256(checkpoint.get("sha256"), f"{path}: parent checkpoint hash")
+    return receipt
 
 
 def promote(args: argparse.Namespace) -> dict:
@@ -1025,9 +1457,11 @@ def promote(args: argparse.Namespace) -> dict:
             raise ValueError("Stage A does not accept prior/capability inputs")
     else:
         if args.prior_receipt is None or args.capability is None:
-            raise ValueError("nearby promotion requires prior and capability inputs")
+            raise ValueError(
+                f"{args.stage} promotion requires prior and capability inputs"
+            )
         prior_receipt = validate_prior_receipt(
-            args.prior_receipt.resolve(), args.arm, "capability"
+            args.prior_receipt.resolve(), args.arm, PRIOR_STAGE[args.stage]
         )
     run_contract_path = args.run_contract.resolve()
     run_contract = parse_run_contract(run_contract_path)
@@ -1045,6 +1479,9 @@ def promote(args: argparse.Namespace) -> dict:
         sampling,
     )
     capability_records = None
+    development_records = None
+    capability_development_records = None
+    continuation_qualification = None
     if args.stage == "capability":
         validate_panel_conditions(records, CAPABILITY_IDS)
         decision = decide_capability(records)
@@ -1061,16 +1498,74 @@ def promote(args: argparse.Namespace) -> dict:
             sampling,
         )
         validate_panel_conditions(capability_records, CAPABILITY_IDS)
-        decision = decide_nearby(
-            records,
-            capability_records,
-            prior_receipt,
-            bank["core_ids"],
-            bank["family_by_condition"],
-        )
+        if args.stage == "nearby":
+            decision = decide_nearby(
+                records,
+                capability_records,
+                prior_receipt,
+                bank["core_ids"],
+                bank["family_by_condition"],
+            )
+        else:
+            decision = decide_full(
+                records,
+                capability_records,
+                prior_receipt,
+                bank["main_ids"],
+                bank["family_by_condition"],
+            )
+
+            if (
+                getattr(args, "development", None) is None
+                or getattr(args, "capability_development", None) is None
+                or getattr(args, "parent_job_receipt", None) is None
+            ):
+                raise ValueError(
+                    "full promotion requires development, capability-development, "
+                    "and parent-job-receipt inputs"
+                )
+            development_records = validate_evaluation(
+                args.development.resolve(),
+                args.stage,
+                args.arm,
+                bank,
+                run_contract,
+                panel_contract(bank, "main", "development"),
+                sampling,
+                expected_split="development",
+            )
+            validate_panel_conditions(development_records, bank["main_ids"])
+            capability_development_records = validate_evaluation(
+                args.capability_development.resolve(),
+                args.stage,
+                args.arm,
+                bank,
+                run_contract,
+                panel_contract(bank, "capability", "development"),
+                sampling,
+                expected_split="development",
+            )
+            validate_panel_conditions(capability_development_records, CAPABILITY_IDS)
+            continuation_qualification = qualify_full_continuation(
+                records,
+                development_records,
+                capability_records,
+                capability_development_records,
+                bank["main_ids"],
+                bank["core_ids"],
+            )
+            decision["passed"] = bool(
+                decision["passed"] and continuation_qualification["qualified_for_120h"]
+            )
+            decision["reason"] = (
+                "full-V8 screen retains prior skills and improves V6 constraints"
+                if decision["passed"]
+                else "full-V8 screen failed retention, integrity, or V6 progress"
+            )
 
     pair = records[-2:]
-    validated_pair = [
+    records_to_validate = records if args.stage == "full" else pair
+    validated_checkpoints = [
         validate_candidate_checkpoint(
             record,
             args.stage,
@@ -1078,15 +1573,54 @@ def promote(args: argparse.Namespace) -> dict:
             run_contract,
             sampling,
         )
-        for record in pair
+        for record in records_to_validate
     ]
-    candidate = validated_pair[-1]
+    candidate = validated_checkpoints[-1]
+    if continuation_qualification is not None:
+        by_update = {
+            checkpoint["next_update"]: checkpoint
+            for checkpoint in validated_checkpoints
+        }
+        reference = by_update[continuation_qualification["reference_update"]]
+        continuation_qualification.update(
+            {
+                "reference_checkpoint_sha256": reference["checkpoint_sha256"],
+                "candidate_checkpoint_sha256": candidate["checkpoint_sha256"],
+                "inherited_retention_passed": bool(
+                    not decision["rollback_triggered"]
+                    and all(
+                        not failed
+                        for failed in decision["retention_failure_history"][-2:]
+                    )
+                ),
+                "qualified_for_120h": bool(decision["passed"]),
+            }
+        )
     if args.stage == "capability":
         input_parent_path = candidate["teacher_checkpoint"]
     else:
         input_parent_path = candidate["warm_start_from"]
         if input_parent_path != prior_receipt["candidate"]["path"]:
             raise ValueError("stage transition did not load the prior promoted path")
+
+    evaluated_updates = [record["checkpoint_update"] for record in records]
+    parent_job = None
+    if args.stage == "full":
+        parent_job = validate_parent_job_receipt(
+            args.parent_job_receipt.resolve(),
+            run_contract_path,
+            run_contract,
+            evaluated_updates,
+        )
+        for record, checkpoint in zip(records, parent_job["checkpoints"]):
+            if _checkpoint_identity(record) != (
+                checkpoint["path"],
+                checkpoint["sha256"],
+                checkpoint["update"],
+            ):
+                raise ValueError(
+                    "full evaluation differs from the frozen parent checkpoint prefix"
+                )
 
     receipt = {
         "schema": SCHEMA,
@@ -1103,7 +1637,11 @@ def promote(args: argparse.Namespace) -> dict:
         "training_mixture_sha256": TRAINING_MIXTURE_SHA256,
         "sampling": sampling,
         "scheduled_updates": list(STAGE_UPDATES[args.stage]),
+        "evaluated_updates": evaluated_updates,
         "evaluated_pair": [record["checkpoint_update"] for record in pair],
+        "evaluated_checkpoints": (
+            validated_checkpoints if args.stage == "full" else None
+        ),
         "candidate": candidate,
         "input_parent": {
             "path": input_parent_path,
@@ -1113,6 +1651,9 @@ def promote(args: argparse.Namespace) -> dict:
         "mastery": decision["mastery"],
         "family_totals": decision.get("family_totals"),
         "integrity_pair": decision["integrity_pair"],
+        "integrity_history": decision.get("integrity_history"),
+        "continuation_qualification": continuation_qualification,
+        "parent_slurm_job": parent_job,
         "retention": {
             "inherited_thresholds": decision["inherited_thresholds"],
             "new_thresholds": decision["new_thresholds"],
@@ -1135,6 +1676,30 @@ def promote(args: argparse.Namespace) -> dict:
                 else {
                     "path": str(args.capability.resolve()),
                     "sha256": sha256_file(args.capability.resolve()),
+                }
+            ),
+            "development": (
+                None
+                if development_records is None
+                else {
+                    "path": str(args.development.resolve()),
+                    "sha256": sha256_file(args.development.resolve()),
+                }
+            ),
+            "capability_development": (
+                None
+                if capability_development_records is None
+                else {
+                    "path": str(args.capability_development.resolve()),
+                    "sha256": sha256_file(args.capability_development.resolve()),
+                }
+            ),
+            "parent_job_receipt": (
+                None
+                if parent_job is None
+                else {
+                    "path": str(args.parent_job_receipt.resolve()),
+                    "sha256": sha256_file(args.parent_job_receipt.resolve()),
                 }
             ),
             "prior_receipt": (
@@ -1257,6 +1822,9 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--bank-root", type=Path, required=True)
     command.add_argument("--promotion", type=Path, required=True)
     command.add_argument("--capability", type=Path)
+    command.add_argument("--development", type=Path)
+    command.add_argument("--capability-development", type=Path)
+    command.add_argument("--parent-job-receipt", type=Path)
     command.add_argument("--prior-receipt", type=Path)
     command.add_argument("--run-contract", type=Path, required=True)
     command.add_argument("--output", type=Path, required=True)

@@ -1,6 +1,6 @@
 # V8 deep+xattn curriculum campaign
 
-- Status: implementation and admission
+- Status: Stage-A screen running; later-stage launch path implemented and gated
 - Date: 2026-08-03
 - Dataset authority:
   [`V8_COMBINED_DISTRIBUTION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_v8_combined_20260803/V8_COMBINED_DISTRIBUTION_PLAN.md)
@@ -30,8 +30,16 @@ evaluations. This isolates the value of cross-attention.
 A smaller network may be used for a local or update-1 engineering smoke. It is
 not an intermediate teacher and is not a third production arm. The target
 deep+xattn network has about 2.857 million parameters versus 2.699 million for
-the deep parent, so a smaller-teacher stage saves little compute while adding a
-capacity-transfer confound.
+the deep parent. In P5c, medium was about 22% faster over 4,000 updates but
+ended below deep on development macro (`0.565` versus `0.586`) and exact
+completion (`94/512` versus `143/512`). The trained deep parent was itself
+grown from medium, so inserting another small V8 teacher saves little compute
+while adding a capacity-transfer and checkpoint-selection confound.
+
+If scaling efficiency is studied later, use a separate equal-transition
+ablation: graft xattn onto the P5c medium policy, train it on V8, then grow only
+the block depths `(1,2,2,2) -> (2,2,3,3)` and compare against direct
+deep+xattn at matched GPU-hours. That is not a prerequisite for this campaign.
 
 Do not add E7's self-attention token mixer or import historical attention
 weights. The new cross-attention contribution is exactly zero at update zero,
@@ -96,10 +104,22 @@ promotion or demotion.
 - support: all 47 training conditions;
 - mass: 25% capability, 25% nearby core, 50% V6 constraints;
 - every slice remains 50/50 foundation/trench;
+- ordered sampler contract SHA-256:
+  `2a457be780e086c02e0474489b2060d6c577fac0ac429c48ad1a7e1e5e011357`;
 - bounded first allocation: configure 8,000 updates, checkpoint every 500,
   and let the 24-hour allocation determine the reached update;
 - continue a promising checkpoint with true optimizer/schedule/sampler resume
   on the 120-hour queue; never restart it as a nominal continuation.
+
+Full-stage training and evaluation are separate jobs. An `afterany` evaluator
+accepts a `COMPLETED` or wall-time `TIMEOUT` training job, discovers the longest
+contiguous `500,1000,...,N` checkpoint prefix, and requires at least two
+checkpoints. It rejects gaps, duplicate updates, OOM/node/cancellation failures,
+and checkpoint or sampler-state mutation. Promotion, development, and both
+capability panels are evaluated at exactly the same checkpoint paths and
+hashes. Checkpoints are published by temporary-file plus atomic rename, so a
+wall-time interruption cannot expose a truncated final-name pickle. Every
+evaluated checkpoint is reloaded and verified, not just the latest pair.
 
 For every previously mastered 16-map condition, retention requires
 
@@ -116,6 +136,25 @@ inherited condition falls below its frozen threshold. Any two adjacent
 retention-failing checkpoints in the full stage history stop that treatment and
 restore the last fully passing checkpoint, even if the final pair later
 recovers. Training does not silently demote individual vector environments.
+
+The permissive 120-hour compute gate compares the latest complete checkpoint
+with the checkpoint exactly 1,000 updates earlier, or the preceding checkpoint
+when only two exist. It requires on the 32 V6 constraint conditions of the
+promotion panel either one additional exact completion or at least `0.001`
+condition-macro graded gain. Foundation macro, trench macro, micro `p10`, and
+worst-condition completion may each regress by at most five percentage points;
+the same four guards also apply on development. All inherited retention and all
+four-panel integrity checks must pass. Progress on capability/core replay alone
+does not buy long compute.
+
+A qualifying arm resumes the same full-stage checkpoint with optimizer, update
+counter, entropy schedule, and fixed sampler state restored. The absolute
+target is update 80,000 on `gpuhe.120h` for `119:45:00`; it is never interpreted
+as 80,000 additional updates. If both arms qualify, continue the matched pair.
+If only one qualifies, it may continue under an explicitly unpaired label and
+cannot support a matched architecture conclusion. The resume uses the source
+treatment name verbatim—without adding a second machine/timestamp suffix—so
+source and continuation checkpoints remain one fixed-bank treatment.
 
 ## Architecture and PPO contract
 
@@ -207,27 +246,32 @@ being `RUNNING` are not behavioral outcomes.
 - [x] Deep→deep+xattn output-preserving graft implemented and verified.
 - [x] Fixed stage-weight sampler and V8 loader implemented.
 - [x] Capability-panel fixed evaluation added.
-- [x] Focused CPU contract tests, full 314-test suite, launcher syntax, and
+- [x] Focused CPU contract tests, full 331-test suite, launcher syntax, and
   ShellCheck pass.
 - [x] Euler dry-run resolves only the two intended arms and immutable inputs.
-- [ ] Both update-1 jobs pass finite parameters/losses, transition integrity,
+- [x] Both update-1 jobs pass finite parameters/losses, transition integrity,
   four-GPU runtime, and checkpoint verification.
-- [ ] Submit the two-arm Stage-A bounded screen.
+- [x] Submit the two-arm Stage-A bounded screen.
+- [x] Implement and independently review Stage-C tail evaluation, true 120-hour
+  resume, continuation leaderboard, and dense-reward qualification receipt.
 - [ ] Evaluate every 500-update checkpoint and apply the Stage-A gate.
 - [ ] Launch Stage B only from a checkpoint that passes Stage A twice.
 - [ ] Launch Stage C only from a checkpoint that passes Stage B twice.
-- [ ] Use 120-hour true resume only after fixed held-out evidence remains
-  promising; do not require the short run to have converged.
+- [ ] Evaluate the full-stage tail in a separate job and issue a continuation
+  receipt only after V6 progress, retention, tail, and integrity gates pass.
+- [ ] Use 120-hour true resume only from that receipt; do not require the short
+  run to have converged.
 - [ ] Begin reward-v2 implementation/ablation only after dense full-V8 reward
   qualification.
 
 The launch entry point is
 [`scripts/euler_v8_deep_xattn_v1/submit.sh`](../../scripts/euler_v8_deep_xattn_v1/submit.sh).
 It defaults to a non-mutating dry run and refuses to submit a screen without
-passed update-1 receipts for both arms. This revision accepts only Stage A.
-Before Stage B or C is enabled, the launcher must require the prior-stage gate
-receipt and the exact promoted parent path and SHA-256; a later stage must not
-restart from the original P5c parent.
+passed update-1 receipts for both arms. Stage B and Stage C require the
+prior-stage receipt and derive the exact promoted parent path and SHA-256 from
+it; a later stage cannot restart from the original P5c parent. Full-stage and
+120-hour training use separate tail-evaluation jobs so wall-time termination
+cannot discard complete checkpoints.
 
 Promotion receipts are per arm. The deep and deep+xattn policies each advance
 from their own latest gate-passing checkpoint. Automatic matched submission
@@ -250,6 +294,17 @@ single-arm feasibility continuation would require a separately named decision.
   with a regression test requiring every declared label. This does not change
   PPO, reward, observations, maps, or architecture. Both matched update-1
   admissions must be rerun from the clean recovery revision.
+- **Revision `97296e8`, jobs `9550441`/`9550442`: passed update-1 admission.**
+  Both arms used four RTX 4090 devices, the frozen V8 capability sampler, the
+  exact parent/teacher SHA, finite first-update training and checkpoint state,
+  and passed periodic/final checkpoint verification. This is runtime admission,
+  not a policy result.
+- **Revision `97296e8`, jobs `9552543`/`9552544`: Stage-A behavioral screen
+  running.** Each arm is configured for 2,000 updates and frozen evaluation
+  every 500 updates. Deep started at `20:59:55 CEST`; deep+xattn started at
+  `21:20:38 CEST`. Both passed four-GPU/CUDA/NCCL startup and loaded the frozen
+  parent, teacher, bank, and sampler. This is runtime evidence only; no fixed
+  behavioral checkpoint has returned yet.
 
 ## Decision log
 
@@ -271,3 +326,19 @@ single-arm feasibility continuation would require a separately named decision.
 - **V8-XA-08, accepted 2026-08-03:** use a fresh optimizer and sampler and no
   teacher kickstart at map-stage boundaries; reserve true resume for unchanged
   full-V8 continuation.
+- **V8-XA-09, accepted 2026-08-03:** train deep+xattn directly. Reserve the
+  medium+xattn-to-deep+xattn route for a later equal-transition scaling
+  ablation, not an intermediate production teacher.
+- **V8-XA-10, accepted 2026-08-03:** award 120-hour compute per arm after any
+  measurable V6 progress that passes promotion/development tail guards,
+  inherited retention, and integrity; evaluate the wall-time tail separately.
+- **V8-XA-11, accepted 2026-08-03:** automatically attach an `afterany`
+  continuation evaluator. Freeze every complete checkpoint hash, evaluate the
+  source plus every 2,000 updates and the latest complete diagnostic on all
+  four panels, and issue—but never act on—the reward-qualification receipt.
+- **V8-XA-12, accepted 2026-08-03:** harden the wall-time boundary and resume
+  identity: atomically publish checkpoint pickles, preserve the exact source
+  treatment name, reload every selected continuation checkpoint, validate its
+  finite model/optimizer, update, architecture, fixed sampler, and resume
+  source, and bind every parent receipt to the exact run directory and contract
+  hash. An independent blocker re-review found no remaining correctness issue.
