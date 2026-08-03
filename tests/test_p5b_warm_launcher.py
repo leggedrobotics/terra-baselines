@@ -99,7 +99,7 @@ def test_euler_launcher_is_three_arm_star_and_keeps_screen_contract():
     assert 'for UPDATE in $(seq 500 500 "$UPDATES")' in sbatch
     assert '--accepted-panel "$PANEL"' in sbatch
     assert "--expect-completion-contract exact_visible_dump_v1" in sbatch
-    assert "receipt" not in sbatch.lower()
+    assert '--receipt "$RUN_DIR/eval/wandb_receipt.json"' in sbatch
     assert '"primary_family=$PRIMARY_FAMILY"' in sbatch
     assert '"training_support=$TRAINING_SUPPORT"' in sbatch
     assert '"condition_sampler=$CONDITION_SAMPLER"' in sbatch
