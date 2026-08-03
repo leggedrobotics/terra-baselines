@@ -13,10 +13,12 @@
 set -euo pipefail
 umask 002
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Resolved relative to this installed launcher.
+: "${LEGACY_EASY_LAUNCHER_DIR:?missing LEGACY_EASY_LAUNCHER_DIR}"
+# Slurm copies this script into its spool directory. Resolve helper files from
+# the immutable installed launcher path exported by submit.sh, never from
+# BASH_SOURCE inside the allocation.
 # shellcheck disable=SC1091
-source "$SCRIPT_DIR/common.sh"
+source "$LEGACY_EASY_LAUNCHER_DIR/common.sh"
 
 : "${OUTPUT_ROOT:?missing OUTPUT_ROOT}"
 : "${SLURM_JOB_ID:?run.sbatch must execute inside Slurm}"
@@ -25,11 +27,13 @@ source "$SCRIPT_DIR/common.sh"
 [[ "$OUTPUT_ROOT" =~ ^[A-Za-z0-9_./:+-]+$ ]] ||
     legacy_easy_fail "OUTPUT_ROOT contains unsupported characters"
 legacy_easy_require_canonical_new_path "$OUTPUT_ROOT" OUTPUT_ROOT
+legacy_easy_require_canonical_path \
+    "$LEGACY_EASY_LAUNCHER_DIR" dir LEGACY_EASY_LAUNCHER_DIR
 
 legacy_easy_validate_static_inputs
 legacy_easy_validate_policy_inputs \
     "$POLICY_LABEL" "$CHECKPOINT_PATH" "$CHECKPOINT_SHA256"
-test "$(realpath -e "$SCRIPT_DIR/../..")" = "$BASELINES_ROOT" ||
+test "$(realpath -e "$LEGACY_EASY_LAUNCHER_DIR/../..")" = "$BASELINES_ROOT" ||
     legacy_easy_fail "run.sbatch is not executing from BASELINES_ROOT"
 
 test ! -e "$OUTPUT_ROOT" || legacy_easy_fail "output already exists: $OUTPUT_ROOT"
@@ -91,7 +95,7 @@ run_eval() {
         command+=(--stochastic)
     fi
     "${command[@]}" >"$log" 2>&1
-    "$PYTHON_BIN" "$SCRIPT_DIR/verify_result.py" "$output" \
+    "$PYTHON_BIN" "$LEGACY_EASY_LAUNCHER_DIR/verify_result.py" "$output" \
         --panel "$panel" \
         --mode "$mode" \
         --checkpoint-sha256 "$CHECKPOINT_SHA256" \

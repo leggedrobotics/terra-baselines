@@ -61,3 +61,7 @@ its output directory already exists. On success, that directory contains the
 four JSON files, four logs, `receipt.env`, and `files.sha256`. Inputs are read
 in place and never modified; Python bytecode and runtime caches go to the
 allocation-local temporary directory.
+
+The submitter exports the canonical installed launcher directory explicitly.
+This is required because Slurm executes a copied `run.sbatch` from its spool
+directory; helper lookup must never depend on `BASH_SOURCE` inside the job.
