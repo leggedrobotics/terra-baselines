@@ -26,12 +26,10 @@ def test_accepted_bank_presets_freeze_the_shared_contract(arm):
     assert config.relocation_progress_mult == 1.5
     assert config.curriculum.last_level_type == "none"
     assert (
-        config.curriculum.increase_level_threshold
-        >= PER_ENV_RATCHET_DISABLED_THRESHOLD
+        config.curriculum.increase_level_threshold >= PER_ENV_RATCHET_DISABLED_THRESHOLD
     )
     assert (
-        config.curriculum.decrease_level_threshold
-        >= PER_ENV_RATCHET_DISABLED_THRESHOLD
+        config.curriculum.decrease_level_threshold >= PER_ENV_RATCHET_DISABLED_THRESHOLD
     )
     assert config.pooled_sampler.enabled
 
@@ -51,20 +49,25 @@ def test_generalist_arms_differ_only_in_sampler_rule():
     assert uniform_sampler == adaptive_sampler
 
 
+def test_v8_preset_uses_the_frozen_weighted_stage_sampler():
+    config = get_config("G-V8-FIXED")
+    assert config.accepted_bank_arm == "G-UNIFORM"
+    assert config.maps == []
+    assert config.pooled_sampler.enabled
+    assert config.pooled_sampler.rule == "fixed"
+    assert config.curriculum.last_level_type == "none"
+
+
 @pytest.mark.parametrize("arm", ("F-SPECIALIST", "T-SPECIALIST"))
 def test_family_specialists_use_the_frozen_uniform_treatment(arm):
     specialist = get_config(arm)
     generalist = get_config("G-UNIFORM")
     ignored = {"name", "description", "accepted_bank_arm"}
     specialist_treatment = {
-        key: value
-        for key, value in vars(specialist).items()
-        if key not in ignored
+        key: value for key, value in vars(specialist).items() if key not in ignored
     }
     generalist_treatment = {
-        key: value
-        for key, value in vars(generalist).items()
-        if key not in ignored
+        key: value for key, value in vars(generalist).items() if key not in ignored
     }
     assert specialist_treatment == generalist_treatment
 
@@ -73,18 +76,14 @@ def test_pooled_settings_are_read_from_the_effective_training_config():
     preset = get_config("G-ADAPTIVE")
     sampler = vars(preset.pooled_sampler).copy()
     sampler["seed"] = 11
-    settings = pooled_sampler_settings(
-        SimpleNamespace(pooled_sampler=sampler)
-    )
+    settings = pooled_sampler_settings(SimpleNamespace(pooled_sampler=sampler))
     assert settings.rule == "adaptive"
     assert settings.seed == 11
     assert settings.uniform_floor == 0.20
 
 
 def test_reset_exposure_histogram_uses_each_transition_level():
-    done = jnp.asarray(
-        [[False, True, False], [True, False, True]], dtype=jnp.bool_
-    )
+    done = jnp.asarray([[False, True, False], [True, False, True]], dtype=jnp.bool_)
     levels = jnp.asarray([[0, 1, 2], [2, 2, 0]], dtype=jnp.int16)
 
     np.testing.assert_array_equal(
@@ -148,9 +147,7 @@ def test_condition_assignment_preserves_shape_and_dtype():
 
 def test_shared_launcher_freezes_production_ppo_contract():
     script = (
-        Path(__file__).resolve().parents[1]
-        / "scripts"
-        / "run_accepted_bank_screen.sh"
+        Path(__file__).resolve().parents[1] / "scripts" / "run_accepted_bank_screen.sh"
     ).read_text()
     for argument in (
         ': "${SEED:?',

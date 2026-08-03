@@ -701,6 +701,20 @@ G-UNIFORM:
     enabled: true
     rule: uniform
 
+G-V8-FIXED:
+  description: V8 checkpoint-bounded curriculum with frozen stage and family mass
+  accepted_bank_arm: G-UNIFORM
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: fixed
+
 G-ADAPTIVE:
   description: All accepted conditions, adaptive-progressive condition mass, scratch
   accepted_bank_arm: G-ADAPTIVE

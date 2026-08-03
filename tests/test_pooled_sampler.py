@@ -9,7 +9,6 @@ from utils.pooled_sampler import (
     SamplerSettings,
 )
 
-
 NAMES = [f"condition-{index}" for index in range(8)]
 
 
@@ -59,6 +58,45 @@ def test_uniform_control_never_refreshes_or_moves():
     np.testing.assert_allclose(sampler.probabilities, np.full(8, 1 / 8))
 
 
+def test_fixed_rule_preserves_explicit_condition_weights():
+    labels = {
+        name: {"sampling_weight": weight}
+        for name, weight in zip(NAMES, range(1, len(NAMES) + 1))
+    }
+    sampler = PooledConditionSampler(
+        NAMES,
+        SamplerSettings(rule="fixed", seed=7),
+        labels=labels,
+    )
+    expected = np.arange(1, len(NAMES) + 1, dtype=np.float64)
+    expected /= expected.sum()
+    np.testing.assert_allclose(sampler.probabilities, expected)
+    sampler.start(0)
+    _observe(sampler, [0.0] * len(NAMES))
+    sampler.refresh(10_000)
+    np.testing.assert_allclose(sampler.probabilities, expected)
+
+    state = sampler.state_dict()
+    state["probabilities"] = [0.1] * (len(NAMES) - 1) + [0.3]
+    with pytest.raises(ValueError, match="changed from frozen weights"):
+        sampler.restore_state_dict(state)
+
+
+def test_partial_or_invalid_fixed_weights_fail_loudly():
+    with pytest.raises(ValueError, match="every condition"):
+        PooledConditionSampler(
+            NAMES,
+            SamplerSettings(rule="fixed"),
+            labels={NAMES[0]: {"sampling_weight": 1.0}},
+        )
+    with pytest.raises(ValueError, match="require rule='fixed'"):
+        PooledConditionSampler(
+            NAMES,
+            SamplerSettings(rule="uniform"),
+            labels={NAMES[0]: {"sampling_weight": 1.0}},
+        )
+
+
 def test_adaptive_sampler_focuses_on_the_solvable_frontier():
     sampler = _sampler(uniform_floor=0.2, mastery_threshold=0.75)
     sampler.start(0)
@@ -104,31 +142,21 @@ def test_sampling_and_receipt_preserve_condition_exposure():
     np.testing.assert_allclose(counts, sampler.probabilities, atol=0.01)
 
     sampler.start(0)
-    sampler.observe_reset_exposures(
-        np.bincount(drawn.ravel(), minlength=len(NAMES))
-    )
+    sampler.observe_reset_exposures(np.bincount(drawn.ravel(), minlength=len(NAMES)))
     _observe(sampler, [0.2] * 8)
     sampler.refresh(1)
     assert sampler.refreshes == 1
     receipt = json.loads(json.dumps(sampler.receipt()))
     assert receipt["schema"] == "terra_pooled_condition_sampler_v2"
-    assert receipt["windows"]["current"]["completed_episode_mass"] == [
-        None
-    ] * 8
-    assert receipt["windows"]["closed"]["completed_episode_count"] == [
-        10
-    ] * 8
-    assert sum(receipt["windows"]["closed"]["sampled_assignment_count"]) == (
-        drawn.size
-    )
+    assert receipt["windows"]["current"]["completed_episode_mass"] == [None] * 8
+    assert receipt["windows"]["closed"]["completed_episode_count"] == [10] * 8
+    assert sum(receipt["windows"]["closed"]["sampled_assignment_count"]) == (drawn.size)
 
 
 def test_assignments_resets_and_completed_episodes_are_not_conflated():
     sampler = _sampler(rule="uniform")
     drawn = sampler.sample_levels((2, 64))
-    sampler.observe_reset_exposures(
-        np.array([8, 7, 6, 5, 4, 3, 2, 1], dtype=np.int64)
-    )
+    sampler.observe_reset_exposures(np.array([8, 7, 6, 5, 4, 3, 2, 1], dtype=np.int64))
     _observe(sampler, [0.1] * 8, episodes=2)
     receipt = sampler.receipt()["windows"]["current"]
     assert sum(receipt["sampled_assignment_count"]) == drawn.size
@@ -158,16 +186,12 @@ def test_state_roundtrip_preserves_windows_probabilities_and_future_samples():
     sampler = _sampler(competence_ema=0.5)
     sampler.start(3)
     first = sampler.sample_levels((2, 64))
-    sampler.observe_reset_exposures(
-        np.bincount(first.ravel(), minlength=len(NAMES))
-    )
+    sampler.observe_reset_exposures(np.bincount(first.ravel(), minlength=len(NAMES)))
     _observe(sampler, [0.9, 0.7, 0.5, 0.3, 0.2, 0.1, 0.05, 0.0])
     sampler.refresh(10)
 
     current = sampler.sample_levels((3, 17))
-    sampler.observe_reset_exposures(
-        np.bincount(current.ravel(), minlength=len(NAMES))
-    )
+    sampler.observe_reset_exposures(np.bincount(current.ravel(), minlength=len(NAMES)))
     _observe(sampler, [0.8, 0.6, 0.4, 0.2, 0.1, 0.05, 0.0, 0.0], episodes=3)
 
     state = sampler.state_dict()

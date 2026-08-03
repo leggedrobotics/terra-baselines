@@ -11,7 +11,7 @@ from utils.pooled_sampler import effective_sample_size, entropy
 
 LOGGING_SCHEMA = "terra_wandb_human_v1"
 FAMILIES = ("foundation", "trench")
-BRANCH_DEPTHS = ("Anchor", "One-axis", "Composed")
+BRANCH_DEPTHS = ("Anchor", "Nearby core", "One-axis", "Composed")
 ACTION_NAMES = (
     "forward",
     "backward",

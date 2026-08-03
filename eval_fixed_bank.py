@@ -26,7 +26,7 @@ from train_mixed import (
     _validate_checkpoint_architecture,
     make_mixed_agent_states,
 )
-from utils.accepted_bank import load_accepted_bank
+from utils.accepted_bank import V8_RELEASE_ID, load_accepted_bank
 from utils.explicit_episode_bank import ExplicitEpisodePanel
 from utils.explicit_episode_bank import load_explicit_episode_panel
 from utils.helpers import load_pkl_object
@@ -889,6 +889,14 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--capability-panel",
+        choices=("promotion", "development", "sealed"),
+        help=(
+            "Evaluate the named release's separate capability-floor panel. "
+            "These scores never enter the main benchmark macro."
+        ),
+    )
+    parser.add_argument(
         "--explicit-episode-panel",
         choices=("train", "promotion", "development", "sealed"),
         help=(
@@ -936,15 +944,18 @@ def main() -> None:
         for option in (
             args.accepted_panel,
             args.diagnostic_panel,
+            args.capability_panel,
             args.explicit_episode_panel,
         )
     )
     if selected_panel_modes > 1:
         raise ValueError(
-            "choose only one of --accepted-panel, --diagnostic-panel, and "
-            "--explicit-episode-panel"
+            "choose only one of --accepted-panel, --diagnostic-panel, "
+            "--capability-panel, and --explicit-episode-panel"
         )
-    panel_name = args.accepted_panel or args.diagnostic_panel
+    panel_name = (
+        args.accepted_panel or args.diagnostic_panel or args.capability_panel
+    )
     accepted_bank = None
     explicit_episode_panel = None
     if args.explicit_episode_panel is not None:
@@ -969,21 +980,30 @@ def main() -> None:
             raise ValueError("fixed manifest panels are incompatible with --strata")
         if args.terra_revision is None:
             raise ValueError("fixed manifest panels require --terra-revision")
+        release_id = json.loads((bank_root / "dataset.json").read_text()).get(
+            "release_id"
+        )
         accepted_bank = load_accepted_bank(
             bank_root,
             "G-UNIFORM",
             args.terra_revision,
             allow_diagnostic_control=args.diagnostic_panel is not None,
+            curriculum_stage="full" if release_id == V8_RELEASE_ID else None,
+        )
+        available_panels = (
+            accepted_bank.capability_floor_evaluation_panels
+            if args.capability_panel is not None
+            else accepted_bank.evaluation_panels
         )
         panel = next(
             panel
-            for panel in accepted_bank.evaluation_panels
+            for panel in available_panels
             if panel.name == panel_name
         )
         targets = [
             (
                 panel_name,
-                "all",
+                "capability" if args.capability_panel is not None else "all",
                 panel.maps_path,
             )
         ]

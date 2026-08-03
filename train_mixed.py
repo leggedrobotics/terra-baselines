@@ -802,9 +802,7 @@ def _restore_pooled_sampler_checkpoint(
         return
 
     saved_state = (
-        checkpoint.get("pooled_sampler_state")
-        if checkpoint is not None
-        else None
+        checkpoint.get("pooled_sampler_state") if checkpoint is not None else None
     )
     if sampler is None:
         if saved_state is not None:
@@ -860,9 +858,7 @@ def assign_curriculum_levels(env_cfg, levels: np.ndarray):
             f"condition assignment shape {assigned.shape} != env shape "
             f"{current.shape}"
         )
-    return env_cfg._replace(
-        curriculum=env_cfg.curriculum._replace(level=assigned)
-    )
+    return env_cfg._replace(curriculum=env_cfg.curriculum._replace(level=assigned))
 
 
 def reset_exposure_histogram(
@@ -1119,9 +1115,9 @@ class MixedAgentTrainConfig:
         self.num_envs = self.num_envs_per_device * self.num_devices
         self.total_timesteps_per_device = self.total_timesteps // self.num_devices
         self.eval_episodes_per_device = self.eval_episodes // self.num_devices
-        assert self.num_envs % self.num_devices == 0, (
-            "Number of environments must be divisible by the number of devices."
-        )
+        assert (
+            self.num_envs % self.num_devices == 0
+        ), "Number of environments must be divisible by the number of devices."
         self.env_steps_per_update = self.num_steps * self.num_envs
         self.num_updates = self.total_timesteps // self.env_steps_per_update
         if self.num_updates <= 0:
@@ -1369,8 +1365,7 @@ def make_mixed_agent_states(
         if sampler_settings is not None:
             if single_map_path is not None:
                 raise ValueError(
-                    "the pooled condition sampler cannot be combined with "
-                    "--map_path"
+                    "the pooled condition sampler cannot be combined with " "--map_path"
                 )
             _assert_pooled_level_contract(
                 curriculum_levels,
@@ -1709,9 +1704,7 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
 
     sampler_config = config.pooled_sampler or {}
     if sampler_config.get("enabled", False):
-        tags.append(
-            f"sampler:{_tag_value(sampler_config.get('rule', 'uniform'))}"
-        )
+        tags.append(f"sampler:{_tag_value(sampler_config.get('rule', 'uniform'))}")
     if config.accepted_bank is not None:
         if config.warm_start_from is not None:
             initialization = "params-only-warm"
@@ -1730,12 +1723,16 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
                 f"init:{initialization}",
             )
         )
+        curriculum_stage = getattr(config.accepted_bank, "curriculum_stage", None)
+        if curriculum_stage is not None:
+            tags.append(
+                "curriculum-stage:"
+                f"{_tag_value(curriculum_stage)}"
+            )
 
     if config.curriculum_levels_override:
         if len(config.curriculum_levels_override) > 8:
-            tags.append(
-                f"map:per-condition-x{len(config.curriculum_levels_override)}"
-            )
+            tags.append(f"map:per-condition-x{len(config.curriculum_levels_override)}")
         else:
             for level in config.curriculum_levels_override:
                 tags.append(f"map:{_tag_value(level['maps_path'])}")
@@ -2072,8 +2069,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 )
             bank = config.accepted_bank
             level_paths = tuple(
-                level["maps_path"]
-                for level in env.batch_cfg.curriculum_global.levels
+                level["maps_path"] for level in env.batch_cfg.curriculum_global.levels
             )
             expected_paths = tuple(level.maps_path for level in bank.levels)
             if level_paths != expected_paths:
@@ -2085,15 +2081,18 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 level.condition_id: {
                     "family": level.family,
                     "branch_depth": level.branch_depth,
+                    **(
+                        {"sampling_weight": bank.sampling_probabilities[index]}
+                        if bank.sampling_probabilities
+                        else {}
+                    ),
                 }
-                for level in bank.levels
+                for index, level in enumerate(bank.levels)
             }
             pooled_sampler = PooledConditionSampler(
                 [level.condition_id for level in bank.levels],
                 sampler_settings,
-                maps_per_condition=[
-                    level.map_count for level in bank.levels
-                ],
+                maps_per_condition=[level.map_count for level in bank.levels],
                 labels=labels,
             )
             print(
@@ -2274,9 +2273,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         next_family_id,
                         next_primary_cell_id,
                         _,
-                    ) = jax.vmap(env.maps_buffer.get_map_provenance)(
-                        _rng_env, timestep.env_cfg
-                    )
+                    ) = jax.vmap(
+                        env.maps_buffer.get_map_provenance
+                    )(_rng_env, timestep.env_cfg)
                     episode_step = EpisodeStep(
                         done=timestep.done,
                         task_done=timestep.info["task_done"],
@@ -2739,9 +2738,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         # Unlike replicated losses, each device owns different
                         # environment assignments. Preserve that device axis.
                         active_levels = np.asarray(
-                            jax.device_get(
-                                runner_state[2].env_cfg.curriculum.level
-                            )
+                            jax.device_get(runner_state[2].env_cfg.curriculum.level)
                         )
                     if need_train_log:
                         log_dict.update(
@@ -2826,9 +2823,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         },
                     }
                     if pooled_sampler is not None:
-                        checkpoint["pooled_sampler_state"] = (
-                            pooled_sampler.state_dict()
-                        )
+                        checkpoint["pooled_sampler_state"] = pooled_sampler.state_dict()
                     checkpoint_name = f"{config.name}.pkl"
                     if config.keep_checkpoint_history:
                         checkpoint_name = f"{config.name}_update_{i + 1:06d}.pkl"
@@ -2843,20 +2838,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                 "update": i + 1,
                                 "run_name": config.name,
                                 "accepted_bank_arm": config.accepted_bank.arm,
-                                "terra_revision": (
-                                    config.accepted_bank.terra_revision
-                                ),
-                                "accepted_bank_root": str(
-                                    config.accepted_bank.root
-                                ),
+                                "terra_revision": (config.accepted_bank.terra_revision),
+                                "accepted_bank_root": str(config.accepted_bank.root),
                                 "environment_protocol_sha256": (
                                     config.accepted_bank.environment_protocol_sha256
                                 ),
+                                "curriculum_stage": (
+                                    config.accepted_bank.curriculum_stage
+                                ),
                             }
                         )
-                        receipt_dir = (
-                            Path(config.checkpoint_dir) / "pooled_sampler"
-                        )
+                        receipt_dir = Path(config.checkpoint_dir) / "pooled_sampler"
                         receipt_dir.mkdir(parents=True, exist_ok=True)
                         receipt_path = receipt_dir / (
                             f"{config.name}_update_{i + 1:06d}.json"
@@ -2954,9 +2946,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     for key, value in transition_integrity_single.items()
                 },
                 "pooled_sampler_state": (
-                    pooled_sampler.state_dict()
-                    if pooled_sampler is not None
-                    else None
+                    pooled_sampler.state_dict() if pooled_sampler is not None else None
                 ),
             }
 
@@ -3449,6 +3439,15 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--accepted-bank-stage",
+        choices=("capability", "nearby", "full"),
+        default=None,
+        help=(
+            "Explicit checkpoint-bounded V8 map stage. Required by the V8 "
+            "release and rejected by older accepted banks."
+        ),
+    )
+    parser.add_argument(
         "--pooled-sampler-interval",
         type=int,
         default=None,
@@ -3603,8 +3602,7 @@ if __name__ == "__main__":
             accepted_bank_arm = preset.accepted_bank_arm
             sampler = preset.pooled_sampler
             pooled_sampler_override = {
-                field: getattr(sampler, field)
-                for field in sampler.__dataclass_fields__
+                field: getattr(sampler, field) for field in sampler.__dataclass_fields__
             }
             curriculum_increase_level_threshold = (
                 preset.curriculum.increase_level_threshold
@@ -3721,9 +3719,9 @@ if __name__ == "__main__":
                 "--pooled-sampler-* overrides require an accepted-bank config"
             )
         if args.terra_revision is not None:
-            raise ValueError(
-                "--terra-revision requires an accepted-bank config"
-            )
+            raise ValueError("--terra-revision requires an accepted-bank config")
+        if args.accepted_bank_stage is not None:
+            raise ValueError("--accepted-bank-stage requires an accepted-bank config")
     else:
         if accepted_bank_arm not in ACCEPTED_BANK_ARMS:
             raise ValueError(
@@ -3731,21 +3729,13 @@ if __name__ == "__main__":
                 f"{accepted_bank_arm!r}"
             )
         if args.accepted_bank_root is None:
-            raise ValueError(
-                f"--config {args.config} requires --accepted-bank-root"
-            )
+            raise ValueError(f"--config {args.config} requires --accepted-bank-root")
         if args.terra_revision is None:
-            raise ValueError(
-                f"--config {args.config} requires --terra-revision"
-            )
+            raise ValueError(f"--config {args.config} requires --terra-revision")
         if curriculum_levels_override:
-            raise ValueError(
-                "accepted-bank configs must not hard-code map paths"
-            )
+            raise ValueError("accepted-bank configs must not hard-code map paths")
         if args.map_path is not None:
-            raise ValueError(
-                "accepted-bank configs cannot be combined with --map_path"
-            )
+            raise ValueError("accepted-bank configs cannot be combined with --map_path")
         # Checkpoint mode is an explicit treatment input. Parameters-only warm
         # starts keep a fresh optimizer and sampler. Resume restores compatible
         # optimizer and pooled-sampler state but cannot restore the exact JAX
@@ -3755,11 +3745,10 @@ if __name__ == "__main__":
             args.accepted_bank_root,
             accepted_bank_arm,
             args.terra_revision,
+            curriculum_stage=args.accepted_bank_stage,
         )
         os.environ["DATASET_PATH"] = str(accepted_bank.root)
-        os.environ["DATASET_SIZE"] = str(
-            accepted_bank.map_count_per_condition
-        )
+        os.environ["DATASET_SIZE"] = str(accepted_bank.map_count_per_condition)
         from terra.config import RewardsType
 
         curriculum_levels_override = [
@@ -3778,27 +3767,25 @@ if __name__ == "__main__":
                 f"accepted-bank config {args.config} must enable the pooled sampler"
             )
         expected_rule = (
-            "adaptive" if accepted_bank_arm == "G-ADAPTIVE" else "uniform"
+            "fixed"
+            if accepted_bank.sampling_probabilities
+            else ("adaptive" if accepted_bank_arm == "G-ADAPTIVE" else "uniform")
         )
         if pooled_sampler_override.get("rule") != expected_rule:
             raise ValueError(
                 f"{accepted_bank_arm} requires sampler rule {expected_rule!r}"
             )
-        if expected_rule == "uniform" and (
+        if expected_rule != "adaptive" and (
             args.pooled_sampler_interval is not None
             or args.pooled_sampler_min_episodes is not None
         ):
             raise ValueError(
-                "sampler refresh overrides do not apply to a uniform arm"
+                "sampler refresh overrides apply only to an adaptive arm"
             )
         if args.pooled_sampler_interval is not None:
-            pooled_sampler_override["update_interval"] = (
-                args.pooled_sampler_interval
-            )
+            pooled_sampler_override["update_interval"] = args.pooled_sampler_interval
         if args.pooled_sampler_min_episodes is not None:
-            pooled_sampler_override["min_episodes"] = (
-                args.pooled_sampler_min_episodes
-            )
+            pooled_sampler_override["min_episodes"] = args.pooled_sampler_min_episodes
         pooled_sampler_override["seed"] = int(args.seed)
         print(
             f"📦 Accepted bank: {accepted_bank.root} | "

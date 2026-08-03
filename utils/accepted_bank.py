@@ -19,6 +19,19 @@ TRAIN96_CAPABILITY_FLOOR_IDS = (
     "fnd-slab-allfree",
     "trn-straight-allfree",
 )
+V8_RELEASE_ID = "terra_v8_v6_constraints_v7_adjacent_train96_v5"
+V8_REVIEW_ADMISSION_SCHEMA = "terra_v8_review_admission_v1"
+V8_TRAINING_MIXTURE_SCHEMA = "terra_v8_training_mixture_v4"
+V8_TRAINING_MIXTURE_SHA256 = (
+    "f2a2a33556d513b46193a8a3996d37e6989534eba9373f46f52d79f956ac128e"
+)
+V8_AUDIT_SHA256 = "b5cc702bc049d26c1924fcb2c2bee54377b4c209518c87102be395270eb4965b"
+V8_MAPS_PER_CONDITION = 96
+V8_CONSTRAINT_CONDITION_COUNT = 32
+V8_CORE_CONDITION_COUNT = 13
+V8_MAIN_CONDITION_COUNT = 45
+V8_CAPABILITY_FLOOR_IDS = TRAIN96_CAPABILITY_FLOOR_IDS
+V8_CURRICULUM_STAGES = ("capability", "nearby", "full")
 REVIEW_RELEASE = "map-curriculum-diverse64-visual-review-20260730"
 REVIEW_MANIFEST_SHA256 = (
     "39f7cd2e8ce565bd384de214da5f2eee5e76764cb554e149c0ba675d815d6d51"
@@ -33,7 +46,7 @@ ARMS = (
     "G-ADAPTIVE",
 )
 FAMILIES = ("foundation", "trench")
-BRANCH_DEPTHS = ("Anchor", "One-axis", "Composed")
+BRANCH_DEPTHS = ("Anchor", "Nearby core", "One-axis", "Composed")
 TRAIN_MAPS_PER_CONDITION = 64
 RESET_ARRAY_FOLDERS = (
     "images",
@@ -141,6 +154,10 @@ class AcceptedBank:
     constrained_condition_ids: tuple[str, ...] = ()
     capability_floor_condition_ids: tuple[str, ...] = ()
     capability_floor_evaluation_panels: tuple["AcceptedPanel", ...] = ()
+    curriculum_stage: str | None = None
+    sampling_probabilities: tuple[float, ...] = ()
+    v6_constraint_condition_ids: tuple[str, ...] = ()
+    v7_core_condition_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -347,6 +364,17 @@ def _sorted_unique_strings(
     return tuple(values)
 
 
+def _unique_strings(payload: dict, field: str, source: Path) -> tuple[str, ...]:
+    values = payload.get(field)
+    if (
+        not isinstance(values, list)
+        or not all(isinstance(value, str) and value for value in values)
+        or len(values) != len(set(values))
+    ):
+        raise ValueError(f"{source}: {field} must contain unique nonempty strings")
+    return tuple(values)
+
+
 def _panel_count_contract(panels: dict) -> dict:
     return {
         name: {
@@ -470,20 +498,276 @@ def _validate_train96_release(
     return review_sha256, constrained_ids, capability_floor_ids
 
 
+def _validate_v8_review_admission(
+    root: Path,
+    index: dict,
+    condition_ids: list[str],
+) -> str:
+    index_path = root / "dataset.json"
+    if index.get("review_admission") != "review_admission.json":
+        raise ValueError(
+            f"{index_path}: review_admission must be 'review_admission.json'"
+        )
+    expected_sha256 = _sha256_field(
+        index,
+        "review_admission_sha256",
+        index_path,
+    )
+    receipt_path = root / "review_admission.json"
+    if not receipt_path.is_file() or receipt_path.is_symlink():
+        raise FileNotFoundError(receipt_path)
+    actual_sha256 = _sha256_file(receipt_path)
+    if actual_sha256 != expected_sha256:
+        raise ValueError(
+            "V8 review admission hash mismatch: "
+            f"expected {expected_sha256}, got {actual_sha256}"
+        )
+    try:
+        receipt = json.loads(receipt_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{receipt_path}: invalid JSON: {exc}") from exc
+    if not isinstance(receipt, dict):
+        raise ValueError(f"{receipt_path}: expected a JSON object")
+    expected_fields = {
+        "schema": V8_REVIEW_ADMISSION_SCHEMA,
+        "release_id": V8_RELEASE_ID,
+        "decision": "accept",
+        "decision_source": "explicit_user_instruction",
+    }
+    for field, expected in expected_fields.items():
+        if receipt.get(field) != expected:
+            raise ValueError(
+                f"{receipt_path}: {field} must be {expected!r}, "
+                f"got {receipt.get(field)!r}"
+            )
+    accepted = receipt.get("accepted_conditions")
+    if accepted != sorted(condition_ids):
+        raise ValueError(
+            f"{receipt_path}: accepted_conditions do not match V8 training support"
+        )
+    _sha256_field(receipt, "candidate_dataset_sha256", receipt_path)
+    return expected_sha256
+
+
+def _validate_v8_release(
+    root: Path,
+    index: dict,
+    levels: list[AcceptedLevel],
+) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], dict]:
+    """Validate the frozen V8 support, review, audit, and stage contract."""
+    index_path = root / "dataset.json"
+    if index.get("release_id") != V8_RELEASE_ID:
+        raise ValueError(f"{index_path}: release_id must be {V8_RELEASE_ID!r}")
+    if index.get("train_maps_per_condition") != V8_MAPS_PER_CONDITION:
+        raise ValueError(
+            f"{index_path}: train_maps_per_condition must be "
+            f"{V8_MAPS_PER_CONDITION}"
+        )
+
+    constraint_ids = _sorted_unique_strings(
+        index,
+        "v6_constraint_condition_ids",
+        index_path,
+    )
+    capability_ids = _unique_strings(
+        index,
+        "v6_capability_floor_condition_ids",
+        index_path,
+    )
+    core_ids = _unique_strings(index, "v7_core_condition_ids", index_path)
+    if len(constraint_ids) != V8_CONSTRAINT_CONDITION_COUNT:
+        raise ValueError(
+            f"{index_path}: V8 must contain {V8_CONSTRAINT_CONDITION_COUNT} "
+            "V6 constraint conditions"
+        )
+    if capability_ids != V8_CAPABILITY_FLOOR_IDS:
+        raise ValueError(
+            f"{index_path}: V8 capability controls must be "
+            f"{list(V8_CAPABILITY_FLOOR_IDS)!r}"
+        )
+    if len(core_ids) != V8_CORE_CONDITION_COUNT:
+        raise ValueError(
+            f"{index_path}: V8 must contain {V8_CORE_CONDITION_COUNT} V7 core "
+            "conditions"
+        )
+    partitions = (set(constraint_ids), set(capability_ids), set(core_ids))
+    if any(
+        left & right
+        for i, left in enumerate(partitions)
+        for right in partitions[i + 1 :]
+    ):
+        raise ValueError(f"{index_path}: V8 condition partitions must be disjoint")
+    level_ids = {level.condition_id for level in levels}
+    if level_ids != set().union(*partitions):
+        raise ValueError(f"{index_path}: V8 partitions must cover all train levels")
+    main_ids = tuple(sorted(set(constraint_ids) | set(core_ids)))
+    if len(main_ids) != V8_MAIN_CONDITION_COUNT:
+        raise ValueError(
+            f"{index_path}: V8 main macro must contain {V8_MAIN_CONDITION_COUNT} "
+            "conditions"
+        )
+    if index.get("included_in_main_macro") != list(main_ids):
+        raise ValueError(
+            f"{index_path}: included_in_main_macro must be the sorted V8 main set"
+        )
+
+    review_sha256 = _validate_v8_review_admission(
+        root,
+        index,
+        [level.condition_id for level in levels],
+    )
+    if index.get("audit_receipt") != "audit_receipt.json":
+        raise ValueError(f"{index_path}: audit_receipt must be 'audit_receipt.json'")
+    audit_sha256 = _sha256_field(index, "audit_receipt_sha256", index_path)
+    audit_path = root / "audit_receipt.json"
+    if audit_sha256 != V8_AUDIT_SHA256 or _sha256_file(audit_path) != audit_sha256:
+        raise ValueError(f"{audit_path}: V8 audit receipt hash mismatch")
+
+    if index.get("training_mixture") != "training_mixture.json":
+        raise ValueError(
+            f"{index_path}: training_mixture must be 'training_mixture.json'"
+        )
+    mixture_sha256 = _sha256_field(index, "training_mixture_sha256", index_path)
+    mixture_path = root / "training_mixture.json"
+    if (
+        mixture_sha256 != V8_TRAINING_MIXTURE_SHA256
+        or _sha256_file(mixture_path) != mixture_sha256
+    ):
+        raise ValueError(f"{mixture_path}: V8 training mixture hash mismatch")
+    try:
+        mixture = json.loads(mixture_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{mixture_path}: invalid JSON: {exc}") from exc
+    if not isinstance(mixture, dict) or mixture.get("schema") != (
+        V8_TRAINING_MIXTURE_SCHEMA
+    ):
+        raise ValueError(
+            f"{mixture_path}: schema must be {V8_TRAINING_MIXTURE_SCHEMA!r}"
+        )
+    expected_protocol = {
+        "accepted_dump_contract": "exact_visible_dump_v1",
+        "apply_trench_rewards": False,
+        "full_resets": True,
+        "max_steps_in_episode": 450,
+        "rewards_type": "DENSE",
+    }
+    if mixture.get("fixed_protocol") != expected_protocol:
+        raise ValueError(f"{mixture_path}: V8 fixed protocol changed")
+    stages = mixture.get("stages")
+    if not isinstance(stages, list) or [stage.get("name") for stage in stages] != [
+        "capability_anchors",
+        "nearby_geometry_core",
+        "constraint_branches",
+    ]:
+        raise ValueError(f"{mixture_path}: V8 stage graph changed")
+    if stages[0].get("new_conditions") != list(capability_ids):
+        raise ValueError(f"{mixture_path}: capability stage support changed")
+    if stages[1].get("new_conditions") != list(core_ids):
+        raise ValueError(f"{mixture_path}: nearby stage support changed")
+    if stages[2].get("new_conditions") != list(constraint_ids):
+        raise ValueError(f"{mixture_path}: constraint stage support changed")
+    return review_sha256, constraint_ids, capability_ids, core_ids, mixture
+
+
+def _v8_stage_selection(
+    levels: list[AcceptedLevel],
+    stage: str,
+    constraint_ids: tuple[str, ...],
+    capability_ids: tuple[str, ...],
+    core_ids: tuple[str, ...],
+    mixture: dict,
+) -> tuple[tuple[AcceptedLevel, ...], tuple[float, ...]]:
+    if stage not in V8_CURRICULUM_STAGES:
+        raise ValueError(
+            f"V8 curriculum_stage must be one of {V8_CURRICULUM_STAGES}, "
+            f"got {stage!r}"
+        )
+    by_id = {level.condition_id: level for level in levels}
+    if stage == "capability":
+        selected_ids = set(capability_ids)
+        slice_mass = {"capability": 1.0, "core": 0.0, "constraint": 0.0}
+    elif stage == "nearby":
+        selected_ids = set(capability_ids) | set(core_ids)
+        slice_mass = {"capability": 0.5, "core": 0.5, "constraint": 0.0}
+    else:
+        selected_ids = set(capability_ids) | set(core_ids) | set(constraint_ids)
+        slice_mass = {"capability": 0.25, "core": 0.25, "constraint": 0.5}
+    selected = tuple(
+        sorted((by_id[name] for name in selected_ids), key=lambda x: x.condition_id)
+    )
+
+    geometry_mass = mixture.get("v7_geometry_mass_within_family")
+    if not isinstance(geometry_mass, dict):
+        raise ValueError("V8 training mixture lacks geometry masses")
+    for family in FAMILIES:
+        values = geometry_mass.get(family)
+        if not isinstance(values, dict) or abs(sum(values.values()) - 1.0) > 1e-12:
+            raise ValueError(f"V8 {family} geometry masses must sum to one")
+
+    constraint_family_counts = {
+        family: sum(
+            by_id[condition_id].family == family for condition_id in constraint_ids
+        )
+        for family in FAMILIES
+    }
+
+    def probability(level: AcceptedLevel) -> float:
+        family_mass = 0.5
+        if level.condition_id in capability_ids:
+            return slice_mass["capability"] * family_mass
+        if level.condition_id in core_ids:
+            prefix = "v7-fnd-" if level.family == "foundation" else "v7-trn-"
+            if not level.condition_id.startswith(
+                prefix
+            ) or not level.condition_id.endswith("-adjacent"):
+                raise ValueError(f"unexpected V8 core condition {level.condition_id!r}")
+            geometry = level.condition_id[len(prefix) : -len("-adjacent")].replace(
+                "-", "_"
+            )
+            try:
+                within_family = float(geometry_mass[level.family][geometry])
+            except KeyError as exc:
+                raise ValueError(
+                    f"V8 geometry mass missing for {level.condition_id!r}"
+                ) from exc
+            return slice_mass["core"] * family_mass * within_family
+        if level.condition_id in constraint_ids:
+            return (
+                slice_mass["constraint"]
+                * family_mass
+                / constraint_family_counts[level.family]
+            )
+        raise ValueError(f"V8 stage selected unknown condition {level.condition_id!r}")
+
+    probabilities = tuple(probability(level) for level in selected)
+    if abs(sum(probabilities) - 1.0) > 1e-12 or any(
+        value <= 0.0 for value in probabilities
+    ):
+        raise ValueError(
+            f"V8 {stage} sampling probabilities must be positive and sum to one"
+        )
+    return selected, probabilities
+
+
 def _train_maps_per_condition(index: dict, source: Path) -> int:
     """Return the one explicitly supported train-bank slot contract."""
     release_id = index.get("release_id")
     if release_id is None:
         return TRAIN_MAPS_PER_CONDITION
-    if release_id != TRAIN96_RELEASE_ID:
+    named_counts = {
+        TRAIN96_RELEASE_ID: TRAIN96_MAPS_PER_CONDITION,
+        V8_RELEASE_ID: V8_MAPS_PER_CONDITION,
+    }
+    if release_id not in named_counts:
         raise ValueError(f"{source}: unsupported release_id {release_id!r}")
     count = index.get("train_maps_per_condition")
-    if count != TRAIN96_MAPS_PER_CONDITION:
+    expected = named_counts[release_id]
+    if count != expected:
         raise ValueError(
-            f"{source}: {TRAIN96_RELEASE_ID} must declare "
-            f"train_maps_per_condition={TRAIN96_MAPS_PER_CONDITION}"
+            f"{source}: {release_id} must declare "
+            f"train_maps_per_condition={expected}"
         )
-    return TRAIN96_MAPS_PER_CONDITION
+    return expected
 
 
 def validate_staged_training_bank(
@@ -584,6 +868,8 @@ def validate_staged_training_bank(
         raise ValueError(f"{index_path}: train repeats a maps_path")
     if index.get("release_id") == TRAIN96_RELEASE_ID:
         _validate_train96_release(root_path, index, levels)
+    elif index.get("release_id") == V8_RELEASE_ID:
+        _validate_v8_release(root_path, index, levels)
     else:
         _validate_review_admission(root_path, index, condition_ids)
     return maps_per_condition
@@ -593,6 +879,8 @@ def _validate_evaluation_panels(
     root: Path,
     panels: object,
     protocol_sha256: str,
+    *,
+    expected_condition_ids: tuple[str, ...] | None = None,
 ) -> tuple[AcceptedPanel, ...]:
     required_panels = {"promotion", "development", "sealed"}
     if not isinstance(panels, dict) or set(panels) != required_panels:
@@ -641,6 +929,10 @@ def _validate_evaluation_panels(
             raise ValueError(
                 f"evaluation panel {name} declares {condition_count} "
                 f"conditions but contains {len(cells)}"
+            )
+        if expected_condition_ids is not None and cells != set(expected_condition_ids):
+            raise ValueError(
+                f"evaluation panel {name} conditions do not match the frozen set"
             )
         for row in rows:
             for field in ("scenario_id", "episode_id"):
@@ -701,6 +993,7 @@ def load_accepted_bank(
     terra_revision: str,
     *,
     allow_diagnostic_control: bool = False,
+    curriculum_stage: str | None = None,
 ) -> AcceptedBank:
     """Validate the canonical index and select the levels owned by one arm."""
     if arm not in ARMS:
@@ -792,18 +1085,27 @@ def load_accepted_bank(
     train = index.get("train")
     if not isinstance(train, list) or not train:
         raise ValueError(f"{index_path}: train must be a nonempty list")
+    release_id = index.get("release_id")
+    expected_main_ids = None
+    expected_capability_ids = None
+    if release_id == V8_RELEASE_ID:
+        expected_main_ids = tuple(index.get("included_in_main_macro", ()))
+        expected_capability_ids = tuple(
+            index.get("v6_capability_floor_condition_ids", ())
+        )
     evaluation_panels = _validate_evaluation_panels(
         root_path,
         index.get("evaluation_panels"),
         protocol_sha256,
+        expected_condition_ids=expected_main_ids,
     )
-    release_id = index.get("release_id")
     capability_floor_evaluation_panels = ()
-    if release_id == TRAIN96_RELEASE_ID:
+    if release_id in (TRAIN96_RELEASE_ID, V8_RELEASE_ID):
         capability_floor_evaluation_panels = _validate_evaluation_panels(
             root_path,
             index.get("capability_floor_evaluation_panels"),
             protocol_sha256,
+            expected_condition_ids=expected_capability_ids,
         )
     all_levels = [_validate_level(root_path, entry) for entry in train]
     condition_ids = [level.condition_id for level in all_levels]
@@ -816,6 +1118,9 @@ def load_accepted_bank(
     capability_floor_contract_sha256 = None
     constrained_condition_ids: tuple[str, ...] = ()
     capability_floor_condition_ids: tuple[str, ...] = ()
+    v6_constraint_condition_ids: tuple[str, ...] = ()
+    v7_core_condition_ids: tuple[str, ...] = ()
+    v8_mixture = None
     if allow_diagnostic_control:
         if release_id == TRAIN96_RELEASE_ID:
             raise ValueError(
@@ -839,6 +1144,17 @@ def load_accepted_bank(
             "capability_floor_contract_sha256",
             index_path,
         )
+    elif release_id == V8_RELEASE_ID:
+        (
+            review_admission_sha256,
+            v6_constraint_condition_ids,
+            capability_floor_condition_ids,
+            v7_core_condition_ids,
+            v8_mixture,
+        ) = _validate_v8_release(root_path, index, all_levels)
+        constrained_condition_ids = tuple(
+            sorted(set(v6_constraint_condition_ids) | set(v7_core_condition_ids))
+        )
     else:
         review_admission_sha256 = _validate_review_admission(
             root_path,
@@ -846,12 +1162,33 @@ def load_accepted_bank(
             condition_ids,
         )
 
-    selected = tuple(
-        sorted(
-            (level for level in all_levels if _selected(level, arm)),
-            key=lambda level: level.condition_id,
+    sampling_probabilities: tuple[float, ...] = ()
+    if release_id == V8_RELEASE_ID:
+        if allow_diagnostic_control:
+            raise ValueError("V8 is a training release, not a diagnostic control")
+        if arm != "G-UNIFORM":
+            raise ValueError("the first V8 curriculum supports only G-UNIFORM")
+        if curriculum_stage is None:
+            raise ValueError(f"{index_path}: V8 requires an explicit curriculum_stage")
+        selected, sampling_probabilities = _v8_stage_selection(
+            all_levels,
+            curriculum_stage,
+            v6_constraint_condition_ids,
+            capability_floor_condition_ids,
+            v7_core_condition_ids,
+            v8_mixture,
         )
-    )
+    else:
+        if curriculum_stage is not None:
+            raise ValueError(
+                f"{index_path}: curriculum_stage applies only to {V8_RELEASE_ID}"
+            )
+        selected = tuple(
+            sorted(
+                (level for level in all_levels if _selected(level, arm)),
+                key=lambda level: level.condition_id,
+            )
+        )
     if not selected:
         raise ValueError(f"{index_path}: arm {arm} selects no accepted conditions")
     if arm in ("F-SPECIALIST", "T-SPECIALIST"):
@@ -898,4 +1235,8 @@ def load_accepted_bank(
         constrained_condition_ids=constrained_condition_ids,
         capability_floor_condition_ids=capability_floor_condition_ids,
         capability_floor_evaluation_panels=capability_floor_evaluation_panels,
+        curriculum_stage=curriculum_stage,
+        sampling_probabilities=sampling_probabilities,
+        v6_constraint_condition_ids=v6_constraint_condition_ids,
+        v7_core_condition_ids=v7_core_condition_ids,
     )

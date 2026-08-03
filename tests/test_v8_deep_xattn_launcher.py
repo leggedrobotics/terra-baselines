@@ -1,0 +1,43 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+LAUNCHER = ROOT / "scripts" / "euler_v8_deep_xattn_v1"
+
+
+def test_v8_launcher_freezes_the_two_arm_warm_start_contract():
+    submit = (LAUNCHER / "submit.sh").read_text()
+    sbatch = (LAUNCHER / "run.sbatch").read_text()
+    runner = (ROOT / "scripts" / "run_v8_warm_screen.sh").read_text()
+
+    assert "ARMS=(G-DEEP-V8-DENSE-WARM G-DEEP-XATTN-V8-DENSE-WARM)" in submit
+    assert submit.index('if [ "$SUBMIT" = 0 ]') < submit.index('ssh "$REMOTE_HOST"')
+    assert "terra_v8_v6_constraints_v7_adjacent_train96_v5" in submit
+    assert "dedbbbfcd1aae648094bb7bcb25d7a28e80b96bdf2469bb941c2e321b7aaf82b" in submit
+    assert "4d178c39443009cb4e57d83713421553689f6e3989da0be674184237c14d86cc" in submit
+    assert "smoke_validation.json" in submit
+    assert "gpuhe.4h" in submit and "gpuhe.24h" in submit
+    assert 'if [ "$STAGE" != capability ]' in submit
+
+    assert "#SBATCH --gpus=rtx_4090:4" in sbatch
+    assert 'test "$STAGE" = capability' in sbatch
+    assert 'test "${#GPU_NAMES[@]}" -eq 4' in sbatch
+    assert "scripts/grow_checkpoint.py" in sbatch
+    assert "resnet_spatial_8x8_se_xattn" in sbatch
+    assert 'INITIAL="$PARENT_CHECKPOINT"' in sbatch
+    assert '"teacher_checkpoint_sha256=$PARENT_SHA"' in sbatch
+    assert '"initialization=params_only_warm_fresh_optimizer"' in sbatch
+    assert '"reward_type=DENSE"' in sbatch
+    assert '"trench_shaping=false"' in sbatch
+    assert '--capability-panel' in sbatch
+    assert '--expect-completion-contract exact_visible_dump_v1' in sbatch
+    assert "status=PASSED" in sbatch
+
+    assert "--config G-V8-FIXED" in runner
+    assert '--accepted-bank-stage "$STAGE"' in runner
+    assert "--kickstart_kl_anneal_updates 1500" in runner
+    assert "--kickstart_value_anneal_updates 500" in runner
+    assert "--resnet_blocks_per_stage 2,2,3,3" in runner
+    assert "--no_value_clip" in runner
+    assert "--flat_minibatch_shuffle" in runner
+    assert "sparse" not in runner.lower()

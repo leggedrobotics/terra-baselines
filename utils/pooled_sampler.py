@@ -8,9 +8,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
-
-RULES = ("uniform", "adaptive")
+RULES = ("uniform", "fixed", "adaptive")
 STATE_SCHEMA = "terra_pooled_condition_sampler_state_v1"
+
+
 def entropy(probabilities: np.ndarray) -> float:
     positive = probabilities[probabilities > 0.0]
     return float(-(positive * np.log(positive)).sum()) if positive.size else 0.0
@@ -120,14 +121,32 @@ class PooledConditionSampler:
                 f"adaptive max_mass={settings.max_mass} is infeasible for "
                 f"{self._count} conditions"
             )
-        self.maps_per_condition = tuple(
-            maps_per_condition or [1] * self._count
-        )
+        self.maps_per_condition = tuple(maps_per_condition or [1] * self._count)
         if len(self.maps_per_condition) != self._count:
             raise ValueError("maps_per_condition must match the condition count")
         self.labels = deepcopy(labels or {})
-
-        self._uniform = np.full(self._count, 1.0 / self._count, dtype=np.float64)
+        raw_weights = [
+            self.labels.get(name, {}).get("sampling_weight") for name in self.names
+        ]
+        if settings.rule == "fixed":
+            if any(
+                value is None
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or float(value) <= 0.0
+                for value in raw_weights
+            ):
+                raise ValueError(
+                    "sampling_weight labels must be finite and positive for every "
+                    "condition"
+                )
+            weights = np.asarray(raw_weights, dtype=np.float64)
+            self._uniform = weights / weights.sum()
+        else:
+            if any(value is not None for value in raw_weights):
+                raise ValueError("sampling_weight labels require rule='fixed'")
+            self._uniform = np.full(self._count, 1.0 / self._count, dtype=np.float64)
         self._probabilities = self._uniform.copy()
         self._competence = np.full(self._count, np.nan, dtype=np.float64)
         self._episodes = np.zeros(self._count, dtype=np.int64)
@@ -216,15 +235,16 @@ class PooledConditionSampler:
             "numpy_rng",
         }
         if not isinstance(state, dict) or set(state) != top_keys:
-            observed = sorted(state) if isinstance(state, dict) else type(state).__name__
+            observed = (
+                sorted(state) if isinstance(state, dict) else type(state).__name__
+            )
             raise ValueError(
                 "pooled sampler state fields do not match the v1 schema: "
                 f"observed={observed}"
             )
         if state["schema"] != STATE_SCHEMA:
             raise ValueError(
-                "unsupported pooled sampler state schema: "
-                f"{state['schema']!r}"
+                "unsupported pooled sampler state schema: " f"{state['schema']!r}"
             )
 
         expected_settings = {
@@ -248,9 +268,7 @@ class PooledConditionSampler:
                     f"checkpoint={observed!r}, current={expected!r}"
                 )
 
-        def float_vector(
-            value, label: str, *, allow_none: bool = False
-        ) -> np.ndarray:
+        def float_vector(value, label: str, *, allow_none: bool = False) -> np.ndarray:
             if not isinstance(value, list) or len(value) != self._count:
                 raise ValueError(
                     f"pooled sampler {label} must have {self._count} entries"
@@ -273,8 +291,7 @@ class PooledConditionSampler:
                 not isinstance(value, list)
                 or len(value) != self._count
                 or any(
-                    isinstance(item, bool)
-                    or not isinstance(item, (int, np.integer))
+                    isinstance(item, bool) or not isinstance(item, (int, np.integer))
                     for item in value
                 )
             ):
@@ -301,9 +318,16 @@ class PooledConditionSampler:
             raise ValueError(
                 "pooled sampler probabilities must be nonnegative and sum to one"
             )
-        competence = float_vector(
-            state["competence"], "competence", allow_none=True
-        )
+        if self.settings.rule == "fixed" and not np.allclose(
+            probabilities,
+            self._uniform,
+            rtol=0.0,
+            atol=1e-12,
+        ):
+            raise ValueError(
+                "fixed sampler checkpoint probabilities changed from frozen weights"
+            )
+        competence = float_vector(state["competence"], "competence", allow_none=True)
         measured_competence = competence[~np.isnan(competence)]
         if np.any((measured_competence < 0.0) | (measured_competence > 1.0)):
             raise ValueError("pooled sampler competence must be in [0, 1]")
@@ -349,9 +373,7 @@ class PooledConditionSampler:
         refresh = state["refresh"]
         refresh_keys = {"has_closed_window", "last_refresh_update", "refreshes"}
         if not isinstance(refresh, dict) or set(refresh) != refresh_keys:
-            raise ValueError(
-                "pooled sampler refresh fields do not match the v1 schema"
-            )
+            raise ValueError("pooled sampler refresh fields do not match the v1 schema")
         if not isinstance(refresh["has_closed_window"], bool):
             raise ValueError("pooled sampler has_closed_window must be boolean")
         last_refresh_update = refresh["last_refresh_update"]
@@ -372,11 +394,9 @@ class PooledConditionSampler:
             )
 
         rng_state = deepcopy(state["numpy_rng"])
-        if (
-            not isinstance(rng_state, dict)
-            or rng_state.get("bit_generator")
-            != self._rng.bit_generator.state.get("bit_generator")
-        ):
+        if not isinstance(rng_state, dict) or rng_state.get(
+            "bit_generator"
+        ) != self._rng.bit_generator.state.get("bit_generator"):
             raise ValueError("pooled sampler NumPy RNG type changed across resume")
         restored_rng = np.random.default_rng()
         try:
@@ -425,13 +445,9 @@ class PooledConditionSampler:
         """Count maps actually instantiated by reset, separately from episodes."""
         values = np.asarray(counts)
         if values.shape != (self._count,):
-            raise ValueError(
-                "reset exposure counts must match the condition count"
-            )
+            raise ValueError("reset exposure counts must match the condition count")
         if values.dtype.kind not in "iub" or np.any(values < 0):
-            raise ValueError(
-                "reset exposure counts must be nonnegative integers"
-            )
+            raise ValueError("reset exposure counts must be nonnegative integers")
         self._reset_exposures += values.astype(np.int64)
 
     def start(self, update_index: int) -> None:
@@ -491,9 +507,7 @@ class PooledConditionSampler:
         if not unmastered.any():
             return self._uniform.copy()
         scores = np.full(self._count, -np.inf, dtype=np.float64)
-        scores[unmastered] = (
-            competence[unmastered] / self.settings.temperature
-        )
+        scores[unmastered] = competence[unmastered] / self.settings.temperature
         scores -= scores[unmastered].max()
         focus = np.where(np.isfinite(scores), np.exp(scores), 0.0)
         focus /= focus.sum()
@@ -524,10 +538,7 @@ class PooledConditionSampler:
         ) -> dict:
             def mass(counts: np.ndarray) -> list[float | None]:
                 values = self._mass(counts)
-                return [
-                    None if math.isnan(value) else float(value)
-                    for value in values
-                ]
+                return [None if math.isnan(value) else float(value) for value in values]
 
             return {
                 "updates": updates,

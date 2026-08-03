@@ -2,6 +2,7 @@
 
 Canonical design and decision authority:
 
+- [`research/V8_DEEP_XATTN_CURRICULUM.md`](research/V8_DEEP_XATTN_CURRICULUM.md)
 - [`research/P5_FOLLOWUP_GOAL.md`](research/P5_FOLLOWUP_GOAL.md)
 - [`research/P5_RESULTS_ANALYSIS.md`](research/P5_RESULTS_ANALYSIS.md)
 - [`research/P5_ACCEPTED_BANK_EXPERIMENTS.md`](research/P5_ACCEPTED_BANK_EXPERIMENTS.md)
@@ -12,11 +13,16 @@ current scheduler state.
 
 ## Current scheduler decision
 
-No Terra PPO job from this campaign is currently authorized to continue. All
-five P5c screens and all declared fixed evaluations completed, but no arm
-passed the predeclared long-run gate at two consecutive checkpoints. The next
-bounded job is a fixed-policy evaluation on the separately frozen Terra
-Legacy-Easy v1 capability floor, not additional training.
+The next authorized Terra jobs are the matched V8 capability-stage pair:
+`G-DEEP-V8-DENSE-WARM` and `G-DEEP-XATTN-V8-DENSE-WARM`. Both start from and
+distill the same P5c deep update-4,000 checkpoint. The xattn arm changes only
+the output-preserving E4-prime cross-attention readout. Update-1 admission must
+pass for both arms before their bounded 2,000-update capability screens start.
+
+No reward fade runs in this first stage. Dense-to-terminal reward progression
+is a separate checkpoint-bounded treatment that can begin only after a dense
+full-V8 checkpoint passes the fixed qualification gate in the V8 campaign
+document.
 
 ## Most recent production jobs (completed fixed-evaluation screens)
 

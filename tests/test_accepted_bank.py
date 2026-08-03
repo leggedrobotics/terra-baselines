@@ -6,6 +6,7 @@ import pytest
 
 from utils import accepted_bank as accepted_bank_module
 from utils.accepted_bank import (
+    AcceptedLevel,
     SCENARIO_IDENTITY_CONTRACT,
     SCHEMA,
     load_accepted_bank,
@@ -183,6 +184,80 @@ def test_arm_selection_is_explicit(tmp_path, arm, conditions):
     assert bank.map_count_per_condition == 64
     assert bank.terra_revision == "terra-test-revision"
     assert bank.review_admission_sha256 == _sha256(tmp_path / "review_admission.json")
+
+
+def test_v8_stage_selection_is_family_balanced_and_checkpoint_bounded():
+    controls = [
+        AcceptedLevel("fnd-slab-allfree", "foundation", "Anchor", "f", 96),
+        AcceptedLevel("trn-straight-allfree", "trench", "Anchor", "t", 96),
+    ]
+    foundation_geometry = {
+        "slab": 0.25,
+        "irregular": 0.15,
+        "courtyard": 0.15,
+        "bearing_walls": 0.20,
+        "pads": 0.15,
+        "courtyard_pads": 0.10,
+    }
+    trench_geometry = {
+        "straight": 0.15,
+        "dogleg": 0.15,
+        "tee": 0.20,
+        "cross": 0.10,
+        "double_t": 0.20,
+        "network3": 0.15,
+        "disconnected_pair": 0.05,
+    }
+    core = [
+        AcceptedLevel(
+            f"v7-fnd-{name.replace('_', '-')}-adjacent",
+            "foundation",
+            "Nearby core",
+            name,
+            96,
+        )
+        for name in foundation_geometry
+    ] + [
+        AcceptedLevel(
+            f"v7-trn-{name.replace('_', '-')}-adjacent",
+            "trench",
+            "Nearby core",
+            name,
+            96,
+        )
+        for name in trench_geometry
+    ]
+    constraints = [
+        AcceptedLevel(f"f-{index}", "foundation", "One-axis", f"f{index}", 96)
+        for index in range(18)
+    ] + [
+        AcceptedLevel(f"t-{index}", "trench", "One-axis", f"t{index}", 96)
+        for index in range(14)
+    ]
+    levels = controls + core + constraints
+    mixture = {
+        "v7_geometry_mass_within_family": {
+            "foundation": foundation_geometry,
+            "trench": trench_geometry,
+        }
+    }
+    for stage, expected_count in (("capability", 2), ("nearby", 15), ("full", 47)):
+        selected, probabilities = accepted_bank_module._v8_stage_selection(
+            levels,
+            stage,
+            tuple(level.condition_id for level in constraints),
+            tuple(level.condition_id for level in controls),
+            tuple(level.condition_id for level in core),
+            mixture,
+        )
+        assert len(selected) == expected_count
+        assert sum(probabilities) == pytest.approx(1.0)
+        for family in ("foundation", "trench"):
+            assert sum(
+                probability
+                for probability, level in zip(probabilities, selected)
+                if level.family == family
+            ) == pytest.approx(0.5)
 
 
 @pytest.mark.parametrize(
