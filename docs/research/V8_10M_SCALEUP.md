@@ -183,10 +183,12 @@ minibatch setting to the control or do not claim a capacity-only comparison.
 ## Gates and run budget
 
 1. CPU parameter/growth probe.
-2. On all 720 exact frozen full-V8 promotion resets, record finite logits/values,
+2. On all 720 frozen full-V8 promotion map slots, record finite logits/values,
    teacher-student KL, value RMSE, and deterministic action agreement before
-   PPO. This diagnoses transplant damage; it is not a behavioral result. The
-   executable receipt is produced by `scripts/v8_10m_initialization.py`.
+   PPO. This diagnoses transplant damage; it is not a behavioral result. It
+   uses deterministic exact-slot keys rather than claiming the combined main
+   panel's inherited episode seeds are valid frozen resets. The executable
+   receipt is produced by `scripts/v8_10m_initialization.py`.
 3. Matched four-RTX-4090 update-1 smokes. Require CUDA convolution backward,
    NCCL all-reduce, finite rollout/teacher tensors, gradients, model, optimizer,
    and loadable checkpoints.
@@ -229,6 +231,9 @@ after the margin stage passes its own fixed gate.
 - [ ] Start the paired Stage-A screen only after both smokes pass.
 - [x] Record explicit launch authorization and the teacher-performance waiver.
 - [ ] Require the formal fixed full-bank gate before changing reward stage.
+- [ ] Repair and freeze the combined main-panel episode reset identities before
+  the full-map stage or either reward-fading stage. Stage A uses the separate
+  capability panels, whose reset seeds do enumerate their frozen slots.
 
 ## Preparation verification
 

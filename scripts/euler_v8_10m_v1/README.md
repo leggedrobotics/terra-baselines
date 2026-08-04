@@ -14,7 +14,9 @@ The two matched arms are:
 Both start from the same provisional teacher, use a fresh optimizer, distill
 from that frozen teacher, and train on the exact Stage-A capability sampler.
 Before PPO, each arm records its logits and values against the teacher on all
-720 exact full-V8 promotion resets.
+720 full-V8 promotion map slots. This diagnostic uses deterministic exact-slot
+keys; it is not a behavioral evaluation or a claim that the combined panel's
+inherited episode seeds are valid frozen resets.
 
 The declared campaign is:
 
@@ -26,6 +28,11 @@ dense_skill -> terminal_margin -> terminal_objective (reward)
 Only the first dense capability stage is enabled in this revision. The reward
 stage does not change until a later fixed full-bank completion gate passes.
 Legacy `SPARSE` is never selected.
+
+The current combined V8 main-panel episode seeds must be repaired before the
+later full-map or reward-fading gates. This does not block Stage A: its separate
+capability promotion and development panels already enumerate their slots
+exactly.
 
 Dry run:
 

@@ -14,8 +14,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from eval_fixed_bank import configure_for_bank
+from eval_fixed_bank import exact_reset_keys
 from eval_fixed_bank import load_manifest
-from eval_fixed_bank import manifest_reset_keys
 from eval_fixed_bank import verify_exact_reset
 from scripts import v8_10m_student
 from train_mixed import make_mixed_agent_states
@@ -216,11 +216,13 @@ def run_diagnostic(
         panel for panel in accepted.evaluation_panels if panel.name == "promotion"
     )
     manifest = load_manifest(bank_root / panel.maps_path)
-    reset_keys = manifest_reset_keys(
-        manifest,
-        len(manifest),
-        accepted.environment_protocol_sha256,
-    )
+    # This is a transplant diagnostic, not a behavioral evaluation.  The V8
+    # combined main-panel reset_seed values retain episode identities from the
+    # component banks and therefore do not select their new combined slots.
+    # Enumerate every frozen map slot deterministically so teacher and student
+    # see identical observations without pretending those keys are frozen
+    # benchmark episodes.
+    reset_keys = exact_reset_keys(len(manifest))
 
     teacher_checkpoint_path = Path(teacher["teacher_checkpoint"]).resolve()
     student_checkpoint_path = student_checkpoint_path.resolve()
@@ -279,7 +281,9 @@ def run_diagnostic(
         "release_id": accepted.release_id,
         "terra_revision": terra_revision,
         "panel": "promotion",
-        "exact_frozen_resets": len(manifest),
+        "exact_frozen_map_slots": len(manifest),
+        "reset_key_contract": "deterministic_exact_slot_keys_v1",
+        "reset_key_sha256": tree_sha256(reset_keys),
         "teacher_admission": teacher_admission,
         "teacher_identity": str(teacher_identity_path),
         "teacher_identity_sha256": v8_10m_student.sha256_file(teacher_identity_path),

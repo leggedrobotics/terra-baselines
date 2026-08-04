@@ -91,7 +91,7 @@ if [ "$PHASE" = screen ]; then
     test -f "$SMOKE_RUN/initialization_diagnostic.json"
     test -f "$SMOKE_RUN/run_contract.env"
     python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["passed"] is True' "$SMOKE_RUN/smoke_validation.json"
-    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] is True; assert d["exact_frozen_resets"] == 720; assert d["teacher_admission"] == "provisional_inspection"' "$SMOKE_RUN/initialization_diagnostic.json"
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] is True; assert d["exact_frozen_map_slots"] == 720; assert d["reset_key_contract"] == "deterministic_exact_slot_keys_v1"; assert d["teacher_admission"] == "provisional_inspection"' "$SMOKE_RUN/initialization_diagnostic.json"
     test "$(sha256sum "$SMOKE_RUN/initialization_diagnostic.json" | awk '{print $1}')" = "$(awk -F= '$1=="initialization_diagnostic_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")"
     test "$(awk -F= '$1=="status" {print $2}' "$SMOKE_RUN/run_contract.env")" = PASSED
     test "$(awk -F= '$1=="phase" {print $2}' "$SMOKE_RUN/run_contract.env")" = smoke

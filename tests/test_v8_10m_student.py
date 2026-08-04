@@ -304,7 +304,8 @@ def test_euler_launcher_cannot_bypass_provisional_teacher_or_matched_smoke():
     assert "SMOKE_JOB_IDS" in submit
     assert "--dependency=afterok" in submit
     assert "SMOKE_STATE" in sbatch
-    assert 'exact_frozen_resets\\"] == 720' in submit
+    assert 'exact_frozen_map_slots\\"] == 720' in submit
+    assert "deterministic_exact_slot_keys_v1" in submit
     assert "TEACHER_SHA" in submit
     assert "TEACHER_RUN_CONTRACT_SHA" in submit
     assert "v8_10m_provisional_teacher.py" in sbatch
