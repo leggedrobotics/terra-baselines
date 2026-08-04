@@ -47,7 +47,7 @@ REMOTE_BANK="$REMOTE_INPUTS/bank-$BANK_SHA.tar.zst"
 SMOKE_REVISION="${SMOKE_REVISION:-$BASELINES_REVISION}"
 SMOKE_JOB_IDS_RAW="${SMOKE_JOB_IDS:-}"
 
-echo "phase=$PHASE stage=$STAGE seed=$SEED target_update=$([ "$PHASE" = smoke ] && echo 1 || echo 2000)"
+echo "phase=$PHASE stage=$STAGE seed=$SEED target_update=$([ "$PHASE" = smoke ] && echo 1 || echo 4000)"
 echo "terra_baselines_revision=$BASELINES_REVISION"
 echo "release_id=$RELEASE_ID"
 echo "teacher_checkpoint=$TEACHER_CHECKPOINT"

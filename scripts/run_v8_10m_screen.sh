@@ -39,10 +39,10 @@ test -f "$TEACHER_CHECKPOINT"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 NUM_DEVICES="${NUM_DEVICES:-4}"
-NUM_ENVS_PER_DEVICE="${NUM_ENVS_PER_DEVICE:-1024}"
+NUM_ENVS_PER_DEVICE="${NUM_ENVS_PER_DEVICE:-512}"
 NUM_STEPS="${NUM_STEPS:-32}"
-NUM_MINIBATCHES="${NUM_MINIBATCHES:-32}"
-CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-500}"
+NUM_MINIBATCHES="${NUM_MINIBATCHES:-16}"
+CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-1000}"
 FINITE_CHECK_INTERVAL="${FINITE_CHECK_INTERVAL:-10}"
 LOG_TRAIN_INTERVAL="${LOG_TRAIN_INTERVAL:-10}"
 CACHE_CLEAR_INTERVAL="${CACHE_CLEAR_INTERVAL:-1000}"
@@ -79,13 +79,13 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --warm_start_from "$INITIAL_CHECKPOINT" \
     --teacher_checkpoint "$TEACHER_CHECKPOINT" \
     --kickstart_kl_coef 1.0 \
-    --kickstart_kl_anneal_updates 1500 \
+    --kickstart_kl_anneal_updates 3000 \
     --kickstart_value_coef 0.5 \
-    --kickstart_value_anneal_updates 500 \
-    --kickstart_lr_warmup_updates 100 \
+    --kickstart_value_anneal_updates 1000 \
+    --kickstart_lr_warmup_updates 200 \
     --ent_schedule_start 0.02 \
     --ent_schedule_end 0.005 \
-    --ent_schedule_steps 10000 \
+    --ent_schedule_steps 20000 \
     --no_value_clip \
     --flat_minibatch_shuffle \
     --no-load-env-from-checkpoint \

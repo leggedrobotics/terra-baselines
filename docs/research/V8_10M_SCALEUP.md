@@ -167,9 +167,9 @@ Both use:
 
 - the same frozen teacher for KL and value targets;
 - a fresh optimizer and update counter;
-- KL coefficient `1.0 -> 0` over 1,500 updates;
-- value coefficient `0.5 -> 0` over 500 updates;
-- learning-rate warmup for 100 updates;
+- KL coefficient `1.0 -> 0` over 3,000 half-batch updates;
+- value coefficient `0.5 -> 0` over 1,000 half-batch updates;
+- learning-rate warmup for 200 half-batch updates;
 - the exact same V8 map stage at every paired update;
 - dense reward only;
 - the same seed, transitions, PPO settings, and fixed evaluations.
@@ -189,13 +189,13 @@ minibatch setting to the control or do not claim a capacity-only comparison.
    uses deterministic exact-slot keys rather than claiming the combined main
    panel's inherited episode seeds are valid frozen resets. The executable
    receipt is produced by `scripts/v8_10m_initialization.py`.
-3. Matched four-RTX-4090 update-1 smokes. Require CUDA convolution backward,
+3. Matched four-GPU update-1 smokes. Require CUDA convolution backward,
    NCCL all-reduce, finite rollout/teacher tensors, gradients, model, optimizer,
    and loadable checkpoints.
-4. Stage A uses one seed per arm for 2,000 updates on the two capability
-   controls, checkpoints every 500 updates. The latest two promotion and
-   development evaluations must each reach at least 12/16 exact successes in
-   both conditions before nearby maps are admitted.
+4. Stage A uses one seed per arm for 4,000 half-batch updates on the two
+   capability controls, checkpoints every 1,000 updates. The latest two
+   promotion and development evaluations must each reach at least 12/16 exact
+   successes in both conditions before nearby maps are admitted.
 5. Nearby and full are separate later runs from the promoted checkpoint, with
    fresh optimizer state and immutable dense reward. The existing stage budgets
    remain 4,000 and 8,000 updates before any long continuation decision.
@@ -210,6 +210,21 @@ declared now but remains a separate checkpoint-bounded stage change: Stage A,
 nearby, and full-map learning all remain dense. `terminal_margin` can begin only
 after the fixed full-bank reward gate passes; `terminal_objective` follows only
 after the margin stage passes its own fixed gate.
+
+### Batch-size repair after the first smoke
+
+The first 10M update-1 smoke (`9678493`) failed before an optimizer update when
+XLA required a 17.38 GB training temporary at 1,024 environments per device.
+The dependent screen was canceled automatically. The compact smoke passed, but
+its pending screen was canceled before allocation so the arms could remain
+matched.
+
+The corrected treatment uses 512 environments per device and 16 minibatches
+for both arms, then doubles updates, annealing periods, LR warmup, entropy
+schedule, and checkpoint intervals. This preserves 262,144,000 Stage-A
+transitions, 1,024 samples per local PPO minibatch, and 128,000 optimizer steps
+relative to the original 1,024-env/device x 2,000-update design while halving
+the rollout activation batch that caused the OOM.
 
 ## Preparation checklist
 

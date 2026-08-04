@@ -70,8 +70,15 @@ SUBMIT=1 scripts/euler_v8_10m_v1/submit.sh screen 20260730 \
   /remote/path/to/teacher/run_contract.env
 ```
 
-The Stage-A screen targets 2,000 updates and evaluates 500/1000/1500/2000 on
-the frozen capability promotion and development panels. Each arm receives a
-gate receipt; nearby maps remain locked unless the latest two checkpoints reach
-12/16 exact successes in both capability conditions on both splits. This
-launcher never silently changes reward stage.
+The Stage-A screen targets 4,000 updates at 512 environments/device and
+evaluates 1000/2000/3000/4000 on the frozen capability promotion and
+development panels. Each arm receives a gate receipt; nearby maps remain
+locked unless the latest two checkpoints reach 12/16 exact successes in both
+capability conditions on both splits. This launcher never silently changes
+reward stage.
+
+The half-sized environment batch is intentional. A real update-1 compile at
+1,024 environments/device required a 17.38 GB XLA temporary and did not fit the
+24 GB card after other live buffers. Halving environments and minibatches while
+doubling update-based schedules preserves total transitions, local minibatch
+size, and optimizer-step budget for the matched comparison.

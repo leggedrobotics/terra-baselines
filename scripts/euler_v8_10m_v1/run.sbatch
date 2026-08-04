@@ -49,10 +49,10 @@ case "$PHASE" in
         test "${SLURM_JOB_PARTITION:-}" = gpuhe.24h
         [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
         [[ "$SMOKE_RUN" = /* ]]
-        UPDATES=2000
-        CHECKPOINT_INTERVAL=500
+        UPDATES=4000
+        CHECKPOINT_INTERVAL=1000
         LOG_TRAIN_INTERVAL=10
-        CACHE_CLEAR_INTERVAL=1000
+        CACHE_CLEAR_INTERVAL=2000
         ;;
     *) echo "unsupported phase '$PHASE'" >&2; exit 2 ;;
 esac
@@ -185,7 +185,7 @@ fi
 
 RUN_NAME="v8_10m_${BASELINES_REVISION:0:12}_${PHASE}_${STAGE}_${ARM,,}_s${SEED}"
 RUN_NAME="${RUN_NAME//-/_}"
-GLOBAL_TRANSITIONS=$((4 * 1024 * 32 * UPDATES))
+GLOBAL_TRANSITIONS=$((4 * 512 * 32 * UPDATES))
 printf '%s\n' \
     "arm=$ARM" \
     "phase=$PHASE" \
@@ -225,13 +225,15 @@ printf '%s\n' \
     "resnet_stage_channels=$EXPECTED_STAGE_CHANNELS" \
     "resnet_blocks_per_stage=2,2,3,3" \
     "num_devices=4" \
-    "num_envs_per_device=1024" \
+    "num_envs_per_device=512" \
     "num_steps=32" \
-    "num_minibatches=32" \
+    "num_minibatches=16" \
     "update_epochs=2" \
     "learning_rate=0.0003" \
-    "kickstart_kl=1.0_to_0_over_1500" \
-    "kickstart_value=0.5_to_0_over_500" \
+    "kickstart_kl=1.0_to_0_over_3000" \
+    "kickstart_value=0.5_to_0_over_1000" \
+    "kickstart_lr_warmup=0.0001_to_0.0003_over_200" \
+    "entropy_schedule=0.02_to_0.005_over_20000" \
     "checkpoint_interval=$CHECKPOINT_INTERVAL" \
     "slurm_job_id=$SLURM_JOB_ID" > "$RUN_DIR/run_contract.env"
 
@@ -240,9 +242,9 @@ export TERRA_REVISION
 export PYTHON_BIN="$PYTHON"
 export MACHINE=euler
 export NUM_DEVICES=4
-export NUM_ENVS_PER_DEVICE=1024
+export NUM_ENVS_PER_DEVICE=512
 export NUM_STEPS=32
-export NUM_MINIBATCHES=32
+export NUM_MINIBATCHES=16
 export CHECKPOINT_INTERVAL LOG_TRAIN_INTERVAL CACHE_CLEAR_INTERVAL
 export FINITE_CHECK_INTERVAL=10
 if [ "$PHASE" = smoke ]; then export FINITE_CHECK_INTERVAL=1; fi
@@ -265,7 +267,7 @@ if [ "$PHASE" = smoke ]; then
         --output "$RUN_DIR/smoke_validation.json"
 else
     CHECKPOINT_ARGS=()
-    for UPDATE in 500 1000 1500 2000; do
+    for UPDATE in 1000 2000 3000 4000; do
         TOKEN="$(printf '%06d' "$UPDATE")"
         CHECKPOINT_ARGS+=(--checkpoint "$(find_one "${RUN_NAME}-euler-*_update_${TOKEN}.pkl")")
     done

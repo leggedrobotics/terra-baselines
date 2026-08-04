@@ -15,7 +15,7 @@ from scripts.euler_v8_deep_xattn_v1 import continuation_contract
 from scripts.euler_v8_deep_xattn_v1 import stage_gate
 
 SCHEMA = "terra_v8_10m_curriculum_gate_v1"
-UPDATES = (500, 1000, 1500, 2000)
+UPDATES = (1000, 2000, 3000, 4000)
 ARMS = {
     "G-V8-XATTN-REWARM-CONTROL": {
         "parameters": 2_856_685,
@@ -131,7 +131,14 @@ def build_gate(
         "condition_count": "2",
         "horizon": "450",
         "full_resets": "true",
-        "updates": "2000",
+        "updates": "4000",
+        "absolute_target_global_transitions": "262144000",
+        "num_envs_per_device": "512",
+        "num_minibatches": "16",
+        "kickstart_kl": "1.0_to_0_over_3000",
+        "kickstart_value": "0.5_to_0_over_1000",
+        "kickstart_lr_warmup": "0.0001_to_0.0003_over_200",
+        "entropy_schedule": "0.02_to_0.005_over_20000",
         "terra_revision": stage_gate.TERRA_REVISION,
         "training_bank_release_id": stage_gate.RELEASE_ID,
         "training_bank_archive_sha256": stage_gate.BANK_ARCHIVE_SHA256,
