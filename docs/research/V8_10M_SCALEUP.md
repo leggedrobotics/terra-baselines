@@ -1,6 +1,6 @@
 # V8 10M scale-up experiment
 
-- Status: **STAGE-A LAUNCH AUTHORIZED; EVIDENCE PENDING**
+- Status: **STAGE-A SUBMITTED; WAITING IN `gpuhe.120h` PRIORITY QUEUE**
 - Date: 2026-08-04
 - Parent campaign:
   [`V8_DEEP_XATTN_CURRICULUM.md`](V8_DEEP_XATTN_CURRICULUM.md)
@@ -235,6 +235,45 @@ preserve 262,144,000 Stage-A transitions, and halves the learning rate to
 the total number of sample presentations across two PPO epochs, while making
 the unavoidable optimizer-step change explicit and identical in both arms.
 
+## Euler launch receipt
+
+The final paired update-1 smokes passed on 2026-08-05 from source revision
+`d6bbba5bf60999f56663afb27e2a0b2b9931f877`:
+
+| Arm | Smoke job | Result | Update-1 checkpoint SHA-256 |
+|---|---:|---|---|
+| `G-V8-XATTN-REWARM-CONTROL` | `9683427` | `COMPLETED`, receipt passed | `81ead9ff5216e0f6c32a2f5ffd0d5f60f89f97e80e492e3f7d27f3e5265c16f8` |
+| `G-V8-10M-XATTN-WARM` | `9683428` | `COMPLETED`, receipt passed | `63429599fa17d44896991ec780b63ac9825e21e31a2b51f2450d00650580de03` |
+
+Both smokes validated a CUDA convolution backward pass, distributed update,
+finite optimizer state, and loadable update-1 checkpoint. The frozen
+initialization diagnostic covered all 720 map slots. The compact control is
+exactly output preserving at initialization (`KL=0`, action agreement `1.0`,
+value RMSE `0`). The widened 10M transplant is finite but **not** function
+preserving (`KL=19.965`, p95 `27.151`, action agreement `0.00972`, value RMSE
+`5.243`). It is therefore recorded as a parameter warm start followed by
+explicit KL/value distillation, not as a Net2Wider identity transform.
+
+After both admissions passed, the paired 4,000-update Stage-A screens were
+submitted from immutable source revision
+`2a195b6c7112e56684d6088f1c9a073f3a3ff047`:
+
+| Arm | Screen job | Queue | State at 2026-08-05 01:16 CEST |
+|---|---:|---|---|
+| `G-V8-XATTN-REWARM-CONTROL` | `9685873` | `gpuhe.120h`, 4x RTX 4090 | `PENDING (Priority)` |
+| `G-V8-10M-XATTN-WARM` | `9685874` | `gpuhe.120h`, 4x RTX 4090 | `PENDING (Priority)` |
+
+The jobs have no Slurm dependency and a `119:45:00` limit. `PENDING` means
+Slurm accepted the experiments but has not allocated GPUs; it is not training
+evidence. Each screen revalidates its matching completed smoke receipt before
+loading the bank or performing an optimizer update.
+
+The selected frozen teacher is update 7,500 of
+`G-DEEP-XATTN-V8-DIRECT-FULL-TEACHER`, SHA-256
+`a6bebfffcf4d390df19ade9652d3c96d833eb7d2587ddb1b95035b7ad6a807f6`.
+The user-authorized performance-waiver remains explicit: this checkpoint is a
+finite same-V8 teacher, not a claim of full-bank mastery.
+
 ## Preparation checklist
 
 - [x] Freeze a concrete approximately-10M architecture and derive its exact
@@ -246,13 +285,13 @@ the unavoidable optimizer-step change explicit and identical in both arms.
   are covered, the grown tree is finite, and no leaf takes the generic fresh-
   initialization path.
 - [x] Add the real-teacher 720-reset pre-PPO output diagnostic.
-- [x] Add the two-arm Euler update-1 and true 24-hour launcher.
+- [x] Add the two-arm Euler update-1 and 120-hour screen launcher.
 - [x] Add the dependent common-prefix evaluator and aggregate/family/condition
   leaderboard, including separate all-free capability controls.
 - [x] Run both smoke and screen launch plans locally with `SUBMIT=0` from a
   committed clean revision; no SSH, scratch, W&B, or Slurm mutation occurred.
-- [ ] Run paired Euler update-1 smokes from the provisional teacher.
-- [ ] Start the paired Stage-A screen only after both smokes pass.
+- [x] Run paired Euler update-1 smokes from the provisional teacher.
+- [x] Submit the paired Stage-A screen only after both smokes pass.
 - [x] Record explicit launch authorization and the teacher-performance waiver.
 - [ ] Require the formal fixed full-bank gate before changing reward stage.
 - [ ] Repair and freeze the combined main-panel episode reset identities before
@@ -261,15 +300,19 @@ the unavoidable optimizer-step change explicit and identical in both arms.
 
 ## Preparation verification
 
-The prepared implementation currently passes:
+The launched implementation passes:
 
-- the full Terra-baselines suite: `344 passed`, including 3 subtests;
+- the full Terra-baselines suite: `346 passed`, `73 warnings`, including 3
+  subtests;
 - Black formatting and Python byte-compilation for the new Python entrypoints;
 - Bash syntax and ShellCheck at warning severity for all new launch scripts;
 - the real-model growth probe at exactly `10,257,209` parameters;
 - an independent launch-blocker re-review of the hardened teacher gate, with no
-  remaining blocker found.
+  remaining blocker found;
+- paired update-1 smoke receipts from jobs `9683427` and `9683428`; and
+- submitted Stage-A screen jobs `9685873` and `9685874` on `gpuhe.120h`.
 
-No 10M Euler job has been submitted. `SUBMIT=0` is the only allowed launcher
-mode until a qualifying teacher receipt exists and a later explicit launch
-instruction is recorded.
+The next operational check is allocation and startup validation, not promotion.
+Nearby maps remain locked until the Stage-A fixed capability gates pass. Reward
+fading remains locked until the later fixed **full-V8** gate passes; no online
+completion signal is permitted to change the reward during these jobs.
