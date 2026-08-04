@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 7 ]; then
-    echo "usage: run_v8_10m_screen.sh ARM BANK_ROOT INITIAL TEACHER RUN_NAME NUM_UPDATES RUN_ROOT" >&2
+if [ "$#" -ne 8 ]; then
+    echo "usage: run_v8_10m_screen.sh ARM BANK_ROOT STAGE INITIAL TEACHER RUN_NAME NUM_UPDATES RUN_ROOT" >&2
     exit 2
 fi
 
 ARM="$1"
 BANK_ROOT="$2"
-INITIAL_CHECKPOINT="$3"
-TEACHER_CHECKPOINT="$4"
-RUN_NAME="$5"
-NUM_UPDATES="$6"
-RUN_ROOT="$7"
+STAGE="$3"
+INITIAL_CHECKPOINT="$4"
+TEACHER_CHECKPOINT="$5"
+RUN_NAME="$6"
+NUM_UPDATES="$7"
+RUN_ROOT="$8"
 
 case "$ARM" in
     G-V8-XATTN-REWARM-CONTROL)
@@ -23,6 +24,7 @@ case "$ARM" in
         ;;
     *) echo "unknown V8 scale arm '$ARM'" >&2; exit 2 ;;
 esac
+case "$STAGE" in capability|nearby|full) ;; *) echo "invalid V8 stage '$STAGE'" >&2; exit 2 ;; esac
 
 : "${TERRA_ROOT:?set TERRA_ROOT to the immutable Terra source}"
 : "${TERRA_REVISION:?set TERRA_REVISION to the frozen V8 Terra revision}"
@@ -55,7 +57,7 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --config G-V8-FIXED \
     --machine "${MACHINE:-euler}" \
     --accepted-bank-root "$BANK_ROOT" \
-    --accepted-bank-stage full \
+    --accepted-bank-stage "$STAGE" \
     --terra-revision "$TERRA_REVISION" \
     --name "$RUN_NAME" \
     --seed "$SEED" \

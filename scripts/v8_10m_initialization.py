@@ -21,6 +21,7 @@ from scripts import v8_10m_student
 from train_mixed import make_mixed_agent_states
 from utils.accepted_bank import load_accepted_bank
 from utils.helpers import load_pkl_object
+from utils.helpers import register_checkpoint_config_classes
 from utils.utils_ppo import obs_to_model_input
 
 ARMS = {
@@ -33,6 +34,52 @@ ARMS = {
         "parameters": v8_10m_student.TARGET_PARAMETER_COUNT,
     },
 }
+
+
+def inspect_teacher_source(
+    *,
+    teacher_receipt: Path | None,
+    teacher_inspection: Path | None,
+    bank_root: Path,
+) -> tuple[dict, Path, str]:
+    """Return one validated teacher identity from either admission path."""
+    if (teacher_receipt is None) == (teacher_inspection is None):
+        raise ValueError("provide exactly one teacher receipt or inspection")
+    if teacher_receipt is not None:
+        path = teacher_receipt.resolve()
+        return (
+            v8_10m_student.inspect_teacher(path, bank_root.resolve()),
+            path,
+            "qualified_receipt",
+        )
+
+    path = teacher_inspection.resolve()
+    record = json.loads(path.read_text())
+    expected = {
+        "schema": "terra_v8_10m_provisional_teacher_v1",
+        "passed": True,
+        "provisional_teacher": True,
+        "performance_mastery_gate_waived_by_user": True,
+        "same_distribution": True,
+        "finite_model_optimizer": True,
+        "full_sampler_state_validated": True,
+        "teacher_arm": v8_10m_student.TEACHER_ARM,
+        "release_id": v8_10m_student.stage_gate.RELEASE_ID,
+        "terra_revision": v8_10m_student.stage_gate.TERRA_REVISION,
+        "curriculum_stage": "full",
+        "reward_stage": "dense_skill",
+    }
+    for key, value in expected.items():
+        if record.get(key) != value:
+            raise ValueError(f"provisional teacher inspection {key} changed")
+    checkpoint = Path(str(record.get("teacher_checkpoint", ""))).resolve()
+    checkpoint_sha = str(record.get("teacher_checkpoint_sha256", ""))
+    if (
+        not checkpoint.is_file()
+        or v8_10m_student.sha256_file(checkpoint) != checkpoint_sha
+    ):
+        raise ValueError("provisional teacher checkpoint changed after inspection")
+    return record, path, "provisional_inspection"
 
 
 def tree_sha256(tree) -> str:
@@ -144,15 +191,18 @@ def model_outputs(
 def run_diagnostic(
     *,
     arm: str,
-    teacher_receipt: Path,
+    teacher_receipt: Path | None,
+    teacher_inspection: Path | None,
     student_checkpoint_path: Path,
     bank_root: Path,
     terra_revision: str,
 ) -> dict:
     if arm not in ARMS:
         raise ValueError(f"unsupported 10M comparison arm: {arm}")
-    teacher = v8_10m_student.inspect_teacher(
-        teacher_receipt.resolve(), bank_root.resolve()
+    teacher, teacher_identity_path, teacher_admission = inspect_teacher_source(
+        teacher_receipt=teacher_receipt,
+        teacher_inspection=teacher_inspection,
+        bank_root=bank_root,
     )
     if terra_revision != v8_10m_student.stage_gate.TERRA_REVISION:
         raise ValueError("initialization diagnostic Terra revision changed")
@@ -174,6 +224,7 @@ def run_diagnostic(
 
     teacher_checkpoint_path = Path(teacher["teacher_checkpoint"]).resolve()
     student_checkpoint_path = student_checkpoint_path.resolve()
+    register_checkpoint_config_classes()
     teacher_checkpoint = load_pkl_object(str(teacher_checkpoint_path))
     student_checkpoint = load_pkl_object(str(student_checkpoint_path))
     expected = ARMS[arm]
@@ -229,8 +280,9 @@ def run_diagnostic(
         "terra_revision": terra_revision,
         "panel": "promotion",
         "exact_frozen_resets": len(manifest),
-        "teacher_receipt": str(teacher_receipt.resolve()),
-        "teacher_receipt_sha256": v8_10m_student.sha256_file(teacher_receipt.resolve()),
+        "teacher_admission": teacher_admission,
+        "teacher_identity": str(teacher_identity_path),
+        "teacher_identity_sha256": v8_10m_student.sha256_file(teacher_identity_path),
         "teacher_checkpoint": str(teacher_checkpoint_path),
         "teacher_checkpoint_sha256": v8_10m_student.sha256_file(
             teacher_checkpoint_path
@@ -250,7 +302,9 @@ def run_diagnostic(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arm", choices=tuple(ARMS), required=True)
-    parser.add_argument("--teacher-receipt", type=Path, required=True)
+    teacher = parser.add_mutually_exclusive_group(required=True)
+    teacher.add_argument("--teacher-receipt", type=Path)
+    teacher.add_argument("--teacher-inspection", type=Path)
     parser.add_argument("--student-checkpoint", type=Path, required=True)
     parser.add_argument("--bank-root", type=Path, required=True)
     parser.add_argument("--terra-revision", required=True)
@@ -261,6 +315,7 @@ def main() -> None:
     result = run_diagnostic(
         arm=args.arm,
         teacher_receipt=args.teacher_receipt,
+        teacher_inspection=args.teacher_inspection,
         student_checkpoint_path=args.student_checkpoint,
         bank_root=args.bank_root.resolve(),
         terra_revision=args.terra_revision,

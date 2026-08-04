@@ -1,7 +1,7 @@
 # V8 10M scale-up experiment
 
-- Status: **PREPARED, NOT CLEARED TO LAUNCH**
-- Date: 2026-08-03
+- Status: **STAGE-A LAUNCH AUTHORIZED; EVIDENCE PENDING**
+- Date: 2026-08-04
 - Parent campaign:
   [`V8_DEEP_XATTN_CURRICULUM.md`](V8_DEEP_XATTN_CURRICULUM.md)
 - Implementation policy:
@@ -9,16 +9,48 @@
 
 ## Question
 
-After a compact deep+xattn policy has actually learned the frozen full-V8
-distribution, does increasing only the spatial encoder width improve held-out
-full-V8 completion at the same number of PPO transitions?
+Starting from the same healthy full-V8 compact teacher, does increasing only
+the spatial encoder width improve held-out V8 completion under the staged map
+curriculum at the same number of PPO transitions?
 
-This is not permission to launch another arm now. The current V8 curriculum must
-first produce a qualified teacher. The old P5c checkpoint is only an
-initialization teacher for the current Stage-A campaign and is explicitly
-ineligible for this experiment.
+On 2026-08-04 Lorenzo explicitly authorized starting the matched compact and
+10M students without waiting for formal teacher mastery. This waives only the
+teacher performance gate. The selected teacher must still be a finite,
+same-distribution, full-V8 deep+xattn checkpoint with a valid optimizer and
+full-bank sampler state.
+
+The launched treatment is checkpoint-bounded on two independent axes:
+
+```text
+map:    capability -> nearby -> full
+reward: dense_skill -> terminal_margin -> terminal_objective
+```
+
+Stage A starts under `dense_skill`. Reward progression cannot start from online
+training success; it requires high fixed full-V8 completion after the full map
+stage. Terra's legacy `SPARSE` enum is not an acceptable substitute for the
+terminal reward contract described in the canonical progressive-reward spec.
 
 ## Teacher admission
+
+### Provisional launch admission
+
+The authorized Stage-A launch accepts the latest numbered checkpoint at or
+after update 5,000 from `G-DEEP-XATTN-V8-DIRECT-FULL-TEACHER` when all of these
+hold immediately inside Slurm:
+
+- the source run contract names the exact V8 release, dataset hashes, dense
+  reward, 450-step horizon, full resets, and all 47 conditions;
+- checkpoint and run-contract hashes match the submitted identities;
+- model and optimizer trees and optimizer step are finite;
+- the compact deep+xattn architecture contains exactly 2,856,685 parameters;
+- the checkpoint stores the frozen full-V8 accepted-bank identity; and
+- the full ordered sampler state is valid for the paired seed.
+
+The resulting inspection is explicitly marked
+`performance_mastery_gate_waived_by_user=true`; it is not a mastery receipt.
+
+### Formal reward-curriculum admission
 
 The 10M experiment accepts exactly one teacher type:
 
@@ -138,7 +170,7 @@ Both use:
 - KL coefficient `1.0 -> 0` over 1,500 updates;
 - value coefficient `0.5 -> 0` over 500 updates;
 - learning-rate warmup for 100 updates;
-- the exact full-V8 sampler from update zero;
+- the exact same V8 map stage at every paired update;
 - dense reward only;
 - the same seed, transitions, PPO settings, and fixed evaluations.
 
@@ -158,22 +190,24 @@ minibatch setting to the control or do not claim a capacity-only comparison.
 3. Matched four-RTX-4090 update-1 smokes. Require CUDA convolution backward,
    NCCL all-reduce, finite rollout/teacher tensors, gradients, model, optimizer,
    and loadable checkpoints.
-4. One seed per arm for a matched 24-hour screen, checkpoints every 500 updates.
-   The absolute target is update 20,000, deliberately above the expected
-   24-hour reach, so wall time rather than an accidental short target bounds the
-   run.
-5. An `afterany` paired evaluator accepts only `COMPLETED` or `TIMEOUT`, rejects
-   gaps and failures, and evaluates the longest common checkpoint prefix at
-   updates 500/1000/1500, every 2,000 thereafter, plus the latest common
-   checkpoint.
+4. Stage A uses one seed per arm for 2,000 updates on the two capability
+   controls, checkpoints every 500 updates. The latest two promotion and
+   development evaluations must each reach at least 12/16 exact successes in
+   both conditions before nearby maps are admitted.
+5. Nearby and full are separate later runs from the promoted checkpoint, with
+   fresh optimizer state and immutable dense reward. The existing stage budgets
+   remain 4,000 and 8,000 updates before any long continuation decision.
 6. Report main promotion/development and the separate all-free capability
    promotion/development panels in one aggregate, family, and per-condition
    leaderboard. Online return is diagnostic only.
 7. Replicate or grant 120-hour compute only if the 10M treatment shows held-out
    progress without family, worst-cell, capability, or integrity regression.
 
-No progressive reward experiment is bundled into this scale test. It remains a
-separate checkpoint-bounded treatment after dense qualification.
+The map curriculum is part of this named treatment. The reward curriculum is
+declared now but remains a separate checkpoint-bounded stage change: Stage A,
+nearby, and full-map learning all remain dense. `terminal_margin` can begin only
+after the fixed full-bank reward gate passes; `terminal_objective` follows only
+after the margin stage passes its own fixed gate.
 
 ## Preparation checklist
 
@@ -191,9 +225,10 @@ separate checkpoint-bounded treatment after dense qualification.
   leaderboard, including separate all-free capability controls.
 - [x] Run both smoke and screen launch plans locally with `SUBMIT=0` from a
   committed clean revision; no SSH, scratch, W&B, or Slurm mutation occurred.
-- [ ] Run the future Euler update-1 smokes after a teacher qualifies.
-- [ ] Wait for an eligible full-V8 teacher receipt.
-- [ ] Obtain explicit launch instruction after teacher qualification.
+- [ ] Run paired Euler update-1 smokes from the provisional teacher.
+- [ ] Start the paired Stage-A screen only after both smokes pass.
+- [x] Record explicit launch authorization and the teacher-performance waiver.
+- [ ] Require the formal fixed full-bank gate before changing reward stage.
 
 ## Preparation verification
 

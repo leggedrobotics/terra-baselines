@@ -293,27 +293,30 @@ def test_selected_development_gate_covers_families_cells_and_capability():
         v8_10m_student.validate_selected_development_gate(main, capability)
 
 
-def test_euler_launcher_cannot_bypass_teacher_or_matched_smoke():
+def test_euler_launcher_cannot_bypass_provisional_teacher_or_matched_smoke():
     submit = (ROOT / "scripts/euler_v8_10m_v1/submit.sh").read_text()
     sbatch = (ROOT / "scripts/euler_v8_10m_v1/run.sbatch").read_text()
-    compare = (ROOT / "scripts/euler_v8_10m_v1/compare.sbatch").read_text()
     train = (ROOT / "scripts/run_v8_10m_screen.sh").read_text()
 
     assert "SUBMIT=0: no SSH, scratch, W&B, or Slurm mutation" in submit
     assert "smoke_validation.json" in submit
     assert "initialization_diagnostic.json" in submit
     assert 'exact_frozen_resets\\"] == 720' in submit
-    assert "teacher_receipt_sha256" in submit
-    assert "inspect-teacher --receipt" in sbatch
+    assert "TEACHER_SHA" in submit
+    assert "TEACHER_RUN_CONTRACT_SHA" in submit
+    assert "v8_10m_provisional_teacher.py" in sbatch
+    assert (
+        "performance_mastery_gate_waived_by_user"
+        in (ROOT / "scripts/v8_10m_provisional_teacher.py").read_text()
+    )
     assert '--bank-root "$BANK"' in sbatch
     assert "--resnet_stage_channels 64,128,192,256" in sbatch
     assert "EXPECTED_PARAMETERS=10257209" in sbatch
-    assert "UPDATES=20000" in sbatch
+    assert "UPDATES=2000" in sbatch
     assert "v8_10m_initialization.py" in sbatch
-    assert "afterany:$CONTROL_JOB_ID:$TREATMENT_JOB_ID" in submit
-    assert "v8_10m_compare.py" in compare
-    assert "--capability-panel" in compare
-    assert "--accepted-bank-stage full" in train
+    assert "--capability-panel" in sbatch
+    assert "v8_10m_curriculum_gate.py" in sbatch
+    assert '--accepted-bank-stage "$STAGE"' in train
     assert "--teacher_checkpoint" in train
     assert "--kickstart_kl_anneal_updates 1500" in train
     assert "terminal_objective" not in train
