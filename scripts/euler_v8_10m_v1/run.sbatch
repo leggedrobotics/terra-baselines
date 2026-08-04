@@ -227,12 +227,12 @@ printf '%s\n' \
     "num_devices=4" \
     "num_envs_per_device=512" \
     "num_steps=32" \
-    "num_minibatches=16" \
+    "num_minibatches=32" \
     "update_epochs=2" \
-    "learning_rate=0.0003" \
+    "learning_rate=0.00015" \
     "kickstart_kl=1.0_to_0_over_3000" \
     "kickstart_value=0.5_to_0_over_1000" \
-    "kickstart_lr_warmup=0.0001_to_0.0003_over_200" \
+    "kickstart_lr_warmup=0.00005_to_0.00015_over_200" \
     "entropy_schedule=0.02_to_0.005_over_20000" \
     "checkpoint_interval=$CHECKPOINT_INTERVAL" \
     "slurm_job_id=$SLURM_JOB_ID" > "$RUN_DIR/run_contract.env"
@@ -244,7 +244,7 @@ export MACHINE=euler
 export NUM_DEVICES=4
 export NUM_ENVS_PER_DEVICE=512
 export NUM_STEPS=32
-export NUM_MINIBATCHES=16
+export NUM_MINIBATCHES=32
 export CHECKPOINT_INTERVAL LOG_TRAIN_INTERVAL CACHE_CLEAR_INTERVAL
 export FINITE_CHECK_INTERVAL=10
 if [ "$PHASE" = smoke ]; then export FINITE_CHECK_INTERVAL=1; fi

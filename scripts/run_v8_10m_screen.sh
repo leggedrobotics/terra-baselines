@@ -41,7 +41,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 NUM_DEVICES="${NUM_DEVICES:-4}"
 NUM_ENVS_PER_DEVICE="${NUM_ENVS_PER_DEVICE:-512}"
 NUM_STEPS="${NUM_STEPS:-32}"
-NUM_MINIBATCHES="${NUM_MINIBATCHES:-16}"
+NUM_MINIBATCHES="${NUM_MINIBATCHES:-32}"
 CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-1000}"
 FINITE_CHECK_INTERVAL="${FINITE_CHECK_INTERVAL:-10}"
 LOG_TRAIN_INTERVAL="${LOG_TRAIN_INTERVAL:-10}"
@@ -67,7 +67,7 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --total_timesteps "$TOTAL_TIMESTEPS" \
     --update_epochs 2 \
     --num_minibatches "$NUM_MINIBATCHES" \
-    --lr 3e-4 \
+    --lr 1.5e-4 \
     --model_size medium \
     --model_core mlp \
     --map_encoder resnet_spatial_8x8_se_xattn \

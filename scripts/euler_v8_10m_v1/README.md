@@ -79,6 +79,9 @@ reward stage.
 
 The half-sized environment batch is intentional. A real update-1 compile at
 1,024 environments/device required a 17.38 GB XLA temporary and did not fit the
-24 GB card after other live buffers. Halving environments and minibatches while
-doubling update-based schedules preserves total transitions, local minibatch
-size, and optimizer-step budget for the matched comparison.
+24 GB card after other live buffers. The first attempted repair also halved
+minibatches, leaving the compiled local PPO batch at 1,024 and reproducing the
+OOM. The final treatment keeps 32 minibatches, making the local PPO batch 512,
+doubles update-based schedules to preserve total transitions, and halves the
+learning rate for the doubled sequence of smaller optimizer steps. Every one of
+these settings is identical across the two architecture arms.

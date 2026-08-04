@@ -211,7 +211,7 @@ nearby, and full-map learning all remain dense. `terminal_margin` can begin only
 after the fixed full-bank reward gate passes; `terminal_objective` follows only
 after the margin stage passes its own fixed gate.
 
-### Batch-size repair after the first smoke
+### Batch-size repair after the real smokes
 
 The first 10M update-1 smoke (`9678493`) failed before an optimizer update when
 XLA required a 17.38 GB training temporary at 1,024 environments per device.
@@ -219,12 +219,19 @@ The dependent screen was canceled automatically. The compact smoke passed, but
 its pending screen was canceled before allocation so the arms could remain
 matched.
 
-The corrected treatment uses 512 environments per device and 16 minibatches
-for both arms, then doubles updates, annealing periods, LR warmup, entropy
-schedule, and checkpoint intervals. This preserves 262,144,000 Stage-A
-transitions, 1,024 samples per local PPO minibatch, and 128,000 optimizer steps
-relative to the original 1,024-env/device x 2,000-update design while halving
-the rollout activation batch that caused the OOM.
+The first repair used 512 environments and 16 minibatches. That reduced resident
+environment state but accidentally retained a 1,024-sample local PPO minibatch;
+the second 10M smoke (`9680835`) therefore reproduced the failure with a
+17.50 GB allocation. Its dependent screen was also canceled automatically, and
+the newly passing compact screen was canceled before allocation.
+
+The final treatment uses 512 environments per device and **32** minibatches for
+both arms, producing a 512-sample local PPO minibatch. It doubles updates,
+annealing periods, LR warmup, entropy schedule, and checkpoint intervals to
+preserve 262,144,000 Stage-A transitions, and halves the learning rate to
+`1.5e-4` for the doubled sequence of half-batch optimizer steps. This preserves
+the total number of sample presentations across two PPO epochs, while making
+the unavoidable optimizer-step change explicit and identical in both arms.
 
 ## Preparation checklist
 

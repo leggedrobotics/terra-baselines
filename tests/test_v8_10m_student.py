@@ -318,7 +318,7 @@ def test_euler_launcher_cannot_bypass_provisional_teacher_or_matched_smoke():
     assert "EXPECTED_PARAMETERS=10257209" in sbatch
     assert "UPDATES=4000" in sbatch
     assert "NUM_ENVS_PER_DEVICE=512" in sbatch
-    assert "NUM_MINIBATCHES=16" in sbatch
+    assert "NUM_MINIBATCHES=32" in sbatch
     assert "for UPDATE in 1000 2000 3000 4000" in sbatch
     assert "v8_10m_initialization.py" in sbatch
     assert "--capability-panel" in sbatch
@@ -329,4 +329,5 @@ def test_euler_launcher_cannot_bypass_provisional_teacher_or_matched_smoke():
     assert "--kickstart_value_anneal_updates 1000" in train
     assert "--kickstart_lr_warmup_updates 200" in train
     assert "--ent_schedule_steps 20000" in train
+    assert "--lr 1.5e-4" in train
     assert "terminal_objective" not in train
