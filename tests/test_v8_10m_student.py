@@ -301,6 +301,9 @@ def test_euler_launcher_cannot_bypass_provisional_teacher_or_matched_smoke():
     assert "SUBMIT=0: no SSH, scratch, W&B, or Slurm mutation" in submit
     assert "smoke_validation.json" in submit
     assert "initialization_diagnostic.json" in submit
+    assert "SMOKE_JOB_IDS" in submit
+    assert "--dependency=afterok" in submit
+    assert "SMOKE_STATE" in sbatch
     assert 'exact_frozen_resets\\"] == 720' in submit
     assert "TEACHER_SHA" in submit
     assert "TEACHER_RUN_CONTRACT_SHA" in submit

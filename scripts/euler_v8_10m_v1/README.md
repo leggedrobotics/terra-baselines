@@ -51,6 +51,18 @@ SUBMIT=1 scripts/euler_v8_10m_v1/submit.sh screen 20260730 \
   /remote/path/to/teacher/run_contract.env
 ```
 
+If the smokes are still queued, the screen can be queued safely behind their
+exact job IDs. Each screen has an `afterok` dependency on its matching arm and
+revalidates the completed smoke receipt before touching the dataset or GPUs:
+
+```bash
+SMOKE_REVISION=SMOKE_SOURCE_SHA \
+SMOKE_JOB_IDS=CONTROL_SMOKE_JOB,TREATMENT_SMOKE_JOB \
+SUBMIT=1 scripts/euler_v8_10m_v1/submit.sh screen 20260730 \
+  /remote/path/to/teacher_update_008000.pkl \
+  /remote/path/to/teacher/run_contract.env
+```
+
 The Stage-A screen targets 2,000 updates and evaluates 500/1000/1500/2000 on
 the frozen capability promotion and development panels. Each arm receives a
 gate receipt; nearby maps remain locked unless the latest two checkpoints reach

@@ -25,6 +25,8 @@ umask 002
 : "${TEACHER_SHA:?missing TEACHER_SHA}"
 : "${TEACHER_RUN_CONTRACT:?missing TEACHER_RUN_CONTRACT}"
 : "${TEACHER_RUN_CONTRACT_SHA:?missing TEACHER_RUN_CONTRACT_SHA}"
+: "${SMOKE_JOB_ID:?missing SMOKE_JOB_ID}"
+: "${SMOKE_RUN:?missing SMOKE_RUN}"
 : "${SLURM_JOB_ID:?must run inside Slurm}"
 : "${TMPDIR:?Euler did not provide TMPDIR}"
 
@@ -36,6 +38,8 @@ EXPECTED_CONDITIONS=2
 case "$PHASE" in
     smoke)
         test "${SLURM_JOB_PARTITION:-}" = gpuhe.4h
+        test "$SMOKE_JOB_ID" = none
+        test "$SMOKE_RUN" = none
         UPDATES=1
         CHECKPOINT_INTERVAL=1
         LOG_TRAIN_INTERVAL=1
@@ -43,6 +47,8 @@ case "$PHASE" in
         ;;
     screen)
         test "${SLURM_JOB_PARTITION:-}" = gpuhe.24h
+        [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
+        [[ "$SMOKE_RUN" = /* ]]
         UPDATES=2000
         CHECKPOINT_INTERVAL=500
         LOG_TRAIN_INTERVAL=10
@@ -78,6 +84,22 @@ test "$(sha256sum "$TEACHER_CHECKPOINT" | awk '{print $1}')" = "$TEACHER_SHA"
 test "$(sha256sum "$TEACHER_RUN_CONTRACT" | awk '{print $1}')" = "$TEACHER_RUN_CONTRACT_SHA"
 test -d "$RUN_DIR"
 test ! -e "$RUN_DIR/run_contract.env"
+if [ "$PHASE" = screen ]; then
+    SMOKE_STATE="$(sacct -n -X -P -j "$SMOKE_JOB_ID" --format=JobIDRaw,State | awk -F'|' -v id="$SMOKE_JOB_ID" '$1==id {sub(/\+.*/, "", $2); print $2}')"
+    test "$SMOKE_STATE" = COMPLETED
+    test -f "$SMOKE_RUN/smoke_validation.json"
+    test -f "$SMOKE_RUN/initialization_diagnostic.json"
+    test -f "$SMOKE_RUN/run_contract.env"
+    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["passed"] is True' "$SMOKE_RUN/smoke_validation.json"
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] is True; assert d["exact_frozen_resets"] == 720; assert d["teacher_admission"] == "provisional_inspection"' "$SMOKE_RUN/initialization_diagnostic.json"
+    test "$(sha256sum "$SMOKE_RUN/initialization_diagnostic.json" | awk '{print $1}')" = "$(awk -F= '$1=="initialization_diagnostic_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")"
+    test "$(awk -F= '$1=="status" {print $2}' "$SMOKE_RUN/run_contract.env")" = PASSED
+    test "$(awk -F= '$1=="phase" {print $2}' "$SMOKE_RUN/run_contract.env")" = smoke
+    test "$(awk -F= '$1=="arm" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$ARM"
+    test "$(awk -F= '$1=="curriculum_stage" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$STAGE"
+    test "$(awk -F= '$1=="teacher_checkpoint_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TEACHER_SHA"
+    test "$(awk -F= '$1=="teacher_run_contract_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TEACHER_RUN_CONTRACT_SHA"
+fi
 
 tar --zstd -xf "$P5_ARCHIVE" -C "$TMPDIR" \
     campaign/source/terra campaign/runtime/check_jax_runtime.py
@@ -195,6 +217,8 @@ printf '%s\n' \
     "teacher_checkpoint=$TEACHER_CHECKPOINT" \
     "teacher_checkpoint_sha256=$TEACHER_SHA" \
     "teacher_update=$TEACHER_UPDATE" \
+    "smoke_job_id=$SMOKE_JOB_ID" \
+    "smoke_run=$SMOKE_RUN" \
     "initial_checkpoint_sha256=$INITIAL_SHA" \
     "initialization_diagnostic_sha256=$INITIALIZATION_DIAGNOSTIC_SHA" \
     "model_parameter_count=$OBSERVED_PARAMETERS" \
