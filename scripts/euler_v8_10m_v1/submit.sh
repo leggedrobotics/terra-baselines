@@ -86,8 +86,8 @@ if [ "$PHASE" = screen ]; then
 fi
 
 case "$PHASE" in
-    smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00 ;;
-    screen) PARTITION=gpuhe.24h; WALLTIME=23:45:00 ;;
+    smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; GPU_TYPE=rtx_3090 ;;
+    screen) PARTITION=gpuhe.24h; WALLTIME=23:45:00; GPU_TYPE=rtx_4090 ;;
 esac
 for ARM in "${ARMS[@]}"; do
     RUN_PARENT="$REMOTE_RUNS/$BASELINES_REVISION/$PHASE/$STAGE/s$SEED"
@@ -95,7 +95,7 @@ for ARM in "${ARMS[@]}"; do
     ssh "$REMOTE_HOST" "mkdir -p '$RUN_PARENT' && mkdir '$RUN_DIR'"
     EXPORTS="ALL,PHASE=$PHASE,STAGE=$STAGE,ARM=$ARM,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_RELEASE_ID=$RELEASE_ID,TEACHER_CHECKPOINT=$TEACHER_CHECKPOINT,TEACHER_SHA=$TEACHER_SHA,TEACHER_RUN_CONTRACT=$TEACHER_RUN_CONTRACT,TEACHER_RUN_CONTRACT_SHA=$TEACHER_RUN_CONTRACT_SHA"
     JOB_ID="$(
-        ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_10m_v1/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --exclude='eu-g6-064' --job-name='terra-v8-10m-${PHASE}-${STAGE}-${ARM}' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'"
+        ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_10m_v1/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --exclude='eu-g6-064' --job-name='terra-v8-10m-${PHASE}-${STAGE}-${ARM}' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'"
     )"
     echo "$PHASE $STAGE $ARM $JOB_ID"
 done

@@ -106,10 +106,10 @@ export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cu
 mapfile -t GPU_NAMES < <(nvidia-smi --query-gpu=name --format=csv,noheader)
 test "${#GPU_NAMES[@]}" -eq 4
 for GPU_NAME in "${GPU_NAMES[@]}"; do
-    test "$GPU_NAME" = "NVIDIA GeForce RTX 4090" || {
-        echo "unsupported GPU: $GPU_NAME" >&2
-        exit 3
-    }
+    case "$GPU_NAME" in
+        "NVIDIA GeForce RTX 3090"|"NVIDIA GeForce RTX 4090") ;;
+        *) echo "unsupported GPU: $GPU_NAME" >&2; exit 3 ;;
+    esac
 done
 export JAX_PLATFORMS=cuda
 "$PYTHON" "$RUNTIME_CHECK" --min-devices 4
