@@ -81,6 +81,7 @@ fi
 ssh "$REMOTE_HOST" "test \"\$(sha256sum '$REMOTE_BANK' | awk '{print \$1}')\" = '$BANK_SHA'"
 
 SMOKE_JOB_ARRAY=()
+SMOKE_JOB_STATE_ARRAY=()
 if [ "$PHASE" = screen ]; then
     if [ -n "$SMOKE_JOB_IDS_RAW" ]; then
         IFS=, read -r -a SMOKE_JOB_ARRAY <<< "$SMOKE_JOB_IDS_RAW"
@@ -90,11 +91,20 @@ if [ "$PHASE" = screen ]; then
         ARM="${ARMS[$INDEX]}"
         SMOKE="$REMOTE_RUNS/$SMOKE_REVISION/smoke/$STAGE/s$SEED/$ARM"
         if [ -z "$SMOKE_JOB_IDS_RAW" ]; then
-            ssh "$REMOTE_HOST" "test -f '$SMOKE/smoke_validation.json' && python3 -c 'import json; assert json.load(open(\"$SMOKE/smoke_validation.json\"))[\"passed\"] is True' && test -f '$SMOKE/initialization_diagnostic.json' && python3 -c 'import json; d=json.load(open(\"$SMOKE/initialization_diagnostic.json\")); assert d[\"passed\"] is True; assert d[\"exact_frozen_map_slots\"] == 720; assert d[\"reset_key_contract\"] == \"deterministic_exact_slot_keys_v1\"; assert d[\"teacher_admission\"] == \"provisional_inspection\"' && test \"\$(sha256sum '$SMOKE/initialization_diagnostic.json' | awk '{print \$1}')\" = \"\$(awk -F= '\$1==\"initialization_diagnostic_sha256\" {print \$2}' '$SMOKE/run_contract.env')\" && test \"\$(awk -F= '\$1==\"teacher_checkpoint_sha256\" {print \$2}' '$SMOKE/run_contract.env')\" = '$TEACHER_SHA' && test \"\$(awk -F= '\$1==\"teacher_run_contract_sha256\" {print \$2}' '$SMOKE/run_contract.env')\" = '$TEACHER_RUN_CONTRACT_SHA'"
+            ssh "$REMOTE_HOST" "test -f '$SMOKE/run_contract.env'"
             SMOKE_JOB_ARRAY+=("$(ssh "$REMOTE_HOST" "awk -F= '\$1==\"slurm_job_id\" {print \$2}' '$SMOKE/run_contract.env'")")
         fi
-        [[ "${SMOKE_JOB_ARRAY[$INDEX]}" =~ ^[0-9]+$ ]]
-        ssh "$REMOTE_HOST" "scontrol show job '${SMOKE_JOB_ARRAY[$INDEX]}' -o >/dev/null"
+        SMOKE_JOB_ID="${SMOKE_JOB_ARRAY[$INDEX]}"
+        [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
+        SMOKE_JOB_STATE="$(ssh "$REMOTE_HOST" "sacct -n -X -P -j '$SMOKE_JOB_ID' --format=JobIDRaw,State | awk -F'|' -v id='$SMOKE_JOB_ID' '\$1==id {sub(/\\+.*/, \"\", \$2); print \$2}'")"
+        case "$SMOKE_JOB_STATE" in
+            PENDING|RUNNING) test -n "$SMOKE_JOB_IDS_RAW" ;;
+            COMPLETED)
+                ssh "$REMOTE_HOST" "test -f '$SMOKE/smoke_validation.json' && python3 -c 'import json; assert json.load(open(\"$SMOKE/smoke_validation.json\"))[\"passed\"] is True' && test -f '$SMOKE/initialization_diagnostic.json' && python3 -c 'import json; d=json.load(open(\"$SMOKE/initialization_diagnostic.json\")); assert d[\"passed\"] is True; assert d[\"exact_frozen_map_slots\"] == 720; assert d[\"reset_key_contract\"] == \"deterministic_exact_slot_keys_v1\"; assert d[\"teacher_admission\"] == \"provisional_inspection\"' && test \"\$(sha256sum '$SMOKE/initialization_diagnostic.json' | awk '{print \$1}')\" = \"\$(awk -F= '\$1==\"initialization_diagnostic_sha256\" {print \$2}' '$SMOKE/run_contract.env')\" && test \"\$(awk -F= '\$1==\"teacher_checkpoint_sha256\" {print \$2}' '$SMOKE/run_contract.env')\" = '$TEACHER_SHA' && test \"\$(awk -F= '\$1==\"teacher_run_contract_sha256\" {print \$2}' '$SMOKE/run_contract.env')\" = '$TEACHER_RUN_CONTRACT_SHA' && test \"\$(awk -F= '\$1==\"status\" {print \$2}' '$SMOKE/run_contract.env')\" = PASSED"
+                ;;
+            *) echo "smoke job $SMOKE_JOB_ID has unsupported state '$SMOKE_JOB_STATE'" >&2; exit 3 ;;
+        esac
+        SMOKE_JOB_STATE_ARRAY+=("$SMOKE_JOB_STATE")
     done
 fi
 
@@ -113,7 +123,9 @@ for INDEX in "${!ARMS[@]}"; do
     if [ "$PHASE" = screen ]; then
         SMOKE_JOB_ID="${SMOKE_JOB_ARRAY[$INDEX]}"
         SMOKE_RUN="$REMOTE_RUNS/$SMOKE_REVISION/smoke/$STAGE/s$SEED/$ARM"
-        DEPENDENCY_OPTION="--dependency=afterok:$SMOKE_JOB_ID --kill-on-invalid-dep=yes"
+        if [ "${SMOKE_JOB_STATE_ARRAY[$INDEX]}" != COMPLETED ]; then
+            DEPENDENCY_OPTION="--dependency=afterok:$SMOKE_JOB_ID --kill-on-invalid-dep=yes"
+        fi
     fi
     EXPORTS="ALL,PHASE=$PHASE,STAGE=$STAGE,ARM=$ARM,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_RELEASE_ID=$RELEASE_ID,TEACHER_CHECKPOINT=$TEACHER_CHECKPOINT,TEACHER_SHA=$TEACHER_SHA,TEACHER_RUN_CONTRACT=$TEACHER_RUN_CONTRACT,TEACHER_RUN_CONTRACT_SHA=$TEACHER_RUN_CONTRACT_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN"
     JOB_ID="$(

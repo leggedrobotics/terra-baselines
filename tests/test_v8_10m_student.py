@@ -302,6 +302,8 @@ def test_euler_launcher_cannot_bypass_provisional_teacher_or_matched_smoke():
     assert "smoke_validation.json" in submit
     assert "initialization_diagnostic.json" in submit
     assert "SMOKE_JOB_IDS" in submit
+    assert "SMOKE_JOB_STATE_ARRAY" in submit
+    assert "sacct -n -X -P" in submit
     assert "--dependency=afterok" in submit
     assert "SMOKE_STATE" in sbatch
     assert "gpuhe.120h" in sbatch
