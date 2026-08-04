@@ -4,8 +4,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=rtx_4090:4
 #SBATCH --mem-per-cpu=8G
-#SBATCH --partition=gpuhe.24h
-#SBATCH --time=23:45:00
+#SBATCH --partition=gpuhe.120h
+#SBATCH --time=119:45:00
 #SBATCH --no-requeue
 
 set -euo pipefail
@@ -46,7 +46,7 @@ case "$PHASE" in
         CACHE_CLEAR_INTERVAL=0
         ;;
     screen)
-        test "${SLURM_JOB_PARTITION:-}" = gpuhe.24h
+        test "${SLURM_JOB_PARTITION:-}" = gpuhe.120h
         [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
         [[ "$SMOKE_RUN" = /* ]]
         UPDATES=4000

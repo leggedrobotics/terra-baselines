@@ -304,6 +304,8 @@ def test_euler_launcher_cannot_bypass_provisional_teacher_or_matched_smoke():
     assert "SMOKE_JOB_IDS" in submit
     assert "--dependency=afterok" in submit
     assert "SMOKE_STATE" in sbatch
+    assert "gpuhe.120h" in sbatch
+    assert "119:45:00" in sbatch
     assert 'exact_frozen_map_slots\\"] == 720' in submit
     assert "deterministic_exact_slot_keys_v1" in submit
     assert "TEACHER_SHA" in submit

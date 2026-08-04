@@ -100,7 +100,7 @@ fi
 
 case "$PHASE" in
     smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; GPU_TYPE=rtx_3090 ;;
-    screen) PARTITION=gpuhe.24h; WALLTIME=23:45:00; GPU_TYPE=rtx_4090 ;;
+    screen) PARTITION=gpuhe.120h; WALLTIME=119:45:00; GPU_TYPE=rtx_4090 ;;
 esac
 for INDEX in "${!ARMS[@]}"; do
     ARM="${ARMS[$INDEX]}"

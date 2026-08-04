@@ -202,8 +202,10 @@ minibatch setting to the control or do not claim a capacity-only comparison.
 6. Report main promotion/development and the separate all-free capability
    promotion/development panels in one aggregate, family, and per-condition
    leaderboard. Online return is diagnostic only.
-7. Replicate or grant 120-hour compute only if the 10M treatment shows held-out
-   progress without family, worst-cell, capability, or integrity regression.
+7. Stage A runs on the 120-hour 4090 queue so compilation and the full 4,000
+   updates cannot be truncated by the old 24-hour limit. Replication remains
+   gated on held-out progress without family, worst-cell, capability, or
+   integrity regression.
 
 The map curriculum is part of this named treatment. The reward curriculum is
 declared now but remains a separate checkpoint-bounded stage change: Stage A,

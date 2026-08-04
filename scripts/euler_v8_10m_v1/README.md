@@ -46,8 +46,10 @@ Run matched update-1 smokes first. Only after both smokes pass may Stage A be
 submitted:
 
 The smokes use four RTX 3090s to avoid the saturated 4090 short queue; the
-Stage-A screens remain pinned to four RTX 4090s. Both hardware types execute
-the same CUDA, cuDNN, NCCL, finite-state, and checkpoint checks.
+Stage-A screens use four RTX 4090s on `gpuhe.120h`. This avoids truncating the
+10M screen at the old 24-hour wall-time while keeping the two arms on identical
+hardware. Both hardware types execute the same CUDA, cuDNN, NCCL, finite-state,
+and checkpoint checks.
 
 ```bash
 SUBMIT=1 scripts/euler_v8_10m_v1/submit.sh smoke 20260730 \
