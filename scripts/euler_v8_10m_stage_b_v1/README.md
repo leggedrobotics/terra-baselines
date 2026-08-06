@@ -40,3 +40,25 @@ SUBMIT=0 scripts/euler_v8_10m_stage_b_v1/submit.sh \
 
 Set `SUBMIT=1` only after the selection receipt and dry run validate. Submit
 the screen only after both update-1 smokes pass.
+
+## Checkpoint-bounded observation
+
+The long job evaluates all 20 retained checkpoints before emitting its final
+gate. During training, use the same frozen evaluator at an individual retained
+checkpoint to detect capability forgetting early:
+
+```bash
+SUBMIT=0 scripts/euler_v8_10m_stage_b_v1/submit_checkpoint_eval.sh \
+  G-V8-XATTN-REWARM-CONTROL 1000
+```
+
+After the checkpoint exists, repeat with `SUBMIT=1`. The launcher reuses the
+validated one-checkpoint whole-V8 evaluator from launch revision `f682f37`,
+hash-pins the checkpoint, and enumerates main plus all-free capability panels
+on both promotion and development. Results live outside the training run under
+`checkpoint_eval/nearby/`; they cannot alter optimizer or sampler state.
+
+One checkpoint is diagnostic only. The inherited all-free thresholds are
+`12/16` for each family, and rollback requires two consecutive retained
+checkpoint failures. Promotion still requires the complete Stage-B gate and
+never uses development for checkpoint selection.
