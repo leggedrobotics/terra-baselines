@@ -1,0 +1,10 @@
+meters_per_tile: 0.6875
+terra_origin_map_m:
+- -31.173715004831788
+- -19.844232851764417
+rotation_deg: -0.0
+source_gridmap:
+  resolution_m_per_cell: 0.1
+  size_rows_cols:
+  - 600
+  - 600

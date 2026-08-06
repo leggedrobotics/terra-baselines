@@ -121,6 +121,7 @@ def _load_plan_alignment(map_path: Path) -> dict[str, Any]:
         "origin_map_xy_m": [0.0, 0.0],
         "yaw_map_from_plan_rad": 0.0,
     }
+    origin_from_terra_metadata = False
 
     map_json_path = map_path / "metadata" / "map.json"
     try:
@@ -133,6 +134,7 @@ def _load_plan_alignment(map_path: Path) -> dict[str, Any]:
 
     terra_metadata_path = map_path / "metadata" / "terra_metadata.yaml"
     if not terra_metadata_path.exists():
+        alignment["origin_from_terra_metadata"] = origin_from_terra_metadata
         return alignment
 
     lines = terra_metadata_path.read_text(encoding="utf-8").splitlines()
@@ -153,6 +155,7 @@ def _load_plan_alignment(map_path: Path) -> dict[str, Any]:
                     values.append(float(item[1:].strip()))
             if len(values) == 2:
                 alignment["origin_map_xy_m"] = values
+                origin_from_terra_metadata = True
         elif stripped.startswith("resolution_m_per_cell:"):
             source_resolution = float(stripped.split(":", 1)[1].strip())
         elif stripped.startswith("size_rows_cols:"):
@@ -164,13 +167,14 @@ def _load_plan_alignment(map_path: Path) -> dict[str, Any]:
 
     if source_resolution is not None:
         alignment["meters_per_tile"] = source_resolution
-        if len(source_size_rows_cols) == 2:
+        if len(source_size_rows_cols) == 2 and not origin_from_terra_metadata:
             rows, cols = source_size_rows_cols
             alignment["origin_map_xy_m"] = [
                 -cols * source_resolution / 2.0,
                 -rows * source_resolution / 2.0,
             ]
 
+    alignment["origin_from_terra_metadata"] = origin_from_terra_metadata
     return alignment
 
 
@@ -274,21 +278,24 @@ def _plan_to_schema_v2(
 ) -> dict[str, Any]:
     waypoints, metadata = _schema_v2_waypoints_and_metadata(plan)
     alignment = _load_plan_alignment(map_path)
+    origin_from_terra_metadata = alignment.pop("origin_from_terra_metadata", False)
     if env_cfgs is not None:
         tile_size = _scalar_float(
             getattr(env_cfgs, "tile_size", None), alignment["meters_per_tile"]
         )
         alignment["meters_per_tile"] = tile_size
-        # Recompute origin from the real in-use map resolution so alignment stays centered.
-        try:
-            map_shape = np.load(map_path / "images" / "img_1.npy").shape[:2]
-            rows, cols = map_shape
-            alignment["origin_map_xy_m"] = [
-                -cols * tile_size / 2.0,
-                -rows * tile_size / 2.0,
-            ]
-        except Exception:
-            pass
+        if not origin_from_terra_metadata:
+            # No real-world origin available, so fall back to a centered origin
+            # derived from the in-use map resolution.
+            try:
+                map_shape = np.load(map_path / "images" / "img_1.npy").shape[:2]
+                rows, cols = map_shape
+                alignment["origin_map_xy_m"] = [
+                    -cols * tile_size / 2.0,
+                    -rows * tile_size / 2.0,
+                ]
+            except Exception:
+                pass
     return {
         "schema_version": 2,
         "source_map_frame_id": "map",
