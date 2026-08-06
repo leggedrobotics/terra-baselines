@@ -27,6 +27,12 @@ Both arms receive 20,000 updates (`1,310,720,000` transitions), retain every
 retention failures trigger rollback in the gate receipt. Stage C and reward
 fading remain locked.
 
+Run outputs are written under
+`/cluster/work/rsl/lterenzi/terra_v8_10m_nearby_long_v1`. The immutable bank,
+selection receipt, parents, and teacher remain at their hash-pinned source
+paths. Persistent work storage avoids the unrelated Euler scratch inode soft
+limit without changing the training treatment.
+
 ```bash
 SUBMIT=0 scripts/euler_v8_10m_stage_b_v1/submit.sh \
   smoke 20260730 /absolute/path/to/stage_b_selection.json

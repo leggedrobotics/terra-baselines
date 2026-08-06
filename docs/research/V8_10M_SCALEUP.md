@@ -466,3 +466,11 @@ job `9849664` failed after 41 seconds because the source teacher's original
 zero elapsed compute. Admission now reconstructs and validates the teacher's
 hash-pinned legacy sampler separately; Stage B remains unchanged on the new
 25/75 bounded-replay population.
+
+The corrected submission then stopped before Slurm because the Euler scratch
+user inode count (`1,105,009`) exceeded its `1,000,000` soft quota despite only
+528.5 GiB of 2.273 TiB byte quota being used. No run was submitted. Rather than
+delete unrelated historical artifacts, Stage-B outputs are rooted at
+`/cluster/work/rsl/lterenzi/terra_v8_10m_nearby_long_v1`, whose 16 TiB quota
+has ample byte and inode headroom. Inputs and model identities remain at their
+original hash-pinned paths; this is storage routing, not an experiment change.

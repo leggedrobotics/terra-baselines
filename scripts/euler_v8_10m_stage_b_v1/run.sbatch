@@ -67,7 +67,7 @@ EXPECTED_RELEASE=terra_v8_v6_constraints_v7_adjacent_train96_v5
 P5_SHA=f8aac348d64c7f71ee65273e6729ad142828731598ce383b2ac0331e225ebaaa
 P5_ARCHIVE=/cluster/work/rsl/lterenzi/terra_curriculum_campaigns/sha256-$P5_SHA/campaign.tar.zst
 VENV=/cluster/project/rsl/lterenzi/terra_curriculum_20260730_c14bd7d_3ce0e84_py312_jax0426
-RUN_BASE=/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_v8_10m_nearby_long_v1
+RUN_BASE=/cluster/work/rsl/lterenzi/terra_v8_10m_nearby_long_v1
 RUN_DIR="$RUN_BASE/$BASELINES_REVISION/$PHASE/$STAGE/s$SEED/$ARM"
 
 test "$BANK_RELEASE_ID" = "$EXPECTED_RELEASE"

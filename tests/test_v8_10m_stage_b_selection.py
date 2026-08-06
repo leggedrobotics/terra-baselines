@@ -94,6 +94,8 @@ def test_stage_b_launcher_uses_fixed_whole_v8_reference_teacher():
     assert f"TEACHER_SHA={teacher_sha}" in launcher
     assert "TEACHER_ARM=" not in launcher
     assert "TEACHER_FIXED_EVAL_MAIN_DEVELOPMENT_SHA=" in launcher
+    assert "REMOTE_RUNS=/cluster/work/rsl/lterenzi/$CAMPAIGN_ID" in launcher
+    assert "RUN_BASE=/cluster/work/rsl/lterenzi/terra_v8_10m_nearby_long_v1" in runner
     assert '"teacher_checkpoint_sha256=$TEACHER_SHA"' in runner
     assert '"teacher_admission=fixed_whole_v8_eval_v1"' in runner
     assert "v8_10m_provisional_teacher.py" in runner
