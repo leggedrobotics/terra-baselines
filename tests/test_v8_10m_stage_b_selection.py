@@ -84,15 +84,20 @@ def test_select_parent_uses_promotion_and_requires_capability_retention():
     assert result["weakest_development_conditions"][0]["curriculum_stage"] == "full"
 
 
-def test_stage_b_launcher_reuses_selected_compact_parent_as_teacher():
+def test_stage_b_launcher_uses_fixed_whole_v8_reference_teacher():
     root = Path(__file__).parents[1]
     launcher = (root / "scripts/euler_v8_10m_stage_b_v1/submit.sh").read_text()
     runner = (root / "scripts/euler_v8_10m_stage_b_v1/run.sbatch").read_text()
     gate = (root / "scripts/v8_10m_stage_b_gate.py").read_text()
 
-    assert "TEACHER_ARM=G-V8-XATTN-REWARM-CONTROL" in launcher
-    assert "${PARENTS[$TEACHER_ARM]}" in launcher
+    teacher_sha = "a6bebfffcf4d390df19ade9652d3c96d833eb7d2587ddb1b95035b7ad6a807f6"
+    assert f"TEACHER_SHA={teacher_sha}" in launcher
+    assert "TEACHER_ARM=" not in launcher
+    assert "TEACHER_FIXED_EVAL_MAIN_DEVELOPMENT_SHA=" in launcher
     assert '"teacher_checkpoint_sha256=$TEACHER_SHA"' in runner
+    assert '"teacher_admission=fixed_whole_v8_eval_v1"' in runner
+    assert "v8_10m_provisional_teacher.py" in runner
     assert '"kickstart=current_rollout_kl1_3000_value0p5_1000"' in runner
     assert '"$PARENT_CHECKPOINT" "$TEACHER_CHECKPOINT"' in runner
-    assert 'selection["parents"]["G-V8-XATTN-REWARM-CONTROL"]' in gate
+    assert f'"sha256": "{teacher_sha}"' in gate
+    assert "REFERENCE_TEACHER_EVIDENCE" in gate

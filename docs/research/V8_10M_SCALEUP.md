@@ -1,6 +1,6 @@
 # V8 10M scale-up experiment
 
-- Status: **STAGE A PASSED; WHOLE-V8 FIXED EVALUATION REPAIRED AND NEXT**
+- Status: **STAGE-B PARENTS AND REFERENCE TEACHER SELECTED; FINAL SMOKES NEXT**
 - Updated: 2026-08-06
 - Parent campaign:
   [`V8_DEEP_XATTN_CURRICULUM.md`](V8_DEEP_XATTN_CURRICULUM.md)
@@ -309,12 +309,9 @@ finite same-V8 teacher, not a claim of full-bank mastery.
   from frozen environment/pose seeds; verify all 720 promotion resets locally.
 - [x] Evaluate every Stage-A checkpoint on full-V8 promotion/development and
   publish the standardized family/condition leaderboard.
-- [ ] Evaluate the output-identical update-0 compact reference (the selected
-  update-7,500 full-V8 teacher) with the repaired whole-V8 evaluator before
-  interpreting Stage-A learning versus its original initialization. This is a
-  queued diagnostic, not a Stage-B launch blocker: the selected compact
-  Stage-A checkpoint itself now has fixed whole-V8 evidence and is the frozen
-  Stage-B teacher.
+- [x] Evaluate the output-identical update-0 compact reference (the selected
+  update-7,500 full-V8 teacher) with the repaired whole-V8 evaluator and bind
+  its source contract plus all four fixed-panel hashes into Stage-B admission.
 
 ## Preparation verification
 
@@ -331,7 +328,9 @@ The launched implementation passes:
 - completed Stage-A jobs `9685873` and `9685874`, both with passing fixed
   capability receipts; and
 - focused reset/reporting tests plus a local exact 720-slot reset receipt for
-  the combined promotion panel.
+  the combined promotion panel; and
+- completed reference-teacher evaluation job `9845019`, including all 720 main
+  and 32 capability episodes on both source-disjoint splits.
 
 The next operational check is paired update-1 Stage-B admission, followed by
 the nearby-stage 20,000-update jobs under `bounded_replay25_v1`. Reward fading
@@ -423,6 +422,20 @@ Selected-checkpoint nearby weaknesses are condition-specific:
 The complete standardized family/condition histories are in
 `/home/lorenzo/moleworks/.artifacts/terra_v8_stagea_whole_eval_20260806/leaderboard/`.
 
+The independent full-V8 compact teacher was then evaluated by job `9845019`.
+It is materially stronger than either selected Stage-A parent and is therefore
+the common frozen distillation teacher:
+
+| Reference teacher | Promotion exact / macro | Development exact / macro | Capability P / D |
+|---|---:|---:|---:|
+| compact deep+xattn update 7,500 | `552/720` / `0.875` | `538/720` / `0.868` | `31/32` / `31/32` |
+
+The teacher checkpoint SHA-256 is
+`a6bebfffcf4d390df19ade9652d3c96d833eb7d2587ddb1b95035b7ad6a807f6`.
+Its source run contract and four fixed-panel files are independently
+hash-pinned in the launcher. Local copies are archived under
+`/home/lorenzo/moleworks/.artifacts/terra_v8_reference_teacher_full_eval_20260806/`.
+
 Stage B is a paired 20,000-update allocation over 15 conditions and 96 real
 layouts per condition (`1,440` distinct training maps,
 `1,310,720,000` transitions per arm). Each random full reset samples the fixed
@@ -431,10 +444,17 @@ layouts per condition (`1,440` distinct training maps,
 ratchet. Promotion remains global and checkpoint-bounded; every 1,000-update
 checkpoint is retained for the fixed panels.
 
-Both arms use the selected compact update-1,000 checkpoint as one frozen
-teacher on current Stage-B rollout observations. Policy KL decays from `1.0`
-over 3,000 updates and value imitation from `0.5` over 1,000 updates, with a
-200-update learning-rate warmup. The compact arm begins from that same teacher;
-the 10M arm begins from its selected update-3,000 weights. This matched
-distillation treatment protects measured broad competence while teaching the
-larger student on the newly active maps. It is not reward annealing.
+Both arms use the independent full-V8 compact update-7,500 checkpoint as one
+frozen teacher on current Stage-B rollout observations. Policy KL decays from
+`1.0` over 3,000 updates and value imitation from `0.5` over 1,000 updates,
+with a 200-update learning-rate warmup. The compact arm begins from its
+selected update-1,000 weights; the 10M arm begins from its selected
+update-3,000 weights. This matched distillation treatment protects broad
+competence while both policies learn the 1,440-map population. It is not
+reward annealing.
+
+An update-1 engineering smoke for the compact arm (`9846405`) passed against
+the superseded compact-parent teacher wiring. The paired 10M job (`9846416`)
+was cancelled while still pending, with zero elapsed compute, when the stronger
+reference-teacher evidence arrived. Neither receipt qualifies the final
+teacher-bound launch; both final smokes are rerun from one immutable revision.

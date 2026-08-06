@@ -13,18 +13,21 @@ current scheduler state.
 
 ## Current scheduler decision
 
-The corrected whole-V8 Stage-A evaluation job `9839960` completed cleanly.
-The hash-pinned Stage-B parents are compact deep+xattn update 1,000 and 10M
-deep+xattn update 3,000. The next jobs are their paired update-1 nearby-stage
-smokes, followed only on admission success by two 20,000-update allocations on
-the 120-hour queue.
+The corrected whole-V8 Stage-A evaluation job `9839960` and reference-teacher
+evaluation job `9845019` both completed cleanly. The hash-pinned Stage-B
+parents are compact deep+xattn update 1,000 and 10M deep+xattn update 3,000.
+The next jobs are paired update-1 nearby-stage smokes against the admitted
+teacher, followed only on admission success by two 20,000-update allocations
+on the 120-hour queue.
 
 Stage B contains 15 conditions x 96 layouts = 1,440 distinct training maps.
 Random full resets draw 25% from the two mastered capability anchors and 75%
 from the 13 nearby conditions, with 50/50 foundation/trench mass within each
 slice. There is no per-environment promotion or demotion. Both arms use the
-selected compact checkpoint as one frozen current-rollout KL/value teacher;
-the teacher treatment is matched and fades over 3,000/1,000 updates.
+independent full-V8 compact update-7,500 checkpoint as one frozen
+current-rollout KL/value teacher; its development result is `538/720` exact,
+`0.868` macro, and `31/32` on capability. The matched distillation treatment
+fades over 3,000/1,000 updates.
 
 The compact parent reached `516/720` exact and `0.840` macro on fixed
 development; the 10M parent reached `68/720` and `0.344`. This is evidence that
@@ -36,6 +39,7 @@ Primary evidence:
 
 - `/home/lorenzo/moleworks/.artifacts/terra_v8_stagea_whole_eval_20260806/leaderboard/LEADERBOARD.md`
 - `/home/lorenzo/moleworks/.artifacts/terra_v8_stagea_whole_eval_20260806/stage_b_selection.json`
+- `/home/lorenzo/moleworks/.artifacts/terra_v8_reference_teacher_full_eval_20260806/`
 - [`research/V8_10M_SCALEUP.md`](research/V8_10M_SCALEUP.md)
 
 ## Most recent production jobs (completed fixed-evaluation screens)

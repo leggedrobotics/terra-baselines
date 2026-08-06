@@ -15,6 +15,24 @@ from scripts.euler_v8_deep_xattn_v1 import continuation_contract, stage_gate
 
 SCHEMA = "terra_v8_10m_stage_b_gate_v1"
 UPDATES = tuple(range(1000, 20_001, 1000))
+REFERENCE_TEACHER = {
+    "path": "/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_v8_direct_full_teacher_v1/885b1dbe6d7ac4b4199140a188d147657760eeee/screen/s20260730/G-DEEP-XATTN-V8-DIRECT-FULL-TEACHER/checkpoints/v8_direct_full_885b1dbe6d7a_screen_g_deep_xattn_v8_dense_warm_s20260730-euler-2026-08-04-07-29-25_update_007500.pkl",
+    "sha256": "a6bebfffcf4d390df19ade9652d3c96d833eb7d2587ddb1b95035b7ad6a807f6",
+    "update": 7500,
+    "parameters": 2_856_685,
+}
+REFERENCE_TEACHER_RUN_CONTRACT = {
+    "path": "/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_v8_direct_full_teacher_v1/885b1dbe6d7ac4b4199140a188d147657760eeee/screen/s20260730/G-DEEP-XATTN-V8-DIRECT-FULL-TEACHER/run_contract.env",
+    "sha256": "5ebb4de9769d2222839d9845b8eb753d3275fb9b5bab9772d5030470926456fc",
+}
+REFERENCE_TEACHER_EVAL_ROOT = "/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_v8_10m_curriculum_v1/548253810319831ce6102bea7cd315bff508ba94/reference_teacher_full_v8/s20260730"
+REFERENCE_TEACHER_EVIDENCE = {
+    "status.env": "dd46643b9ef4493330eb4997ebe7ff32083da46483fa1ea7e0ca9b6bb94fbbfa",
+    "eval/main_promotion.json": "7d7129595f0fa33d5fb1bb2f32a0e2a2f0ebcada2e09b933c346e81d1c9e4459",
+    "eval/main_development.json": "6c4886822509e8f17f34f4d3904289c878cfc71d08061abc0084d8056f6f7f67",
+    "eval/capability_promotion.json": "e8f9cfaf31d085ee4e5378f42e9c838391144456c62692b8ec3b22a68872107e",
+    "eval/capability_development.json": "6e0654f70b9d9b7d142e5c0603c3ad92fc4140b0379b934e748a9aec069fa89f",
+}
 
 
 def read_records(
@@ -128,7 +146,7 @@ def build_gate(args: argparse.Namespace) -> dict:
     selection_path = args.parent_selection.resolve()
     selection = v8_10m_stage_b_selection.inspect_selection(selection_path)
     parent = selection["parents"][args.arm]
-    teacher = selection["parents"]["G-V8-XATTN-REWARM-CONTROL"]
+    teacher = dict(REFERENCE_TEACHER)
     expected_contract = {
         "arm": args.arm,
         "phase": "screen",
@@ -151,6 +169,31 @@ def build_gate(args: argparse.Namespace) -> dict:
         "learning_rate": "0.00015",
         "teacher_checkpoint": teacher["path"],
         "teacher_checkpoint_sha256": teacher["sha256"],
+        "teacher_checkpoint_update": str(teacher["update"]),
+        "teacher_parameter_count": str(teacher["parameters"]),
+        "teacher_admission": "fixed_whole_v8_eval_v1",
+        "teacher_source_run_contract": REFERENCE_TEACHER_RUN_CONTRACT["path"],
+        "teacher_source_run_contract_sha256": REFERENCE_TEACHER_RUN_CONTRACT["sha256"],
+        "teacher_fixed_eval_root": REFERENCE_TEACHER_EVAL_ROOT,
+        "teacher_fixed_eval_status_sha256": REFERENCE_TEACHER_EVIDENCE["status.env"],
+        "teacher_fixed_eval_main_promotion_sha256": REFERENCE_TEACHER_EVIDENCE[
+            "eval/main_promotion.json"
+        ],
+        "teacher_fixed_eval_main_development_sha256": REFERENCE_TEACHER_EVIDENCE[
+            "eval/main_development.json"
+        ],
+        "teacher_fixed_eval_capability_promotion_sha256": REFERENCE_TEACHER_EVIDENCE[
+            "eval/capability_promotion.json"
+        ],
+        "teacher_fixed_eval_capability_development_sha256": REFERENCE_TEACHER_EVIDENCE[
+            "eval/capability_development.json"
+        ],
+        "teacher_fixed_promotion_exact": "552/720",
+        "teacher_fixed_promotion_macro": "0.8747645628069424",
+        "teacher_fixed_development_exact": "538/720",
+        "teacher_fixed_development_macro": "0.8676237401759459",
+        "teacher_fixed_capability_promotion_exact": "31/32",
+        "teacher_fixed_capability_development_exact": "31/32",
         "kickstart": "current_rollout_kl1_3000_value0p5_1000",
         "kickstart_kl_coef": "1.0",
         "kickstart_kl_anneal_updates": "3000",
@@ -170,6 +213,44 @@ def build_gate(args: argparse.Namespace) -> dict:
     for key, value in expected_contract.items():
         if contract.get(key) != value:
             raise ValueError(f"run contract {key} changed")
+    teacher_path = Path(teacher["path"])
+    if v8_10m_student.sha256_file(teacher_path) != teacher["sha256"]:
+        raise ValueError("reference teacher checkpoint changed")
+    teacher_contract_path = Path(REFERENCE_TEACHER_RUN_CONTRACT["path"])
+    if (
+        v8_10m_student.sha256_file(teacher_contract_path)
+        != REFERENCE_TEACHER_RUN_CONTRACT["sha256"]
+    ):
+        raise ValueError("reference teacher source contract changed")
+    evidence_root = Path(REFERENCE_TEACHER_EVAL_ROOT)
+    for relative_path, expected_sha256 in REFERENCE_TEACHER_EVIDENCE.items():
+        if v8_10m_student.sha256_file(evidence_root / relative_path) != expected_sha256:
+            raise ValueError(f"reference teacher evidence changed: {relative_path}")
+    status = stage_gate.parse_run_contract(evidence_root / "status.env")
+    if (
+        status.get("status") != "PASSED"
+        or status.get("teacher_checkpoint_sha256") != teacher["sha256"]
+    ):
+        raise ValueError("reference teacher evaluation did not pass")
+    inspection_path = Path(contract.get("teacher_inspection", "")).resolve()
+    if inspection_path.parent != run_dir or not inspection_path.is_file():
+        raise ValueError("reference teacher inspection is outside the Stage-B run")
+    if v8_10m_student.sha256_file(inspection_path) != contract.get(
+        "teacher_inspection_sha256"
+    ):
+        raise ValueError("reference teacher inspection changed")
+    inspection = json.loads(inspection_path.read_text())
+    for key, value in {
+        "schema": "terra_v8_10m_provisional_teacher_v1",
+        "passed": True,
+        "same_distribution": True,
+        "teacher_checkpoint": teacher["path"],
+        "teacher_checkpoint_sha256": teacher["sha256"],
+        "teacher_update": teacher["update"],
+        "teacher_parameter_count": teacher["parameters"],
+    }.items():
+        if inspection.get(key) != value:
+            raise ValueError(f"reference teacher inspection {key} changed")
     seed = int(contract["seed"])
     bank = stage_gate.load_bank_contract(args.bank_root.resolve())
     sampling = stage_gate.stage_sampling_contract(bank, "nearby", "bounded_replay25_v1")

@@ -14,6 +14,11 @@ umask 002
 for REQUIRED in PHASE ARM BASELINES_ROOT BASELINES_REVISION SEED BANK_ARCHIVE \
     BANK_SHA BANK_DATASET_SHA BANK_RELEASE_ID PARENT_CHECKPOINT PARENT_SHA \
     PARENT_SELECTION PARENT_SELECTION_SHA TEACHER_CHECKPOINT TEACHER_SHA \
+    TEACHER_RUN_CONTRACT TEACHER_RUN_CONTRACT_SHA TEACHER_FIXED_EVAL_ROOT \
+    TEACHER_FIXED_EVAL_STATUS_SHA TEACHER_FIXED_EVAL_MAIN_PROMOTION_SHA \
+    TEACHER_FIXED_EVAL_MAIN_DEVELOPMENT_SHA \
+    TEACHER_FIXED_EVAL_CAPABILITY_PROMOTION_SHA \
+    TEACHER_FIXED_EVAL_CAPABILITY_DEVELOPMENT_SHA \
     SMOKE_JOB_ID SMOKE_RUN \
     SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
@@ -71,6 +76,13 @@ test "$(sha256sum "$P5_ARCHIVE" | awk '{print $1}')" = "$P5_SHA"
 test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_SHA"
 test "$(sha256sum "$PARENT_CHECKPOINT" | awk '{print $1}')" = "$PARENT_SHA"
 test "$(sha256sum "$TEACHER_CHECKPOINT" | awk '{print $1}')" = "$TEACHER_SHA"
+test "$(sha256sum "$TEACHER_RUN_CONTRACT" | awk '{print $1}')" = "$TEACHER_RUN_CONTRACT_SHA"
+test "$(sha256sum "$TEACHER_FIXED_EVAL_ROOT/status.env" | awk '{print $1}')" = "$TEACHER_FIXED_EVAL_STATUS_SHA"
+test "$(awk -F= '$1=="status" {print $2}' "$TEACHER_FIXED_EVAL_ROOT/status.env")" = PASSED
+test "$(sha256sum "$TEACHER_FIXED_EVAL_ROOT/eval/main_promotion.json" | awk '{print $1}')" = "$TEACHER_FIXED_EVAL_MAIN_PROMOTION_SHA"
+test "$(sha256sum "$TEACHER_FIXED_EVAL_ROOT/eval/main_development.json" | awk '{print $1}')" = "$TEACHER_FIXED_EVAL_MAIN_DEVELOPMENT_SHA"
+test "$(sha256sum "$TEACHER_FIXED_EVAL_ROOT/eval/capability_promotion.json" | awk '{print $1}')" = "$TEACHER_FIXED_EVAL_CAPABILITY_PROMOTION_SHA"
+test "$(sha256sum "$TEACHER_FIXED_EVAL_ROOT/eval/capability_development.json" | awk '{print $1}')" = "$TEACHER_FIXED_EVAL_CAPABILITY_DEVELOPMENT_SHA"
 test "$(sha256sum "$PARENT_SELECTION" | awk '{print $1}')" = "$PARENT_SELECTION_SHA"
 test -d "$RUN_DIR"
 test ! -e "$RUN_DIR/run_contract.env"
@@ -84,6 +96,11 @@ if [ "$PHASE" = screen ]; then
     test "$(awk -F= '$1=="parent_checkpoint_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$PARENT_SHA"
     test "$(awk -F= '$1=="parent_selection_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$PARENT_SELECTION_SHA"
     test "$(awk -F= '$1=="teacher_checkpoint_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TEACHER_SHA"
+    test "$(awk -F= '$1=="teacher_fixed_eval_status_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TEACHER_FIXED_EVAL_STATUS_SHA"
+    test "$(awk -F= '$1=="teacher_fixed_eval_main_promotion_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TEACHER_FIXED_EVAL_MAIN_PROMOTION_SHA"
+    test "$(awk -F= '$1=="teacher_fixed_eval_main_development_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TEACHER_FIXED_EVAL_MAIN_DEVELOPMENT_SHA"
+    test "$(awk -F= '$1=="teacher_fixed_eval_capability_promotion_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TEACHER_FIXED_EVAL_CAPABILITY_PROMOTION_SHA"
+    test "$(awk -F= '$1=="teacher_fixed_eval_capability_development_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TEACHER_FIXED_EVAL_CAPABILITY_DEVELOPMENT_SHA"
 fi
 
 tar --zstd -xf "$P5_ARCHIVE" -C "$TMPDIR" \
@@ -127,10 +144,14 @@ read -r SELECTED_PATH SELECTED_SHA SELECTED_UPDATE RECEIPT_SHA <<< "$("$PYTHON" 
 test "$SELECTED_PATH" = "$PARENT_CHECKPOINT"
 test "$SELECTED_SHA" = "$PARENT_SHA"
 test "$RECEIPT_SHA" = "$PARENT_SELECTION_SHA"
-TEACHER_INFO="$(JAX_PLATFORMS=cpu "$PYTHON" "$BASELINES_ROOT/scripts/v8_10m_stage_b_selection.py" inspect --receipt "$PARENT_SELECTION" --arm G-V8-XATTN-REWARM-CONTROL)"
-read -r SELECTED_TEACHER_PATH SELECTED_TEACHER_SHA <<< "$("$PYTHON" -c 'import json,sys; d=json.load(sys.stdin); print(d["path"],d["sha256"])' <<< "$TEACHER_INFO")"
-test "$SELECTED_TEACHER_PATH" = "$TEACHER_CHECKPOINT"
-test "$SELECTED_TEACHER_SHA" = "$TEACHER_SHA"
+JAX_PLATFORMS=cpu "$PYTHON" "$BASELINES_ROOT/scripts/v8_10m_provisional_teacher.py" \
+    --checkpoint "$TEACHER_CHECKPOINT" --checkpoint-sha256 "$TEACHER_SHA" \
+    --run-contract "$TEACHER_RUN_CONTRACT" --bank-root "$BANK" \
+    --output "$RUN_DIR/teacher_inspection.json"
+TEACHER_INSPECTION_SHA="$(sha256sum "$RUN_DIR/teacher_inspection.json" | awk '{print $1}')"
+read -r TEACHER_UPDATE TEACHER_PARAMETERS <<< "$("$PYTHON" -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["passed"] is True; print(d["teacher_update"],d["teacher_parameter_count"])' "$RUN_DIR/teacher_inspection.json")"
+test "$TEACHER_UPDATE" = 7500
+test "$TEACHER_PARAMETERS" = 2856685
 
 OBSERVED_PARAMETERS="$(JAX_PLATFORMS=cpu "$PYTHON" -c 'import sys,jax; from utils.helpers import load_pkl_object,register_checkpoint_config_classes; register_checkpoint_config_classes(); c=load_pkl_object(sys.argv[1]); print(sum(x.size for x in jax.tree_util.tree_leaves(c["model"])))' "$PARENT_CHECKPOINT" | tail -1)"
 test "$OBSERVED_PARAMETERS" = "$EXPECTED_PARAMETERS"
@@ -185,6 +206,25 @@ printf '%s\n' \
     "initial_checkpoint_sha256=$PARENT_SHA" \
     "teacher_checkpoint=$TEACHER_CHECKPOINT" \
     "teacher_checkpoint_sha256=$TEACHER_SHA" \
+    "teacher_checkpoint_update=$TEACHER_UPDATE" \
+    "teacher_parameter_count=$TEACHER_PARAMETERS" \
+    "teacher_admission=fixed_whole_v8_eval_v1" \
+    "teacher_source_run_contract=$TEACHER_RUN_CONTRACT" \
+    "teacher_source_run_contract_sha256=$TEACHER_RUN_CONTRACT_SHA" \
+    "teacher_inspection=$RUN_DIR/teacher_inspection.json" \
+    "teacher_inspection_sha256=$TEACHER_INSPECTION_SHA" \
+    "teacher_fixed_eval_root=$TEACHER_FIXED_EVAL_ROOT" \
+    "teacher_fixed_eval_status_sha256=$TEACHER_FIXED_EVAL_STATUS_SHA" \
+    "teacher_fixed_eval_main_promotion_sha256=$TEACHER_FIXED_EVAL_MAIN_PROMOTION_SHA" \
+    "teacher_fixed_eval_main_development_sha256=$TEACHER_FIXED_EVAL_MAIN_DEVELOPMENT_SHA" \
+    "teacher_fixed_eval_capability_promotion_sha256=$TEACHER_FIXED_EVAL_CAPABILITY_PROMOTION_SHA" \
+    "teacher_fixed_eval_capability_development_sha256=$TEACHER_FIXED_EVAL_CAPABILITY_DEVELOPMENT_SHA" \
+    "teacher_fixed_promotion_exact=552/720" \
+    "teacher_fixed_promotion_macro=0.8747645628069424" \
+    "teacher_fixed_development_exact=538/720" \
+    "teacher_fixed_development_macro=0.8676237401759459" \
+    "teacher_fixed_capability_promotion_exact=31/32" \
+    "teacher_fixed_capability_development_exact=31/32" \
     "initialization=params_only_stage_transition_fresh_optimizer" \
     "model_parameter_count=$OBSERVED_PARAMETERS" \
     "resnet_stage_channels=$EXPECTED_STAGE_CHANNELS" \
