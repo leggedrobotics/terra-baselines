@@ -31,11 +31,28 @@ case "$STAGE" in capability|nearby|full) ;; *) echo "invalid V8 stage '$STAGE'" 
 : "${SEED:?set the paired training seed}"
 V8_SAMPLER_PROFILE="${V8_SAMPLER_PROFILE:-bank_v4}"
 test -f "$INITIAL_CHECKPOINT"
-test -f "$TEACHER_CHECKPOINT"
 [[ "$NUM_UPDATES" =~ ^[1-9][0-9]*$ ]] || {
     echo "NUM_UPDATES must be a positive integer" >&2
     exit 2
 }
+
+TEACHER_ARGS=()
+if [ "$TEACHER_CHECKPOINT" = none ]; then
+    test "$STAGE" != capability || {
+        echo "Stage A requires its frozen teacher" >&2
+        exit 2
+    }
+else
+    test -f "$TEACHER_CHECKPOINT"
+    TEACHER_ARGS=(
+        --teacher_checkpoint "$TEACHER_CHECKPOINT"
+        --kickstart_kl_coef 1.0
+        --kickstart_kl_anneal_updates 3000
+        --kickstart_value_coef 0.5
+        --kickstart_value_anneal_updates 1000
+        --kickstart_lr_warmup_updates 200
+    )
+fi
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -79,12 +96,7 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --resnet_stage_channels "$STAGE_CHANNELS" \
     --resnet_blocks_per_stage 2,2,3,3 \
     --warm_start_from "$INITIAL_CHECKPOINT" \
-    --teacher_checkpoint "$TEACHER_CHECKPOINT" \
-    --kickstart_kl_coef 1.0 \
-    --kickstart_kl_anneal_updates 3000 \
-    --kickstart_value_coef 0.5 \
-    --kickstart_value_anneal_updates 1000 \
-    --kickstart_lr_warmup_updates 200 \
+    "${TEACHER_ARGS[@]}" \
     --ent_schedule_start 0.02 \
     --ent_schedule_end 0.005 \
     --ent_schedule_steps 20000 \

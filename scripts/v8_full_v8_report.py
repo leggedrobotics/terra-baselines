@@ -72,6 +72,9 @@ def build_report(paths: dict[tuple[str, str], Path]) -> dict:
                             "panel": panel,
                             "update": update,
                             "condition_id": condition_id,
+                            "curriculum_stage": (
+                                "nearby" if condition_id.startswith("v7-") else "full"
+                            ),
                             "family": result["family"],
                             "exact_successes": result["successes"],
                             "episodes": result["episodes"],

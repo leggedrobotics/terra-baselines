@@ -26,6 +26,7 @@ BASELINES_REVISION="$(git -C "$REPO" rev-parse HEAD)"
 REMOTE_SOURCE="$REMOTE_WORK/$BASELINES_REVISION/terra-baselines"
 REMOTE_BANK="$REMOTE_INPUTS/bank-$BANK_SHA.tar.zst"
 OUTPUT_ROOT="$REMOTE_RUNS/$BASELINES_REVISION/reference_teacher_full_v8/s$SEED"
+OUTPUT_PARENT="$(dirname "$OUTPUT_ROOT")"
 
 echo "terra_baselines_revision=$BASELINES_REVISION"
 echo "teacher_checkpoint_sha256=$TEACHER_SHA"
@@ -44,7 +45,7 @@ if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_SOURCE/REVISION'"; then
     ssh "$REMOTE_HOST" "printf '%s\n' '$BASELINES_REVISION' > '$PARTIAL/terra-baselines/REVISION' && mv '$PARTIAL' '$REMOTE_WORK/$BASELINES_REVISION'"
 fi
 ssh "$REMOTE_HOST" "test \"\$(cat '$REMOTE_SOURCE/REVISION')\" = '$BASELINES_REVISION'"
-ssh "$REMOTE_HOST" "mkdir -p '$REMOTE_INPUTS' '$(dirname "$OUTPUT_ROOT")' && test ! -e '$OUTPUT_ROOT'"
+ssh "$REMOTE_HOST" "mkdir -p '$REMOTE_INPUTS' '$OUTPUT_PARENT' && test ! -e '$OUTPUT_ROOT'"
 if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_BANK'"; then
     PARTIAL="$REMOTE_BANK.partial.$$"
     scp -q "$BANK_LOCAL" "$REMOTE_HOST:$PARTIAL"
@@ -52,6 +53,6 @@ if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_BANK'"; then
 fi
 EXPORTS="ALL,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,TEACHER_CHECKPOINT=$TEACHER_CHECKPOINT,TEACHER_SHA=$TEACHER_SHA,OUTPUT_ROOT=$OUTPUT_ROOT"
 JOB_ID="$(
-    ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_10m_v1/teacher_full_v8_eval.sbatch' | sbatch --parsable --partition=gpuhe.4h --time=03:45:00 --gpus=rtx_4090:1 --exclude='eu-g6-064' --job-name='terra-v8-reference-teacher-eval' --output='$OUTPUT_ROOT/../teacher_eval_%j.out' --export='$EXPORTS'"
+    ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_10m_v1/teacher_full_v8_eval.sbatch' | sbatch --parsable --partition=gpuhe.4h --time=03:45:00 --gpus=rtx_4090:1 --exclude='eu-g6-064' --job-name='terra-v8-reference-teacher-eval' --output='$OUTPUT_PARENT/teacher_eval_%j.out' --export='$EXPORTS'"
 )"
 echo "reference-teacher-eval $JOB_ID"
