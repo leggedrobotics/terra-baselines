@@ -1734,10 +1734,10 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         )
         curriculum_stage = getattr(config.accepted_bank, "curriculum_stage", None)
         if curriculum_stage is not None:
-            tags.append(
-                "curriculum-stage:"
-                f"{_tag_value(curriculum_stage)}"
-            )
+            tags.append("curriculum-stage:" f"{_tag_value(curriculum_stage)}")
+        sampler_profile = getattr(config.accepted_bank, "sampler_profile", None)
+        if sampler_profile is not None:
+            tags.append(f"sampler-profile:{_tag_value(sampler_profile)}")
 
     if config.curriculum_levels_override:
         if len(config.curriculum_levels_override) > 8:
@@ -2855,6 +2855,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                 "curriculum_stage": (
                                     config.accepted_bank.curriculum_stage
                                 ),
+                                "sampler_profile": (
+                                    config.accepted_bank.sampler_profile
+                                ),
                             }
                         )
                         receipt_dir = Path(config.checkpoint_dir) / "pooled_sampler"
@@ -3465,6 +3468,16 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--accepted-bank-sampler-profile",
+        choices=("bank_v4", "bounded_replay25_v1"),
+        default=None,
+        help=(
+            "Named V8 stage-population contract. bounded_replay25_v1 gives "
+            "25% of exposure to the previous mastered mixture and 75% to "
+            "the active stage; rejected by older accepted banks."
+        ),
+    )
+    parser.add_argument(
         "--pooled-sampler-interval",
         type=int,
         default=None,
@@ -3739,6 +3752,10 @@ if __name__ == "__main__":
             raise ValueError("--terra-revision requires an accepted-bank config")
         if args.accepted_bank_stage is not None:
             raise ValueError("--accepted-bank-stage requires an accepted-bank config")
+        if args.accepted_bank_sampler_profile is not None:
+            raise ValueError(
+                "--accepted-bank-sampler-profile requires an accepted-bank config"
+            )
     else:
         if accepted_bank_arm not in ACCEPTED_BANK_ARMS:
             raise ValueError(
@@ -3763,6 +3780,7 @@ if __name__ == "__main__":
             accepted_bank_arm,
             args.terra_revision,
             curriculum_stage=args.accepted_bank_stage,
+            sampler_profile=args.accepted_bank_sampler_profile,
         )
         os.environ["DATASET_PATH"] = str(accepted_bank.root)
         os.environ["DATASET_SIZE"] = str(accepted_bank.map_count_per_condition)
@@ -3796,9 +3814,7 @@ if __name__ == "__main__":
             args.pooled_sampler_interval is not None
             or args.pooled_sampler_min_episodes is not None
         ):
-            raise ValueError(
-                "sampler refresh overrides apply only to an adaptive arm"
-            )
+            raise ValueError("sampler refresh overrides apply only to an adaptive arm")
         if args.pooled_sampler_interval is not None:
             pooled_sampler_override["update_interval"] = args.pooled_sampler_interval
         if args.pooled_sampler_min_episodes is not None:
@@ -3807,7 +3823,8 @@ if __name__ == "__main__":
         print(
             f"📦 Accepted bank: {accepted_bank.root} | "
             f"{accepted_bank_arm} | {len(accepted_bank.levels)} conditions x "
-            f"{accepted_bank.map_count_per_condition} maps",
+            f"{accepted_bank.map_count_per_condition} maps | "
+            f"sampler={accepted_bank.sampler_profile or 'release-default'}",
             flush=True,
         )
 

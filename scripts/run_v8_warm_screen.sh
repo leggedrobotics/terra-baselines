@@ -31,6 +31,7 @@ case "$STAGE" in capability|nearby|full) ;; *) echo "invalid V8 stage '$STAGE'" 
 : "${TERRA_REVISION:?set TERRA_REVISION to the bank Terra revision}"
 : "${RUN_ROOT:?set RUN_ROOT to the scratch run directory}"
 : "${SEED:?set the paired training seed}"
+: "${V8_SAMPLER_PROFILE:?set the frozen V8 sampler profile}"
 test -f "$INITIAL_CHECKPOINT"
 if [ "$STAGE" = capability ]; then
     test "$TEACHER_CHECKPOINT" != none
@@ -68,6 +69,7 @@ TRAIN_ARGS=(
     --machine "$MACHINE"
     --accepted-bank-root "$BANK_ROOT"
     --accepted-bank-stage "$STAGE"
+    --accepted-bank-sampler-profile "$V8_SAMPLER_PROFILE"
     --terra-revision "$TERRA_REVISION"
     --name "$RUN_NAME"
     --seed "$SEED"

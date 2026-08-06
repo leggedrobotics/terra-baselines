@@ -33,17 +33,23 @@ umask 002
 case "$STAGE" in
     capability)
         EXPECTED_CONDITIONS=2
+        V8_SAMPLER_PROFILE=bank_v4
+        CONDITION_SAMPLER=fixed_v8_stage_weights
         test "$PRIOR_GATE_RECEIPT" = none
         test "$PRIOR_GATE_SHA" = none
         ;;
     nearby)
         EXPECTED_CONDITIONS=15
+        V8_SAMPLER_PROFILE=bounded_replay25_v1
+        CONDITION_SAMPLER=fixed_v8_bounded_replay
         PRIOR_STAGE=capability
         test "$PRIOR_GATE_RECEIPT" != none
         test "$PRIOR_GATE_SHA" != none
         ;;
     full)
         EXPECTED_CONDITIONS=47
+        V8_SAMPLER_PROFILE=bounded_replay25_v1
+        CONDITION_SAMPLER=fixed_v8_bounded_replay
         PRIOR_STAGE=nearby
         test "$PRIOR_GATE_RECEIPT" != none
         test "$PRIOR_GATE_SHA" != none
@@ -142,7 +148,7 @@ export JAX_PLATFORMS=cuda
 "$PYTHON" "$RUNTIME_CHECK" --min-devices 4
 MAPS_PER_CONDITION="$(PYTHONPATH="$BASELINES_ROOT" "$PYTHON" "$BASELINES_ROOT/scripts/euler_accepted_bank_v1/validate_training_bank.py" "$BANK" --expected-maps-per-condition 96 --expected-release-id "$EXPECTED_RELEASE")"
 test "$MAPS_PER_CONDITION" = 96
-"$PYTHON" -c 'import sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], "G-UNIFORM", sys.argv[2], curriculum_stage=sys.argv[3]); assert len(b.levels)==int(sys.argv[4]); assert b.map_count_per_condition==96; assert abs(sum(b.sampling_probabilities)-1.0)<1e-12' "$BANK" "$TERRA_REVISION" "$STAGE" "$EXPECTED_CONDITIONS"
+"$PYTHON" -c 'import sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], "G-UNIFORM", sys.argv[2], curriculum_stage=sys.argv[3], sampler_profile=sys.argv[5]); assert len(b.levels)==int(sys.argv[4]); assert b.map_count_per_condition==96; assert abs(sum(b.sampling_probabilities)-1.0)<1e-12; assert b.sampler_profile==sys.argv[5]' "$BANK" "$TERRA_REVISION" "$STAGE" "$EXPECTED_CONDITIONS" "$V8_SAMPLER_PROFILE"
 if [ "$STAGE" != capability ]; then
     JAX_PLATFORMS=cpu "$PYTHON" "$BASELINES_ROOT/scripts/euler_v8_deep_xattn_v1/stage_gate.py" inspect \
         --receipt "$PRIOR_GATE_RECEIPT" --stage "$PRIOR_STAGE" --arm "$ARM" \
@@ -199,7 +205,8 @@ printf '%s\n' \
     "curriculum_stage=$STAGE" \
     "reward_stage=dense_skill" \
     "reward_type=DENSE" \
-    "condition_sampler=fixed_v8_stage_weights" \
+    "condition_sampler=$CONDITION_SAMPLER" \
+    "sampler_profile=$V8_SAMPLER_PROFILE" \
     "condition_count=$EXPECTED_CONDITIONS" \
     "seed=$SEED" \
     "phase=$PHASE" \

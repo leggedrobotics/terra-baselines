@@ -74,6 +74,13 @@ and probability vector from every qualifying checkpoint's sampler state; a
 vector that merely sums to one is insufficient. There is no per-environment
 promotion or demotion.
 
+The map archive remains immutable. The later-stage exposure rule is the named
+training-protocol profile `bounded_replay25_v1`, which supersedes the archive's
+original 50% replay suggestion without modifying any map, manifest, episode,
+or dataset hash. Stage A's `bank_v4` vector is unchanged. Retention is enforced
+by fixed panels and rollback, not by spending half of all rollouts forever on
+already-mastered conditions.
+
 ### Stage A: capability
 
 - support: `fnd-slab-allfree` and `trn-straight-allfree`;
@@ -88,11 +95,11 @@ promotion or demotion.
 ### Stage B: nearby geometry
 
 - support: both capability controls plus the 13 V7 adjacent-generous cells;
-- mass: 50% capability replay and 50% nearby core;
+- mass under `bounded_replay25_v1`: 25% capability replay and 75% nearby core;
 - every slice remains 50/50 foundation/trench;
 - V7 geometry mass within each family follows the frozen V8 mixture;
 - ordered sampler contract SHA-256:
-  `a681e5e92562a322db2627825e607df2d7b8ece708f9bcd87d5d0d710b3ae398`;
+  `b6e9e5d4fd672b87b4b87252b630d3243355e5d10988772f9861f3ec0cf0f245`;
 - bounded screen: at most 4,000 updates;
 - promotion: foundation nearby core at least `78/96`, trench nearby core at
   least `91/112`, every cell at least `12/16`, at the latest two scheduled
@@ -102,10 +109,12 @@ promotion or demotion.
 ### Stage C: full V8
 
 - support: all 47 training conditions;
-- mass: 25% capability, 25% nearby core, 50% V6 constraints;
+- mass under `bounded_replay25_v1`: 6.25% capability, 18.75% nearby core,
+  and 75% V6 constraints. This is 25% replay of the mastered Stage-B mixture
+  plus 75% newly active constraints;
 - every slice remains 50/50 foundation/trench;
 - ordered sampler contract SHA-256:
-  `2a457be780e086c02e0474489b2060d6c577fac0ac429c48ad1a7e1e5e011357`;
+  `989f379b038f71506a188ddf55e9789f79d94c1b537f76661e0d2d6af4653af3`;
 - bounded first allocation: configure 8,000 updates, checkpoint every 500,
   and let the 24-hour allocation determine the reached update;
 - continue a promising checkpoint with true optimizer/schedule/sampler resume
@@ -356,3 +365,9 @@ single-arm feasibility continuation would require a separately named decision.
   longest common complete checkpoint prefix on all four panels and writes the
   aggregate, family, and per-condition leaderboard. Preparation is not launch
   authorization.
+- **V8-XA-15, accepted 2026-08-06:** keep active-stage online success as a
+  diagnostic only. Primary success enumerates the complete source-disjoint V8
+  fixed panel. Use `bounded_replay25_v1` after Stage A: 25% replay of the
+  mastered previous-stage mixture and 75% active-stage exposure, with fixed
+  retention gates and rollback. This changes the named sampler treatment, not
+  the immutable V8 map archive.

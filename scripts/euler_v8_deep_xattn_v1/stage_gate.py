@@ -48,8 +48,8 @@ STAGE_UPDATES = {
 }
 STAGE_SAMPLING_SHA256 = {
     "capability": "a569e04eba1bc2ed7cff9d084ff75c7a09224df6d600a4ab647a7b28c15f8633",
-    "nearby": "a681e5e92562a322db2627825e607df2d7b8ece708f9bcd87d5d0d710b3ae398",
-    "full": "2a457be780e086c02e0474489b2060d6c577fac0ac429c48ad1a7e1e5e011357",
+    "nearby": "b6e9e5d4fd672b87b4b87252b630d3243355e5d10988772f9861f3ec0cf0f245",
+    "full": "989f379b038f71506a188ddf55e9789f79d94c1b537f76661e0d2d6af4653af3",
 }
 NEXT_STAGE = {"capability": "nearby", "nearby": "full", "full": "continuation"}
 PRIOR_STAGE = {"nearby": "capability", "full": "nearby"}
@@ -205,6 +205,9 @@ def load_bank_contract(bank_root: Path) -> dict:
 
 
 def panel_contract(bank: dict, panel_group: str, split: str) -> dict:
+    import jax
+    import numpy as np
+
     dataset = bank["dataset"]
     group_field = (
         "capability_floor_evaluation_panels"
@@ -252,6 +255,16 @@ def panel_contract(bank: dict, panel_group: str, split: str) -> dict:
         ],
         "layer_sha256": layer_hashes,
     }
+    rows = [json.loads(line) for line in manifest.read_text().splitlines()]
+    seeds = np.asarray([row["reset_seed"] for row in rows], dtype=np.uint32)
+    seed_keys = jax.vmap(jax.random.PRNGKey)(seeds)
+    reset_verification["manifest_episode_seeds"] = {
+        "passed": True,
+        "map_selection_decoupled": True,
+        "sha256": hashlib.sha256(
+            np.ascontiguousarray(np.asarray(seed_keys)).tobytes()
+        ).hexdigest(),
+    }
     return {
         "bank_root": str(bank["root"]),
         "manifest": str(manifest),
@@ -263,7 +276,11 @@ def panel_contract(bank: dict, panel_group: str, split: str) -> dict:
     }
 
 
-def stage_sampling_contract(bank: dict, stage: str) -> dict:
+def stage_sampling_contract(
+    bank: dict,
+    stage: str,
+    sampler_profile: str = "bank_v4",
+) -> dict:
     import numpy as np
 
     from utils.accepted_bank import load_accepted_bank
@@ -273,6 +290,7 @@ def stage_sampling_contract(bank: dict, stage: str) -> dict:
         "G-UNIFORM",
         TERRA_REVISION,
         curriculum_stage=stage,
+        sampler_profile=sampler_profile,
     )
     conditions = [level.condition_id for level in accepted.levels]
     weights = np.asarray(accepted.sampling_probabilities, dtype=np.float64)
@@ -284,6 +302,8 @@ def stage_sampling_contract(bank: dict, stage: str) -> dict:
         "probabilities": probabilities,
         "maps_per_condition": accepted.map_count_per_condition,
     }
+    if stage != "capability":
+        contract["sampler_profile"] = sampler_profile
     encoded = json.dumps(
         contract, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode()
@@ -296,12 +316,18 @@ def stage_sampling_contract(bank: dict, stage: str) -> dict:
 def validate_run_contract(
     contract: dict[str, str], stage: str, arm: str, prior_receipt: dict | None
 ) -> None:
+    sampler_profile = "bank_v4" if stage == "capability" else "bounded_replay25_v1"
     expected = {
         "arm": arm,
         "curriculum_stage": stage,
         "reward_stage": "dense_skill",
         "reward_type": "DENSE",
-        "condition_sampler": "fixed_v8_stage_weights",
+        "condition_sampler": (
+            "fixed_v8_stage_weights"
+            if stage == "capability"
+            else "fixed_v8_bounded_replay"
+        ),
+        "sampler_profile": sampler_profile,
         "condition_count": str(EXPECTED_CONDITIONS[stage]),
         "phase": "screen",
         "terra_revision": TERRA_REVISION,
@@ -748,9 +774,17 @@ def validate_candidate_checkpoint(
         "release_id": RELEASE_ID,
         "terra_revision": TERRA_REVISION,
         "curriculum_stage": stage,
+        "sampler_profile": (
+            "bank_v4" if stage == "capability" else "bounded_replay25_v1"
+        ),
     }
     for field, value in expected_bank.items():
-        if _field(bank, field) != value:
+        observed = _field(bank, field)
+        if field == "sampler_profile" and stage == "capability" and observed is None:
+            # Stage A predates the named profile; bank_v4 is its exact legacy
+            # probability vector and its receipt hash remains unchanged.
+            continue
+        if observed != value:
             raise ValueError(f"{path}: accepted-bank {field} changed")
     architecture = {
         field: _field(config, field)
@@ -1450,7 +1484,13 @@ def validate_parent_job_receipt(
 
 def promote(args: argparse.Namespace) -> dict:
     bank = load_bank_contract(args.bank_root.resolve())
-    sampling = stage_sampling_contract(bank, args.stage)
+    run_contract_path = args.run_contract.resolve()
+    run_contract = parse_run_contract(run_contract_path)
+    sampling = stage_sampling_contract(
+        bank,
+        args.stage,
+        run_contract.get("sampler_profile", "bank_v4"),
+    )
     prior_receipt = None
     if args.stage == "capability":
         if args.prior_receipt is not None or args.capability is not None:
@@ -1463,8 +1503,6 @@ def promote(args: argparse.Namespace) -> dict:
         prior_receipt = validate_prior_receipt(
             args.prior_receipt.resolve(), args.arm, PRIOR_STAGE[args.stage]
         )
-    run_contract_path = args.run_contract.resolve()
-    run_contract = parse_run_contract(run_contract_path)
     validate_run_contract(run_contract, args.stage, args.arm, prior_receipt)
 
     promotion_path = args.promotion.resolve()

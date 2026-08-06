@@ -35,6 +35,7 @@ test "$STAGE" = capability || {
     exit 2
 }
 EXPECTED_CONDITIONS=2
+V8_SAMPLER_PROFILE=bank_v4
 case "$PHASE" in
     smoke)
         test "${SLURM_JOB_PARTITION:-}" = gpuhe.4h
@@ -137,7 +138,7 @@ export JAX_PLATFORMS=cuda
 "$PYTHON" "$RUNTIME_CHECK" --min-devices 4
 MAPS_PER_CONDITION="$(PYTHONPATH="$BASELINES_ROOT" "$PYTHON" "$BASELINES_ROOT/scripts/euler_accepted_bank_v1/validate_training_bank.py" "$BANK" --expected-maps-per-condition 96 --expected-release-id "$EXPECTED_RELEASE")"
 test "$MAPS_PER_CONDITION" = 96
-"$PYTHON" -c 'import sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], "G-UNIFORM", sys.argv[2], curriculum_stage=sys.argv[3]); assert len(b.levels)==int(sys.argv[4]); assert b.map_count_per_condition==96; assert abs(sum(b.sampling_probabilities)-1.0)<1e-12' "$BANK" "$TERRA_REVISION" "$STAGE" "$EXPECTED_CONDITIONS"
+"$PYTHON" -c 'import sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], "G-UNIFORM", sys.argv[2], curriculum_stage=sys.argv[3], sampler_profile=sys.argv[5]); assert len(b.levels)==int(sys.argv[4]); assert b.map_count_per_condition==96; assert abs(sum(b.sampling_probabilities)-1.0)<1e-12; assert b.sampler_profile==sys.argv[5]' "$BANK" "$TERRA_REVISION" "$STAGE" "$EXPECTED_CONDITIONS" "$V8_SAMPLER_PROFILE"
 
 JAX_PLATFORMS=cpu "$PYTHON" "$BASELINES_ROOT/scripts/v8_10m_provisional_teacher.py" \
     --checkpoint "$TEACHER_CHECKPOINT" --checkpoint-sha256 "$TEACHER_SHA" \
@@ -196,6 +197,7 @@ printf '%s\n' \
     "curriculum_stage=$STAGE" \
     "map_curriculum=capability_then_nearby_then_full" \
     "condition_sampler=fixed_v8_stage_weights" \
+    "sampler_profile=$V8_SAMPLER_PROFILE" \
     "condition_count=$EXPECTED_CONDITIONS" \
     "reward_stage=dense_skill" \
     "reward_curriculum=dense_skill_then_terminal_margin_then_terminal_objective" \
@@ -245,6 +247,7 @@ export NUM_DEVICES=4
 export NUM_ENVS_PER_DEVICE=512
 export NUM_STEPS=32
 export NUM_MINIBATCHES=32
+export V8_SAMPLER_PROFILE
 export CHECKPOINT_INTERVAL LOG_TRAIN_INTERVAL CACHE_CLEAR_INTERVAL
 export FINITE_CHECK_INTERVAL=10
 if [ "$PHASE" = smoke ]; then export FINITE_CHECK_INTERVAL=1; fi

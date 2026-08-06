@@ -15,8 +15,7 @@ Both start from the same provisional teacher, use a fresh optimizer, distill
 from that frozen teacher, and train on the exact Stage-A capability sampler.
 Before PPO, each arm records its logits and values against the teacher on all
 720 full-V8 promotion map slots. This diagnostic uses deterministic exact-slot
-keys; it is not a behavioral evaluation or a claim that the combined panel's
-inherited episode seeds are valid frozen resets.
+keys and is not a behavioral evaluation.
 
 The declared campaign is:
 
@@ -25,14 +24,20 @@ capability -> nearby -> full                         (maps)
 dense_skill -> terminal_margin -> terminal_objective (reward)
 ```
 
-Only the first dense capability stage is enabled in this revision. The reward
-stage does not change until a later fixed full-bank completion gate passes.
-Legacy `SPARSE` is never selected.
+The completed Stage-A jobs used dense reward throughout. Annealed kickstart
+KL/value distillation is not reward annealing. The reward stage does not change
+until a later fixed full-bank completion gate passes. Legacy `SPARSE` is never
+selected.
 
-The current combined V8 main-panel episode seeds must be repaired before the
-later full-map or reward-fading gates. This does not block Stage A: its separate
-capability promotion and development panels already enumerate their slots
-exactly.
+Combined-panel evaluation now materializes each ordered map with an exact-slot
+key and initializes it with the row's frozen episode seed. All 720 promotion
+slots pass the reset-layer/metadata audit. The primary report is full-V8 fixed
+development exact success plus macro/family/condition results;
+`train/episode_success_rate` remains an active-stage diagnostic only.
+
+Later stages use `bounded_replay25_v1`: 25% replay of the mastered previous
+mixture and 75% newly active conditions, with fixed retention panels and
+rollback. This sampler profile changes exposure, not the immutable map bank.
 
 Dry run:
 

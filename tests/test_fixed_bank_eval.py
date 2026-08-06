@@ -15,6 +15,7 @@ from eval_fixed_bank import (
     environment_completion_contract,
     exact_reset_keys,
     grouped_results,
+    manifest_environment_keys,
     manifest_reset_keys,
     selected_map_indices,
     validate_checkpoint_sequence,
@@ -60,6 +61,25 @@ class FixedBankEvalTest(unittest.TestCase):
         np.testing.assert_array_equal(selected_map_indices(observed, 4), np.arange(4))
         rows[0]["environment_protocol_sha256"] = "b" * 64
         with self.assertRaisesRegex(ValueError, "stale protocol"):
+            manifest_reset_keys(rows, 4, protocol)
+
+    def test_manifest_environment_keys_do_not_double_as_map_selection(self):
+        protocol = "a" * 64
+        rows = [
+            {
+                "slot_index": index + 1,
+                "reset_seed": 100 + index,
+                "environment_protocol_sha256": protocol,
+            }
+            for index in range(4)
+        ]
+        keys = manifest_environment_keys(rows, 4, protocol)
+        expected = jax.vmap(jax.random.PRNGKey)(
+            np.asarray([100, 101, 102, 103], dtype=np.uint32)
+        )
+        np.testing.assert_array_equal(keys, expected)
+        self.assertFalse(np.array_equal(selected_map_indices(keys, 4), np.arange(4)))
+        with self.assertRaises(AssertionError):
             manifest_reset_keys(rows, 4, protocol)
 
     def test_grouping_preserves_family_and_primary_cells(self):
@@ -325,21 +345,15 @@ class FixedBankEvalTest(unittest.TestCase):
                 }
             ],
         )
-        baseline = checkpoint_treatment_fingerprint(
-            {"train_config": config}
-        )
-        same = checkpoint_treatment_fingerprint(
-            {"train_config": config}
-        )
+        baseline = checkpoint_treatment_fingerprint({"train_config": config})
+        same = checkpoint_treatment_fingerprint({"train_config": config})
         self.assertEqual(baseline, same)
 
         changed_run = SimpleNamespace(**vars(config))
         changed_run.seed = 8
         self.assertNotEqual(
             baseline["sha256"],
-            checkpoint_treatment_fingerprint(
-                {"train_config": changed_run}
-            )["sha256"],
+            checkpoint_treatment_fingerprint({"train_config": changed_run})["sha256"],
         )
         changed_protocol = SimpleNamespace(**vars(bank))
         changed_protocol.environment_protocol_sha256 = "c" * 64
@@ -347,9 +361,9 @@ class FixedBankEvalTest(unittest.TestCase):
         changed_bank_config.accepted_bank = changed_protocol
         self.assertNotEqual(
             baseline["sha256"],
-            checkpoint_treatment_fingerprint(
-                {"train_config": changed_bank_config}
-            )["sha256"],
+            checkpoint_treatment_fingerprint({"train_config": changed_bank_config})[
+                "sha256"
+            ],
         )
 
         changed_depth = SimpleNamespace(**vars(config))
@@ -357,9 +371,7 @@ class FixedBankEvalTest(unittest.TestCase):
         changed_depth.resnet_blocks_per_stage = (2, 2, 3, 3)
         self.assertNotEqual(
             baseline["sha256"],
-            checkpoint_treatment_fingerprint(
-                {"train_config": changed_depth}
-            )["sha256"],
+            checkpoint_treatment_fingerprint({"train_config": changed_depth})["sha256"],
         )
 
     def test_checkpoint_sequence_rejects_duplicate_updates_and_mixed_runs(self):

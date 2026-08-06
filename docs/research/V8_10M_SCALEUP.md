@@ -1,7 +1,7 @@
 # V8 10M scale-up experiment
 
-- Status: **STAGE-A SUBMITTED; WAITING IN `gpuhe.120h` PRIORITY QUEUE**
-- Date: 2026-08-04
+- Status: **STAGE A PASSED; WHOLE-V8 FIXED EVALUATION REPAIRED AND NEXT**
+- Updated: 2026-08-06
 - Parent campaign:
   [`V8_DEEP_XATTN_CURRICULUM.md`](V8_DEEP_XATTN_CURRICULUM.md)
 - Implementation policy:
@@ -30,6 +30,17 @@ Stage A starts under `dense_skill`. Reward progression cannot start from online
 training success; it requires high fixed full-V8 completion after the full map
 stage. Terra's legacy `SPARSE` enum is not an acceptable substitute for the
 terminal reward contract described in the canonical progressive-reward spec.
+Both completed Stage-A runs used `DENSE` for every PPO update. The decaying
+kickstart KL/value coefficients are teacher-distillation schedules, not reward
+annealing; `reward_transition_launched=false` in both run contracts.
+
+The primary performance metric is not `train/episode_success_rate`. That value
+is success among completed episodes from the currently active training stage
+and is retained only as a sampler/optimization diagnostic. Primary policy
+performance is deterministic exact success on every source-disjoint full-V8
+development episode at horizon 450, with condition-balanced macro completion,
+family results, worst condition, and all per-condition results reported beside
+it. Promotion uses the separate promotion panel.
 
 ## Teacher admission
 
@@ -258,15 +269,14 @@ After both admissions passed, the paired 4,000-update Stage-A screens were
 submitted from immutable source revision
 `2a195b6c7112e56684d6088f1c9a073f3a3ff047`:
 
-| Arm | Screen job | Queue | State at 2026-08-05 01:16 CEST |
+| Arm | Screen job | Runtime | Final state |
 |---|---:|---|---|
-| `G-V8-XATTN-REWARM-CONTROL` | `9685873` | `gpuhe.120h`, 4x RTX 4090 | `PENDING (Priority)` |
-| `G-V8-10M-XATTN-WARM` | `9685874` | `gpuhe.120h`, 4x RTX 4090 | `PENDING (Priority)` |
+| `G-V8-XATTN-REWARM-CONTROL` | `9685873` | `5:19:05` | `COMPLETED`, gate passed |
+| `G-V8-10M-XATTN-WARM` | `9685874` | `9:33:43` | `COMPLETED`, gate passed |
 
-The jobs have no Slurm dependency and a `119:45:00` limit. `PENDING` means
-Slurm accepted the experiments but has not allocated GPUs; it is not training
-evidence. Each screen revalidates its matching completed smoke receipt before
-loading the bank or performing an optimizer update.
+The jobs had no Slurm dependency and a `119:45:00` limit. Both revalidated their
+matching completed smoke receipt, ran all 4,000 updates, completed fixed
+capability evaluation, and wrote a passing Stage-A gate receipt.
 
 The selected frozen teacher is update 7,500 of
 `G-DEEP-XATTN-V8-DIRECT-FULL-TEACHER`, SHA-256
@@ -294,9 +304,10 @@ finite same-V8 teacher, not a claim of full-bank mastery.
 - [x] Submit the paired Stage-A screen only after both smokes pass.
 - [x] Record explicit launch authorization and the teacher-performance waiver.
 - [ ] Require the formal fixed full-bank gate before changing reward stage.
-- [ ] Repair and freeze the combined main-panel episode reset identities before
-  the full-map stage or either reward-fading stage. Stage A uses the separate
-  capability panels, whose reset seeds do enumerate their frozen slots.
+- [x] Repair combined main-panel evaluation by separating exact map-slot keys
+  from frozen environment/pose seeds; verify all 720 promotion resets locally.
+- [ ] Evaluate every Stage-A checkpoint on full-V8 promotion/development and
+  publish the standardized family/condition leaderboard.
 
 ## Preparation verification
 
@@ -310,9 +321,58 @@ The launched implementation passes:
 - an independent launch-blocker re-review of the hardened teacher gate, with no
   remaining blocker found;
 - paired update-1 smoke receipts from jobs `9683427` and `9683428`; and
-- submitted Stage-A screen jobs `9685873` and `9685874` on `gpuhe.120h`.
+- completed Stage-A jobs `9685873` and `9685874`, both with passing fixed
+  capability receipts; and
+- focused reset/reporting tests plus a local exact 720-slot reset receipt for
+  the combined promotion panel.
 
-The next operational check is allocation and startup validation, not promotion.
-Nearby maps remain locked until the Stage-A fixed capability gates pass. Reward
-fading remains locked until the later fixed **full-V8** gate passes; no online
-completion signal is permitted to change the reward during these jobs.
+The next operational check is the whole-V8 fixed benchmark, followed by the
+nearby stage under `bounded_replay25_v1`. Reward fading remains locked until the
+later fixed **full-V8** gate passes; no online completion signal may change the
+reward.
+
+### Bounded replay population contract
+
+Stage A necessarily samples its two capability conditions 50/50. For later
+stages, the original archive-declared 50% replay is replaced by the named
+training-protocol treatment `bounded_replay25_v1`; the map archive itself is
+unchanged:
+
+- nearby: 25% mastered capability replay, 75% newly active nearby conditions;
+- full: 25% replay of the mastered nearby-stage mixture and 75% newly active
+  constraints. Expanding the replay mixture gives 6.25% capability, 18.75%
+  nearby core, and 75% constraints;
+- every slice is still foundation/trench balanced;
+- replay probabilities remain fixed inside a checkpoint-bounded stage;
+- fixed capability/core panels guard retention. A retention failure restores
+  the last passing checkpoint and previous mixture; it does not silently spend
+  more population on mastered maps or use per-environment promotion/demotion.
+
+This is the simplest anti-forgetting rule that still directs most data toward
+the current unsolved support. The sampler profile and exact ordered probability
+vector are stored in checkpoints and gate receipts.
+
+### Stage-A result (2026-08-05)
+
+Both jobs completed all 4,000 updates and passed the latest-two-checkpoint
+capability gate:
+
+| Policy | Job | Promotion exact | Development exact | Development macro |
+|---|---:|---:|---:|---:|
+| compact deep+xattn | `9685873` | `30/32` | `31/32` | `0.969` |
+| 10M deep+xattn | `9685874` | `31/32` | `29/32` | `0.955` |
+
+These are two-condition capability results, not whole-V8 success. The 10M
+policy has therefore passed Stage A but has not yet shown a capacity advantage.
+The next measurement enumerates all 720 promotion and 720 development episodes
+for every Stage-A checkpoint before Stage B consumes more PPO compute.
+
+### Combined-panel reset repair
+
+The combined V8 main manifests correctly froze each episode's map identity and
+environment seed, but those inherited seeds selected only 10 of 720 ordered
+slots after V6 and V7 panels were concatenated. Evaluation now uses two keys:
+an exact-slot key solely to materialize each ordered map once, and the frozen
+manifest seed solely for pose/environment initialization. A local reset receipt
+verified all 720 promotion slots, layers, metadata, zero initial steps, and the
+ordered episode-seed hash. The benchmark maps and episode IDs were not changed.

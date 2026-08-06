@@ -32,6 +32,7 @@ V8_CORE_CONDITION_COUNT = 13
 V8_MAIN_CONDITION_COUNT = 45
 V8_CAPABILITY_FLOOR_IDS = TRAIN96_CAPABILITY_FLOOR_IDS
 V8_CURRICULUM_STAGES = ("capability", "nearby", "full")
+V8_SAMPLER_PROFILES = ("bank_v4", "bounded_replay25_v1")
 REVIEW_RELEASE = "map-curriculum-diverse64-visual-review-20260730"
 REVIEW_MANIFEST_SHA256 = (
     "39f7cd2e8ce565bd384de214da5f2eee5e76764cb554e149c0ba675d815d6d51"
@@ -155,9 +156,17 @@ class AcceptedBank:
     capability_floor_condition_ids: tuple[str, ...] = ()
     capability_floor_evaluation_panels: tuple["AcceptedPanel", ...] = ()
     curriculum_stage: str | None = None
+    sampler_profile: str | None = None
     sampling_probabilities: tuple[float, ...] = ()
     v6_constraint_condition_ids: tuple[str, ...] = ()
     v7_core_condition_ids: tuple[str, ...] = ()
+
+    def __getattr__(self, name: str):
+        # Checkpoints written before sampler profiles were named unpickle into
+        # this class without the new field in their instance dictionary.
+        if name == "sampler_profile":
+            return None
+        raise AttributeError(name)
 
 
 @dataclass(frozen=True)
@@ -676,11 +685,17 @@ def _v8_stage_selection(
     capability_ids: tuple[str, ...],
     core_ids: tuple[str, ...],
     mixture: dict,
+    sampler_profile: str = "bank_v4",
 ) -> tuple[tuple[AcceptedLevel, ...], tuple[float, ...]]:
     if stage not in V8_CURRICULUM_STAGES:
         raise ValueError(
             f"V8 curriculum_stage must be one of {V8_CURRICULUM_STAGES}, "
             f"got {stage!r}"
+        )
+    if sampler_profile not in V8_SAMPLER_PROFILES:
+        raise ValueError(
+            f"V8 sampler_profile must be one of {V8_SAMPLER_PROFILES}, "
+            f"got {sampler_profile!r}"
         )
     by_id = {level.condition_id: level for level in levels}
     if stage == "capability":
@@ -688,10 +703,18 @@ def _v8_stage_selection(
         slice_mass = {"capability": 1.0, "core": 0.0, "constraint": 0.0}
     elif stage == "nearby":
         selected_ids = set(capability_ids) | set(core_ids)
-        slice_mass = {"capability": 0.5, "core": 0.5, "constraint": 0.0}
+        slice_mass = (
+            {"capability": 0.5, "core": 0.5, "constraint": 0.0}
+            if sampler_profile == "bank_v4"
+            else {"capability": 0.25, "core": 0.75, "constraint": 0.0}
+        )
     else:
         selected_ids = set(capability_ids) | set(core_ids) | set(constraint_ids)
-        slice_mass = {"capability": 0.25, "core": 0.25, "constraint": 0.5}
+        slice_mass = (
+            {"capability": 0.25, "core": 0.25, "constraint": 0.5}
+            if sampler_profile == "bank_v4"
+            else {"capability": 0.0625, "core": 0.1875, "constraint": 0.75}
+        )
     selected = tuple(
         sorted((by_id[name] for name in selected_ids), key=lambda x: x.condition_id)
     )
@@ -994,6 +1017,7 @@ def load_accepted_bank(
     *,
     allow_diagnostic_control: bool = False,
     curriculum_stage: str | None = None,
+    sampler_profile: str | None = None,
 ) -> AcceptedBank:
     """Validate the canonical index and select the levels owned by one arm."""
     if arm not in ARMS:
@@ -1170,6 +1194,8 @@ def load_accepted_bank(
             raise ValueError("the first V8 curriculum supports only G-UNIFORM")
         if curriculum_stage is None:
             raise ValueError(f"{index_path}: V8 requires an explicit curriculum_stage")
+        if sampler_profile is None:
+            sampler_profile = "bank_v4"
         selected, sampling_probabilities = _v8_stage_selection(
             all_levels,
             curriculum_stage,
@@ -1177,11 +1203,16 @@ def load_accepted_bank(
             capability_floor_condition_ids,
             v7_core_condition_ids,
             v8_mixture,
+            sampler_profile,
         )
     else:
         if curriculum_stage is not None:
             raise ValueError(
                 f"{index_path}: curriculum_stage applies only to {V8_RELEASE_ID}"
+            )
+        if sampler_profile is not None:
+            raise ValueError(
+                f"{index_path}: sampler_profile applies only to {V8_RELEASE_ID}"
             )
         selected = tuple(
             sorted(
@@ -1236,6 +1267,7 @@ def load_accepted_bank(
         capability_floor_condition_ids=capability_floor_condition_ids,
         capability_floor_evaluation_panels=capability_floor_evaluation_panels,
         curriculum_stage=curriculum_stage,
+        sampler_profile=sampler_profile,
         sampling_probabilities=sampling_probabilities,
         v6_constraint_condition_ids=v6_constraint_condition_ids,
         v7_core_condition_ids=v7_core_condition_ids,

@@ -11,7 +11,6 @@ from pathlib import Path
 
 from utils.accepted_bank import ARMS as ACCEPTED_BANK_ARMS
 
-
 SCREEN_UPDATES = (500, 1000, 2000)
 GENERALIST_ARMS = ("G-UNIFORM", "G-ADAPTIVE")
 
@@ -76,9 +75,7 @@ def _panel_identity(record: dict) -> dict:
         "horizon": record.get("horizon"),
         "deterministic": record.get("deterministic"),
         "policy_mode": record.get("policy_mode"),
-        "exact_manifest_enumeration": record.get(
-            "exact_manifest_enumeration"
-        ),
+        "exact_manifest_enumeration": record.get("exact_manifest_enumeration"),
         "episode_ids": [row.get("episode_id") for row in record.get("per_map", ())],
         "map_ids": [row.get("map_id") for row in record.get("per_map", ())],
     }
@@ -148,9 +145,7 @@ def _candidate(records: list[dict]) -> dict:
         "checkpoint_sha256": final.get("checkpoint_sha256"),
         "checkpoint_update": final.get("checkpoint_update"),
         "comparison_to_previous": comparison,
-        "macro_completion": float(
-            final["summary"]["graded"]["macro_completion"]
-        ),
+        "macro_completion": float(final["summary"]["graded"]["macro_completion"]),
         "exact_successes": int(final["summary"]["overall"]["successes"]),
         "worst_condition_completion": float(
             final["summary"]["graded"]["worst_condition_completion"]
@@ -171,9 +166,7 @@ def select_promotion(
             raise ValueError(
                 "generalist screens do not enumerate the identical promotion panel"
             )
-        if _shared_treatment(uniform_record) != _shared_treatment(
-            adaptive_record
-        ):
+        if _shared_treatment(uniform_record) != _shared_treatment(adaptive_record):
             raise ValueError(
                 "generalist screens differ outside the declared sampler rule"
             )
@@ -197,9 +190,7 @@ def select_promotion(
         "G-UNIFORM": _candidate(uniform),
         "G-ADAPTIVE": _candidate(adaptive),
     }
-    passing = [
-        arm for arm in GENERALIST_ARMS if candidates[arm]["passed"]
-    ]
+    passing = [arm for arm in GENERALIST_ARMS if candidates[arm]["passed"]]
     if not passing:
         selected = None
         reason = "neither generalist passed the update-1000 to update-2000 gate"
@@ -207,6 +198,7 @@ def select_promotion(
         selected = passing[0]
         reason = "only one generalist passed the update-1000 to update-2000 gate"
     else:
+
         def rank(arm: str) -> tuple[float, int, float]:
             candidate = candidates[arm]
             return (
@@ -217,11 +209,7 @@ def select_promotion(
 
         uniform_rank = rank("G-UNIFORM")
         adaptive_rank = rank("G-ADAPTIVE")
-        selected = (
-            "G-ADAPTIVE"
-            if adaptive_rank > uniform_rank
-            else "G-UNIFORM"
-        )
+        selected = "G-ADAPTIVE" if adaptive_rank > uniform_rank else "G-UNIFORM"
         reason = (
             "both passed; ranked by macro completion, exact successes, then "
             "worst-condition completion; exact ties choose G-UNIFORM"
@@ -254,8 +242,10 @@ def reset_hashes(args: argparse.Namespace) -> dict:
 
     from eval_fixed_bank import (
         configure_for_bank,
+        exact_reset_keys,
         load_manifest,
-        manifest_reset_keys,
+        manifest_environment_keys,
+        prepare_manifest_episode_reset,
         sha256_file as eval_sha256_file,
         verify_exact_reset,
     )
@@ -269,9 +259,7 @@ def reset_hashes(args: argparse.Namespace) -> dict:
         "G-UNIFORM",
         args.terra_revision,
     )
-    panel = next(
-        panel for panel in bank.evaluation_panels if panel.name == args.panel
-    )
+    panel = next(panel for panel in bank.evaluation_panels if panel.name == args.panel)
     directory = bank.root / panel.maps_path
     rows = load_manifest(directory)
     checkpoint = load_pkl_object(str(args.checkpoint.resolve()))
@@ -284,19 +272,34 @@ def reset_hashes(args: argparse.Namespace) -> dict:
     os.environ["DATASET_SIZE"] = str(len(rows))
     _, env, env_params, _ = make_mixed_agent_states(config)
     env_params = jax.tree_util.tree_map(lambda value: value[0], env_params)
-    keys = manifest_reset_keys(
+    map_keys = exact_reset_keys(len(rows))
+    state_keys = manifest_environment_keys(
         rows,
         len(rows),
         bank.environment_protocol_sha256,
     )
+    timestep, env_params, state_keys = prepare_manifest_episode_reset(
+        env,
+        env_params,
+        map_keys,
+        state_keys,
+    )
     verification = verify_exact_reset(
         env,
         env_params,
-        keys,
+        None,
         directory,
         len(rows),
+        timestep=timestep,
     )
-    state = env.reset(env_params, keys).state
+    verification["manifest_episode_seeds"] = {
+        "passed": True,
+        "map_selection_decoupled": True,
+        "sha256": hashlib.sha256(
+            np.ascontiguousarray(np.asarray(state_keys)).tobytes()
+        ).hexdigest(),
+    }
+    state = timestep.state
     ordered_hashes = []
     for index in range(len(rows)):
         agent = slice_agent_batch(
@@ -349,9 +352,7 @@ def verify_smoke(
         config = checkpoint.get("train_config")
         bank = getattr(config, "accepted_bank", None)
         if getattr(bank, "arm", None) != arm:
-            raise ValueError(
-                f"{label} smoke checkpoint has wrong accepted-bank arm"
-            )
+            raise ValueError(f"{label} smoke checkpoint has wrong accepted-bank arm")
         for tree_name in ("model", "optimizer_state"):
             leaves = jax.tree_util.tree_leaves(checkpoint.get(tree_name))
             if not leaves:
@@ -360,9 +361,7 @@ def verify_smoke(
                 not np.all(np.isfinite(np.asarray(jax.device_get(leaf))))
                 for leaf in leaves
             ):
-                raise ValueError(
-                    f"{label} smoke checkpoint has non-finite {tree_name}"
-                )
+                raise ValueError(f"{label} smoke checkpoint has non-finite {tree_name}")
         losses = checkpoint.get("loss_info")
         loss_leaves = jax.tree_util.tree_leaves(losses)
         if not loss_leaves or any(
@@ -374,9 +373,7 @@ def verify_smoke(
         if not isinstance(integrity, dict) or any(
             int(np.asarray(value)) != 0 for value in integrity.values()
         ):
-            raise ValueError(
-                f"{label} smoke checkpoint failed transition integrity"
-            )
+            raise ValueError(f"{label} smoke checkpoint failed transition integrity")
     return {
         "schema": "terra_accepted_bank_smoke_validation_v1",
         "passed": True,

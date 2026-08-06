@@ -18,8 +18,13 @@ update zero.
 The map curriculum is checkpoint-bounded:
 
 - `capability`: 2 all-free controls, 50/50 foundation/trench;
-- `nearby`: 50% capability replay + 50% V7 adjacent geometry core;
-- `full`: 25% capability + 25% nearby core + 50% V6 constraints.
+- `nearby`: 25% capability replay + 75% V7 adjacent geometry core;
+- `full`: 6.25% capability + 18.75% nearby core + 75% V6 constraints.
+
+Later stages use the named `bounded_replay25_v1` sampler profile: retain 25%
+of the previous mastered mixture and spend 75% on newly active conditions.
+The V8 map archive remains immutable; fixed retention panels and rollback guard
+against forgetting.
 
 Every stage is family-balanced. The first screen is `capability` for at most
 2,000 updates; it evaluates all numbered checkpoints on the frozen capability

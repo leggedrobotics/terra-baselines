@@ -29,6 +29,7 @@ case "$STAGE" in capability|nearby|full) ;; *) echo "invalid V8 stage '$STAGE'" 
 : "${TERRA_ROOT:?set TERRA_ROOT to the immutable Terra source}"
 : "${TERRA_REVISION:?set TERRA_REVISION to the frozen V8 Terra revision}"
 : "${SEED:?set the paired training seed}"
+V8_SAMPLER_PROFILE="${V8_SAMPLER_PROFILE:-bank_v4}"
 test -f "$INITIAL_CHECKPOINT"
 test -f "$TEACHER_CHECKPOINT"
 [[ "$NUM_UPDATES" =~ ^[1-9][0-9]*$ ]] || {
@@ -58,6 +59,7 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --machine "${MACHINE:-euler}" \
     --accepted-bank-root "$BANK_ROOT" \
     --accepted-bank-stage "$STAGE" \
+    --accepted-bank-sampler-profile "$V8_SAMPLER_PROFILE" \
     --terra-revision "$TERRA_REVISION" \
     --name "$RUN_NAME" \
     --seed "$SEED" \

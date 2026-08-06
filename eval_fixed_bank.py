@@ -185,12 +185,12 @@ def exact_reset_keys(count: int) -> jax.Array:
     return result
 
 
-def manifest_reset_keys(
+def _manifest_environment_keys(
     rows: list[dict],
     count: int,
     environment_protocol_sha256: str,
 ) -> jax.Array:
-    """Load the frozen episode reset seeds and verify exact slot selection."""
+    """Load frozen episode seeds after validating their runtime contract."""
     from terra.benchmark_protocol import BENCHMARK_JAX_DEFAULT_PRNG_IMPL
     from terra.benchmark_protocol import BENCHMARK_JAX_THREEFRY_PARTITIONABLE
 
@@ -226,6 +226,25 @@ def manifest_reset_keys(
             )
         seeds.append(seed)
     keys = jax.vmap(jax.random.PRNGKey)(jnp.asarray(seeds, dtype=jnp.uint32))
+    return keys
+
+
+def manifest_environment_keys(
+    rows: list[dict],
+    count: int,
+    environment_protocol_sha256: str,
+) -> jax.Array:
+    """Return frozen environment-state keys without treating them as map selectors."""
+    return _manifest_environment_keys(rows, count, environment_protocol_sha256)
+
+
+def manifest_reset_keys(
+    rows: list[dict],
+    count: int,
+    environment_protocol_sha256: str,
+) -> jax.Array:
+    """Load legacy seeds whose PRNG keys also select their ordered map slots."""
+    keys = _manifest_environment_keys(rows, count, environment_protocol_sha256)
     actual = selected_map_indices(keys, count)
     np.testing.assert_array_equal(actual, np.arange(count))
     return keys
@@ -282,6 +301,61 @@ def configure_for_bank(train_config, relative_path: str, count: int):
     return config
 
 
+def _prepare_ordered_map_slots(env, env_params, map_reset_keys):
+    count = np.asarray(map_reset_keys).shape[0]
+    if np.asarray(map_reset_keys).shape != (count, 2):
+        raise ValueError("map_reset_keys must contain one PRNG key per episode")
+
+    # prepare_reset owns a leading device axis; fixed evaluation operates on
+    # its sole device after materializing every ordered map slot exactly once.
+    device_env_params = jax.tree_util.tree_map(
+        lambda value: jnp.asarray(value)[None], env_params
+    )
+    prepared_device = env.prepare_reset(
+        device_env_params,
+        jnp.asarray(map_reset_keys)[None],
+    )
+    return jax.tree_util.tree_map(lambda value: value[0], prepared_device)
+
+
+def prepare_manifest_episode_reset(
+    env,
+    env_params,
+    map_reset_keys,
+    environment_state_keys,
+):
+    """Materialize ordered maps while retaining each manifest episode seed."""
+    prepared = _prepare_ordered_map_slots(env, env_params, map_reset_keys)
+    (
+        prepared_env_params,
+        target_maps,
+        padding_masks,
+        trench_axes,
+        trench_type,
+        foundation_border_axes,
+        foundation_border_type,
+        dumpability_mask_init,
+        action_maps,
+        distance_maps,
+    ) = prepared
+    if np.asarray(environment_state_keys).shape != np.asarray(map_reset_keys).shape:
+        raise ValueError("environment_state_keys must match map_reset_keys")
+    timestep = env.reset_prepared(
+        prepared_env_params,
+        environment_state_keys,
+        target_maps,
+        padding_masks,
+        trench_axes,
+        trench_type,
+        foundation_border_axes,
+        foundation_border_type,
+        dumpability_mask_init,
+        action_maps,
+        distance_maps,
+    )
+    return timestep, prepared_env_params, environment_state_keys
+
+
 def prepare_explicit_episode_reset(
     env,
     env_params,
@@ -292,19 +366,7 @@ def prepare_explicit_episode_reset(
     from terra.benchmark_state import validate_benchmark_initial_agent
 
     count = panel.slot_count
-    if np.asarray(map_reset_keys).shape != (count, 2):
-        raise ValueError("map_reset_keys must contain one PRNG key per episode")
-
-    # prepare_reset owns a leading device axis; fixed evaluation operates on
-    # its sole device after map materialization.
-    device_env_params = jax.tree_util.tree_map(
-        lambda value: jnp.asarray(value)[None], env_params
-    )
-    prepared_device = env.prepare_reset(
-        device_env_params,
-        jnp.asarray(map_reset_keys)[None],
-    )
-    prepared = jax.tree_util.tree_map(lambda value: value[0], prepared_device)
+    prepared = _prepare_ordered_map_slots(env, env_params, map_reset_keys)
     (
         prepared_env_params,
         target_maps,
@@ -366,7 +428,7 @@ def verify_exact_reset(
     expected_initial_state_sha256: tuple[str, ...] | None = None,
     expected_state_keys=None,
 ) -> dict:
-    explicit_reset = timestep is not None
+    precomputed_reset = timestep is not None
     if timestep is None:
         timestep = env.reset(env_params, reset_keys)
     state = timestep.state
@@ -461,13 +523,11 @@ def verify_exact_reset(
         ],
         "layer_sha256": layer_hashes,
     }
-    if explicit_reset:
+    if expected_initial_state_sha256 is not None:
         from terra.benchmark_state import agent_state_sha256
 
-        if expected_initial_state_sha256 is None or expected_state_keys is None:
-            raise ValueError(
-                "explicit reset verification requires state hashes and state keys"
-            )
+        if expected_state_keys is None:
+            raise ValueError("explicit initial-state verification requires state keys")
         expected_hashes = tuple(expected_initial_state_sha256)
         if len(expected_hashes) != count:
             raise ValueError("expected state-hash count does not match panel")
@@ -480,10 +540,6 @@ def verify_exact_reset(
             observed_hashes.append(agent_state_sha256(agent))
         if tuple(observed_hashes) != expected_hashes:
             raise RuntimeError("explicit reset changed an initial Agent state")
-        observed_state_keys = np.asarray(state.key)
-        expected_state_keys_host = np.asarray(expected_state_keys)
-        if not np.array_equal(observed_state_keys, expected_state_keys_host):
-            raise RuntimeError("explicit reset changed an environment state key")
         result["explicit_initial_state"] = {
             "passed": True,
             "slots": count,
@@ -493,10 +549,24 @@ def verify_exact_reset(
                     separators=(",", ":"),
                 ).encode()
             ).hexdigest(),
-            "environment_state_keys_sha256": hashlib.sha256(
+        }
+    if expected_state_keys is not None:
+        if not precomputed_reset:
+            raise ValueError("state-key verification requires a precomputed reset")
+        observed_state_keys = np.asarray(state.key)
+        expected_state_keys_host = np.asarray(expected_state_keys)
+        if not np.array_equal(observed_state_keys, expected_state_keys_host):
+            raise RuntimeError("precomputed reset changed an environment state key")
+        result["environment_state_keys"] = {
+            "passed": True,
+            "sha256": hashlib.sha256(
                 np.ascontiguousarray(expected_state_keys_host).tobytes()
             ).hexdigest(),
         }
+        if expected_initial_state_sha256 is not None:
+            result["explicit_initial_state"]["environment_state_keys_sha256"] = result[
+                "environment_state_keys"
+            ]["sha256"]
     return result
 
 
@@ -953,9 +1023,7 @@ def main() -> None:
             "choose only one of --accepted-panel, --diagnostic-panel, "
             "--capability-panel, and --explicit-episode-panel"
         )
-    panel_name = (
-        args.accepted_panel or args.diagnostic_panel or args.capability_panel
-    )
+    panel_name = args.accepted_panel or args.diagnostic_panel or args.capability_panel
     accepted_bank = None
     explicit_episode_panel = None
     if args.explicit_episode_panel is not None:
@@ -995,11 +1063,7 @@ def main() -> None:
             if args.capability_panel is not None
             else accepted_bank.evaluation_panels
         )
-        panel = next(
-            panel
-            for panel in available_panels
-            if panel.name == panel_name
-        )
+        panel = next(panel for panel in available_panels if panel.name == panel_name)
         targets = [
             (
                 panel_name,
@@ -1086,17 +1150,38 @@ def main() -> None:
                 ),
                 expected_state_keys=state_keys,
             )
+        elif accepted_bank is not None:
+            map_reset_keys = exact_reset_keys(count)
+            state_keys = manifest_environment_keys(
+                rows,
+                count,
+                accepted_bank.environment_protocol_sha256,
+            )
+            initial_timestep, env_params, state_keys = prepare_manifest_episode_reset(
+                env,
+                env_params,
+                map_reset_keys,
+                state_keys,
+            )
+            reset_keys = None
+            reset_verification = verify_exact_reset(
+                env,
+                env_params,
+                None,
+                directory,
+                count,
+                timestep=initial_timestep,
+            )
+            reset_verification["manifest_episode_seeds"] = {
+                "passed": True,
+                "map_selection_decoupled": True,
+                "sha256": hashlib.sha256(
+                    np.ascontiguousarray(np.asarray(state_keys)).tobytes()
+                ).hexdigest(),
+            }
         else:
             initial_timestep = None
-            reset_keys = (
-                manifest_reset_keys(
-                    rows,
-                    count,
-                    accepted_bank.environment_protocol_sha256,
-                )
-                if accepted_bank is not None
-                else exact_reset_keys(count)
-            )
+            reset_keys = exact_reset_keys(count)
             reset_verification = verify_exact_reset(
                 env,
                 env_params,
