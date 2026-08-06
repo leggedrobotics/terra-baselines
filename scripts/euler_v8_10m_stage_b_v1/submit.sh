@@ -40,7 +40,7 @@ REMOTE_BANK="$REMOTE_INPUTS/bank-$BANK_SHA.tar.zst"
 REMOTE_SELECTION="$REMOTE_INPUTS/selections/$SELECTION_SHA.json"
 declare -A PARENTS PARENT_SHAS PARENT_UPDATES
 for ARM in "${ARMS[@]}"; do
-    INFO="$(JAX_PLATFORMS=cpu "$LOCAL_PYTHON" "$REPO/scripts/v8_10m_stage_b_selection.py" inspect --receipt "$SELECTION" --arm "$ARM")"
+    INFO="$(PYTHONPATH="$REPO${PYTHONPATH:+:$PYTHONPATH}" JAX_PLATFORMS=cpu "$LOCAL_PYTHON" "$REPO/scripts/v8_10m_stage_b_selection.py" inspect --receipt "$SELECTION" --arm "$ARM")"
     read -r PARENT_VALUE PARENT_SHA_VALUE PARENT_UPDATE_VALUE RECEIPT_SHA <<< "$("$LOCAL_PYTHON" -c 'import json,sys; d=json.load(sys.stdin); print(d["path"],d["sha256"],d["update"],d["receipt_sha256"])' <<< "$INFO")"
     PARENTS[$ARM]="$PARENT_VALUE"
     PARENT_SHAS[$ARM]="$PARENT_SHA_VALUE"
