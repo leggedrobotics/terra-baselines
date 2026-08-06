@@ -308,6 +308,10 @@ finite same-V8 teacher, not a claim of full-bank mastery.
   from frozen environment/pose seeds; verify all 720 promotion resets locally.
 - [ ] Evaluate every Stage-A checkpoint on full-V8 promotion/development and
   publish the standardized family/condition leaderboard.
+- [ ] Evaluate the output-identical update-0 compact reference (the selected
+  update-7,500 full-V8 teacher) with the repaired whole-V8 evaluator before
+  selecting either Stage-B parent. This distinguishes useful Stage-A learning
+  from forgetting caused by anchor-only training.
 
 ## Preparation verification
 
