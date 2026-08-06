@@ -521,3 +521,21 @@ throughput; there is no NaN, OOM, NCCL, or process failure. The projected
 training times are about 24 hours for compact and 44 hours for 10M, before the
 post-training fixed-panel sweep. These projections are operational only and
 do not qualify either policy.
+
+An early checkpoint observer was added in commit `335bf3c`. It reuses the
+already validated one-checkpoint whole-V8 evaluator from immutable launch
+revision `f682f37` and hash-pins each retained Stage-B checkpoint before
+enumerating main promotion/development plus both all-free capability panels.
+Its results are stored outside the training run under `checkpoint_eval/` and
+cannot change optimizer or sampler state. One checkpoint is diagnostic only:
+each capability condition must retain at least `12/16`, and only two
+consecutive retained-checkpoint failures trigger rollback. Full Stage-B
+promotion still requires the complete latest-two-checkpoint core, family,
+capability, integrity, and development gates.
+
+At the initial live observation, W&B reported the declared population within
+sampling noise (approximately 25% capability, 75% nearby core, and exactly
+50/50 foundation/trench). Active-stage completion was high for both arms, but
+this is completed-episode behavior on the sampled training population. It is
+not source-disjoint whole-V8 performance and cannot promote a checkpoint or
+unlock reward progression.
