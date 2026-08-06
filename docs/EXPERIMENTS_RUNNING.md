@@ -30,6 +30,14 @@ about 15.1k transitions/s for compact and 8.3k for 10M, projecting roughly 24
 and 44 hours respectively for 20,000 updates before fixed evaluation. These
 are runtime estimates, not learning results.
 
+The compact arm retained update 1,000 with SHA-256
+`5130856886889f4dccd3efa3b60a843e5c3af666e04c12a6e688000e05598f2d`.
+Early fixed observer job `9864040` was submitted against that exact checkpoint
+and is pending/running independently of training. It enumerates main and
+all-free capability promotion/development panels. Its submission does not
+promote the checkpoint; update 1,000 is only the first member of a required
+two-checkpoint retention pair.
+
 Stage B contains 15 conditions x 96 layouts = 1,440 distinct training maps.
 Random full resets draw 25% from the two mastered capability anchors and 75%
 from the 13 nearby conditions, with 50/50 foundation/trench mass within each

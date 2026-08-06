@@ -539,3 +539,11 @@ sampling noise (approximately 25% capability, 75% nearby core, and exactly
 this is completed-episode behavior on the sampled training population. It is
 not source-disjoint whole-V8 performance and cannot promote a checkpoint or
 unlock reward progression.
+
+The compact arm atomically published update 1,000 at 15:37 CEST. Its checkpoint
+SHA-256 is
+`5130856886889f4dccd3efa3b60a843e5c3af666e04c12a6e688000e05598f2d`.
+The hash-pinned four-panel observer was submitted as Slurm job `9864040` while
+the training job continued past update 1,000. Submission is not a behavioral
+result; the checkpoint remains unqualified until the fixed evaluator completes
+and its integrity and per-condition outputs are inspected.
