@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -19,6 +20,37 @@ SCHEMA = "terra_v8_10m_provisional_teacher_v1"
 EXPECTED_TREATMENT = "G-DEEP-XATTN-V8-DIRECT-FULL-TEACHER"
 EXPECTED_ARM = "G-DEEP-XATTN-V8-DENSE-WARM"
 MINIMUM_UPDATE = 5_000
+LEGACY_FULL_SAMPLING_SHA256 = (
+    "2a457be780e086c02e0474489b2060d6c577fac0ac429c48ad1a7e1e5e011357"
+)
+
+
+def legacy_full_sampling_contract(bank: dict) -> dict:
+    """Reconstruct the exact bank_v4 sampler stored by the source teacher."""
+    from utils.accepted_bank import load_accepted_bank
+
+    accepted = load_accepted_bank(
+        bank["root"],
+        "G-UNIFORM",
+        stage_gate.TERRA_REVISION,
+        curriculum_stage="full",
+        sampler_profile="bank_v4",
+    )
+    weights = np.asarray(accepted.sampling_probabilities, dtype=np.float64)
+    contract = {
+        "stage": "full",
+        "conditions": [level.condition_id for level in accepted.levels],
+        "declared_weights": weights.tolist(),
+        "probabilities": (weights / weights.sum()).tolist(),
+        "maps_per_condition": accepted.map_count_per_condition,
+    }
+    encoded = json.dumps(
+        contract, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
+    digest = hashlib.sha256(encoded).hexdigest()
+    if digest != LEGACY_FULL_SAMPLING_SHA256:
+        raise ValueError("legacy full-V8 teacher sampler changed")
+    return {**contract, "sha256": digest, "sampler_profile": "bank_v4"}
 
 
 def parse_run_contract(path: Path) -> dict[str, str]:
@@ -79,7 +111,7 @@ def inspect_teacher(
             )
 
     bank = stage_gate.load_bank_contract(bank_root)
-    sampling = stage_gate.stage_sampling_contract(bank, "full")
+    sampling = legacy_full_sampling_contract(bank)
     checkpoint = stage_gate._load_checkpoint(checkpoint_path)
     for key in (
         "model",
@@ -146,6 +178,8 @@ def inspect_teacher(
         "same_distribution": True,
         "finite_model_optimizer": True,
         "full_sampler_state_validated": True,
+        "teacher_sampler_profile": sampling["sampler_profile"],
+        "teacher_sampling_sha256": sampling["sha256"],
         "teacher_arm": EXPECTED_ARM,
         "teacher_checkpoint": str(checkpoint_path),
         "teacher_checkpoint_sha256": expected_sha256,

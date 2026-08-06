@@ -458,3 +458,11 @@ the superseded compact-parent teacher wiring. The paired 10M job (`9846416`)
 was cancelled while still pending, with zero elapsed compute, when the stronger
 reference-teacher evidence arrived. Neither receipt qualifies the final
 teacher-bound launch; both final smokes are rerun from one immutable revision.
+
+The first teacher-bound attempt exposed a pre-PPO validator mismatch. Compact
+job `9849664` failed after 41 seconds because the source teacher's original
+`bank_v4` full-sampler vector was compared to the later Stage-B
+`bounded_replay25_v1` digest. The pending 10M peer `9849666` was cancelled at
+zero elapsed compute. Admission now reconstructs and validates the teacher's
+hash-pinned legacy sampler separately; Stage B remains unchanged on the new
+25/75 bounded-replay population.
