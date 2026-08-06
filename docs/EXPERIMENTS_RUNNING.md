@@ -19,10 +19,16 @@ evaluation job `9845019` both completed cleanly. Teacher-bound update-1 smokes
 finite-checkpoint receipts. The paired 20,000-update Stage-B jobs are submitted
 to the 120-hour queue:
 
-| Arm | Parent | Smoke | Long job | Current state at submission |
+| Arm | Parent | Smoke | Long job | Current state |
 |---|---:|---:|---:|---|
-| compact deep+xattn | update 1,000 | `9854547` PASS | `9858450` | `PENDING (Priority)` |
-| 10M deep+xattn | update 3,000 | `9854549` PASS | `9858451` | `PENDING (Priority)` |
+| compact deep+xattn | update 1,000 | `9854547` PASS | `9858450` | `RUNNING` on `eu-g6-065` |
+| 10M deep+xattn | update 3,000 | `9854549` PASS | `9858451` | `RUNNING` on `eu-g6-023` |
+
+Both jobs passed their immediate smoke, parent, teacher, sampler, architecture,
+CUDA, cuDNN, and NCCL checks inside Slurm. Early steady-state throughput is
+about 15.1k transitions/s for compact and 8.3k for 10M, projecting roughly 24
+and 44 hours respectively for 20,000 updates before fixed evaluation. These
+are runtime estimates, not learning results.
 
 Stage B contains 15 conditions x 96 layouts = 1,440 distinct training maps.
 Random full resets draw 25% from the two mastered capability anchors and 75%

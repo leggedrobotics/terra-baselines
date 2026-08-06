@@ -503,3 +503,21 @@ requesting four RTX 4090s, 20,000 updates, and `4-23:45:00`:
 They have no dependency on each other. Each long job revalidates its matching
 completed smoke before training and retains every 1,000-update checkpoint for
 the fixed 720-map main and 32-map capability panels.
+
+Both allocations subsequently started independently:
+
+| Arm | Start (2026-08-06 CEST) | Node | Early steady throughput | State |
+|---|---:|---|---:|---|
+| compact deep+xattn | `14:13:44` | `eu-g6-065` | approximately 15.1k transitions/s | `RUNNING` |
+| 10M deep+xattn | `14:19:48` | `eu-g6-023` | approximately 8.3k transitions/s | `RUNNING` |
+
+The emitted contracts match the launch receipt, including each distinct
+parent SHA, common admitted teacher, 1,440-map bounded-replay population,
+dense reward, full resets, 20,000 updates, and checkpoint interval 1,000. Both
+completed multiple real PPO updates and passed the update-10 finite-check
+boundary. The 10M XLA/cudNN autotuner reported BF16 convolution-algorithm
+comparison mismatches, rejected those algorithms, and continued at stable
+throughput; there is no NaN, OOM, NCCL, or process failure. The projected
+training times are about 24 hours for compact and 44 hours for 10M, before the
+post-training fixed-panel sweep. These projections are operational only and
+do not qualify either policy.
