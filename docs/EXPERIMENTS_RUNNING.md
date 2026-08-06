@@ -32,11 +32,14 @@ are runtime estimates, not learning results.
 
 The compact arm retained update 1,000 with SHA-256
 `5130856886889f4dccd3efa3b60a843e5c3af666e04c12a6e688000e05598f2d`.
-Early fixed observer job `9864040` was submitted against that exact checkpoint
-and is pending/running independently of training. It enumerates main and
-all-free capability promotion/development panels. Its submission does not
-promote the checkpoint; update 1,000 is only the first member of a required
-two-checkpoint retention pair.
+Early fixed observer job `9864040` completed `0:0`: promotion is `548/720`
+exact and `0.865` macro; development is `546/720` and `0.865`; capability is
+`31/32` on both splits; all integrity counts are zero. Nearby trenches pass
+their Stage-B family/cell thresholds, but foundations reach only `53/96`
+promotion and `60/96` development versus the required `78/96`. The checkpoint
+improves on its selected parent but does not promote. Compact update-2,000
+observer `9884423` and 10M update-1,000 observer `9884425` are submitted after
+a transient local DNS failure stopped the original non-training watchers.
 
 Stage B contains 15 conditions x 96 layouts = 1,440 distinct training maps.
 Random full resets draw 25% from the two mastered capability anchors and 75%

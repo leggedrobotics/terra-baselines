@@ -543,7 +543,33 @@ unlock reward progression.
 The compact arm atomically published update 1,000 at 15:37 CEST. Its checkpoint
 SHA-256 is
 `5130856886889f4dccd3efa3b60a843e5c3af666e04c12a6e688000e05598f2d`.
-The hash-pinned four-panel observer was submitted as Slurm job `9864040` while
-the training job continued past update 1,000. Submission is not a behavioral
-result; the checkpoint remains unqualified until the fixed evaluator completes
-and its integrity and per-condition outputs are inspected.
+The hash-pinned four-panel observer ran as Slurm job `9864040`, completed
+`0:0` in `00:29:30`, and passed every transition-integrity check:
+
+| Split | Exact | Macro | Foundation exact / macro | Trench exact / macro | Capability |
+|---|---:|---:|---:|---:|---:|
+| promotion | `548/720` | `0.865` | `230/384` / `0.773` | `318/336` / `0.971` | `15/16 + 16/16` |
+| development | `546/720` | `0.865` | `237/384` / `0.778` | `309/336` / `0.966` | `15/16 + 16/16` |
+
+This is a source-disjoint improvement over the selected compact parent on
+development (`516/720`, `0.840`) and nearly matches the independent teacher's
+macro while exceeding its exact count (`538/720`, `0.868`). It is not a
+Stage-B pass. Nearby trenches clear the family/cell gate on both splits
+(`107/112` promotion and `108/112` development), but nearby foundations do not
+(`53/96` and `60/96`, versus the required `78/96`). On development,
+slab-adjacent is `3/16`, courtyard-pads `8/16`, irregular `9/16`, and
+bearing-walls `11/16`. Capability retention passes on both splits. Update
+1,000 therefore justifies continued dense Stage-B training but cannot promote,
+roll back, or unlock reward progression by itself.
+
+The exact evaluation evidence is archived at
+`/home/lorenzo/moleworks/.artifacts/terra_v8_stageb_checkpoint_eval_20260806/compact_u1000/`.
+Its four JSON SHA-256 values are `9b468667...` main promotion,
+`f676ebec...` main development, `549c8324...` capability promotion, and
+`5f3b7174...` capability development.
+
+The first background checkpoint watchers later exited after a transient local
+DNS failure resolving `euler.ethz.ch`; both training jobs remained healthy and
+continued writing checkpoints. The gap was recovered without changing either
+run: compact update 2,000 (SHA `10b9a1d0...`) was submitted to evaluator job
+`9884423`, and 10M update 1,000 (SHA `c499e33b...`) to job `9884425`.
