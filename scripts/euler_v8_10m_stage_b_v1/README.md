@@ -10,8 +10,14 @@ The frozen training population is:
 - 25% random full resets on the two mastered all-free anchors;
 - 75% random full resets on the 13 nearby geometry conditions;
 - 50/50 foundation/trench mass within each slice; and
-- no per-environment promotion, demotion, partial reset, teacher loss, or
-  reward transition.
+- no per-environment promotion, demotion, partial reset, or reward transition.
+
+Both arms use the selected compact update-1,000 parent as one frozen teacher
+on their current Stage-B rollout observations. Policy KL `1.0 -> 0` over 3,000
+updates and value imitation `0.5 -> 0` over 1,000 updates preserve the compact
+policy's measured whole-V8 competence while the 10M student learns the 1,440-
+map population. This distillation schedule is identical across arms and is not
+a reward fade.
 
 Both arms receive 20,000 updates (`1,310,720,000` transitions), retain every
 1,000-update checkpoint, and are evaluated on the fixed 720-map main and

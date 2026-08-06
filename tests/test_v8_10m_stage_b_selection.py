@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from scripts import v8_10m_stage_b_selection as selection
 
 
@@ -80,3 +82,17 @@ def test_select_parent_uses_promotion_and_requires_capability_retention():
     assert result["promotion"]["exact_successes"] == 120
     assert result["development"]["exact_successes"] == 299
     assert result["weakest_development_conditions"][0]["curriculum_stage"] == "full"
+
+
+def test_stage_b_launcher_reuses_selected_compact_parent_as_teacher():
+    root = Path(__file__).parents[1]
+    launcher = (root / "scripts/euler_v8_10m_stage_b_v1/submit.sh").read_text()
+    runner = (root / "scripts/euler_v8_10m_stage_b_v1/run.sbatch").read_text()
+    gate = (root / "scripts/v8_10m_stage_b_gate.py").read_text()
+
+    assert "TEACHER_ARM=G-V8-XATTN-REWARM-CONTROL" in launcher
+    assert "${PARENTS[$TEACHER_ARM]}" in launcher
+    assert '"teacher_checkpoint_sha256=$TEACHER_SHA"' in runner
+    assert '"kickstart=current_rollout_kl1_3000_value0p5_1000"' in runner
+    assert '"$PARENT_CHECKPOINT" "$TEACHER_CHECKPOINT"' in runner
+    assert 'selection["parents"]["G-V8-XATTN-REWARM-CONTROL"]' in gate

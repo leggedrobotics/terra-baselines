@@ -1,4 +1,4 @@
-# Experiments — current state (updated 2026-08-03 CEST)
+# Experiments — current state (updated 2026-08-06 CEST)
 
 Canonical design and decision authority:
 
@@ -13,16 +13,30 @@ current scheduler state.
 
 ## Current scheduler decision
 
-The next authorized Terra jobs are the matched V8 capability-stage pair:
-`G-DEEP-V8-DENSE-WARM` and `G-DEEP-XATTN-V8-DENSE-WARM`. Both start from and
-distill the same P5c deep update-4,000 checkpoint. The xattn arm changes only
-the output-preserving E4-prime cross-attention readout. Update-1 admission must
-pass for both arms before their bounded 2,000-update capability screens start.
+The corrected whole-V8 Stage-A evaluation job `9839960` completed cleanly.
+The hash-pinned Stage-B parents are compact deep+xattn update 1,000 and 10M
+deep+xattn update 3,000. The next jobs are their paired update-1 nearby-stage
+smokes, followed only on admission success by two 20,000-update allocations on
+the 120-hour queue.
 
-No reward fade runs in this first stage. Dense-to-terminal reward progression
-is a separate checkpoint-bounded treatment that can begin only after a dense
-full-V8 checkpoint passes the fixed qualification gate in the V8 campaign
-document.
+Stage B contains 15 conditions x 96 layouts = 1,440 distinct training maps.
+Random full resets draw 25% from the two mastered capability anchors and 75%
+from the 13 nearby conditions, with 50/50 foundation/trench mass within each
+slice. There is no per-environment promotion or demotion. Both arms use the
+selected compact checkpoint as one frozen current-rollout KL/value teacher;
+the teacher treatment is matched and fades over 3,000/1,000 updates.
+
+The compact parent reached `516/720` exact and `0.840` macro on fixed
+development; the 10M parent reached `68/720` and `0.344`. This is evidence that
+the 10M policy is learning but has not inherited broad competence. Dense reward
+therefore remains frozen. Reward fading may start only after a future dense
+full-V8 checkpoint passes the documented qualification gate.
+
+Primary evidence:
+
+- `/home/lorenzo/moleworks/.artifacts/terra_v8_stagea_whole_eval_20260806/leaderboard/LEADERBOARD.md`
+- `/home/lorenzo/moleworks/.artifacts/terra_v8_stagea_whole_eval_20260806/stage_b_selection.json`
+- [`research/V8_10M_SCALEUP.md`](research/V8_10M_SCALEUP.md)
 
 ## Most recent production jobs (completed fixed-evaluation screens)
 

@@ -128,6 +128,7 @@ def build_gate(args: argparse.Namespace) -> dict:
     selection_path = args.parent_selection.resolve()
     selection = v8_10m_stage_b_selection.inspect_selection(selection_path)
     parent = selection["parents"][args.arm]
+    teacher = selection["parents"]["G-V8-XATTN-REWARM-CONTROL"]
     expected_contract = {
         "arm": args.arm,
         "phase": "screen",
@@ -148,7 +149,14 @@ def build_gate(args: argparse.Namespace) -> dict:
         "num_envs_per_device": "512",
         "num_minibatches": "32",
         "learning_rate": "0.00015",
-        "teacher_checkpoint_sha256": "none",
+        "teacher_checkpoint": teacher["path"],
+        "teacher_checkpoint_sha256": teacher["sha256"],
+        "kickstart": "current_rollout_kl1_3000_value0p5_1000",
+        "kickstart_kl_coef": "1.0",
+        "kickstart_kl_anneal_updates": "3000",
+        "kickstart_value_coef": "0.5",
+        "kickstart_value_anneal_updates": "1000",
+        "kickstart_lr_warmup_updates": "200",
         "initialization": "params_only_stage_transition_fresh_optimizer",
         "entropy_schedule": "0.02_to_0.005_over_20000",
         "terra_revision": stage_gate.TERRA_REVISION,
@@ -230,6 +238,7 @@ def build_gate(args: argparse.Namespace) -> dict:
         "best_observed_promotion": _best_observed(main_promotion),
         "best_observed_development": _best_observed(main_development),
         "parent": parent,
+        "teacher": teacher,
         "population": sampling,
         "inputs": {
             name: {

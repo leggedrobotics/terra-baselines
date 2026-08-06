@@ -13,7 +13,8 @@ umask 002
 
 for REQUIRED in PHASE ARM BASELINES_ROOT BASELINES_REVISION SEED BANK_ARCHIVE \
     BANK_SHA BANK_DATASET_SHA BANK_RELEASE_ID PARENT_CHECKPOINT PARENT_SHA \
-    PARENT_SELECTION PARENT_SELECTION_SHA SMOKE_JOB_ID SMOKE_RUN \
+    PARENT_SELECTION PARENT_SELECTION_SHA TEACHER_CHECKPOINT TEACHER_SHA \
+    SMOKE_JOB_ID SMOKE_RUN \
     SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
@@ -69,6 +70,7 @@ test "$(cat "$BASELINES_ROOT/REVISION")" = "$BASELINES_REVISION"
 test "$(sha256sum "$P5_ARCHIVE" | awk '{print $1}')" = "$P5_SHA"
 test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_SHA"
 test "$(sha256sum "$PARENT_CHECKPOINT" | awk '{print $1}')" = "$PARENT_SHA"
+test "$(sha256sum "$TEACHER_CHECKPOINT" | awk '{print $1}')" = "$TEACHER_SHA"
 test "$(sha256sum "$PARENT_SELECTION" | awk '{print $1}')" = "$PARENT_SELECTION_SHA"
 test -d "$RUN_DIR"
 test ! -e "$RUN_DIR/run_contract.env"
@@ -81,6 +83,7 @@ if [ "$PHASE" = screen ]; then
     test "$(awk -F= '$1=="status" {print $2}' "$SMOKE_RUN/run_contract.env")" = PASSED
     test "$(awk -F= '$1=="parent_checkpoint_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$PARENT_SHA"
     test "$(awk -F= '$1=="parent_selection_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$PARENT_SELECTION_SHA"
+    test "$(awk -F= '$1=="teacher_checkpoint_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TEACHER_SHA"
 fi
 
 tar --zstd -xf "$P5_ARCHIVE" -C "$TMPDIR" \
@@ -124,6 +127,10 @@ read -r SELECTED_PATH SELECTED_SHA SELECTED_UPDATE RECEIPT_SHA <<< "$("$PYTHON" 
 test "$SELECTED_PATH" = "$PARENT_CHECKPOINT"
 test "$SELECTED_SHA" = "$PARENT_SHA"
 test "$RECEIPT_SHA" = "$PARENT_SELECTION_SHA"
+TEACHER_INFO="$(JAX_PLATFORMS=cpu "$PYTHON" "$BASELINES_ROOT/scripts/v8_10m_stage_b_selection.py" inspect --receipt "$PARENT_SELECTION" --arm G-V8-XATTN-REWARM-CONTROL)"
+read -r SELECTED_TEACHER_PATH SELECTED_TEACHER_SHA <<< "$("$PYTHON" -c 'import json,sys; d=json.load(sys.stdin); print(d["path"],d["sha256"])' <<< "$TEACHER_INFO")"
+test "$SELECTED_TEACHER_PATH" = "$TEACHER_CHECKPOINT"
+test "$SELECTED_TEACHER_SHA" = "$TEACHER_SHA"
 
 OBSERVED_PARAMETERS="$(JAX_PLATFORMS=cpu "$PYTHON" -c 'import sys,jax; from utils.helpers import load_pkl_object,register_checkpoint_config_classes; register_checkpoint_config_classes(); c=load_pkl_object(sys.argv[1]); print(sum(x.size for x in jax.tree_util.tree_leaves(c["model"])))' "$PARENT_CHECKPOINT" | tail -1)"
 test "$OBSERVED_PARAMETERS" = "$EXPECTED_PARAMETERS"
@@ -176,7 +183,8 @@ printf '%s\n' \
     "parent_selection=$PARENT_SELECTION" \
     "parent_selection_sha256=$PARENT_SELECTION_SHA" \
     "initial_checkpoint_sha256=$PARENT_SHA" \
-    "teacher_checkpoint_sha256=none" \
+    "teacher_checkpoint=$TEACHER_CHECKPOINT" \
+    "teacher_checkpoint_sha256=$TEACHER_SHA" \
     "initialization=params_only_stage_transition_fresh_optimizer" \
     "model_parameter_count=$OBSERVED_PARAMETERS" \
     "resnet_stage_channels=$EXPECTED_STAGE_CHANNELS" \
@@ -187,7 +195,12 @@ printf '%s\n' \
     "num_minibatches=32" \
     "update_epochs=2" \
     "learning_rate=0.00015" \
-    "kickstart=none" \
+    "kickstart=current_rollout_kl1_3000_value0p5_1000" \
+    "kickstart_kl_coef=1.0" \
+    "kickstart_kl_anneal_updates=3000" \
+    "kickstart_value_coef=0.5" \
+    "kickstart_value_anneal_updates=1000" \
+    "kickstart_lr_warmup_updates=200" \
     "entropy_schedule=0.02_to_0.005_over_20000" \
     "checkpoint_interval=$CHECKPOINT_INTERVAL" \
     "smoke_job_id=$SMOKE_JOB_ID" \
@@ -199,7 +212,7 @@ export V8_SAMPLER_PROFILE CHECKPOINT_INTERVAL LOG_TRAIN_INTERVAL CACHE_CLEAR_INT
 export FINITE_CHECK_INTERVAL=10
 if [ "$PHASE" = smoke ]; then export FINITE_CHECK_INTERVAL=1; fi
 "$BASELINES_ROOT/scripts/run_v8_10m_screen.sh" \
-    "$ARM" "$BANK" "$STAGE" "$PARENT_CHECKPOINT" none \
+    "$ARM" "$BANK" "$STAGE" "$PARENT_CHECKPOINT" "$TEACHER_CHECKPOINT" \
     "$RUN_NAME" "$UPDATES" "$RUN_DIR"
 
 find_one() {

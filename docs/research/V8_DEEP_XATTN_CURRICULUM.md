@@ -1,7 +1,8 @@
 # V8 deep+xattn curriculum campaign
 
-- Status: Stage-A screen running; later-stage launch path implemented and gated
-- Date: 2026-08-03
+- Status: original compact campaign retained; the 10M scale-up has selected
+  Stage-A parents and is preparing the longer Stage-B treatment
+- Date: 2026-08-06
 - Dataset authority:
   [`V8_COMBINED_DISTRIBUTION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_v8_combined_20260803/V8_COMBINED_DISTRIBUTION_PLAN.md)
 - Training-design authority:
@@ -93,6 +94,11 @@ already-mastered conditions.
 - development is reported but never used to promote.
 
 ### Stage B: nearby geometry
+
+The original compact campaign below used a 4,000-update screen. The current
+paired compact-versus-10M continuation is the separately named 20,000-update
+treatment in [`V8_10M_SCALEUP.md`](V8_10M_SCALEUP.md); it keeps the same map
+support, sampler vector, dense reward, horizon, and promotion contract.
 
 - support: both capability controls plus the 13 V7 adjacent-generous cells;
 - mass under `bounded_replay25_v1`: 25% capability replay and 75% nearby core;

@@ -303,21 +303,24 @@ finite same-V8 teacher, not a claim of full-bank mastery.
 - [x] Run paired Euler update-1 smokes from the provisional teacher.
 - [x] Submit the paired Stage-A screen only after both smokes pass.
 - [x] Record explicit launch authorization and the teacher-performance waiver.
-- [ ] Require the formal fixed full-bank gate before changing reward stage.
+- [x] Require the formal fixed full-bank gate before changing reward stage;
+  Stage-A does not pass it, so reward fading remains locked.
 - [x] Repair combined main-panel evaluation by separating exact map-slot keys
   from frozen environment/pose seeds; verify all 720 promotion resets locally.
-- [ ] Evaluate every Stage-A checkpoint on full-V8 promotion/development and
+- [x] Evaluate every Stage-A checkpoint on full-V8 promotion/development and
   publish the standardized family/condition leaderboard.
 - [ ] Evaluate the output-identical update-0 compact reference (the selected
   update-7,500 full-V8 teacher) with the repaired whole-V8 evaluator before
-  selecting either Stage-B parent. This distinguishes useful Stage-A learning
-  from forgetting caused by anchor-only training.
+  interpreting Stage-A learning versus its original initialization. This is a
+  queued diagnostic, not a Stage-B launch blocker: the selected compact
+  Stage-A checkpoint itself now has fixed whole-V8 evidence and is the frozen
+  Stage-B teacher.
 
 ## Preparation verification
 
 The launched implementation passes:
 
-- the full Terra-baselines suite: `346 passed`, `73 warnings`, including 3
+- the full Terra-baselines suite: `350 passed`, `73 warnings`, including 3
   subtests;
 - Black formatting and Python byte-compilation for the new Python entrypoints;
 - Bash syntax and ShellCheck at warning severity for all new launch scripts;
@@ -330,10 +333,10 @@ The launched implementation passes:
 - focused reset/reporting tests plus a local exact 720-slot reset receipt for
   the combined promotion panel.
 
-The next operational check is the whole-V8 fixed benchmark, followed by the
-nearby stage under `bounded_replay25_v1`. Reward fading remains locked until the
-later fixed **full-V8** gate passes; no online completion signal may change the
-reward.
+The next operational check is paired update-1 Stage-B admission, followed by
+the nearby-stage 20,000-update jobs under `bounded_replay25_v1`. Reward fading
+remains locked until the later fixed **full-V8** gate passes; no online
+completion signal may change the reward.
 
 ### Bounded replay population contract
 
@@ -380,3 +383,58 @@ an exact-slot key solely to materialize each ordered map once, and the frozen
 manifest seed solely for pose/environment initialization. A local reset receipt
 verified all 720 promotion slots, layers, metadata, zero initial steps, and the
 ordered episode-seed hash. The benchmark maps and episode IDs were not changed.
+
+### Corrected whole-V8 result and Stage-B decision (2026-08-06)
+
+Job `9839960` completed with exit `0:0` after enumerating every one of the 720
+promotion and 720 source-disjoint development episodes for all four Stage-A
+checkpoints of both policies. The corrected benchmark selects checkpoints by
+promotion exact successes, then promotion macro, while requiring both
+capability controls to remain at least `12/16` on promotion and development.
+Development reports generalization and never selects a checkpoint.
+
+| Policy | Selected update | Promotion exact / macro | Development exact / macro | Capability P / D |
+|---|---:|---:|---:|---|
+| compact deep+xattn | 1,000 | `530/720` / `0.855` | `516/720` / `0.840` | `16+16` / `15+16` |
+| 10M deep+xattn | 3,000 | `75/720` / `0.340` | `68/720` / `0.344` | `16+16` / `14+15` |
+
+The compact checkpoint SHA-256 is
+`5050b5c2fc890a176d1acf64fd7ba8c79a4c4ddbdd8b9ee1a64f727ec7833c80`;
+the 10M checkpoint SHA-256 is
+`ea6d61f7d95dd398c29819b67b4b8806c25dc0c6f33d092b222dc77c21182dd1`.
+The immutable selection receipt is
+`/home/lorenzo/moleworks/.artifacts/terra_v8_stagea_whole_eval_20260806/stage_b_selection.json`,
+SHA-256
+`63452163df74e0b413c4a8a6bbd50169c13dddce8c18f15c838dd355e94f715b`.
+
+The 10M result is a learning signal, not a capacity win. It rises from
+`0/720` development exact at update 1,000 to `68/720` at update 3,000, then
+falls to `4/720` at update 4,000. The compact policy also regresses after its
+early peak. Therefore neither terminal checkpoint is a valid parent and dense
+reward remains frozen.
+
+Selected-checkpoint nearby weaknesses are condition-specific:
+
+| Policy | Weak nearby cells on development |
+|---|---|
+| compact | slab `2/16` (`0.611` mean completion), irregular `7/16` (`0.686`), courtyard-pads `8/16` (`0.701`), bearing-walls `8/16` (`0.714`) |
+| 10M | courtyard `0/16` (`0.211`), slab `0/16` (`0.218`), bearing-walls `0/16` (`0.302`), courtyard-pads `1/16` (`0.310`), irregular `2/16` (`0.453`) |
+
+The complete standardized family/condition histories are in
+`/home/lorenzo/moleworks/.artifacts/terra_v8_stagea_whole_eval_20260806/leaderboard/`.
+
+Stage B is a paired 20,000-update allocation over 15 conditions and 96 real
+layouts per condition (`1,440` distinct training maps,
+`1,310,720,000` transitions per arm). Each random full reset samples the fixed
+`bounded_replay25_v1` population: 25% capability replay, 75% nearby core, and
+50/50 foundation/trench mass inside each slice. There is no per-environment
+ratchet. Promotion remains global and checkpoint-bounded; every 1,000-update
+checkpoint is retained for the fixed panels.
+
+Both arms use the selected compact update-1,000 checkpoint as one frozen
+teacher on current Stage-B rollout observations. Policy KL decays from `1.0`
+over 3,000 updates and value imitation from `0.5` over 1,000 updates, with a
+200-update learning-rate warmup. The compact arm begins from that same teacher;
+the 10M arm begins from its selected update-3,000 weights. This matched
+distillation treatment protects measured broad competence while teaching the
+larger student on the newly active maps. It is not reward annealing.
