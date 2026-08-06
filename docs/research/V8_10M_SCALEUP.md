@@ -1,6 +1,6 @@
 # V8 10M scale-up experiment
 
-- Status: **STAGE-B PARENTS AND REFERENCE TEACHER SELECTED; FINAL SMOKES NEXT**
+- Status: **STAGE-B 20K JOBS SUBMITTED AFTER PAIRED SMOKE ADMISSION**
 - Updated: 2026-08-06
 - Parent campaign:
   [`V8_DEEP_XATTN_CURRICULUM.md`](V8_DEEP_XATTN_CURRICULUM.md)
@@ -474,3 +474,32 @@ delete unrelated historical artifacts, Stage-B outputs are rooted at
 `/cluster/work/rsl/lterenzi/terra_v8_10m_nearby_long_v1`, whose 16 TiB quota
 has ample byte and inode headroom. Inputs and model identities remain at their
 original hash-pinned paths; this is storage routing, not an experiment change.
+
+### Final Stage-B admission and allocation
+
+Revision `f682f37d6a856c779b2c52e9e2d02a56cb04c15c` passed the complete local
+suite (`351 passed`, 73 warnings, 3 subtests), Bash/ShellCheck validation, the
+real-bank legacy sampler probe, and both Euler update-1 gates:
+
+| Arm | Smoke | Runtime | Parameters | Receipt |
+|---|---:|---:|---:|---|
+| compact deep+xattn | `9854547` | `00:14:14` | `2,856,685` | `COMPLETED 0:0`, PASS |
+| 10M deep+xattn | `9854549` | `00:14:36` | `10,257,209` | `COMPLETED 0:0`, PASS |
+
+Both receipts bind the selected parent SHA, teacher checkpoint and source
+contract, all four teacher fixed-evaluation hashes, 1,440 distinct maps,
+`bounded_replay25_v1`, 25% capability replay, 75% nearby core, 50/50 family
+mass within each slice, dense reward, full resets, and finite periodic/final
+checkpoints.
+
+The paired long jobs were then submitted independently to `gpuhe.120h`, each
+requesting four RTX 4090s, 20,000 updates, and `4-23:45:00`:
+
+| Arm | Slurm job | Initial scheduler state |
+|---|---:|---|
+| compact deep+xattn | `9858450` | `PENDING (Priority)` |
+| 10M deep+xattn | `9858451` | `PENDING (Priority)` |
+
+They have no dependency on each other. Each long job revalidates its matching
+completed smoke before training and retains every 1,000-update checkpoint for
+the fixed 720-map main and 32-map capability panels.

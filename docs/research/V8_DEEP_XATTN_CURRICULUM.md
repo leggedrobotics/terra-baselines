@@ -1,8 +1,7 @@
 # V8 deep+xattn curriculum campaign
 
-- Status: original compact campaign retained; the 10M scale-up has selected
-  Stage-A parents and admitted the reference teacher for the longer Stage-B
-  treatment
+- Status: original compact campaign retained; the 10M scale-up passed paired
+  Stage-B admission and submitted the compact/10M 20k-update treatment
 - Date: 2026-08-06
 - Dataset authority:
   [`V8_COMBINED_DISTRIBUTION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_v8_combined_20260803/V8_COMBINED_DISTRIBUTION_PLAN.md)

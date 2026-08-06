@@ -14,11 +14,15 @@ current scheduler state.
 ## Current scheduler decision
 
 The corrected whole-V8 Stage-A evaluation job `9839960` and reference-teacher
-evaluation job `9845019` both completed cleanly. The hash-pinned Stage-B
-parents are compact deep+xattn update 1,000 and 10M deep+xattn update 3,000.
-The next jobs are paired update-1 nearby-stage smokes against the admitted
-teacher, followed only on admission success by two 20,000-update allocations
-on the 120-hour queue.
+evaluation job `9845019` both completed cleanly. Teacher-bound update-1 smokes
+`9854547` (compact) and `9854549` (10M) then completed `0:0` with passing
+finite-checkpoint receipts. The paired 20,000-update Stage-B jobs are submitted
+to the 120-hour queue:
+
+| Arm | Parent | Smoke | Long job | Current state at submission |
+|---|---:|---:|---:|---|
+| compact deep+xattn | update 1,000 | `9854547` PASS | `9858450` | `PENDING (Priority)` |
+| 10M deep+xattn | update 3,000 | `9854549` PASS | `9858451` | `PENDING (Priority)` |
 
 Stage B contains 15 conditions x 96 layouts = 1,440 distinct training maps.
 Random full resets draw 25% from the two mastered capability anchors and 75%
@@ -41,6 +45,11 @@ Primary evidence:
 - `/home/lorenzo/moleworks/.artifacts/terra_v8_stagea_whole_eval_20260806/stage_b_selection.json`
 - `/home/lorenzo/moleworks/.artifacts/terra_v8_reference_teacher_full_eval_20260806/`
 - [`research/V8_10M_SCALEUP.md`](research/V8_10M_SCALEUP.md)
+
+The immutable launch revision is
+`f682f37d6a856c779b2c52e9e2d02a56cb04c15c`. Stage-B output is under
+`/cluster/work/rsl/lterenzi/terra_v8_10m_nearby_long_v1/`; no historical
+scratch data was deleted to resolve the unrelated scratch inode soft limit.
 
 ## Most recent production jobs (completed fixed-evaluation screens)
 
