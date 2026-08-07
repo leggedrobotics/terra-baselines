@@ -1,7 +1,7 @@
 # V8 10M scale-up experiment
 
-- Status: **STAGE-B 20K JOBS SUBMITTED AFTER PAIRED SMOKE ADMISSION**
-- Updated: 2026-08-06
+- Status: **COMPACT STAGE-B MAIN FINAL PAIR FAILS; FORMAL RECEIPT PENDING; 10M RUNNING**
+- Updated: 2026-08-07
 - Parent campaign:
   [`V8_DEEP_XATTN_CURRICULUM.md`](V8_DEEP_XATTN_CURRICULUM.md)
 - Implementation policy:
@@ -598,3 +598,125 @@ remains diagnostic only. Matched update-9,000 checkpoints were hash-pinned as
 `caf8ea47...` compact and `df5b4f96...` 10M and submitted to frozen evaluator
 jobs `9964699` and `9964703`. Their results, not the online curves, determine
 whether the 10M model has caught up and whether foundations improved.
+
+## Stage-B curriculum review and full-support successor
+
+This section records the 2026-08-07 curriculum review. It does not alter the
+already completed `bounded_replay25_v1` treatment, qualify a checkpoint, or
+authorize another PPO job. The active Stage-B run used exactly 25% capability
+replay, 75% nearby-core exposure, and zero probability for the 32 V6
+constraint conditions.
+
+### Measured failure of zero future support
+
+The complete compact main-panel histories separate the 13-condition nearby
+core from the 32 conditions absent from Stage-B training:
+
+| Checkpoint | Nearby core promotion / development (max 208) | Absent constraints promotion / development (max 512) |
+|---:|---:|---:|
+| 1,000 | `163 / 168` | `387 / 378` |
+| 3,000, when policy KL reaches zero | `166 / 169` | `383 / 379` |
+| 19,000 | `196 / 196` | `238 / 223` |
+| 20,000 | `201 / 189` | `147 / 126` |
+
+The nearby core therefore improved by `+33/+28` exact maps from update 1,000
+to 19,000 while the absent constraints lost `149/155`. The final checkpoint
+made the asymmetry worse. This is not evidence that the absent maps became
+intrinsically harder: the frozen entering teacher already scored at least
+`12/16` on both source-disjoint panels for 19 of the 32 nominally future
+conditions. Stage B retained 19/19 of those cells on promotion and 18/19 on
+development at update 1,000, but only 2/19 and 1/19 at update 20,000.
+
+The nearby-learning result itself is real. Update 19,000 clears every nearby
+family and cell floor on both main panels. Update 20,000 clears the promotion
+side but development `v7-fnd-slab-adjacent` falls to `10/16`, below the frozen
+`12/16` cell floor. Thus the final pair does not pass the existing gate, and
+the terminal checkpoint is simultaneously a poor full-V8 parent. The early
+1,000--3,000 checkpoints retain the strongest broad competence but fail nearby
+foundations; they are not valid Stage-C parents either.
+
+These results support two narrow conclusions:
+
+1. A curriculum may focus most samples on the current difficulty frontier,
+   but conditions outside that frontier must not have exactly zero support.
+2. Replay membership cannot be inferred only from the nominal stage graph.
+   The entering policy can already know conditions labelled as future, and a
+   fixed whole-bank audit must continue to expose loss of that competence.
+
+### Proposed fixed `10/75/15` treatment
+
+The first successor treatment should remain deliberately simpler than an
+online difficulty controller. For Stage B, freeze one ordered probability
+vector for the whole screen:
+
+```text
+10%  replay:   the two previously admitted all-free capability conditions
+75%  frontier: the 13 nearby-core conditions
+15%  preview:  the 32 next-stage V6 constraint conditions
+```
+
+Each bucket is foundation/trench balanced before its mass is divided by the
+frozen within-family mixture. All 47 conditions consequently have nonzero
+probability, while the slab-dominated nearby frontier retains the same 75%
+mass as the completed treatment. The preview is rehearsal as well as
+look-ahead: it includes the 19 constraint cells the entering teacher had
+already mastered. The capability share falls from 25% to 10%, so capability
+retention on both source-disjoint panels remains a hard gate rather than an
+assumption.
+
+The weights are a preregistered engineering hypothesis, not a literature
+constant and not a claim of optimality. They make one controlled change to
+the failed population contract: transfer 15 percentage points from capability
+replay to next-stage preview without reducing the current frontier.
+The sampler stays fixed between checkpoints, is serialized in every
+checkpoint, and never reads promotion or development results. Promotion,
+development, capability, horizon, reward, reset, architecture, PPO, and bank
+contracts remain unchanged. A later adaptive treatment is admissible only
+after this fixed vector establishes whether nonzero preview prevents forgetting.
+
+The minimum causal screen reuses the completed 25/75/0 trajectory as the
+historical control and runs one compact 10/75/15 arm from the identical parent,
+teacher, seed, bank, KL/value schedules, and optimizer protocol. Evaluate
+updates 1,000, 3,000, 4,000, and 6,000 on the same four fixed panels; update
+6,000 is the first severe broad collapse in the control after teacher KL has
+ended. Continue the treatment only if nearby-core exact stays within five maps
+of control on each main split, absent-constraint exact loses no more than five
+percentage points from its own update-1,000 value, and every capability and
+integrity gate passes. This is an experiment specification, not launch
+authorization.
+
+### Relation to curriculum literature
+
+The design borrows mechanisms and cautions from prior work without claiming
+that game-level results determine Terra's weights:
+
+- [Prioritized Level Replay (PLR)](https://proceedings.mlr.press/v139/jiang21b.html)
+  prioritizes replay by estimated learning potential and demonstrates that
+  level sampling can improve procedural-environment generalization. Terra's
+  first treatment keeps replay fixed because the earlier P5 competence-frontier
+  sampler starved remote/tight cells; PLR motivates replay, not an unvalidated
+  priority score here.
+- [Self-Paced Deep Reinforcement Learning](https://proceedings.neurips.cc/paper/2020/hash/68a9750337a418a86fe06c1991a1d64c-Abstract.html)
+  learns task distributions that approach a target distribution at a pace
+  controlled by competence. Terra retains the same easy-to-nearby-to-full
+  direction, but uses checkpoint-bounded fixed mixtures so promotion and
+  failure remain auditable.
+- [Replay-Guided Adversarial Environment Design](https://proceedings.neurips.cc/paper/2021/hash/0e915db6326b6fb6a3c56546980a8c93-Abstract.html)
+  connects replay curation with environment design and robustness. It supports
+  preserving a replay distribution while presenting novel levels; Terra does
+  not adopt adversarial generation because its maps require separate capacity,
+  feasibility, and human-review contracts.
+- [ACCEL: Evolving Curricula with Regret-Based Environment Design](https://proceedings.mlr.press/v162/parker-holder22a.html)
+  grows complexity by editing levels near the agent's capability frontier.
+  Terra's 75% frontier has the analogous role, while the immutable accepted
+  bank and 15% preview replace online level editing in this first test.
+- [C-Procgen: Implicit Curriculum in Procgen Made Explicit](https://proceedings.neurips.cc/paper_files/paper/2024/hash/24662461d2194d1bc70a47b6b6771026-Abstract-Conference.html)
+  shows easy-to-hard learning can emerge even under multi-context sampling and
+  reports that masking contexts can change learning. This is the closest
+  qualitative motivation for keeping a nonzero preview instead of treating
+  stage exclusion as harmless.
+
+None of these papers establishes that 10/75/15 is optimal for excavation,
+that exact success is the right online priority, or that Terra should generate
+adversarial maps. The deciding evidence remains the matched Terra fixed-bank
+screen above.
