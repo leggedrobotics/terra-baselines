@@ -1,8 +1,14 @@
 # Experiments — current state (updated 2026-08-07 CEST)
 
-Canonical design and decision authority:
+Current design and decision authority:
+
+- [`research/V8_10M_SCALEUP.md`](research/V8_10M_SCALEUP.md), section
+  "Accepted decision: continuous all-47 bands (2026-08-07)"
+
+Supporting historical evidence:
 
 - [`research/V8_DEEP_XATTN_CURRICULUM.md`](research/V8_DEEP_XATTN_CURRICULUM.md)
+  (superseded hard-stage campaign)
 - [`research/P5_FOLLOWUP_GOAL.md`](research/P5_FOLLOWUP_GOAL.md)
 - [`research/P5_RESULTS_ANALYSIS.md`](research/P5_RESULTS_ANALYSIS.md)
 - [`research/P5_ACCEPTED_BANK_EXPERIMENTS.md`](research/P5_ACCEPTED_BANK_EXPERIMENTS.md)
@@ -29,10 +35,21 @@ Foundation and trench retain 50% target probability each and advance their
 bands independently from exact completed training episodes. The permanent
 10% all-condition term gives every map type support from update 0. Fixed
 source-disjoint panels select and audit checkpoints but never update sampler
-state. The executable contract is commit `0982b7803777fee81a227ce26f30bd85004a9aaa`;
-that is the implementation base, while the launcher records the exact clean
-launch HEAD in every run contract. Its update-1 smoke and long run are not yet
-launched in this ledger entry.
+state. The implementation base is commit
+`0982b7803777fee81a227ce26f30bd85004a9aaa`; exact launch revision
+`d0aea30e475ec97442a86fcd443f690976572fe3` adds only the corrected experiment
+documentation.
+
+| Arm | Initialization | Update-1 smoke | 20,000-update run | Current state |
+|---|---|---:|---:|---|
+| `G-V8-XATTN-CONTINUOUS-BANDED` | random parameters, no teacher | `10012150` PASS | `10015084` | PENDING on four RTX 4090s |
+
+Smoke `10012150` completed `0:0` in 13m55s. Both update-1 and final
+checkpoints reloaded; the receipt records all 47 conditions, family counts
+25/22, depth counts 2/13/32, positive minimum probability `0.002`, resumable
+`terra_continuous_banded_sampler_state_v1`, and graph SHA-256
+`f0ad2c9c138cbb7d7139ac8bf50cb8c9b897d06d49c625b82b78d0a9c3e42b2d`.
+This is engineering admission evidence, not a learning result.
 
 ## Active reward-only diagnostic
 

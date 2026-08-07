@@ -1,7 +1,15 @@
 # V8 deep+xattn curriculum campaign
 
-- Status: original compact campaign retained; the 10M scale-up passed paired
-  Stage-B admission and submitted the compact/10M 20k-update treatment
+> **Historical campaign record.** The hard Stage A/B/C launch sequence and
+> commands below are superseded. The current map-curriculum authority is
+> [`V8_10M_SCALEUP.md`](V8_10M_SCALEUP.md), section "Accepted decision:
+> continuous all-47 bands (2026-08-07)": one uninterrupted all-47 run with
+> continuously moving family bands. Depth remains map metadata, not a job
+> boundary. Keep this file only for the provenance and results of the earlier
+> staged campaign.
+
+- Status: superseded staged campaign retained as historical evidence; its
+  compact and 10M jobs are not the current map-curriculum launch path
 - Date: 2026-08-06
 - Dataset authority:
   [`V8_COMBINED_DISTRIBUTION_PLAN.md`](/home/lorenzo/moleworks/.worktrees/terra_v8_combined_20260803/V8_COMBINED_DISTRIBUTION_PLAN.md)
