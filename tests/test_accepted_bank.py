@@ -285,6 +285,43 @@ def test_v8_stage_selection_is_family_balanced_and_checkpoint_bounded():
             observed[key] += probability
         assert observed == pytest.approx(expected_slice_mass[stage])
 
+    selected, probabilities = accepted_bank_module._v8_stage_selection(
+        levels,
+        "nearby",
+        tuple(level.condition_id for level in constraints),
+        tuple(level.condition_id for level in controls),
+        tuple(level.condition_id for level in core),
+        mixture,
+        "banded_preview15_v1",
+    )
+    assert len(selected) == 47
+    observed = {"capability": 0.0, "core": 0.0, "constraint": 0.0}
+    family_mass = {"foundation": 0.0, "trench": 0.0}
+    for level, probability in zip(selected, probabilities):
+        key = (
+            "capability"
+            if level.condition_id in control_ids
+            else "core" if level.condition_id in core_ids else "constraint"
+        )
+        observed[key] += probability
+        family_mass[level.family] += probability
+        assert probability > 0.0
+    assert observed == pytest.approx(
+        {"capability": 0.10, "core": 0.75, "constraint": 0.15}
+    )
+    assert family_mass == pytest.approx({"foundation": 0.5, "trench": 0.5})
+
+    with pytest.raises(ValueError, match="nearby-stage treatment"):
+        accepted_bank_module._v8_stage_selection(
+            levels,
+            "full",
+            tuple(level.condition_id for level in constraints),
+            tuple(level.condition_id for level in controls),
+            tuple(level.condition_id for level in core),
+            mixture,
+            "banded_preview15_v1",
+        )
+
 
 @pytest.mark.parametrize(
     ("arm", "family"),

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import numpy as np
 
 RULES = ("uniform", "fixed", "adaptive")
-STATE_SCHEMA = "terra_pooled_condition_sampler_state_v1"
+STATE_SCHEMA = "terra_pooled_condition_sampler_state_v2"
 
 
 def entropy(probabilities: np.ndarray) -> float:
@@ -157,6 +157,8 @@ class PooledConditionSampler:
         self._last_assignments = np.zeros(self._count, dtype=np.int64)
         self._reset_exposures = np.zeros(self._count, dtype=np.int64)
         self._last_reset_exposures = np.zeros(self._count, dtype=np.int64)
+        self._transition_exposures = np.zeros(self._count, dtype=np.int64)
+        self._last_transition_exposures = np.zeros(self._count, dtype=np.int64)
         self._window_updates = 0
         self._last_window_updates = 0
         self._has_closed_window = False
@@ -172,6 +174,7 @@ class PooledConditionSampler:
             completion_sum: np.ndarray,
             assignments: np.ndarray,
             reset_exposures: np.ndarray,
+            transition_exposures: np.ndarray,
             updates: int,
         ) -> dict:
             return {
@@ -179,6 +182,7 @@ class PooledConditionSampler:
                 "completion_sum": completion_sum.tolist(),
                 "sampled_assignment_count": assignments.tolist(),
                 "reset_exposure_count": reset_exposures.tolist(),
+                "transition_exposure_count": transition_exposures.tolist(),
                 "updates": int(updates),
             }
 
@@ -201,6 +205,7 @@ class PooledConditionSampler:
                 self._completion_sum,
                 self._assignments,
                 self._reset_exposures,
+                self._transition_exposures,
                 self._window_updates,
             ),
             "closed_window": window(
@@ -208,6 +213,7 @@ class PooledConditionSampler:
                 self._last_completion_sum,
                 self._last_assignments,
                 self._last_reset_exposures,
+                self._last_transition_exposures,
                 self._last_window_updates,
             ),
             "refresh": {
@@ -239,7 +245,7 @@ class PooledConditionSampler:
                 sorted(state) if isinstance(state, dict) else type(state).__name__
             )
             raise ValueError(
-                "pooled sampler state fields do not match the v1 schema: "
+                "pooled sampler state fields do not match the v2 schema: "
                 f"observed={observed}"
             )
         if state["schema"] != STATE_SCHEMA:
@@ -337,13 +343,14 @@ class PooledConditionSampler:
             "completion_sum",
             "sampled_assignment_count",
             "reset_exposure_count",
+            "transition_exposure_count",
             "updates",
         }
 
         def restore_window(value, label: str):
             if not isinstance(value, dict) or set(value) != window_keys:
                 raise ValueError(
-                    f"pooled sampler {label} fields do not match the v1 schema"
+                    f"pooled sampler {label} fields do not match the v2 schema"
                 )
             episodes = count_vector(
                 value["completed_episode_count"],
@@ -364,8 +371,19 @@ class PooledConditionSampler:
                 value["reset_exposure_count"],
                 f"{label}.reset_exposure_count",
             )
+            transition_exposures = count_vector(
+                value["transition_exposure_count"],
+                f"{label}.transition_exposure_count",
+            )
             updates = nonnegative_int(value["updates"], f"{label}.updates")
-            return episodes, completion_sum, assignments, reset_exposures, updates
+            return (
+                episodes,
+                completion_sum,
+                assignments,
+                reset_exposures,
+                transition_exposures,
+                updates,
+            )
 
         current = restore_window(state["current_window"], "current_window")
         closed = restore_window(state["closed_window"], "closed_window")
@@ -373,7 +391,7 @@ class PooledConditionSampler:
         refresh = state["refresh"]
         refresh_keys = {"has_closed_window", "last_refresh_update", "refreshes"}
         if not isinstance(refresh, dict) or set(refresh) != refresh_keys:
-            raise ValueError("pooled sampler refresh fields do not match the v1 schema")
+            raise ValueError("pooled sampler refresh fields do not match the v2 schema")
         if not isinstance(refresh["has_closed_window"], bool):
             raise ValueError("pooled sampler has_closed_window must be boolean")
         last_refresh_update = refresh["last_refresh_update"]
@@ -387,7 +405,8 @@ class PooledConditionSampler:
             or closed[1].any()
             or closed[2].any()
             or closed[3].any()
-            or closed[4] != 0
+            or closed[4].any()
+            or closed[5] != 0
         ):
             raise ValueError(
                 "pooled sampler has no closed window but closed-window state is nonzero"
@@ -411,6 +430,7 @@ class PooledConditionSampler:
             self._completion_sum,
             self._assignments,
             self._reset_exposures,
+            self._transition_exposures,
             self._window_updates,
         ) = current
         (
@@ -418,6 +438,7 @@ class PooledConditionSampler:
             self._last_completion_sum,
             self._last_assignments,
             self._last_reset_exposures,
+            self._last_transition_exposures,
             self._last_window_updates,
         ) = closed
         self._has_closed_window = refresh["has_closed_window"]
@@ -449,6 +470,15 @@ class PooledConditionSampler:
         if values.dtype.kind not in "iub" or np.any(values < 0):
             raise ValueError("reset exposure counts must be nonnegative integers")
         self._reset_exposures += values.astype(np.int64)
+
+    def observe_transition_exposures(self, counts: np.ndarray) -> None:
+        """Count actual policy transitions under each map condition."""
+        values = np.asarray(counts)
+        if values.shape != (self._count,):
+            raise ValueError("transition exposure counts must match the condition count")
+        if values.dtype.kind not in "iub" or np.any(values < 0):
+            raise ValueError("transition exposure counts must be nonnegative integers")
+        self._transition_exposures += values.astype(np.int64)
 
     def start(self, update_index: int) -> None:
         if self._last_refresh_update is None:
@@ -491,10 +521,12 @@ class PooledConditionSampler:
         self._last_completion_sum = self._completion_sum
         self._last_assignments = self._assignments
         self._last_reset_exposures = self._reset_exposures
+        self._last_transition_exposures = self._transition_exposures
         self._episodes = np.zeros(self._count, dtype=np.int64)
         self._completion_sum = np.zeros(self._count, dtype=np.float64)
         self._assignments = np.zeros(self._count, dtype=np.int64)
         self._reset_exposures = np.zeros(self._count, dtype=np.int64)
+        self._transition_exposures = np.zeros(self._count, dtype=np.int64)
         self._last_window_updates = self._window_updates
         self._window_updates = 0
         self._has_closed_window = True
@@ -535,6 +567,7 @@ class PooledConditionSampler:
             episodes: np.ndarray,
             assignments: np.ndarray,
             reset_exposures: np.ndarray,
+            transition_exposures: np.ndarray,
         ) -> dict:
             def mass(counts: np.ndarray) -> list[float | None]:
                 values = self._mass(counts)
@@ -548,6 +581,8 @@ class PooledConditionSampler:
                 "sampled_assignment_mass": mass(assignments),
                 "reset_exposure_count": reset_exposures.tolist(),
                 "reset_exposure_mass": mass(reset_exposures),
+                "transition_exposure_count": transition_exposures.tolist(),
+                "transition_exposure_mass": mass(transition_exposures),
             }
 
         return {
@@ -568,6 +603,7 @@ class PooledConditionSampler:
                     self._episodes,
                     self._assignments,
                     self._reset_exposures,
+                    self._transition_exposures,
                 ),
                 "closed": (
                     window_receipt(
@@ -575,6 +611,7 @@ class PooledConditionSampler:
                         self._last_episodes,
                         self._last_assignments,
                         self._last_reset_exposures,
+                        self._last_transition_exposures,
                     )
                     if self._has_closed_window
                     else None

@@ -143,6 +143,9 @@ def test_sampling_and_receipt_preserve_condition_exposure():
 
     sampler.start(0)
     sampler.observe_reset_exposures(np.bincount(drawn.ravel(), minlength=len(NAMES)))
+    sampler.observe_transition_exposures(
+        np.bincount(drawn.ravel(), minlength=len(NAMES)) * 32
+    )
     _observe(sampler, [0.2] * 8)
     sampler.refresh(1)
     assert sampler.refreshes == 1
@@ -151,16 +154,23 @@ def test_sampling_and_receipt_preserve_condition_exposure():
     assert receipt["windows"]["current"]["completed_episode_mass"] == [None] * 8
     assert receipt["windows"]["closed"]["completed_episode_count"] == [10] * 8
     assert sum(receipt["windows"]["closed"]["sampled_assignment_count"]) == (drawn.size)
+    assert sum(receipt["windows"]["closed"]["transition_exposure_count"]) == (
+        drawn.size * 32
+    )
 
 
 def test_assignments_resets_and_completed_episodes_are_not_conflated():
     sampler = _sampler(rule="uniform")
     drawn = sampler.sample_levels((2, 64))
     sampler.observe_reset_exposures(np.array([8, 7, 6, 5, 4, 3, 2, 1], dtype=np.int64))
+    sampler.observe_transition_exposures(
+        np.array([80, 70, 60, 50, 40, 30, 20, 10], dtype=np.int64)
+    )
     _observe(sampler, [0.1] * 8, episodes=2)
     receipt = sampler.receipt()["windows"]["current"]
     assert sum(receipt["sampled_assignment_count"]) == drawn.size
     assert sum(receipt["reset_exposure_count"]) == 36
+    assert sum(receipt["transition_exposure_count"]) == 360
     assert sum(receipt["completed_episode_count"]) == 16
 
 
@@ -170,6 +180,8 @@ def test_reset_exposure_shape_and_dtype_are_checked():
         sampler.observe_reset_exposures(np.zeros(7, dtype=np.int64))
     with pytest.raises(ValueError, match="nonnegative integers"):
         sampler.observe_reset_exposures(np.full(8, 0.5, dtype=np.float64))
+    with pytest.raises(ValueError, match="condition count"):
+        sampler.observe_transition_exposures(np.zeros(7, dtype=np.int64))
 
 
 def test_duplicate_conditions_and_infeasible_cap_fail_loudly():
@@ -187,11 +199,17 @@ def test_state_roundtrip_preserves_windows_probabilities_and_future_samples():
     sampler.start(3)
     first = sampler.sample_levels((2, 64))
     sampler.observe_reset_exposures(np.bincount(first.ravel(), minlength=len(NAMES)))
+    sampler.observe_transition_exposures(
+        np.bincount(first.ravel(), minlength=len(NAMES)) * 32
+    )
     _observe(sampler, [0.9, 0.7, 0.5, 0.3, 0.2, 0.1, 0.05, 0.0])
     sampler.refresh(10)
 
     current = sampler.sample_levels((3, 17))
     sampler.observe_reset_exposures(np.bincount(current.ravel(), minlength=len(NAMES)))
+    sampler.observe_transition_exposures(
+        np.bincount(current.ravel(), minlength=len(NAMES)) * 32
+    )
     _observe(sampler, [0.8, 0.6, 0.4, 0.2, 0.1, 0.05, 0.0, 0.0], episodes=3)
 
     state = sampler.state_dict()

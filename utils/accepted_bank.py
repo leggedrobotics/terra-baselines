@@ -32,7 +32,11 @@ V8_CORE_CONDITION_COUNT = 13
 V8_MAIN_CONDITION_COUNT = 45
 V8_CAPABILITY_FLOOR_IDS = TRAIN96_CAPABILITY_FLOOR_IDS
 V8_CURRICULUM_STAGES = ("capability", "nearby", "full")
-V8_SAMPLER_PROFILES = ("bank_v4", "bounded_replay25_v1")
+V8_SAMPLER_PROFILES = (
+    "bank_v4",
+    "bounded_replay25_v1",
+    "banded_preview15_v1",
+)
 REVIEW_RELEASE = "map-curriculum-diverse64-visual-review-20260730"
 REVIEW_MANIFEST_SHA256 = (
     "39f7cd2e8ce565bd384de214da5f2eee5e76764cb554e149c0ba675d815d6d51"
@@ -702,13 +706,23 @@ def _v8_stage_selection(
         selected_ids = set(capability_ids)
         slice_mass = {"capability": 1.0, "core": 0.0, "constraint": 0.0}
     elif stage == "nearby":
-        selected_ids = set(capability_ids) | set(core_ids)
-        slice_mass = (
-            {"capability": 0.5, "core": 0.5, "constraint": 0.0}
-            if sampler_profile == "bank_v4"
-            else {"capability": 0.25, "core": 0.75, "constraint": 0.0}
-        )
+        if sampler_profile == "bank_v4":
+            selected_ids = set(capability_ids) | set(core_ids)
+            slice_mass = {"capability": 0.5, "core": 0.5, "constraint": 0.0}
+        elif sampler_profile == "bounded_replay25_v1":
+            selected_ids = set(capability_ids) | set(core_ids)
+            slice_mass = {"capability": 0.25, "core": 0.75, "constraint": 0.0}
+        else:
+            selected_ids = (
+                set(capability_ids) | set(core_ids) | set(constraint_ids)
+            )
+            slice_mass = {"capability": 0.10, "core": 0.75, "constraint": 0.15}
     else:
+        if sampler_profile == "banded_preview15_v1":
+            raise ValueError(
+                "banded_preview15_v1 is a nearby-stage treatment; use "
+                "bounded_replay25_v1 for the full stage"
+            )
         selected_ids = set(capability_ids) | set(core_ids) | set(constraint_ids)
         slice_mass = (
             {"capability": 0.25, "core": 0.25, "constraint": 0.5}

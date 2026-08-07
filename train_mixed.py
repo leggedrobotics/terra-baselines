@@ -165,6 +165,7 @@ class Transition(struct.PyTreeNode):
     done: jax.Array
     task_done: jax.Array
     curriculum_level: jax.Array
+    active_curriculum_level: jax.Array
     action: jax.Array
     value: jax.Array
     reward: jax.Array
@@ -884,6 +885,18 @@ def reset_exposure_histogram(
         jnp.zeros((num_stages,), dtype=jnp.int32)
         .at[curriculum_level.reshape(-1)]
         .add(done.reshape(-1).astype(jnp.int32))
+    )
+
+
+def transition_exposure_histogram(
+    active_curriculum_level: jax.Array,
+    num_stages: int,
+) -> jax.Array:
+    """Count policy transitions by the map condition that produced them."""
+    return (
+        jnp.zeros((num_stages,), dtype=jnp.int32)
+        .at[active_curriculum_level.reshape(-1)]
+        .add(1)
     )
 
 
@@ -2315,6 +2328,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         accepted_dump_volume=reward_components["accepted_dump_volume"],
                         illegal_dump_volume=reward_components["illegal_dump_volume"],
                     )
+                    active_curriculum_level = episode_accumulator.stage_id
                     episode_accumulator, pending_aggregate = update_episode_aggregate(
                         episode_accumulator,
                         pending_aggregate,
@@ -2332,6 +2346,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         done=timestep.done,
                         task_done=timestep.info["task_done"],
                         curriculum_level=timestep.env_cfg.curriculum.level,
+                        active_curriculum_level=active_curriculum_level,
                         action=action,
                         value=value,
                         reward=timestep.reward,
@@ -2407,6 +2422,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     reset_exposure_histogram(
                         transitions.done,
                         transitions.curriculum_level,
+                        num_stages,
+                    ),
+                    "devices",
+                )
+                transition_exposure_count = jax.lax.psum(
+                    transition_exposure_histogram(
+                        transitions.active_curriculum_level,
                         num_stages,
                     ),
                     "devices",
@@ -2575,6 +2597,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     aggregate_snapshot,
                     transition_integrity,
                     reset_exposure_count,
+                    transition_exposure_count,
                 )
 
             # Setup runner state for multiple devices
@@ -2683,6 +2706,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     episode_aggregate_snapshot,
                     transition_integrity,
                     reset_exposure_count,
+                    transition_exposure_count,
                 ) = jax.block_until_ready(
                     _update_step(
                         runner_state,
@@ -2695,11 +2719,18 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 transition_integrity_single = unreplicate(transition_integrity)
                 _assert_transition_integrity(transition_integrity_single)
                 reset_exposure_single = None
+                transition_exposure_single = None
                 if pooled_sampler is not None:
                     reset_exposure_single = np.asarray(
                         unreplicate(reset_exposure_count)
                     )
                     pooled_sampler.observe_reset_exposures(reset_exposure_single)
+                    transition_exposure_single = np.asarray(
+                        unreplicate(transition_exposure_count)
+                    )
+                    pooled_sampler.observe_transition_exposures(
+                        transition_exposure_single
+                    )
                 end_time = time.time()
 
                 iteration_duration = end_time - start_time
@@ -2785,6 +2816,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             data=condition_rows(
                                 active_levels,
                                 reset_exposure_single,
+                                transition_exposure_single,
                                 episode_payload,
                                 names=pooled_sampler.names,
                                 labels=pooled_sampler.labels,

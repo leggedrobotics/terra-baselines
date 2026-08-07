@@ -30,6 +30,7 @@ CONDITION_COLUMNS = (
     "target_probability",
     "active_population_fraction",
     "reset_exposure_fraction",
+    "transition_exposure_fraction",
     "ended_episode_fraction",
     "train_success_rate",
     "mean_absolute_completion",
@@ -236,6 +237,7 @@ def curriculum_metrics(
 def condition_rows(
     levels: np.ndarray,
     reset_exposures: np.ndarray,
+    transition_exposures: np.ndarray,
     episode_payload: dict,
     *,
     names: tuple[str, ...],
@@ -245,19 +247,25 @@ def condition_rows(
     """Build one aligned per-condition snapshot for the current PPO update."""
     levels = np.asarray(levels, dtype=np.int64).reshape(-1)
     resets = np.asarray(reset_exposures, dtype=np.int64).reshape(-1)
+    transitions = np.asarray(transition_exposures, dtype=np.int64).reshape(-1)
     probabilities = np.asarray(probabilities, dtype=np.float64)
     if resets.shape != (len(names),):
         raise ValueError("reset exposure counts must match condition names")
+    if transitions.shape != (len(names),):
+        raise ValueError("transition exposure counts must match condition names")
     if levels.size == 0 or np.any((levels < 0) | (levels >= len(names))):
         raise ValueError("active curriculum levels must index the condition bank")
     if np.any(resets < 0):
         raise ValueError("reset exposure counts must be nonnegative")
+    if np.any(transitions < 0):
+        raise ValueError("transition exposure counts must be nonnegative")
     if probabilities.shape != (len(names),):
         raise ValueError("sampler probabilities must match condition names")
 
     active = np.bincount(levels, minlength=len(names)).astype(np.float64)
     active /= active.sum()
     reset_total = int(resets.sum())
+    transition_total = int(transitions.sum())
 
     episodes = defaultdict(int)
     successes = defaultdict(int)
@@ -282,6 +290,7 @@ def condition_rows(
                 float(probabilities[index]),
                 float(active[index]),
                 _safe_rate(resets[index], reset_total),
+                _safe_rate(transitions[index], transition_total),
                 _safe_rate(count, episode_total),
                 _safe_rate(successes[name], count),
                 _safe_rate(completion[name], count),

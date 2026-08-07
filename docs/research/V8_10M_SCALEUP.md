@@ -685,6 +685,24 @@ percentage points from its own update-1,000 value, and every capability and
 integrity gate passes. This is an experiment specification, not launch
 authorization.
 
+### Accepted fresh-training path
+
+On 2026-08-07 the fresh policy was selected as the first implementation path,
+rather than another warm restart from the existing Stage-B parent. This does
+not flatten the curriculum. The compact deep+xattn policy starts from random
+parameters on the two all-free capability conditions with dense reward and no
+teacher. Only a checkpoint passing both capability panels at `12/16` per cell
+for two consecutive evaluations may initialize Stage B. Stage B then uses the
+fixed `10/75/15` vector above. This fresh path tests the complete staged recipe;
+the completed `25/75/0` trajectory remains descriptive historical evidence,
+not a paired initialization control for the random-start result.
+
+The reward-only experiment remains separate: matched dense and
+`terminal_objective` fine-tunes begin from the same compact update-20,000
+checkpoint, retain the same Stage-B map sampler, and are interpreted only as
+an exploratory efficiency test on already learned nearby maps. They cannot
+qualify the fresh curriculum or Stage C.
+
 ### Relation to curriculum literature
 
 The design borrows mechanisms and cautions from prior work without claiming

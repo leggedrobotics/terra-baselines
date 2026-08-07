@@ -101,6 +101,7 @@ def test_curriculum_population_and_condition_table_use_actual_exposure():
     rows = condition_rows(
         np.array([[0, 0, 1], [2, 3, 3]]),
         np.array([3, 0, 1, 0]),
+        np.array([30, 10, 20, 40]),
         _episode_payload(),
         names=names,
         labels=labels,
@@ -109,6 +110,7 @@ def test_curriculum_population_and_condition_table_use_actual_exposure():
     table = {row[0]: dict(zip(CONDITION_COLUMNS, row)) for row in rows}
     assert table["f0"]["active_population_fraction"] == pytest.approx(1 / 3)
     assert table["f0"]["reset_exposure_fraction"] == 0.75
+    assert table["f0"]["transition_exposure_fraction"] == 0.30
     assert table["f0"]["ended_episode_fraction"] == pytest.approx(2 / 3)
     assert table["f0"]["train_success_rate"] == 0.5
     assert table["t0"]["mean_absolute_completion"] == 0.2

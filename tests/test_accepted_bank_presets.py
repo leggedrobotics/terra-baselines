@@ -12,6 +12,7 @@ from train_mixed import (
     assign_curriculum_levels,
     pooled_sampler_settings,
     reset_exposure_histogram,
+    transition_exposure_histogram,
 )
 from utils.accepted_bank import ARMS
 
@@ -93,6 +94,11 @@ def test_reset_exposure_histogram_uses_each_transition_level():
 
     with pytest.raises(ValueError, match="identical"):
         reset_exposure_histogram(done, levels[:, :2], num_stages=3)
+
+    np.testing.assert_array_equal(
+        transition_exposure_histogram(levels, num_stages=3),
+        np.asarray([2, 1, 3], dtype=np.int32),
+    )
 
 
 def test_level_contract_accepts_any_condition_count_but_no_protocol_changes():
