@@ -94,6 +94,7 @@ from terra.config import (
     BatchConfig,
     Rewards,
     CurriculumGlobalConfig,
+    RewardStage,
     RewardsType,
 )
 from flax.training.train_state import TrainState
@@ -788,6 +789,8 @@ def _build_mixed_dataset_pool(
 
 
 PER_ENV_RATCHET_DISABLED_THRESHOLD = 1_000_000
+REWARD_ANNEAL_SCHEMA = "terra_reward_anneal_v1"
+REWARD_ANNEAL_DURATION_UPDATES = 5_000
 
 
 def pooled_sampler_settings(config) -> SamplerSettings | None:
@@ -850,6 +853,124 @@ def _restore_pooled_sampler_checkpoint(
             "'pooled_sampler_state'; use --warm_start_from for a fresh sampler"
         )
     sampler.restore_state_dict(saved_state)
+
+
+def _new_reward_anneal_state() -> dict:
+    return {
+        "schema": REWARD_ANNEAL_SCHEMA,
+        "started_update": None,
+        "duration_updates": REWARD_ANNEAL_DURATION_UPDATES,
+        "last_applied_mix": 0.0,
+    }
+
+
+def _restore_reward_anneal_checkpoint(
+    reward_stage: str,
+    checkpoint: dict | None,
+    checkpoint_mode: str | None,
+    resume_update: int = 0,
+) -> dict | None:
+    """Restore the one-way fade only for a true annealed-objective resume."""
+    saved = checkpoint.get("reward_anneal_state") if checkpoint is not None else None
+    if reward_stage != "annealed_objective":
+        if checkpoint_mode == "resume" and saved is not None:
+            raise ValueError(
+                "resume checkpoint contains reward_anneal_state, but the current "
+                f"reward_stage is {reward_stage!r}"
+            )
+        return None
+    if checkpoint_mode != "resume":
+        return _new_reward_anneal_state()
+    if saved is None:
+        raise ValueError(
+            "annealed-objective resume requires checkpoint field "
+            "'reward_anneal_state'; use --warm_start_from for a fresh fade"
+        )
+    if checkpoint.get("next_update") != int(resume_update):
+        raise ValueError(
+            "annealed-objective resume must use the checkpoint's exact next_update"
+        )
+    if set(saved) != {
+        "schema",
+        "started_update",
+        "duration_updates",
+        "last_applied_mix",
+    }:
+        raise ValueError("reward_anneal_state fields do not match the v1 schema")
+    if saved["schema"] != REWARD_ANNEAL_SCHEMA:
+        raise ValueError("reward_anneal_state schema is incompatible")
+    if int(saved["duration_updates"]) != REWARD_ANNEAL_DURATION_UPDATES:
+        raise ValueError("reward anneal duration changed across resume")
+    started_update = saved["started_update"]
+    if started_update is not None and (
+        isinstance(started_update, bool)
+        or not isinstance(started_update, (int, np.integer))
+        or int(started_update) < 0
+    ):
+        raise ValueError("reward anneal started_update must be a non-negative integer")
+    last_applied_mix = float(saved["last_applied_mix"])
+    if not 0.0 <= last_applied_mix <= 1.0:
+        raise ValueError("reward anneal last_applied_mix must be in [0, 1]")
+    restored = {
+        "schema": REWARD_ANNEAL_SCHEMA,
+        "started_update": (None if started_update is None else int(started_update)),
+        "duration_updates": REWARD_ANNEAL_DURATION_UPDATES,
+        "last_applied_mix": last_applied_mix,
+    }
+    if restored["started_update"] is not None and restored["started_update"] >= int(
+        resume_update
+    ):
+        raise ValueError("reward anneal starts at or after the resumed update")
+    expected_last_mix = reward_anneal_mix(restored, max(0, int(resume_update) - 1))
+    if not np.isclose(last_applied_mix, expected_last_mix, atol=1e-12, rtol=0.0):
+        raise ValueError(
+            "reward anneal last_applied_mix disagrees with checkpoint next_update"
+        )
+    saved_env_cfg = checkpoint.get("env_config")
+    if saved_env_cfg is None or not hasattr(saved_env_cfg, "terminal_reward_mix"):
+        raise ValueError("annealed-objective resume requires env_config reward mix")
+    saved_env_mix = np.asarray(saved_env_cfg.terminal_reward_mix, dtype=np.float32)
+    if not np.all(saved_env_mix == np.float32(expected_last_mix)):
+        raise ValueError(
+            "checkpoint env_config terminal_reward_mix disagrees with anneal state"
+        )
+    return restored
+
+
+def maybe_start_reward_anneal(
+    state: dict | None,
+    sampler_receipt: dict,
+    update_index: int,
+) -> bool:
+    """Latch the fade once both families have reached curriculum depth two."""
+    if state is None or state["started_update"] is not None:
+        return False
+    active = sampler_receipt["mastery"]["family_active_depth"]
+    # None means every depth in that family is mastered, i.e. it has progressed
+    # beyond the depth-two trigger rather than falling short of it.
+    if all(
+        active[family] is None or active[family] >= 2
+        for family in ("foundation", "trench")
+    ):
+        state["started_update"] = int(update_index)
+        return True
+    return False
+
+
+def reward_anneal_mix(state: dict | None, update_index: int) -> float:
+    if state is None or state["started_update"] is None:
+        return 0.0
+    elapsed = max(0, int(update_index) - int(state["started_update"]))
+    return min(1.0, elapsed / float(state["duration_updates"]))
+
+
+def assign_terminal_reward_mix(env_cfg, mix: float):
+    if not 0.0 <= float(mix) <= 1.0:
+        raise ValueError("terminal reward mix must be in [0, 1]")
+    current = jnp.asarray(env_cfg.terminal_reward_mix)
+    return env_cfg._replace(
+        terminal_reward_mix=jnp.full_like(current, float(mix), dtype=current.dtype)
+    )
 
 
 def _assert_pooled_level_contract(
@@ -994,6 +1115,8 @@ class MixedAgentTrainConfig:
 
     # Agent-neutral relocation reward (can be set via config preset or CLI).
     relocation_progress_mult: float | None = None
+    # One global reward objective. Map-level rewards_type remains frozen.
+    reward_stage: str = "dense_skill"
 
     # Capacity overrides
     truck_capacity: int | None = None
@@ -1068,6 +1191,21 @@ class MixedAgentTrainConfig:
 
     def __post_init__(self):
         _checkpoint_load_mode(self)
+        if self.reward_stage not in (
+            "dense_skill",
+            "annealed_objective",
+            "terminal_objective",
+        ):
+            raise ValueError(
+                "reward_stage must be 'dense_skill', 'annealed_objective', or "
+                f"'terminal_objective', got {self.reward_stage!r}"
+            )
+        if self.reward_stage == "annealed_objective":
+            sampler = self.pooled_sampler or {}
+            if sampler.get("rule") != "continuous_banded_v1":
+                raise ValueError(
+                    "annealed_objective requires the continuous_banded_v1 sampler"
+                )
         self.map_encoder = canonical_map_encoder(self.map_encoder)
         if self.attention_compute_dtype not in ("encoder", "float32", "bfloat16"):
             raise ValueError(
@@ -1182,10 +1320,23 @@ class MixedAgentTrainConfig:
         return getattr(self, key)
 
 
+def _reward_stage_value(reward_stage: str) -> RewardStage:
+    values = {
+        "dense_skill": RewardStage.DENSE_SKILL,
+        "annealed_objective": RewardStage.ANNEALED_OBJECTIVE,
+        "terminal_objective": RewardStage.TERMINAL_OBJECTIVE,
+    }
+    try:
+        return values[reward_stage]
+    except KeyError as exc:
+        raise ValueError(f"unsupported reward_stage {reward_stage!r}") from exc
+
+
 def create_mixed_agent_env_config(
     agent_types=(0, 2),
     action_types=(0, 0),
     relocation_progress_mult=None,
+    reward_stage="dense_skill",
     # Optional capacity overrides
     truck_capacity=None,
     skidsteer_capacity=None,
@@ -1212,9 +1363,10 @@ def create_mixed_agent_env_config(
     """
 
     # Use the existing dense rewards from config
-    env_config = (
-        EnvConfig()
-    )  # This automatically uses Rewards.dense() which includes all our rewards
+    env_config = EnvConfig()._replace(
+        reward_stage=_reward_stage_value(reward_stage),
+        terminal_reward_mix=0.0,
+    )
 
     # Set the agent types from the training configuration
     env_config = env_config._replace(agent_types=agent_types)
@@ -1480,6 +1632,7 @@ def make_mixed_agent_states(
                 agent_types=agent_types,
                 action_types=action_types,
                 relocation_progress_mult=config.relocation_progress_mult,
+                reward_stage=config.reward_stage,
                 # Pass capacity overrides
                 truck_capacity=config.truck_capacity,
                 skidsteer_capacity=config.skidsteer_capacity,
@@ -1521,11 +1674,19 @@ def make_mixed_agent_states(
                     f"{config.relocation_progress_mult}"
                 )
 
+    # The command-line treatment wins over a checkpoint's reward selector. The
+    # mix itself is assigned from explicit host-side anneal state every update.
+    env_params = env_params._replace(
+        reward_stage=_reward_stage_value(config.reward_stage),
+        terminal_reward_mix=0.0,
+    )
+
     # Report the effective value after preset, CLI, and checkpoint precedence.
     print(
         "🪣 Relocation progress multiplier (effective): "
         f"{float(env_params.relocation_progress_mult)}"
     )
+    print(f"🎯 Reward stage (effective): {config.reward_stage}")
 
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
@@ -2137,6 +2298,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 f"{bank.map_count_per_condition} maps/condition",
                 flush=True,
             )
+        if config.reward_stage == "annealed_objective" and pooled_sampler is None:
+            raise ValueError(
+                "annealed_objective requires an enabled continuous_banded_v1 sampler"
+            )
         _restore_pooled_sampler_checkpoint(
             pooled_sampler,
             checkpoint,
@@ -2144,6 +2309,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         )
         if pooled_sampler is not None and checkpoint_mode == "resume":
             print("📊 Restored pooled condition sampler state.", flush=True)
+        reward_anneal_state = _restore_reward_anneal_checkpoint(
+            config.reward_stage,
+            checkpoint,
+            checkpoint_mode,
+            resume_update,
+        )
+        if reward_anneal_state is not None and checkpoint_mode == "resume":
+            print("🎯 Restored reward anneal state.", flush=True)
 
         def train(rng: jax.Array, train_state: TrainState):
             # INIT ENV
@@ -2233,6 +2406,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "illegal_dump_volume": jnp.zeros_like(timestep.reward),
                     "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
                     "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
+                    "workspace_efficiency": jnp.zeros_like(timestep.reward),
+                    "step_efficiency": jnp.zeros_like(timestep.reward),
                 }
                 # Create new timestep with reward_components added to info
                 timestep = timestep._replace(
@@ -2701,6 +2876,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     if pooled_sampler.due(i):
                         pooled_sampler.refresh(i)
                         sampler_refreshed = True
+                    if maybe_start_reward_anneal(
+                        reward_anneal_state,
+                        pooled_sampler.receipt(),
+                        i,
+                    ):
+                        print(
+                            "🎯 Reward fade started at update "
+                            f"{i + 1}; dense -> terminal over "
+                            f"{REWARD_ANNEAL_DURATION_UPDATES} updates.",
+                            flush=True,
+                        )
                     next_env_cfg = assign_curriculum_levels(
                         runner_state[2].env_cfg,
                         pooled_sampler.sample_levels(
@@ -2711,6 +2897,23 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         runner_state[0],
                         runner_state[1],
                         runner_state[2]._replace(env_cfg=next_env_cfg),
+                        *runner_state[3:],
+                    )
+                current_reward_mix = (
+                    1.0
+                    if config.reward_stage == "terminal_objective"
+                    else reward_anneal_mix(reward_anneal_state, i)
+                )
+                if reward_anneal_state is not None:
+                    reward_anneal_state["last_applied_mix"] = current_reward_mix
+                    mixed_env_cfg = assign_terminal_reward_mix(
+                        runner_state[2].env_cfg,
+                        current_reward_mix,
+                    )
+                    runner_state = (
+                        runner_state[0],
+                        runner_state[1],
+                        runner_state[2]._replace(env_cfg=mixed_env_cfg),
                         *runner_state[3:],
                     )
                 start_time = time.time()
@@ -2812,6 +3015,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                     kickstart_kl_coef=kickstart_kl_coef_current,
                                     kickstart_value_coef=kickstart_value_coef_current,
                                 ),
+                                "reward/terminal_objective_mix": current_reward_mix,
                             }
                         )
                         if pooled_sampler is not None:
@@ -2840,7 +3044,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
                     scalar_keys = set(log_dict) - {"curriculum/conditions"}
                     unexpected = scalar_keys - TRAINING_SCALAR_KEYS
-                    if unexpected or len(scalar_keys) > 48:
+                    if unexpected or len(scalar_keys) > len(TRAINING_SCALAR_KEYS):
                         raise RuntimeError(
                             "human W&B scalar contract violated: "
                             f"unexpected={sorted(unexpected)}, "
@@ -2879,6 +3083,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     }
                     if pooled_sampler is not None:
                         checkpoint["pooled_sampler_state"] = pooled_sampler.state_dict()
+                    if reward_anneal_state is not None:
+                        checkpoint["reward_anneal_state"] = dict(reward_anneal_state)
                     checkpoint_name = f"{config.name}.pkl"
                     if config.keep_checkpoint_history:
                         checkpoint_name = f"{config.name}_update_{i + 1:06d}.pkl"
@@ -3015,6 +3221,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 "pooled_sampler_state": (
                     pooled_sampler.state_dict() if pooled_sampler is not None else None
                 ),
+                "reward_anneal_state": (
+                    dict(reward_anneal_state)
+                    if reward_anneal_state is not None
+                    else None
+                ),
             }
 
         return train
@@ -3111,6 +3322,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             final_checkpoint["pooled_sampler_state"] = train_info[
                 "pooled_sampler_state"
             ]
+        if train_info["reward_anneal_state"] is not None:
+            final_checkpoint["reward_anneal_state"] = train_info["reward_anneal_state"]
         final_path = Path(config.checkpoint_dir) / f"{config.name}_FINAL.pkl"
         helpers.save_pkl_object(final_checkpoint, str(final_path))
         print(f"💾 Final mixed agent model saved to {final_path}")
@@ -3598,6 +3811,16 @@ if __name__ == "__main__":
             "(overrides config preset)"
         ),
     )
+    parser.add_argument(
+        "--reward_stage",
+        choices=("dense_skill", "annealed_objective", "terminal_objective"),
+        default="dense_skill",
+        help=(
+            "Global reward objective. annealed_objective starts a one-way "
+            "5000-update dense-to-terminal fade after both continuous-sampler "
+            "families reach curriculum depth two."
+        ),
+    )
     # Checkpoint loading arguments
     parser.add_argument(
         "-r",
@@ -3998,6 +4221,7 @@ if __name__ == "__main__":
         finite_check_interval=args.finite_check_interval,
         config_name=args.config,
         relocation_progress_mult=relocation_progress_mult,
+        reward_stage=args.reward_stage,
         truck_capacity=truck_capacity,
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,

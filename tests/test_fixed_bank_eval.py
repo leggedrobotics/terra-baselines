@@ -103,6 +103,38 @@ class FixedBankEvalTest(unittest.TestCase):
         self.assertEqual(summary["by_family"]["foundation"]["successes"], 32)
         self.assertTrue(summary["integrity"]["passed"])
         self.assertFalse(summary["graded"]["available"])
+        self.assertIsNone(per_map[0]["productive_workspace_cycles"])
+        self.assertFalse(
+            summary["overall"]["successful_efficiency"][
+                "productive_workspace_cycles_available"
+            ]
+        )
+
+    def test_success_efficiency_uses_raw_workspace_cycles_then_steps(self):
+        rows = [
+            {
+                "slot_index": index + 1,
+                "map_id": f"map-{index}",
+                "family": "foundation",
+                "primary_cell": "easy",
+            }
+            for index in range(3)
+        ]
+        per_map, summary = grouped_results(
+            rows,
+            np.array([True, True, False]),
+            np.ones(3, dtype=bool),
+            np.array([10, 20, 450]),
+            productive_workspace_cycles=np.array([3, 1, 9]),
+            productive_workspace_cycles_available=np.ones(3, dtype=bool),
+        )
+
+        self.assertEqual(per_map[0]["productive_workspace_cycles"], 3)
+        efficiency = summary["overall"]["successful_efficiency"]
+        self.assertFalse(efficiency["uses_reward_return"])
+        self.assertEqual(efficiency["productive_workspace_cycles_total"], 4)
+        self.assertEqual(efficiency["steps_total"], 30)
+        self.assertEqual(efficiency["lexicographic_key"], [2, -4, -30])
 
     def test_grouping_separates_success_timeout_and_completion(self):
         rows = [
@@ -334,6 +366,7 @@ class FixedBankEvalTest(unittest.TestCase):
             num_minibatches=32,
             lr=3e-4,
             relocation_progress_mult=1.5,
+            reward_stage="dense_skill",
             agent_types_override=(0,),
             action_types_override=(0,),
             curriculum_levels_override=[
@@ -372,6 +405,15 @@ class FixedBankEvalTest(unittest.TestCase):
         self.assertNotEqual(
             baseline["sha256"],
             checkpoint_treatment_fingerprint({"train_config": changed_depth})["sha256"],
+        )
+
+        changed_reward = SimpleNamespace(**vars(config))
+        changed_reward.reward_stage = "annealed_objective"
+        self.assertNotEqual(
+            baseline["sha256"],
+            checkpoint_treatment_fingerprint({"train_config": changed_reward})[
+                "sha256"
+            ],
         )
 
     def test_checkpoint_sequence_rejects_duplicate_updates_and_mixed_runs(self):

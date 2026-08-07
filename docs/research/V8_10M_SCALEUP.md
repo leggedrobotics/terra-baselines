@@ -778,20 +778,18 @@ under the current dynamic `q`, not a whole-V8 benchmark score. The fixed
 held-out all-47 panels are the whole-distribution audit and model-selection
 evidence.
 
-The causal treatment holds the rest fixed: dense reward, full 450-step resets,
-no teacher or parameter warm start, and the existing compact deep+xattn model
-and PPO settings. A new update-1 smoke must come from the exact committed
-continuous-launcher revision; legacy smoke job `10004034` is invalid. The
-behavioral target is an absolute 20,000 updates, with checkpoints every 500 and
-separate fixed-panel evaluation of retained checkpoints at 1,000-update
-spacing. Those evaluations are submitted during or after allocations; they do
-not run synchronously at each 1,000-update boundary. A job that reaches update
-20,000 also attempts the complete post-target sweep. The first allocation uses
-the 24-hour queue. If it ends early and held-out performance is still improving,
-a later 120-hour allocation resumes an explicit retained checkpoint, including
-optimizer, schedule, and full continuous-sampler state, to the same absolute
-target. Environment RNG and action history restart, so this is a statistical
-continuation rather than a bit-exact one.
+The causal map-curriculum treatment holds full 450-step resets, no teacher or
+parameter warm start, and the existing compact deep+xattn model and PPO
+settings fixed. The accepted reward experiment below runs a constant-dense
+baseline and an annealed treatment from the same new binary. A new update-1
+smoke for each arm must come from the exact committed launcher and runtime
+Terra revisions; legacy smoke job `10004034` is invalid. The behavioral target
+is an absolute 20,000 updates, with checkpoints every 500 and separate
+fixed-panel evaluation of retained checkpoints at 1,000-update spacing. Those
+evaluations are submitted during or after allocations; they do not run
+synchronously at each 1,000-update boundary. The pair requests the 120-hour
+queue because the earlier compact 20,000-update run took about 25h53 and would
+be vulnerable to a 23h45 cutoff.
 
 The first scientific target is 20,000 updates. Training beyond 20,000 is not
 silently enabled by the continuation launcher: if fixed held-out performance
@@ -799,10 +797,10 @@ is still improving there, a longer absolute target must be declared as a new
 extension treatment before using the 120-hour allocation for additional PPO
 updates.
 
-The separate reward probe remains a matched dense-versus-`terminal_objective`
-fine-tune from the historical nearby update-20,000 checkpoint solely to isolate
-reward causality. It neither qualifies the continuous curriculum nor
-resurrects Stage B or Stage C as launch boundaries.
+The historical nearby dense-versus-`terminal_objective` fine-tune was cancelled
+before allocation: jobs `10009405` and `10009411` each consumed `0:00`. It is
+replaced by the all-47 reward pair below and does not resurrect Stage B or Stage
+C as launch boundaries.
 
 The design uses [Prioritized Level Replay](https://proceedings.mlr.press/v139/jiang21b.html)
 for the principle of persistent replay, [Self-Paced Deep Reinforcement
@@ -812,3 +810,46 @@ for competence-linked progression, and
 for the warning that masking contexts changes learning. Those primary results
 motivate the mechanism, not Terra's exact `0.10/0.75/0.15` masses or mastery
 thresholds; the fixed Terra panels remain the deciding evidence.
+
+## Accepted experiment: continuous reward fade (2026-08-07)
+
+Run one matched, random-start compact pair on the accepted all-47 continuous
+curriculum:
+
+| Arm | Reward |
+|---|---|
+| `constant_dense` | `dense_skill` for all 20,000 updates |
+| `dense_to_terminal` | start at `dense_skill`; when both foundation and trench have active depth at least 2, irreversibly linearly mix to the terminal objective over 5,000 updates |
+
+The trigger reuses the sampler's existing exact-success mastery mechanism. It
+does not add a second reward-specific mastery estimate: each family reaches
+active depth 2 only after all of its anchor and nearby conditions meet the
+frozen `0.80` EMA threshold with at least 32 completed episodes. Once triggered,
+the reward mix advances with PPO update count and never reverses if the map
+sampler later demotes a family. The duration and trigger are frozen in the one
+supported training path, not exposed as sweep knobs.
+
+The terminal endpoint is exact terminal success plus small productive-workspace
+and step-efficiency terms, with failure penalized and nonterminal dense shaping
+removed. Its success base is scale-matched to the normalized dense terminal
+component: `2 * rewards.terminal / (active_agents * rewards.normalizer)`.
+Dense and terminal returns still have different semantics and must never be
+compared directly. Rank checkpoints using the fixed, source-disjoint promotion
+and development panels: exact completion, macro graded completion, family and
+depth slices, p10/worst-condition tails, and all-free anchor retention.
+Productive workspace cycles and steps are secondary and are compared only on
+identities solved by both policies.
+
+The only arm-level difference is `reward_stage=dense_skill` versus
+`reward_stage=annealed_objective`. Both use seed `20260807`, random parameters,
+no teacher, the same runtime Terra and terra-baselines commits, all 47
+conditions x 96 layouts, the same 10/75/15 sampler, full 450-step resets,
+2,856,685 parameters, PPO settings, 20,000 updates, checkpoints every 500, and
+fixed-panel spacing of 1,000 updates. This first pair is a one-seed screen; a
+material effect must be replicated before a paper-level reward claim.
+
+Pending dense job `10015084` is held by the user with zero runtime. It uses the
+older dense-only binary and is not the matched control for this experiment. It
+is superseded only after both new same-binary update-1 smokes pass, at which
+point it should be explicitly cancelled before the pair is submitted. The
+launcher itself performs no job cancellation.

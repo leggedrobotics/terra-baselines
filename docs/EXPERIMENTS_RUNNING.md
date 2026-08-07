@@ -19,11 +19,11 @@ current scheduler state.
 
 ## Current map-curriculum decision
 
-The accepted successor is one random-start compact deep+xattn run over all 47
-V8 conditions. It has no capability-only, nearby-only, or constraint-only
-training jobs. Immutable depth 0/1/2 labels describe map difficulty; live
-family-specific bands only redistribute target-assignment probability inside
-the same uninterrupted run:
+The accepted successor uses one uninterrupted random-start compact deep+xattn
+training process per matched arm over all 47 V8 conditions. It has no
+capability-only, nearby-only, or constraint-only training jobs. Immutable depth
+0/1/2 labels describe map difficulty; live family-specific bands only
+redistribute target-assignment probability inside the same run:
 
 ```text
 0.10 * Uniform(all family conditions)
@@ -35,14 +35,32 @@ Foundation and trench retain 50% target probability each and advance their
 bands independently from exact completed training episodes. The permanent
 10% all-condition term gives every map type support from update 0. Fixed
 source-disjoint panels select and audit checkpoints but never update sampler
-state. The implementation base is commit
-`0982b7803777fee81a227ce26f30bd85004a9aaa`; exact launch revision
-`d0aea30e475ec97442a86fcd443f690976572fe3` adds only the corrected experiment
-documentation.
+state. The original dense-only implementation base is commit
+`0982b7803777fee81a227ce26f30bd85004a9aaa`; its launch revision is
+`d0aea30e475ec97442a86fcd443f690976572fe3`. The matched pair will record its
+new common terra-baselines and runtime Terra revisions after implementation,
+tests, and update-1 smokes pass.
 
-| Arm | Initialization | Update-1 smoke | 20,000-update run | Current state |
-|---|---|---:|---:|---|
-| `G-V8-XATTN-CONTINUOUS-BANDED` | random parameters, no teacher | `10012150` PASS | `10015084` | PENDING on four RTX 4090s |
+The next scientific launch is a same-binary reward pair. Both arms retain that
+map curriculum and every non-reward setting:
+
+| Arm | Reward schedule | Initialization | Target | State |
+|---|---|---|---:|---|
+| `constant_dense` | dense for the full run | random parameters, no teacher | 20,000 updates | implementation and common-binary smoke pending |
+| `dense_to_terminal` | dense, then a one-way 5,000-update linear fade after both families reach active depth 2 | random parameters, no teacher | 20,000 updates | implementation and common-binary smoke pending |
+
+Both arms use seed `20260807`, 47 x 96 maps, `continuous_banded_v1`, full
+450-step resets, the 2,856,685-parameter compact deep+xattn policy, checkpoints
+every 500 updates, and fixed-panel evaluation every 1,000 retained updates.
+The 20,000-update pair uses the 120-hour queue because the previous compact
+20,000-update run took about 25h53.
+
+The original dense-only job is retained in the ledger until the replacement
+binary proves it can run both reward modes:
+
+| Prior arm | Update-1 smoke | Long job | Current state |
+|---|---:|---:|---|
+| `G-V8-XATTN-CONTINUOUS-BANDED` | `10012150` PASS | `10015084` | PENDING, held by user (`JobHeldUser`), zero runtime; supersede only after both new common-binary smokes pass |
 
 Smoke `10012150` completed `0:0` in 13m55s. Both update-1 and final
 checkpoints reloaded; the receipt records all 47 conditions, family counts
@@ -51,27 +69,28 @@ checkpoints reloaded; the receipt records all 47 conditions, family counts
 `f0ad2c9c138cbb7d7139ac8bf50cb8c9b897d06d49c625b82b78d0a9c3e42b2d`.
 This is engineering admission evidence, not a learning result.
 
-## Active reward-only diagnostic
+## Cancelled nearby-only reward diagnostic
 
-The compact update-20,000 nearby-policy checkpoint is being used only for a
-matched reward fine-tuning diagnostic. This does not define the replacement
-map curriculum and does not authorize a map-depth transition. Both arms keep
-the historical 15-condition `bounded_replay25_v1` sampler, full 450-step
-resets, architecture, PPO settings, seed, and parent parameters fixed; both
-start fresh optimizers without a teacher.
+The compact update-20,000 nearby-policy checkpoint had been selected for a
+matched reward fine-tuning diagnostic. This did not define the replacement map
+curriculum or authorize a map-depth transition. Both proposed arms kept the
+historical 15-condition `bounded_replay25_v1` sampler, full 450-step resets,
+architecture, PPO settings, seed, and parent parameters fixed; both would have
+started fresh optimizers without a teacher.
 
 | Arm | Reward | Update-1 smoke | 2,000-update screen | State |
 |---|---|---:|---:|---|
-| `R-U20-DENSE-CONTROL` | dense skill | `10007282` PASS | `10009405` | submitted on four RTX 4090s |
-| `R-U20-TERMINAL-OBJECTIVE` | terminal completion plus soft workspace/step efficiency | `10007283` PASS | `10009411` | submitted on four RTX 4090s |
+| `R-U20-DENSE-CONTROL` | dense skill | `10007282` PASS | `10009405` | CANCELLED, elapsed `0:00`, no compute consumed |
+| `R-U20-TERMINAL-OBJECTIVE` | terminal completion plus soft workspace/step efficiency | `10007283` PASS | `10009411` | CANCELLED, elapsed `0:00`, no compute consumed |
 
 The source contract is terra-baselines
 `3567419073e15a3ae8394ed279ea8e7f4839dc6c` plus runtime Terra
 `85e67c3574a34f6238d1bd92caa382bd069d7755`. The common parent SHA-256 is
 `9c92eacdef0b6a2402df0bb2a621b8bffe5c730d5c9ce4f163673569bb2d930e`.
 Because that parent narrowly failed its historical development gate and never
-trained the 32 constraint conditions, this A/B is exploratory reward evidence,
-not a curriculum-promotion result.
+trained the 32 constraint conditions, the two queued screens were cancelled
+before allocation. Their smoke artifacts are retained only as implementation
+history; they provide no learning comparison.
 
 ## Historical staged campaign evidence (superseded)
 

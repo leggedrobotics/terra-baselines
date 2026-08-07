@@ -62,6 +62,7 @@ TRAINING_SCALAR_KEYS = frozenset(
         "reward/episode_return",
         "reward/agent",
         "reward/terminal",
+        "reward/terminal_objective_mix",
         "reward/trench",
         "reward/existence",
         *{f"curriculum/population/{label}" for label in (*FAMILIES, *BRANCH_DEPTHS)},

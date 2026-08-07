@@ -177,7 +177,8 @@ def test_bounded_logging_schema_and_manual_workspace():
     assert metrics["kickstart/kl"] == pytest.approx(0.6)
     assert not any(key.startswith("diagnostics/") for key in metrics)
 
-    assert len(TRAINING_SCALAR_KEYS) <= 48
+    assert len(TRAINING_SCALAR_KEYS) <= 49
+    assert "reward/terminal_objective_mix" in TRAINING_SCALAR_KEYS
     assert {
         f"curriculum/population/{label}" for label in (*FAMILIES, *BRANCH_DEPTHS)
     }.issubset(TRAINING_SCALAR_KEYS)

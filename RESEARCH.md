@@ -12,8 +12,8 @@ checkpoints, and cluster execution.
 
 The authoritative design, evidence, decisions, and operational contract are in
 [V8 10M scale-up and curriculum](docs/research/V8_10M_SCALEUP.md). The accepted
-map treatment is one uninterrupted `continuous_banded_v1` run, not separate
-Stage A/B/C jobs:
+map treatment is one uninterrupted `continuous_banded_v1` process per arm, not
+separate Stage A/B/C jobs:
 
 - all 47 V8 conditions have positive probability from update 0;
 - foundation and trench each receive 50% of target assignment probability;
@@ -27,6 +27,14 @@ Here, depth is immutable map-difficulty metadata and band is a changing sampler
 role. Online success is weighted by the live sampler distribution; it is not a
 whole-V8 benchmark result. Map allocation and reward design remain separate
 causal variables.
+
+The current reward screen therefore holds that map treatment fixed and pairs
+two random-start compact deep+xattn policies: one remains dense, while the
+other starts an irreversible 5,000-update dense-to-terminal fade after both
+families reach active depth 2. Both arms use one common Terra/baselines binary;
+fixed source-disjoint panels, not reward return or online success, decide the
+comparison. The exact launch and evaluation contract is recorded in the
+authoritative design document linked above.
 
 The mechanism is informed by, but does not copy constants from:
 

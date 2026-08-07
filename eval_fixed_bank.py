@@ -126,6 +126,7 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             "agent_types": _jsonable(_field(config, "agent_types_override")),
             "action_types": _jsonable(_field(config, "action_types_override")),
             "relocation_progress_mult": _field(config, "relocation_progress_mult"),
+            "reward_stage": _field(config, "reward_stage"),
             "curriculum_levels": _jsonable(curriculum),
         },
         "sampler": _jsonable(_field(config, "pooled_sampler")),
@@ -755,9 +756,28 @@ def grouped_results(
     horizon: int | None = None,
     completion_metrics: dict[str, np.ndarray] | None = None,
     integrity_metrics: dict[str, np.ndarray] | None = None,
+    productive_workspace_cycles: np.ndarray | None = None,
+    productive_workspace_cycles_available: np.ndarray | None = None,
 ) -> tuple[list[dict], dict]:
     completion_metrics = completion_metrics or {}
     integrity_metrics = integrity_metrics or {}
+    count = len(rows)
+    if productive_workspace_cycles is None:
+        productive_workspace_cycles = np.full(count, -1, dtype=np.int32)
+    if productive_workspace_cycles_available is None:
+        productive_workspace_cycles_available = np.zeros(count, dtype=bool)
+    productive_workspace_cycles = np.asarray(
+        productive_workspace_cycles, dtype=np.int32
+    )
+    productive_workspace_cycles_available = np.asarray(
+        productive_workspace_cycles_available, dtype=bool
+    )
+    if productive_workspace_cycles.shape != (count,):
+        raise ValueError("productive_workspace_cycles must have one value per map")
+    if productive_workspace_cycles_available.shape != (count,):
+        raise ValueError(
+            "productive_workspace_cycles_available must have one value per map"
+        )
     per_map = []
     for index, (row, success, terminated, length) in enumerate(
         zip(rows, successes, terminations, lengths)
@@ -800,11 +820,52 @@ def grouped_results(
                 "timeout": timed_out,
                 "termination_reason": termination_reason,
                 "steps": int(length),
+                "productive_workspace_cycles": (
+                    int(productive_workspace_cycles[index])
+                    if productive_workspace_cycles_available[index]
+                    else None
+                ),
+                "productive_workspace_cycles_available": bool(
+                    productive_workspace_cycles_available[index]
+                ),
                 **metric_values,
                 **integrity_values,
                 "integrity_failure": integrity_failure,
             }
         )
+
+    def successful_efficiency(selected: list[dict]) -> dict:
+        successful = [row for row in selected if row["success"]]
+        cycles_available = bool(successful) and all(
+            row["productive_workspace_cycles_available"] for row in successful
+        )
+        cycles_total = (
+            sum(int(row["productive_workspace_cycles"]) for row in successful)
+            if cycles_available
+            else None
+        )
+        steps_total = sum(int(row["steps"]) for row in successful)
+        return {
+            "objective_order": [
+                "successes_desc",
+                "productive_workspace_cycles_on_successes_asc",
+                "steps_on_successes_asc",
+            ],
+            "uses_reward_return": False,
+            "successful_episodes": len(successful),
+            "productive_workspace_cycles_available": cycles_available,
+            "productive_workspace_cycles_total": cycles_total,
+            "productive_workspace_cycles_mean": (
+                cycles_total / len(successful) if cycles_available else None
+            ),
+            "steps_total": steps_total,
+            "steps_mean": steps_total / len(successful) if successful else None,
+            "lexicographic_key": [
+                len(successful),
+                -cycles_total if cycles_available else None,
+                -steps_total,
+            ],
+        }
 
     def summarize(field: str) -> dict:
         values = sorted({row[field] for row in per_map})
@@ -817,6 +878,7 @@ def grouped_results(
                 "episodes": len(selected),
                 "success_rate": successes_here / len(selected),
                 "terminations": sum(int(row["terminated"]) for row in selected),
+                "successful_efficiency": successful_efficiency(selected),
             }
         return result
 
@@ -827,6 +889,7 @@ def grouped_results(
             "episodes": len(rows),
             "success_rate": total_successes / len(rows),
             "terminations": int(terminations.sum()),
+            "successful_efficiency": successful_efficiency(per_map),
         },
         "by_family": summarize("family"),
         "by_primary_cell": summarize("primary_cell"),
@@ -989,6 +1052,14 @@ def main() -> None:
     parser.add_argument(
         "--expect-completion-contract",
         choices=("exact_visible_dump_v1", LEGACY_COMPLETION_CONTRACT),
+    )
+    parser.add_argument(
+        "--require-productive-workspace-cycles",
+        action="store_true",
+        help=(
+            "Fail unless every evaluated terminal episode exposes Terra's raw "
+            "productive_workspace_cycles counter."
+        ),
     )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -1213,6 +1284,34 @@ def main() -> None:
             successes = np.asarray(stats["episode_done_once"], dtype=bool)
             terminations = np.asarray(stats["episode_terminated_once"], dtype=bool)
             lengths = np.asarray(stats["episode_length"], dtype=np.int32)
+            workspace_cycles = np.asarray(
+                stats.get(
+                    "productive_workspace_cycles",
+                    np.full(count, -1, dtype=np.int32),
+                ),
+                dtype=np.int32,
+            )
+            workspace_cycles_available = np.asarray(
+                stats.get(
+                    "productive_workspace_cycles_available",
+                    np.zeros(count, dtype=bool),
+                ),
+                dtype=bool,
+            )
+            if workspace_cycles.shape != (count,) or (
+                workspace_cycles_available.shape != (count,)
+            ):
+                raise RuntimeError(
+                    "fixed evaluation returned invalid productive workspace arrays"
+                )
+            if args.require_productive_workspace_cycles and not np.all(
+                workspace_cycles_available
+            ):
+                missing = (np.flatnonzero(~workspace_cycles_available) + 1).tolist()
+                raise RuntimeError(
+                    "productive_workspace_cycles unavailable at fixed-bank slots "
+                    f"{missing}"
+                )
             terminal_completion = {
                 key: np.asarray(value, dtype=np.float32)
                 for key, value in stats.get("terminal_completion", {}).items()
@@ -1283,6 +1382,8 @@ def main() -> None:
                     for key, values in terminal_completion.items()
                 },
                 integrity_metrics=integrity_metrics,
+                productive_workspace_cycles=workspace_cycles,
+                productive_workspace_cycles_available=workspace_cycles_available,
             )
             comparison_to_previous = (
                 None

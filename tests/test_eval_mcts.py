@@ -51,6 +51,8 @@ def _timestep():
         info={
             "task_done": jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_),
             "action_had_effect": jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_),
+            "productive_workspace_cycle": jnp.zeros((BATCH_SIZE,), dtype=jnp.int32),
+            "productive_workspace_cycles": jnp.zeros((BATCH_SIZE,), dtype=jnp.int32),
         },
         env_cfg=jnp.zeros((BATCH_SIZE,)),
     )
@@ -116,6 +118,10 @@ class FakeRolloutEnv(FakeEnv):
             info={
                 "task_done": task_done,
                 "action_had_effect": jnp.array([True, False]),
+                "productive_workspace_cycle": jnp.array([True, False], dtype=jnp.bool_),
+                "productive_workspace_cycles": (
+                    next_state * jnp.array([3, 4], dtype=jnp.int32)
+                ),
                 "reward_components": reward_components,
             },
         )
@@ -193,6 +199,10 @@ class RolloutEpisodeAccountingTest(unittest.TestCase):
         np.testing.assert_array_equal(stats["episode_terminated_once"], [True, True])
         np.testing.assert_array_equal(stats["episode_done_once"], [True, False])
         np.testing.assert_array_equal(stats["episode_length"], [1, 2])
+        np.testing.assert_array_equal(stats["productive_workspace_cycles"], [3, 8])
+        np.testing.assert_array_equal(
+            stats["productive_workspace_cycles_available"], [True, True]
+        )
         np.testing.assert_allclose(cumulative_rewards[-1], [1.0, 4.0])
         np.testing.assert_array_equal(
             stats["integrity"]["slot_index_zero_based"], [4, 9]

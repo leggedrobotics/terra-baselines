@@ -296,6 +296,8 @@ def rollout_episode(
                 "illegal_dump_volume": jnp.zeros_like(timestep.reward),
                 "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
                 "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
+                "workspace_efficiency": jnp.zeros_like(timestep.reward),
+                "step_efficiency": jnp.zeros_like(timestep.reward),
             }
             timestep = timestep._replace(
                 info={**timestep.info, "reward_components": dummy_components}
@@ -370,6 +372,12 @@ def rollout_episode(
     terminal_dump_mask_integrity = jnp.zeros_like(terminal_total_completion)
     terminal_accepted_dump_volume = jnp.zeros_like(terminal_total_completion)
     terminal_illegal_dump_volume = jnp.zeros_like(terminal_total_completion)
+    terminal_productive_workspace_cycles = jnp.full(
+        (rl_config.num_test_rollouts,), -1, dtype=jnp.int32
+    )
+    productive_workspace_cycles_available = jnp.zeros(
+        rl_config.num_test_rollouts, dtype=jnp.bool_
+    )
     if expected_slot_indices is None:
         expected_slot_indices = jnp.arange(rl_config.num_test_rollouts, dtype=jnp.int32)
     else:
@@ -610,6 +618,16 @@ def rollout_episode(
             reward_components.get("illegal_dump_volume", terminal_illegal_dump_volume),
             terminal_illegal_dump_volume,
         )
+        if "productive_workspace_cycles" in timestep.info:
+            workspace_cycles = jnp.asarray(
+                timestep.info["productive_workspace_cycles"], dtype=jnp.int32
+            )
+            terminal_productive_workspace_cycles = jnp.where(
+                active_env_mask & step_done,
+                workspace_cycles,
+                terminal_productive_workspace_cycles,
+            )
+            productive_workspace_cycles_available |= active_env_mask & step_done
 
         # Per-agent accumulation (eval_mixed.py parity)
         try:
@@ -855,6 +873,10 @@ def rollout_episode(
         "episode_done_once": episode_succeeded_once,
         "episode_terminated_once": episode_terminated_once,
         "episode_length": episode_length,
+        "productive_workspace_cycles": terminal_productive_workspace_cycles,
+        "productive_workspace_cycles_available": (
+            productive_workspace_cycles_available
+        ),
         "terminal_completion": {
             "absolute": terminal_absolute_completion,
             "dig": terminal_dig_completion,
