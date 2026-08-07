@@ -573,3 +573,28 @@ DNS failure resolving `euler.ethz.ch`; both training jobs remained healthy and
 continued writing checkpoints. The gap was recovered without changing either
 run: compact update 2,000 (SHA `10b9a1d0...`) was submitted to evaluator job
 `9884423`, and 10M update 1,000 (SHA `c499e33b...`) to job `9884425`.
+
+Both recovered observers completed `0:0` with passing status and zero integrity
+failures:
+
+| Policy/checkpoint | Development exact | Macro | Foundation exact / macro | Trench exact / macro | Capability | Nearby F / T |
+|---|---:|---:|---:|---:|---:|---:|
+| compact update 2,000 | `546/720` | `0.870` | `234/384` / `0.787` | `312/336` / `0.965` | `15/16 + 16/16` | `59/96` / `107/112` |
+| 10M update 1,000 | `406/720` | `0.745` | `149/384` / `0.623` | `257/336` / `0.885` | `16/16 + 16/16` | `49/96` / `104/112` |
+
+Compact update 2,000 preserves the update-1,000 exact count and improves macro
+by 0.005 on development, so the first pair passes capability retention but not
+nearby-core mastery. The 10M checkpoint improves dramatically over its selected
+Stage-A parent (`68/720`, `0.344`) but remains below compact and also fails the
+nearby-foundation gate. Its nearby trenches already pass. These results support
+continued training for both arms and identify foundation geometry—not trench
+learning or all-free forgetting—as the current bottleneck.
+
+At 10:43 CEST on 2026-08-07, compact job `9858450` was healthy at approximately
+17,972/20,000 with 17 retained checkpoints and 10M job `9858451` at
+approximately 9,250/20,000 with 9; both had zero runtime-failure signatures.
+Current sampled training completion was about 0.99 and 0.95 respectively, but
+remains diagnostic only. Matched update-9,000 checkpoints were hash-pinned as
+`caf8ea47...` compact and `df5b4f96...` 10M and submitted to frozen evaluator
+jobs `9964699` and `9964703`. Their results, not the online curves, determine
+whether the 10M model has caught up and whether foundations improved.

@@ -1,4 +1,4 @@
-# Experiments — current state (updated 2026-08-06 CEST)
+# Experiments — current state (updated 2026-08-07 CEST)
 
 Canonical design and decision authority:
 
@@ -21,14 +21,15 @@ to the 120-hour queue:
 
 | Arm | Parent | Smoke | Long job | Current state |
 |---|---:|---:|---:|---|
-| compact deep+xattn | update 1,000 | `9854547` PASS | `9858450` | `RUNNING` on `eu-g6-065` |
-| 10M deep+xattn | update 3,000 | `9854549` PASS | `9858451` | `RUNNING` on `eu-g6-023` |
+| compact deep+xattn | update 1,000 | `9854547` PASS | `9858450` | `RUNNING` at approximately 18.0k/20k; 17 checkpoints |
+| 10M deep+xattn | update 3,000 | `9854549` PASS | `9858451` | `RUNNING` at approximately 9.25k/20k; 9 checkpoints |
 
 Both jobs passed their immediate smoke, parent, teacher, sampler, architecture,
-CUDA, cuDNN, and NCCL checks inside Slurm. Early steady-state throughput is
-about 15.1k transitions/s for compact and 8.3k for 10M, projecting roughly 24
-and 44 hours respectively for 20,000 updates before fixed evaluation. These
-are runtime estimates, not learning results.
+CUDA, cuDNN, and NCCL checks inside Slurm. After approximately 20.5 hours,
+throughput is about 17.9k transitions/s for compact and 8.8k for 10M. Compact
+has roughly two training hours left; 10M roughly 22. Neither log contains a
+NaN, OOM, NCCL, traceback, or quota failure. These are operational facts, not
+held-out learning results.
 
 The compact arm retained update 1,000 with SHA-256
 `5130856886889f4dccd3efa3b60a843e5c3af666e04c12a6e688000e05598f2d`.
@@ -38,8 +39,15 @@ exact and `0.865` macro; development is `546/720` and `0.865`; capability is
 their Stage-B family/cell thresholds, but foundations reach only `53/96`
 promotion and `60/96` development versus the required `78/96`. The checkpoint
 improves on its selected parent but does not promote. Compact update-2,000
-observer `9884423` and 10M update-1,000 observer `9884425` are submitted after
-a transient local DNS failure stopped the original non-training watchers.
+observer `9884423` and 10M update-1,000 observer `9884425` also completed
+cleanly. Compact development remains `546/720` while macro rises to `0.870`;
+capability remains `31/32`, but nearby foundations remain only `59/96`. The
+10M policy rises sharply from its selected parent's `68/720`, `0.344` to
+`406/720`, `0.745` on development, with `32/32` capability; nearby foundations
+remain `49/96`. Both policies already clear the nearby-trench gate and fail the
+nearby-foundation gate. Matched update-9,000 observers `9964699` (compact) and
+`9964703` (10M) are pending to test whether the overnight online gains
+generalized. Dense reward and Stage C remain locked.
 
 Stage B contains 15 conditions x 96 layouts = 1,440 distinct training maps.
 Random full resets draw 25% from the two mastered capability anchors and 75%
