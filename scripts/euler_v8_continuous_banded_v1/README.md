@@ -16,6 +16,11 @@ from 50/50. Within a family its distribution is:
 + 0.15 * Uniform(the next depth band)
 ```
 
+At update 0 the two anchors receive approximately 75.43% of total target
+assignments, the 13 nearby conditions receive 17.79%, and the 32 constraint
+conditions receive 6.78%. Thus every condition is present without turning the
+initial distribution into flat all-map training.
+
 Both families start with active depth 0. The active band is the shallowest
 depth not fully mastered and includes mastered siblings at that depth. At the
 last depth, the active-band term becomes 0.90; once every depth is mastered,
@@ -74,3 +79,6 @@ SUBMIT=0 scripts/euler_v8_continuous_banded_v1/submit.sh \
 
 Use `SUBMIT=1` only after that held-out decision; continuation requests the
 120-hour queue but keeps the same absolute update-20,000 target.
+
+Any extension beyond update 20,000 is a separately declared treatment with a
+new absolute target; this launcher never extends the experiment silently.

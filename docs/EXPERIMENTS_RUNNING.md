@@ -11,7 +11,56 @@ The older E1--E10 spatial-encoder run history is retained in
 [`EXPERIMENTS_SPATIAL_V3_RUNS.md`](EXPERIMENTS_SPATIAL_V3_RUNS.md). It is not
 current scheduler state.
 
-## Current scheduler decision
+## Current map-curriculum decision
+
+The accepted successor is one random-start compact deep+xattn run over all 47
+V8 conditions. It has no capability-only, nearby-only, or constraint-only
+training jobs. Immutable depth 0/1/2 labels describe map difficulty; live
+family-specific bands only redistribute target-assignment probability inside
+the same uninterrupted run:
+
+```text
+0.10 * Uniform(all family conditions)
++ 0.75 * Uniform(the entire active depth)
++ 0.15 * Uniform(the next depth)
+```
+
+Foundation and trench retain 50% target probability each and advance their
+bands independently from exact completed training episodes. The permanent
+10% all-condition term gives every map type support from update 0. Fixed
+source-disjoint panels select and audit checkpoints but never update sampler
+state. The executable contract is commit `0982b7803777fee81a227ce26f30bd85004a9aaa`;
+that is the implementation base, while the launcher records the exact clean
+launch HEAD in every run contract. Its update-1 smoke and long run are not yet
+launched in this ledger entry.
+
+## Active reward-only diagnostic
+
+The compact update-20,000 nearby-policy checkpoint is being used only for a
+matched reward fine-tuning diagnostic. This does not define the replacement
+map curriculum and does not authorize a map-depth transition. Both arms keep
+the historical 15-condition `bounded_replay25_v1` sampler, full 450-step
+resets, architecture, PPO settings, seed, and parent parameters fixed; both
+start fresh optimizers without a teacher.
+
+| Arm | Reward | Update-1 smoke | 2,000-update screen | State |
+|---|---|---:|---:|---|
+| `R-U20-DENSE-CONTROL` | dense skill | `10007282` PASS | `10009405` | submitted on four RTX 4090s |
+| `R-U20-TERMINAL-OBJECTIVE` | terminal completion plus soft workspace/step efficiency | `10007283` PASS | `10009411` | submitted on four RTX 4090s |
+
+The source contract is terra-baselines
+`3567419073e15a3ae8394ed279ea8e7f4839dc6c` plus runtime Terra
+`85e67c3574a34f6238d1bd92caa382bd069d7755`. The common parent SHA-256 is
+`9c92eacdef0b6a2402df0bb2a621b8bffe5c730d5c9ce4f163673569bb2d930e`.
+Because that parent narrowly failed its historical development gate and never
+trained the 32 constraint conditions, this A/B is exploratory reward evidence,
+not a curriculum-promotion result.
+
+## Historical staged campaign evidence (superseded)
+
+The following section records the earlier hard-stage campaign and the evidence
+that motivated full-support continuous sampling. Its scheduler language is
+historical and is not the current launch design.
 
 The corrected whole-V8 Stage-A evaluation job `9839960` and reference-teacher
 evaluation job `9845019` both completed cleanly. Teacher-bound update-1 smokes

@@ -708,8 +708,9 @@ that game-level results determine Terra's weights:
 - [Self-Paced Deep Reinforcement Learning](https://proceedings.neurips.cc/paper/2020/hash/68a9750337a418a86fe06c1991a1d64c-Abstract.html)
   learns task distributions that approach a target distribution at a pace
   controlled by competence. Terra retains the same easy-to-nearby-to-full
-  direction, but uses checkpoint-bounded fixed mixtures so promotion and
-  failure remain auditable.
+  direction, but moves continuous family-specific probability bands using an
+  exact-success EMA. Source-disjoint fixed panels remain checkpoint-bounded so
+  learning and model-selection evidence stay auditable.
 - [Replay-Guided Adversarial Environment Design](https://proceedings.neurips.cc/paper/2021/hash/0e915db6326b6fb6a3c56546980a8c93-Abstract.html)
   connects replay curation with environment design and robustness. It supports
   preserving a replay distribution while presenting novel levels; Terra does
@@ -754,6 +755,11 @@ q = 0.10 * Uniform(all family conditions)
   + 0.15 * Uniform(the next depth band)
 ```
 
+At update 0 this gives approximately `75.43%` total target-assignment mass to
+the two depth-0 anchors, `17.79%` to the 13 depth-1 nearby conditions, and
+`6.78%` to the 32 depth-2 constraint conditions. This is full support without
+flattening the initial curriculum.
+
 Both families initially have active depth 0. The active band is the shallowest
 depth not fully mastered and includes mastered siblings at that depth. With no
 next depth, its mass becomes `0.90`; after every depth is mastered, the family
@@ -786,6 +792,12 @@ a later 120-hour allocation resumes an explicit retained checkpoint, including
 optimizer, schedule, and full continuous-sampler state, to the same absolute
 target. Environment RNG and action history restart, so this is a statistical
 continuation rather than a bit-exact one.
+
+The first scientific target is 20,000 updates. Training beyond 20,000 is not
+silently enabled by the continuation launcher: if fixed held-out performance
+is still improving there, a longer absolute target must be declared as a new
+extension treatment before using the 120-hour allocation for additional PPO
+updates.
 
 The separate reward probe remains a matched dense-versus-`terminal_objective`
 fine-tune from the historical nearby update-20,000 checkpoint solely to isolate
