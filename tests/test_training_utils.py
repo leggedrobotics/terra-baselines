@@ -35,6 +35,7 @@ from train_mixed import (
     _validate_resume_update,
     _checkpoint_load_mode,
     _restore_pooled_sampler_checkpoint,
+    accepted_bank_sampler_labels,
     _teacher_model_env_from_checkpoint,
     _wandb_tags_for_config,
 )
@@ -48,6 +49,34 @@ class _PPOConfig(dict):
     """Dict config that supports attribute access for ppo_update_networks."""
 
     __getattr__ = dict.__getitem__
+
+
+def test_continuous_sampler_labels_never_receive_fixed_sampling_weights():
+    bank = SimpleNamespace(
+        levels=(
+            SimpleNamespace(
+                condition_id="f0", family="foundation", branch_depth="Anchor"
+            ),
+        ),
+        curriculum_depths=(0,),
+        sampling_probabilities=(1.0,),
+    )
+    continuous = SamplerSettings(
+        rule="continuous_banded_v1",
+        update_interval=150,
+        mastery_threshold=0.80,
+        min_episodes=32,
+        competence_ema=0.30,
+    )
+    assert accepted_bank_sampler_labels(bank, continuous) == {
+        "f0": {
+            "family": "foundation",
+            "branch_depth": "Anchor",
+            "curriculum_depth": 0,
+        }
+    }
+    fixed = SamplerSettings(rule="fixed")
+    assert accepted_bank_sampler_labels(bank, fixed)["f0"]["sampling_weight"] == 1.0
 
 
 def _model_config(num_prev_actions=5, map_edge=64):

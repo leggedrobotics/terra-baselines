@@ -8,8 +8,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
-RULES = ("uniform", "fixed", "adaptive")
+RULES = ("uniform", "fixed", "adaptive", "continuous_banded_v1")
 STATE_SCHEMA = "terra_pooled_condition_sampler_state_v2"
+CONTINUOUS_STATE_SCHEMA = "terra_continuous_banded_sampler_state_v1"
+CONTINUOUS_RECEIPT_SCHEMA = "terra_continuous_banded_sampler_v1"
+FAMILIES = ("foundation", "trench")
+ALL_FAMILY_FLOOR_MASS = 0.10
+ACTIVE_DEPTH_MASS = 0.75
+NEXT_DEPTH_MASS = 0.15
+DEMOTION_THRESHOLD = 0.65
 
 
 def entropy(probabilities: np.ndarray) -> float:
@@ -84,10 +91,20 @@ class SamplerSettings:
             raise ValueError("sampler competence_ema must be in (0, 1]")
         if not 0.0 < self.max_mass <= 1.0:
             raise ValueError("sampler max_mass must be in (0, 1]")
+        if self.rule == "continuous_banded_v1" and (
+            self.update_interval != 150
+            or self.mastery_threshold != 0.80
+            or self.min_episodes != 32
+            or self.competence_ema != 0.30
+        ):
+            raise ValueError(
+                "continuous_banded_v1 freezes interval=150, mastery=0.80, "
+                "min_episodes=32, and exact-success EMA alpha=0.30"
+            )
 
 
 class PooledConditionSampler:
-    """Uniform control or simple competence-frontier adaptive sampler.
+    """One host-side sampler for uniform, fixed, adaptive, or banded training.
 
     The adaptive arm uses
 
@@ -98,6 +115,11 @@ class PooledConditionSampler:
     training, while the highest-competence unsolved conditions receive more
     exposure. Mastered conditions remain in the uniform floor and re-enter
     automatically if their EMA falls below the threshold.
+
+    ``continuous_banded_v1`` instead keeps a 10% per-family floor across every
+    condition, puts 75% on the family's shallowest incomplete depth, and 15%
+    on the next depth. Foundation and trench each retain exactly half the
+    population. Only exact completed training episodes update its mastery EMA.
     """
 
     def __init__(
@@ -106,7 +128,7 @@ class PooledConditionSampler:
         settings: SamplerSettings,
         *,
         maps_per_condition: list[int] | None = None,
-        labels: dict[str, dict[str, str]] | None = None,
+        labels: dict[str, dict[str, object]] | None = None,
     ):
         if not names:
             raise ValueError("pooled sampler needs at least one condition")
@@ -147,7 +169,40 @@ class PooledConditionSampler:
             if any(value is not None for value in raw_weights):
                 raise ValueError("sampling_weight labels require rule='fixed'")
             self._uniform = np.full(self._count, 1.0 / self._count, dtype=np.float64)
-        self._probabilities = self._uniform.copy()
+        self._depths = np.full(self._count, -1, dtype=np.int64)
+        self._families = np.full(self._count, "", dtype=object)
+        self._mastered = np.zeros(self._count, dtype=bool)
+        if settings.rule == "continuous_banded_v1":
+            for index, name in enumerate(self.names):
+                label = self.labels.get(name, {})
+                family = label.get("family")
+                depth = label.get("curriculum_depth")
+                if family not in FAMILIES:
+                    raise ValueError(
+                        f"continuous_banded condition {name!r} has invalid family"
+                    )
+                if isinstance(depth, bool) or depth not in (0, 1, 2):
+                    raise ValueError(
+                        f"continuous_banded condition {name!r} needs depth 0, 1, or 2"
+                    )
+                self._families[index] = family
+                self._depths[index] = int(depth)
+            for family in FAMILIES:
+                family_mask = self._families == family
+                for depth in range(3):
+                    if not np.any(family_mask & (self._depths == depth)):
+                        raise ValueError(
+                            f"continuous_banded graph lacks {family} depth {depth}"
+                        )
+                if int(np.sum(family_mask & (self._depths == 0))) != 1:
+                    raise ValueError(
+                        f"continuous_banded {family} depth 0 must be a singleton"
+                    )
+        self._probabilities = (
+            self._continuous_distribution()
+            if settings.rule == "continuous_banded_v1"
+            else self._uniform.copy()
+        )
         self._competence = np.full(self._count, np.nan, dtype=np.float64)
         self._episodes = np.zeros(self._count, dtype=np.int64)
         self._completion_sum = np.zeros(self._count, dtype=np.float64)
@@ -177,17 +232,29 @@ class PooledConditionSampler:
             transition_exposures: np.ndarray,
             updates: int,
         ) -> dict:
-            return {
+            result = {
                 "completed_episode_count": episodes.tolist(),
-                "completion_sum": completion_sum.tolist(),
                 "sampled_assignment_count": assignments.tolist(),
                 "reset_exposure_count": reset_exposures.tolist(),
                 "transition_exposure_count": transition_exposures.tolist(),
                 "updates": int(updates),
             }
+            if self.settings.rule == "continuous_banded_v1":
+                if not np.all(completion_sum == np.floor(completion_sum)):
+                    raise ValueError(
+                        "continuous_banded task_done_count is not integral"
+                    )
+                result["task_done_count"] = completion_sum.astype(np.int64).tolist()
+            else:
+                result["completion_sum"] = completion_sum.tolist()
+            return result
 
-        return {
-            "schema": STATE_SCHEMA,
+        result = {
+            "schema": (
+                CONTINUOUS_STATE_SCHEMA
+                if self.settings.rule == "continuous_banded_v1"
+                else STATE_SCHEMA
+            ),
             "conditions": list(self.names),
             "settings": {
                 field: getattr(self.settings, field)
@@ -223,6 +290,13 @@ class PooledConditionSampler:
             },
             "numpy_rng": deepcopy(self._rng.bit_generator.state),
         }
+        if self.settings.rule == "continuous_banded_v1":
+            result["mastery"] = {
+                "mastered": self._mastered.tolist(),
+                "family": self._families.tolist(),
+                "depth": self._depths.tolist(),
+            }
+        return result
 
     def restore_state_dict(self, state: dict) -> None:
         """Restore a sampler checkpoint after validating its full contract."""
@@ -240,15 +314,22 @@ class PooledConditionSampler:
             "refresh",
             "numpy_rng",
         }
+        if self.settings.rule == "continuous_banded_v1":
+            top_keys.add("mastery")
         if not isinstance(state, dict) or set(state) != top_keys:
             observed = (
                 sorted(state) if isinstance(state, dict) else type(state).__name__
             )
             raise ValueError(
-                "pooled sampler state fields do not match the v2 schema: "
+                "pooled sampler state fields do not match the active schema: "
                 f"observed={observed}"
             )
-        if state["schema"] != STATE_SCHEMA:
+        expected_schema = (
+            CONTINUOUS_STATE_SCHEMA
+            if self.settings.rule == "continuous_banded_v1"
+            else STATE_SCHEMA
+        )
+        if state["schema"] != expected_schema:
             raise ValueError(
                 "unsupported pooled sampler state schema: " f"{state['schema']!r}"
             )
@@ -340,28 +421,41 @@ class PooledConditionSampler:
 
         window_keys = {
             "completed_episode_count",
-            "completion_sum",
             "sampled_assignment_count",
             "reset_exposure_count",
             "transition_exposure_count",
             "updates",
         }
+        sum_key = (
+            "task_done_count"
+            if self.settings.rule == "continuous_banded_v1"
+            else "completion_sum"
+        )
+        window_keys.add(sum_key)
 
         def restore_window(value, label: str):
             if not isinstance(value, dict) or set(value) != window_keys:
                 raise ValueError(
-                    f"pooled sampler {label} fields do not match the v2 schema"
+                    f"pooled sampler {label} fields do not match the active schema"
                 )
             episodes = count_vector(
                 value["completed_episode_count"],
                 f"{label}.completed_episode_count",
             )
-            completion_sum = float_vector(
-                value["completion_sum"], f"{label}.completion_sum"
+            completion_sum = (
+                count_vector(value[sum_key], f"{label}.{sum_key}").astype(np.float64)
+                if self.settings.rule == "continuous_banded_v1"
+                else float_vector(value[sum_key], f"{label}.{sum_key}")
             )
             if np.any(completion_sum < 0.0):
                 raise ValueError(
-                    f"pooled sampler {label}.completion_sum must be nonnegative"
+                    f"pooled sampler {label}.{sum_key} must be nonnegative"
+                )
+            if self.settings.rule == "continuous_banded_v1" and np.any(
+                completion_sum > episodes
+            ):
+                raise ValueError(
+                    f"pooled sampler {label}.task_done_count exceeds episodes"
                 )
             assignments = count_vector(
                 value["sampled_assignment_count"],
@@ -423,6 +517,38 @@ class PooledConditionSampler:
         except (TypeError, ValueError) as error:
             raise ValueError("pooled sampler NumPy RNG state is invalid") from error
 
+        mastered = self._mastered
+        if self.settings.rule == "continuous_banded_v1":
+            mastery = state["mastery"]
+            mastery_keys = {
+                "mastered",
+                "family",
+                "depth",
+            }
+            if not isinstance(mastery, dict) or set(mastery) != mastery_keys:
+                raise ValueError(
+                    "continuous_banded mastery fields do not match the v1 schema"
+                )
+            if (
+                not isinstance(mastery["mastered"], list)
+                or len(mastery["mastered"]) != self._count
+                or any(not isinstance(value, bool) for value in mastery["mastered"])
+            ):
+                raise ValueError("continuous_banded mastered must be boolean")
+            mastered = np.asarray(mastery["mastered"], dtype=bool)
+            if (
+                mastery["family"] != self._families.tolist()
+                or mastery["depth"] != self._depths.tolist()
+            ):
+                raise ValueError("continuous_banded graph changed across resume")
+            expected_probabilities = self._continuous_distribution(mastered)
+            if not np.allclose(
+                probabilities, expected_probabilities, rtol=0.0, atol=1e-12
+            ):
+                raise ValueError(
+                    "continuous_banded checkpoint probabilities disagree with mastery"
+                )
+
         self._probabilities = probabilities
         self._competence = competence
         (
@@ -445,6 +571,7 @@ class PooledConditionSampler:
         self._last_refresh_update = last_refresh_update
         self._refreshes = refreshes
         self._rng = restored_rng
+        self._mastered = mastered
 
     @property
     def probabilities(self) -> np.ndarray:
@@ -475,7 +602,9 @@ class PooledConditionSampler:
         """Count actual policy transitions under each map condition."""
         values = np.asarray(counts)
         if values.shape != (self._count,):
-            raise ValueError("transition exposure counts must match the condition count")
+            raise ValueError(
+                "transition exposure counts must match the condition count"
+            )
         if values.dtype.kind not in "iub" or np.any(values < 0):
             raise ValueError("transition exposure counts must be nonnegative integers")
         self._transition_exposures += values.astype(np.int64)
@@ -493,16 +622,45 @@ class PooledConditionSampler:
 
     def observe_episode_payload(self, payload: dict) -> None:
         """Add one flushed aggregate receipt to the current sampler window."""
+        if self.settings.rule == "continuous_banded_v1" and payload.get("schema") != (
+            "terra_training_episode_aggregate_v2"
+        ):
+            raise ValueError(
+                "continuous_banded accepts only training episode aggregates; "
+                "held-out evaluation must never feed the sampler"
+            )
         for row in payload.get("groups", ()):
             index = self._index.get(row.get("primary_cell"))
             if index is None:
                 continue
             episodes = int(row["episode_count"])
             self._episodes[index] += episodes
-            self._completion_sum[index] += float(row["combined_completion_sum"])
+            self._completion_sum[index] += float(
+                row[
+                    (
+                        "task_done_count"
+                        if self.settings.rule == "continuous_banded_v1"
+                        else "combined_completion_sum"
+                    )
+                ]
+            )
         self._window_updates += 1
 
     def refresh(self, update_index: int) -> None:
+        if self.settings.rule == "continuous_banded_v1":
+            if self._last_refresh_update is None or not self.due(update_index):
+                raise ValueError(
+                    "continuous_banded refresh must occur at its fixed update boundary"
+                )
+            if (
+                update_index - self._last_refresh_update
+                != self.settings.update_interval
+            ):
+                raise ValueError(
+                    "continuous_banded cannot skip a fixed refresh boundary"
+                )
+            self._refresh_continuous_mastery()
+            self._probabilities = self._continuous_distribution()
         if self.settings.rule == "adaptive":
             alpha = self.settings.competence_ema
             for index, episodes in enumerate(self._episodes):
@@ -532,6 +690,81 @@ class PooledConditionSampler:
         self._has_closed_window = True
         self._last_refresh_update = int(update_index)
         self._refreshes += 1
+
+    def _active_depth(
+        self, family: str, mastered: np.ndarray | None = None
+    ) -> int | None:
+        state = self._mastered if mastered is None else mastered
+        unmastered = (self._families == family) & ~state
+        if not unmastered.any():
+            return None
+        return int(self._depths[unmastered].min())
+
+    def _refresh_continuous_mastery(self) -> None:
+        active_depths = {family: self._active_depth(family) for family in FAMILIES}
+        eligible = self._episodes >= self.settings.min_episodes
+        for index in range(self._count):
+            if not eligible[index]:
+                continue
+            episodes = int(self._episodes[index])
+            observed = float(self._completion_sum[index]) / episodes
+            if not 0.0 <= observed <= 1.0:
+                raise ValueError(
+                    "continuous_banded exact success rate is outside [0, 1]"
+                )
+            previous = self._competence[index]
+            alpha = self.settings.competence_ema
+            self._competence[index] = (
+                observed
+                if math.isnan(previous)
+                else (1.0 - alpha) * previous + alpha * observed
+            )
+            if self._mastered[index]:
+                if self._competence[index] < DEMOTION_THRESHOLD:
+                    self._mastered[index] = False
+                continue
+
+            family = str(self._families[index])
+            if self._depths[index] != active_depths[family]:
+                # Preview is observable but remains locked until its family
+                # reaches this depth.
+                continue
+            if self._competence[index] >= self.settings.mastery_threshold:
+                self._mastered[index] = True
+
+    def _continuous_distribution(
+        self, mastered: np.ndarray | None = None
+    ) -> np.ndarray:
+        state = self._mastered if mastered is None else mastered
+        probabilities = np.zeros(self._count, dtype=np.float64)
+        for family in FAMILIES:
+            family_mask = self._families == family
+            active_depth = self._active_depth(family, state)
+            if active_depth is None:
+                probabilities[family_mask] = 0.5 / int(family_mask.sum())
+                continue
+            active = family_mask & (self._depths == active_depth)
+            next_depth = active_depth + 1
+            next_band = family_mask & (self._depths == next_depth)
+            probabilities[family_mask] += (
+                0.5 * ALL_FAMILY_FLOOR_MASS / int(family_mask.sum())
+            )
+            if next_band.any():
+                active_mass = ACTIVE_DEPTH_MASS
+                next_mass = NEXT_DEPTH_MASS
+            else:
+                active_mass = ACTIVE_DEPTH_MASS + NEXT_DEPTH_MASS
+                next_mass = 0.0
+            probabilities[active] += 0.5 * active_mass / int(active.sum())
+            if next_mass:
+                probabilities[next_band] += 0.5 * next_mass / int(next_band.sum())
+        if np.any(probabilities <= 0.0) or not np.isclose(
+            probabilities.sum(), 1.0, rtol=0.0, atol=1e-12
+        ):
+            raise ValueError(
+                "continuous_banded must retain positive support and unit mass"
+            )
+        return probabilities
 
     def _adaptive_distribution(self) -> np.ndarray:
         competence = np.where(np.isnan(self._competence), 0.0, self._competence)
@@ -585,8 +818,12 @@ class PooledConditionSampler:
                 "transition_exposure_mass": mass(transition_exposures),
             }
 
-        return {
-            "schema": "terra_pooled_condition_sampler_v2",
+        result = {
+            "schema": (
+                CONTINUOUS_RECEIPT_SCHEMA
+                if self.settings.rule == "continuous_banded_v1"
+                else "terra_pooled_condition_sampler_v2"
+            ),
             "rule": self.settings.rule,
             "settings": {
                 field: getattr(self.settings, field)
@@ -622,3 +859,25 @@ class PooledConditionSampler:
                 for value in self._competence
             ],
         }
+        if self.settings.rule == "continuous_banded_v1":
+            role_by_condition = []
+            family_active = {family: self._active_depth(family) for family in FAMILIES}
+            for index in range(self._count):
+                family = str(self._families[index])
+                active_depth = family_active[family]
+                if active_depth is None:
+                    role = "all_mastered"
+                elif self._depths[index] == active_depth:
+                    role = "active"
+                elif self._depths[index] == active_depth + 1:
+                    role = "next"
+                else:
+                    role = "floor_only"
+                role_by_condition.append(role)
+            result["mastery"] = {
+                "mastered": self._mastered.tolist(),
+                "family_active_depth": family_active,
+                "role": role_by_condition,
+                "exact_success_ema": result["competence"],
+            }
+        return result

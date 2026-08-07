@@ -36,6 +36,12 @@ V8_SAMPLER_PROFILES = (
     "bank_v4",
     "bounded_replay25_v1",
     "banded_preview15_v1",
+    "continuous_banded_v1",
+)
+V8_CONTINUOUS_GRAPH_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "configs"
+    / "v8_continuous_banded_graph_v1.json"
 )
 REVIEW_RELEASE = "map-curriculum-diverse64-visual-review-20260730"
 REVIEW_MANIFEST_SHA256 = (
@@ -164,6 +170,8 @@ class AcceptedBank:
     sampling_probabilities: tuple[float, ...] = ()
     v6_constraint_condition_ids: tuple[str, ...] = ()
     v7_core_condition_ids: tuple[str, ...] = ()
+    curriculum_depths: tuple[int, ...] = ()
+    curriculum_graph_sha256: str | None = None
 
     def __getattr__(self, name: str):
         # Checkpoints written before sampler profiles were named unpickle into
@@ -702,6 +710,11 @@ def _v8_stage_selection(
             f"got {sampler_profile!r}"
         )
     by_id = {level.condition_id: level for level in levels}
+    if sampler_profile == "continuous_banded_v1" and stage != "full":
+        raise ValueError(
+            "continuous_banded_v1 requires full support; use "
+            "curriculum_stage='full' only as a bank-selection compatibility flag"
+        )
     if stage == "capability":
         selected_ids = set(capability_ids)
         slice_mass = {"capability": 1.0, "core": 0.0, "constraint": 0.0}
@@ -713,9 +726,7 @@ def _v8_stage_selection(
             selected_ids = set(capability_ids) | set(core_ids)
             slice_mass = {"capability": 0.25, "core": 0.75, "constraint": 0.0}
         else:
-            selected_ids = (
-                set(capability_ids) | set(core_ids) | set(constraint_ids)
-            )
+            selected_ids = set(capability_ids) | set(core_ids) | set(constraint_ids)
             slice_mass = {"capability": 0.10, "core": 0.75, "constraint": 0.15}
     else:
         if sampler_profile == "banded_preview15_v1":
@@ -724,11 +735,14 @@ def _v8_stage_selection(
                 "bounded_replay25_v1 for the full stage"
             )
         selected_ids = set(capability_ids) | set(core_ids) | set(constraint_ids)
-        slice_mass = (
-            {"capability": 0.25, "core": 0.25, "constraint": 0.5}
-            if sampler_profile == "bank_v4"
-            else {"capability": 0.0625, "core": 0.1875, "constraint": 0.75}
-        )
+        if sampler_profile == "bank_v4":
+            slice_mass = {"capability": 0.25, "core": 0.25, "constraint": 0.5}
+        elif sampler_profile == "continuous_banded_v1":
+            # Selection is full-support; the live sampler owns the dynamic
+            # probability vector and therefore consumes no frozen weights.
+            slice_mass = {"capability": 1.0, "core": 1.0, "constraint": 1.0}
+        else:
+            slice_mass = {"capability": 0.0625, "core": 0.1875, "constraint": 0.75}
     selected = tuple(
         sorted((by_id[name] for name in selected_ids), key=lambda x: x.condition_id)
     )
@@ -776,6 +790,8 @@ def _v8_stage_selection(
             )
         raise ValueError(f"V8 stage selected unknown condition {level.condition_id!r}")
 
+    if sampler_profile == "continuous_banded_v1":
+        return selected, ()
     probabilities = tuple(probability(level) for level in selected)
     if abs(sum(probabilities) - 1.0) > 1e-12 or any(
         value <= 0.0 for value in probabilities
@@ -784,6 +800,62 @@ def _v8_stage_selection(
             f"V8 {stage} sampling probabilities must be positive and sum to one"
         )
     return selected, probabilities
+
+
+def _v8_continuous_graph(
+    levels: tuple[AcceptedLevel, ...],
+    capability_ids: tuple[str, ...],
+    core_ids: tuple[str, ...],
+    constraint_ids: tuple[str, ...],
+) -> tuple[tuple[int, ...], str]:
+    """Validate the executable coarse-depth graph against the frozen V8 bank."""
+    graph_path = V8_CONTINUOUS_GRAPH_PATH
+    graph = json.loads(graph_path.read_text())
+    if set(graph) != {"schema", "release_id", "siblings_ordered", "depths"}:
+        raise ValueError(f"{graph_path}: unexpected graph fields")
+    if graph["schema"] != "terra_v8_continuous_banded_graph_v1":
+        raise ValueError(f"{graph_path}: unsupported graph schema")
+    if graph["release_id"] != V8_RELEASE_ID or graph["siblings_ordered"] is not False:
+        raise ValueError(f"{graph_path}: release or sibling-order contract changed")
+    depths = graph["depths"]
+    if not isinstance(depths, dict) or set(depths) != {"0", "1", "2"}:
+        raise ValueError(f"{graph_path}: depths must be exactly 0, 1, and 2")
+    expected = {
+        0: set(capability_ids),
+        1: set(core_ids),
+        2: set(constraint_ids),
+    }
+    by_id = {level.condition_id: level for level in levels}
+    depth_by_id: dict[str, int] = {}
+    for depth in range(3):
+        family_rows = depths[str(depth)]
+        if not isinstance(family_rows, dict) or set(family_rows) != set(FAMILIES):
+            raise ValueError(f"{graph_path}: depth {depth} must name both families")
+        observed: set[str] = set()
+        for family in FAMILIES:
+            condition_ids = family_rows[family]
+            if not isinstance(condition_ids, list) or not condition_ids:
+                raise ValueError(
+                    f"{graph_path}: depth {depth} {family} must be nonempty"
+                )
+            for condition_id in condition_ids:
+                if condition_id in depth_by_id:
+                    raise ValueError(
+                        f"{graph_path}: repeated condition {condition_id!r}"
+                    )
+                if condition_id not in by_id or by_id[condition_id].family != family:
+                    raise ValueError(
+                        f"{graph_path}: {condition_id!r} is not a V8 {family} condition"
+                    )
+                depth_by_id[condition_id] = depth
+                observed.add(condition_id)
+        if observed != expected[depth]:
+            raise ValueError(f"{graph_path}: depth {depth} does not match the V8 bank")
+    if set(depth_by_id) != set(by_id):
+        raise ValueError(f"{graph_path}: graph does not cover all selected conditions")
+    return tuple(depth_by_id[level.condition_id] for level in levels), _sha256_file(
+        graph_path
+    )
 
 
 def _train_maps_per_condition(index: dict, source: Path) -> int:
@@ -1249,6 +1321,15 @@ def load_accepted_bank(
                 f"{index_path}: arm {arm} has no accepted non-anchor conditions; "
                 "running it would duplicate the family anchor control"
             )
+    curriculum_depths: tuple[int, ...] = ()
+    curriculum_graph_sha256 = None
+    if sampler_profile == "continuous_banded_v1":
+        curriculum_depths, curriculum_graph_sha256 = _v8_continuous_graph(
+            selected,
+            capability_floor_condition_ids,
+            v7_core_condition_ids,
+            v6_constraint_condition_ids,
+        )
     map_counts = {level.map_count for level in selected}
     if len(map_counts) != 1:
         raise ValueError(
@@ -1285,4 +1366,6 @@ def load_accepted_bank(
         sampling_probabilities=sampling_probabilities,
         v6_constraint_condition_ids=v6_constraint_condition_ids,
         v7_core_condition_ids=v7_core_condition_ids,
+        curriculum_depths=curriculum_depths,
+        curriculum_graph_sha256=curriculum_graph_sha256,
     )

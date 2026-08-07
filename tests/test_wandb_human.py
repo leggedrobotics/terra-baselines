@@ -116,6 +116,43 @@ def test_curriculum_population_and_condition_table_use_actual_exposure():
     assert table["t0"]["mean_absolute_completion"] == 0.2
 
 
+def test_condition_rows_prefer_continuous_depth_and_keep_legacy_fallback():
+    payload = {
+        "groups": [
+            {
+                "primary_cell": "new",
+                "episode_count": 1,
+                "task_done_count": 1,
+                "combined_completion_sum": 1.0,
+            },
+            {
+                "primary_cell": "old",
+                "episode_count": 1,
+                "task_done_count": 0,
+                "combined_completion_sum": 0.0,
+            },
+        ]
+    }
+    rows = condition_rows(
+        np.array([0, 1]),
+        np.array([1, 1]),
+        np.array([1, 1]),
+        payload,
+        names=("new", "old"),
+        labels={
+            "new": {
+                "family": "foundation",
+                "branch_depth": "Anchor",
+                "curriculum_depth": 0,
+            },
+            "old": {"family": "trench", "branch_depth": "One-axis"},
+        },
+        probabilities=np.array([0.5, 0.5]),
+    )
+    assert rows[0][2] == 0
+    assert rows[1][2] == "One-axis"
+
+
 def test_bounded_logging_schema_and_manual_workspace():
     metrics = loss_metrics(
         {

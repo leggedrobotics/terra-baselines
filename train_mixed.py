@@ -802,6 +802,29 @@ def pooled_sampler_settings(config) -> SamplerSettings | None:
     return SamplerSettings(**values)
 
 
+def accepted_bank_sampler_labels(bank, settings: SamplerSettings) -> dict[str, dict]:
+    """Build the one runtime label contract consumed by the host sampler."""
+    if bank.curriculum_depths and len(bank.curriculum_depths) != len(bank.levels):
+        raise ValueError("accepted-bank curriculum depths do not match its levels")
+    return {
+        level.condition_id: {
+            "family": level.family,
+            "branch_depth": level.branch_depth,
+            **(
+                {"curriculum_depth": bank.curriculum_depths[index]}
+                if bank.curriculum_depths
+                else {}
+            ),
+            **(
+                {"sampling_weight": bank.sampling_probabilities[index]}
+                if settings.rule == "fixed" and bank.sampling_probabilities
+                else {}
+            ),
+        }
+        for index, level in enumerate(bank.levels)
+    }
+
+
 def _restore_pooled_sampler_checkpoint(
     sampler: PooledConditionSampler | None,
     checkpoint: dict | None,
@@ -1745,10 +1768,12 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
                 f"init:{initialization}",
             )
         )
-        curriculum_stage = getattr(config.accepted_bank, "curriculum_stage", None)
-        if curriculum_stage is not None:
-            tags.append("curriculum-stage:" f"{_tag_value(curriculum_stage)}")
         sampler_profile = getattr(config.accepted_bank, "sampler_profile", None)
+        curriculum_stage = getattr(config.accepted_bank, "curriculum_stage", None)
+        if sampler_profile == "continuous_banded_v1":
+            tags.append("support:all47-continuous")
+        elif curriculum_stage is not None:
+            tags.append("curriculum-stage:" f"{_tag_value(curriculum_stage)}")
         if sampler_profile is not None:
             tags.append(f"sampler-profile:{_tag_value(sampler_profile)}")
 
@@ -2099,18 +2124,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     "accepted-bank level order changed between validation and "
                     "environment construction"
                 )
-            labels = {
-                level.condition_id: {
-                    "family": level.family,
-                    "branch_depth": level.branch_depth,
-                    **(
-                        {"sampling_weight": bank.sampling_probabilities[index]}
-                        if bank.sampling_probabilities
-                        else {}
-                    ),
-                }
-                for index, level in enumerate(bank.levels)
-            }
+            labels = accepted_bank_sampler_labels(bank, sampler_settings)
             pooled_sampler = PooledConditionSampler(
                 [level.condition_id for level in bank.levels],
                 sampler_settings,
@@ -2874,24 +2888,33 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     )
                     if pooled_sampler is not None:
                         receipt = pooled_sampler.receipt()
-                        receipt.update(
-                            {
-                                "update": i + 1,
-                                "run_name": config.name,
-                                "accepted_bank_arm": config.accepted_bank.arm,
-                                "terra_revision": (config.accepted_bank.terra_revision),
-                                "accepted_bank_root": str(config.accepted_bank.root),
-                                "environment_protocol_sha256": (
-                                    config.accepted_bank.environment_protocol_sha256
-                                ),
-                                "curriculum_stage": (
-                                    config.accepted_bank.curriculum_stage
-                                ),
-                                "sampler_profile": (
-                                    config.accepted_bank.sampler_profile
-                                ),
-                            }
-                        )
+                        receipt_contract = {
+                            "update": i + 1,
+                            "run_name": config.name,
+                            "accepted_bank_arm": config.accepted_bank.arm,
+                            "terra_revision": (config.accepted_bank.terra_revision),
+                            "accepted_bank_root": str(config.accepted_bank.root),
+                            "environment_protocol_sha256": (
+                                config.accepted_bank.environment_protocol_sha256
+                            ),
+                            "sampler_profile": (config.accepted_bank.sampler_profile),
+                        }
+                        if config.accepted_bank.sampler_profile == (
+                            "continuous_banded_v1"
+                        ):
+                            receipt_contract.update(
+                                {
+                                    "support_scope": "all47_continuous",
+                                    "curriculum_graph_sha256": (
+                                        config.accepted_bank.curriculum_graph_sha256
+                                    ),
+                                }
+                            )
+                        else:
+                            receipt_contract["curriculum_stage"] = (
+                                config.accepted_bank.curriculum_stage
+                            )
+                        receipt.update(receipt_contract)
                         receipt_dir = Path(config.checkpoint_dir) / "pooled_sampler"
                         receipt_dir.mkdir(parents=True, exist_ok=True)
                         receipt_path = receipt_dir / (
@@ -3490,23 +3513,35 @@ if __name__ == "__main__":
             "contain .git metadata."
         ),
     )
-    parser.add_argument(
+    accepted_scope = parser.add_mutually_exclusive_group()
+    accepted_scope.add_argument(
         "--accepted-bank-stage",
         choices=("capability", "nearby", "full"),
         default=None,
         help=(
-            "Explicit checkpoint-bounded V8 map stage. Required by the V8 "
-            "release and rejected by older accepted banks."
+            "Legacy hard-stage bank selector. New continuous runs use "
+            "--accepted-bank-scope full."
         ),
+    )
+    accepted_scope.add_argument(
+        "--accepted-bank-scope",
+        dest="accepted_bank_stage",
+        choices=("full",),
+        help="Select all 47 V8 conditions for one continuous full-support run.",
     )
     parser.add_argument(
         "--accepted-bank-sampler-profile",
-        choices=("bank_v4", "bounded_replay25_v1"),
+        choices=(
+            "bank_v4",
+            "bounded_replay25_v1",
+            "banded_preview15_v1",
+            "continuous_banded_v1",
+        ),
         default=None,
         help=(
-            "Named V8 stage-population contract. bounded_replay25_v1 gives "
-            "25% of exposure to the previous mastered mixture and 75% to "
-            "the active stage; rejected by older accepted banks."
+            "Named V8 population contract. continuous_banded_v1 retains "
+            "positive support on all 47 conditions while shifting mass by "
+            "family depth."
         ),
     )
     parser.add_argument(
@@ -3833,11 +3868,14 @@ if __name__ == "__main__":
             raise ValueError(
                 f"accepted-bank config {args.config} must enable the pooled sampler"
             )
-        expected_rule = (
-            "fixed"
-            if accepted_bank.sampling_probabilities
-            else ("adaptive" if accepted_bank_arm == "G-ADAPTIVE" else "uniform")
-        )
+        if accepted_bank.sampler_profile == "continuous_banded_v1":
+            expected_rule = "continuous_banded_v1"
+        elif accepted_bank.sampling_probabilities:
+            expected_rule = "fixed"
+        else:
+            expected_rule = (
+                "adaptive" if accepted_bank_arm == "G-ADAPTIVE" else "uniform"
+            )
         if pooled_sampler_override.get("rule") != expected_rule:
             raise ValueError(
                 f"{accepted_bank_arm} requires sampler rule {expected_rule!r}"

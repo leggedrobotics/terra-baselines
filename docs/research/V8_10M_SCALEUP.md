@@ -1,11 +1,19 @@
 # V8 10M scale-up experiment
 
-- Status: **COMPACT STAGE-B MAIN FINAL PAIR FAILS; FORMAL RECEIPT PENDING; 10M RUNNING**
+- Status: **STAGE-B EVIDENCE FROZEN; CONTINUOUS ALL-47 SUCCESSOR PREPARED; NO NEW RUN LAUNCHED**
 - Updated: 2026-08-07
 - Parent campaign:
   [`V8_DEEP_XATTN_CURRICULUM.md`](V8_DEEP_XATTN_CURRICULUM.md)
 - Implementation policy:
   [`simple-research-code`](/home/lorenzo/git/codex_skills/skills/simple-research-code/SKILL.md)
+
+## Reading status
+
+The Stage-A/Stage-B narrative below is retained as historical experiment
+provenance. Imperative or future-tense wording in that record describes the
+decision at the time; it is not a current launch instruction. Hard A/B/C map
+launches are rejected for the successor. The authoritative 2026-08-07
+continuous all-47 decision is recorded at the end of this document.
 
 ## Question
 
@@ -643,11 +651,10 @@ These results support two narrow conclusions:
    The entering policy can already know conditions labelled as future, and a
    fixed whole-bank audit must continue to expose loss of that competence.
 
-### Proposed fixed `10/75/15` treatment
+### Rejected fixed `10/75/15` hard-stage proposal
 
-The first successor treatment should remain deliberately simpler than an
-online difficulty controller. For Stage B, freeze one ordered probability
-vector for the whole screen:
+The first reviewed successor proposal kept a hard Stage-B boundary and froze
+one ordered probability vector for the whole screen:
 
 ```text
 10%  replay:   the two previously admitted all-free capability conditions
@@ -674,34 +681,18 @@ development, capability, horizon, reward, reset, architecture, PPO, and bank
 contracts remain unchanged. A later adaptive treatment is admissible only
 after this fixed vector establishes whether nonzero preview prevents forgetting.
 
-The minimum causal screen reuses the completed 25/75/0 trajectory as the
-historical control and runs one compact 10/75/15 arm from the identical parent,
-teacher, seed, bank, KL/value schedules, and optimizer protocol. Evaluate
-updates 1,000, 3,000, 4,000, and 6,000 on the same four fixed panels; update
-6,000 is the first severe broad collapse in the control after teacher KL has
-ended. Continue the treatment only if nearby-core exact stays within five maps
-of control on each main split, absent-constraint exact loses no more than five
-percentage points from its own update-1,000 value, and every capability and
-integrity gate passes. This is an experiment specification, not launch
-authorization.
+That matched warm-restart screen remains a useful rejected alternative, not an
+active experiment specification. Its completed `25/75/0` trajectory is
+historical evidence for why zero-support conditions are unsafe; it does not
+authorize a new Stage-B job or define the random-start successor.
 
-### Accepted fresh-training path
+### Rejected fresh hard-stage path
 
-On 2026-08-07 the fresh policy was selected as the first implementation path,
-rather than another warm restart from the existing Stage-B parent. This does
-not flatten the curriculum. The compact deep+xattn policy starts from random
-parameters on the two all-free capability conditions with dense reward and no
-teacher. Only a checkpoint passing both capability panels at `12/16` per cell
-for two consecutive evaluations may initialize Stage B. Stage B then uses the
-fixed `10/75/15` vector above. This fresh path tests the complete staged recipe;
-the completed `25/75/0` trajectory remains descriptive historical evidence,
-not a paired initialization control for the random-start result.
-
-The reward-only experiment remains separate: matched dense and
-`terminal_objective` fine-tunes begin from the same compact update-20,000
-checkpoint, retain the same Stage-B map sampler, and are interpreted only as
-an exploratory efficiency test on already learned nearby maps. They cannot
-qualify the fresh curriculum or Stage C.
+The briefly accepted plan to train capability-only from scratch and then launch
+a separate fixed `10/75/15` Stage B is superseded. No capability-only Stage A,
+separate Stage B, or separate Stage C is an accepted launch path. The successor
+starts from random parameters with nonzero support for all 47 conditions at
+update 0 and changes sampler bands inside one continuous run.
 
 ### Relation to curriculum literature
 
@@ -738,3 +729,74 @@ None of these papers establishes that 10/75/15 is optimal for excavation,
 that exact success is the right online priority, or that Terra should generate
 adversarial maps. The deciding evidence remains the matched Terra fixed-bank
 screen above.
+
+## Accepted decision: continuous all-47 bands (2026-08-07)
+
+This decision supersedes the rejected hard-stage launch proposals above. It
+does not change or erase their measured evidence, and it does not authorize a
+job by itself. Stage B now means only the historical `bounded_replay25_v1`
+provenance used to diagnose catastrophic loss under zero future support.
+
+The successor uses one `continuous_banded_v1` compact deep+xattn run from
+random parameters. All 47 accepted V8 conditions have positive probability
+from update 0 onward. `depth` is immutable map-difficulty metadata in the
+hash-pinned graph; `band` is a condition's current sampler role. Bands move
+within one run and are not separate Stage A/B/C launches.
+
+Foundation and trench are independent samplers with 50% target assignment
+probability each. Actual active, reset, transition, and completed-episode
+exposures can differ because episode lengths differ; those four axes are logged
+separately and audited. For each family, the live distribution is
+
+```text
+q = 0.10 * Uniform(all family conditions)
+  + 0.75 * Uniform(the entire active depth band)
+  + 0.15 * Uniform(the next depth band)
+```
+
+Both families initially have active depth 0. The active band is the shallowest
+depth not fully mastered and includes mastered siblings at that depth. With no
+next depth, its mass becomes `0.90`; after every depth is mastered, the family
+is uniform over all conditions. The 10% all-condition floor is permanent, so
+advancing a band never removes support from earlier or later conditions.
+There is no per-condition mass cap: uniform weighting within the entire active
+depth prevents a single weak condition from monopolizing its 75% band.
+
+Only exact `task_done` outcomes update mastery. The sampler refreshes every 150
+updates, uses EMA alpha `0.30`, requires 32 completed episodes, promotes only
+the active depth at `>=0.80`, and demotes any depth below `0.65`. There is no
+consecutive-window streak rule. Source-disjoint promotion and development
+panels audit and select model checkpoints only; their results never enter the
+online sampler or change a band. Online training success is sampler-weighted
+under the current dynamic `q`, not a whole-V8 benchmark score. The fixed
+held-out all-47 panels are the whole-distribution audit and model-selection
+evidence.
+
+The causal treatment holds the rest fixed: dense reward, full 450-step resets,
+no teacher or parameter warm start, and the existing compact deep+xattn model
+and PPO settings. A new update-1 smoke must come from the exact committed
+continuous-launcher revision; legacy smoke job `10004034` is invalid. The
+behavioral target is an absolute 20,000 updates, with checkpoints every 500 and
+separate fixed-panel evaluation of retained checkpoints at 1,000-update
+spacing. Those evaluations are submitted during or after allocations; they do
+not run synchronously at each 1,000-update boundary. A job that reaches update
+20,000 also attempts the complete post-target sweep. The first allocation uses
+the 24-hour queue. If it ends early and held-out performance is still improving,
+a later 120-hour allocation resumes an explicit retained checkpoint, including
+optimizer, schedule, and full continuous-sampler state, to the same absolute
+target. Environment RNG and action history restart, so this is a statistical
+continuation rather than a bit-exact one.
+
+The separate reward probe remains a matched dense-versus-`terminal_objective`
+fine-tune from the historical nearby update-20,000 checkpoint solely to isolate
+reward causality. It neither qualifies the continuous curriculum nor
+resurrects Stage B or Stage C as launch boundaries.
+
+The design uses [Prioritized Level Replay](https://proceedings.mlr.press/v139/jiang21b.html)
+for the principle of persistent replay, [Self-Paced Deep Reinforcement
+Learning](https://proceedings.neurips.cc/paper/2020/hash/68a9750337a418a86fe06c1991a1d64c-Abstract.html)
+for competence-linked progression, and
+[C-Procgen](https://proceedings.neurips.cc/paper_files/paper/2024/hash/24662461d2194d1bc70a47b6b6771026-Abstract-Conference.html)
+for the warning that masking contexts changes learning. Those primary results
+motivate the mechanism, not Terra's exact `0.10/0.75/0.15` masses or mastery
+thresholds; the fixed Terra panels remain the deciding evidence.

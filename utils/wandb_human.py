@@ -186,7 +186,7 @@ def curriculum_metrics(
     levels: np.ndarray,
     *,
     names: tuple[str, ...],
-    labels: dict[str, dict[str, str]],
+    labels: dict[str, dict[str, object]],
     probabilities: np.ndarray,
     refreshes: int,
 ) -> dict[str, float]:
@@ -286,7 +286,10 @@ def condition_rows(
             [
                 name,
                 labels.get(name, {}).get("family", "unknown"),
-                labels.get(name, {}).get("branch_depth", "unknown"),
+                labels.get(name, {}).get(
+                    "curriculum_depth",
+                    labels.get(name, {}).get("branch_depth", "unknown"),
+                ),
                 float(probabilities[index]),
                 float(active[index]),
                 _safe_rate(resets[index], reset_total),
