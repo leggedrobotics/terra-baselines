@@ -853,3 +853,60 @@ older dense-only binary and is not the matched control for this experiment. It
 is superseded only after both new same-binary update-1 smokes pass, at which
 point it should be explicitly cancelled before the pair is submitted. The
 launcher itself performs no job cancellation.
+
+## Accepted amendment: compact trunk, small Atari control, reward fork (2026-08-09)
+
+This amendment supersedes the random-start two-arm reward pair immediately
+above. It retains the same all-47 continuous map curriculum and reward
+implementation, but separates the capacity and reward questions more cleanly.
+The completed historical 10M run is retained as evidence and receives no new
+compute for now: it did not establish a strong capacity advantage over the
+compact policy.
+
+First train two constant-dense policies from scratch:
+
+| Arm | Architecture | Parameters | Scientific role |
+|---|---|---:|---|
+| `compact_xattn` | compact deep SE encoder plus cross-attention | 2,856,685 | primary dense all-47 trunk and reward-fork parent |
+| `atari_base` | original Atari CNN with base policy/value/local-map heads | 480,137 | small-system replication control |
+
+Both arms use seed `20260807`, 47 conditions x 96 training layouts,
+`continuous_banded_v1`, full 450-step resets, dense reward, 4 devices x 512
+environments x 32 rollout steps, 32 minibatches, 2 PPO epochs, learning rate
+`3e-4`, entropy `0.15 -> 0.02 / 20,000`, 20,000 absolute updates, checkpoint
+spacing 500, and source-disjoint promotion/development plus capability panels
+at retained 1,000-update spacing. The Atari arm is not an encoder-only
+ablation: its smaller heads are part of the original small architecture. The
+comparison asks whether the curriculum result replicates in a much smaller
+policy, not which single layer causes a difference.
+
+The compact constant-dense run is the baseline for the reward experiment.
+Do not launch a second independent random-start annealed trajectory. Instead,
+select the first retained compact checkpoint for which both restored sampler
+families have active depth at least 2 (or are fully mastered) and fixed
+promotion and development results have been archived. Fork that exact
+checkpoint into two true-resume children:
+
+| Child | Reward over the next 5,000 updates |
+|---|---|
+| dense control | remain at `dense_skill` |
+| annealed treatment | start at terminal mix 0 and linearly reach the terminal objective over 5,000 updates |
+
+Both children restore the same model, optimizer and optimizer step, absolute
+PPO update, continuous-sampler mastery/probabilities/windows/RNG, and original
+20,000-update entropy schedule. Environment trajectory and action history are
+not bit-exact across resumed jobs, so this is a matched statistical fork rather
+than a trajectory-identical counterfactual. The source checkpoint hash and its
+fixed-panel receipt are part of both child contracts. Compare exact success,
+macro completion, family/depth/cell tails, and anchor retention on the same
+fixed identities; compare workspace cycles and steps only for identities both
+children solve. A one-seed effect is a screen and must be replicated before a
+reward claim.
+
+The previous update-1 jobs `10022782` and `10022786` remain engineering smokes
+only. Their reward mix never left zero, no 20,000-update pair was submitted,
+and independent GPU execution diverged numerically after one update despite
+matching sampler and transition receipts. They are neither positive nor
+negative reward evidence. Pending legacy dense job `10015084` may be cancelled
+only after the new compact and Atari update-1 smokes pass; it has consumed zero
+runtime.

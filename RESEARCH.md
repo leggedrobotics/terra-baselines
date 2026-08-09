@@ -28,13 +28,22 @@ role. Online success is weighted by the live sampler distribution; it is not a
 whole-V8 benchmark result. Map allocation and reward design remain separate
 causal variables.
 
-The current reward screen therefore holds that map treatment fixed and pairs
-two random-start compact deep+xattn policies: one remains dense, while the
-other starts an irreversible 5,000-update dense-to-terminal fade after both
-families reach active depth 2. Both arms use one common Terra/baselines binary;
-fixed source-disjoint panels, not reward return or online success, decide the
-comparison. The exact launch and evaluation contract is recorded in the
-authoritative design document linked above.
+The current primary experiment holds reward dense and trains two random-start
+all-47 controls: the 2.856M compact deep+xattn policy and the original 480k
+Atari-base policy. They share the map sampler, transition budget, PPO shape,
+seed, horizon, and fixed evaluations. The Atari policy is a deliberately small
+system control, not a pure encoder ablation, because its actor, critic, and
+local-map heads are also smaller.
+
+Reward fading is a later fork of the compact dense trunk, not a second
+random-start map-curriculum run. Once both sampler families reach depth 2 (or
+are fully mastered) and the nearest retained checkpoint has fixed promotion
+and development evidence, two children resume the same model, optimizer,
+update count, and sampler state. One remains dense; the other irreversibly
+fades to the terminal objective over 5,000 updates. Fixed source-disjoint
+panels, not reward return or online success, decide both comparisons. The exact
+launch and evaluation contract is recorded in the authoritative design
+document linked above.
 
 The mechanism is informed by, but does not copy constants from:
 

@@ -869,9 +869,49 @@ def _restore_reward_anneal_checkpoint(
     checkpoint: dict | None,
     checkpoint_mode: str | None,
     resume_update: int = 0,
+    sampler_receipt: dict | None = None,
 ) -> dict | None:
     """Restore the one-way fade only for a true annealed-objective resume."""
     saved = checkpoint.get("reward_anneal_state") if checkpoint is not None else None
+    saved_stage = (
+        _checkpoint_config_value(checkpoint, "reward_stage", None)
+        if checkpoint is not None
+        else None
+    )
+    if (
+        checkpoint_mode == "resume"
+        and saved_stage is not None
+        and saved_stage != reward_stage
+    ):
+        if not (
+            saved_stage == "dense_skill" and reward_stage == "annealed_objective"
+        ):
+            raise ValueError(
+                "unsupported reward_stage conversion across resume: "
+                f"checkpoint={saved_stage!r}, current={reward_stage!r}"
+            )
+        if saved is not None:
+            raise ValueError(
+                "dense checkpoint unexpectedly contains reward_anneal_state"
+            )
+        if checkpoint.get("next_update") != int(resume_update):
+            raise ValueError(
+                "dense-to-annealed fork must use the checkpoint's exact next_update"
+            )
+        if sampler_receipt is None:
+            raise ValueError(
+                "dense-to-annealed fork requires the restored continuous sampler"
+            )
+        active = sampler_receipt["mastery"]["family_active_depth"]
+        if not all(
+            active[family] is None or active[family] >= 2
+            for family in ("foundation", "trench")
+        ):
+            raise ValueError(
+                "dense-to-annealed fork requires both sampler families at "
+                "active depth two or fully mastered"
+            )
+        return _new_reward_anneal_state()
     if reward_stage != "annealed_objective":
         if checkpoint_mode == "resume" and saved is not None:
             raise ValueError(
@@ -2314,6 +2354,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             checkpoint,
             checkpoint_mode,
             resume_update,
+            sampler_receipt=(
+                pooled_sampler.receipt() if pooled_sampler is not None else None
+            ),
         )
         if reward_anneal_state is not None and checkpoint_mode == "resume":
             print("🎯 Restored reward anneal state.", flush=True)

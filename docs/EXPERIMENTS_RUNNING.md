@@ -1,9 +1,10 @@
-# Experiments — current state (updated 2026-08-07 CEST)
+# Experiments — current state (updated 2026-08-09 CEST)
 
 Current design and decision authority:
 
 - [`research/V8_10M_SCALEUP.md`](research/V8_10M_SCALEUP.md), section
-  "Accepted decision: continuous all-47 bands (2026-08-07)"
+  "Accepted amendment: compact trunk, small Atari control, reward fork
+  (2026-08-09)"
 
 Supporting historical evidence:
 
@@ -36,31 +37,39 @@ bands independently from exact completed training episodes. The permanent
 10% all-condition term gives every map type support from update 0. Fixed
 source-disjoint panels select and audit checkpoints but never update sampler
 state. The original dense-only implementation base is commit
-`0982b7803777fee81a227ce26f30bd85004a9aaa`; its launch revision is
-`d0aea30e475ec97442a86fcd443f690976572fe3`. The matched pair will record its
-new common terra-baselines and runtime Terra revisions after implementation,
-tests, and update-1 smokes pass.
+`0982b7803777fee81a227ce26f30bd85004a9aaa`; the new architecture pair records
+its common terra-baselines and runtime Terra revisions after the launch source
+is committed and its update-1 smokes pass.
 
-The next scientific launch is a same-binary reward pair. Both arms retain that
-map curriculum and every non-reward setting:
+The next scientific launch is a constant-dense architecture pair. Both arms
+retain that map curriculum, data, transition budget, PPO shape, seed, horizon,
+and fixed evaluations:
 
-| Arm | Reward schedule | Initialization | Target | State |
+| Arm | Architecture | Parameters | Target | State |
 |---|---|---|---:|---|
-| `constant_dense` | dense for the full run | random parameters, no teacher | 20,000 updates | implementation and common-binary smoke pending |
-| `dense_to_terminal` | dense, then a one-way 5,000-update linear fade after both families reach active depth 2 | random parameters, no teacher | 20,000 updates | implementation and common-binary smoke pending |
+| `compact_xattn` | compact deep SE plus cross-attention | 2,856,685 | 20,000 updates | implementation complete; update-1 smoke pending |
+| `atari_base` | original Atari CNN plus base heads | 480,137 | 20,000 updates | implementation complete; update-1 smoke pending |
 
 Both arms use seed `20260807`, 47 x 96 maps, `continuous_banded_v1`, full
-450-step resets, the 2,856,685-parameter compact deep+xattn policy, checkpoints
-every 500 updates, and fixed-panel evaluation every 1,000 retained updates.
-The 20,000-update pair uses the 120-hour queue because the previous compact
-20,000-update run took about 25h53.
+450-step resets, dense reward, checkpoints every 500 updates, and fixed-panel
+evaluation every 1,000 retained updates. Compact requests the 120-hour queue
+because the previous compact 20,000-update run took about 25h53. Atari is a
+small-system replication control, not a pure encoder ablation, because its
+policy, value, and local-map heads are also smaller.
 
-The original dense-only job is retained in the ledger until the replacement
-binary proves it can run both reward modes:
+Reward fading is deferred to a true-resume fork of a qualified compact dense
+checkpoint. Once both sampler families reach depth 2 (or finish all depths)
+and fixed promotion/development evidence is archived, matched dense and
+5,000-update dense-to-terminal children will restore the same model, optimizer,
+absolute update, and sampler state. No independent random-start annealed long
+run is planned.
+
+The original dense-only job is retained in the ledger until both replacement
+architecture smokes pass:
 
 | Prior arm | Update-1 smoke | Long job | Current state |
 |---|---:|---:|---|
-| `G-V8-XATTN-CONTINUOUS-BANDED` | `10012150` PASS | `10015084` | PENDING, held by user (`JobHeldUser`), zero runtime; supersede only after both new common-binary smokes pass |
+| `G-V8-XATTN-CONTINUOUS-BANDED` | `10012150` PASS | `10015084` | PENDING, held by user (`JobHeldUser`), zero runtime; cancel only after both new architecture smokes pass |
 
 Smoke `10012150` completed `0:0` in 13m55s. Both update-1 and final
 checkpoints reloaded; the receipt records all 47 conditions, family counts
@@ -68,6 +77,13 @@ checkpoints reloaded; the receipt records all 47 conditions, family counts
 `terra_continuous_banded_sampler_state_v1`, and graph SHA-256
 `f0ad2c9c138cbb7d7139ac8bf50cb8c9b897d06d49c625b82b78d0a9c3e42b2d`.
 This is engineering admission evidence, not a learning result.
+
+The same-binary random-start reward smokes `10022782` (dense) and `10022786`
+(annealed) both passed individually, but the anneal trigger had not fired and
+the terminal mix remained zero. No long reward pair was submitted. The two
+independent GPU updates diverged numerically despite matching sampler and
+transition receipts, so these jobs are implementation evidence only and are
+not a reward result.
 
 ## Cancelled nearby-only reward diagnostic
 
@@ -101,20 +117,22 @@ historical and is not the current launch design.
 The corrected whole-V8 Stage-A evaluation job `9839960` and reference-teacher
 evaluation job `9845019` both completed cleanly. Teacher-bound update-1 smokes
 `9854547` (compact) and `9854549` (10M) then completed `0:0` with passing
-finite-checkpoint receipts. The paired 20,000-update Stage-B jobs are submitted
-to the 120-hour queue:
+finite-checkpoint receipts. The paired 20,000-update historical Stage-B jobs
+then completed on the 120-hour queue:
 
 | Arm | Parent | Smoke | Long job | Current state |
 |---|---:|---:|---:|---|
-| compact deep+xattn | update 1,000 | `9854547` PASS | `9858450` | `RUNNING` at approximately 18.0k/20k; 17 checkpoints |
-| 10M deep+xattn | update 3,000 | `9854549` PASS | `9858451` | `RUNNING` at approximately 9.25k/20k; 9 checkpoints |
+| compact deep+xattn | update 1,000 | `9854547` PASS | `9858450` | COMPLETED, 20,000 updates, 25:52:43 |
+| 10M deep+xattn | update 3,000 | `9854549` PASS | `9858451` | COMPLETED, 20,000 updates, 46:32:38 |
 
 Both jobs passed their immediate smoke, parent, teacher, sampler, architecture,
-CUDA, cuDNN, and NCCL checks inside Slurm. After approximately 20.5 hours,
-throughput is about 17.9k transitions/s for compact and 8.8k for 10M. Compact
-has roughly two training hours left; 10M roughly 22. Neither log contains a
-NaN, OOM, NCCL, traceback, or quota failure. These are operational facts, not
-held-out learning results.
+CUDA, cuDNN, and NCCL checks inside Slurm and completed without a NaN, OOM,
+NCCL, traceback, or quota failure. Compact's best fixed development result was
+`548/720` exact with macro `0.863` (best macro `0.870` at the adjacent retained
+checkpoint), but it regressed to `315/720`, macro `0.529` at update 20,000.
+The 10M policy peaked at `427/720`, macro `0.710` and finished at `418/720`,
+macro `0.666`. This does not establish a 10M capacity advantage and motivates
+the all-47 continuous dense trunk rather than more 10M compute.
 
 The compact arm retained update 1,000 with SHA-256
 `5130856886889f4dccd3efa3b60a843e5c3af666e04c12a6e688000e05598f2d`.
@@ -131,8 +149,8 @@ capability remains `31/32`, but nearby foundations remain only `59/96`. The
 `406/720`, `0.745` on development, with `32/32` capability; nearby foundations
 remain `49/96`. Both policies already clear the nearby-trench gate and fail the
 nearby-foundation gate. Matched update-9,000 observers `9964699` (compact) and
-`9964703` (10M) are pending to test whether the overnight online gains
-generalized. Dense reward and Stage C remain locked.
+`9964703` (10M) completed; the complete fixed-panel trajectories are summarized
+above. Dense reward and Stage C remained locked in that historical campaign.
 
 Stage B contains 15 conditions x 96 layouts = 1,440 distinct training maps.
 Random full resets draw 25% from the two mastered capability anchors and 75%
