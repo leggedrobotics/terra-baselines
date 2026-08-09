@@ -61,9 +61,11 @@ policy, value, and local-map heads are also smaller.
 Reward fading is deferred to a true-resume fork of a qualified compact dense
 checkpoint. Once both sampler families reach depth 2 (or finish all depths)
 and fixed promotion/development evidence is archived, matched dense and
-5,000-update dense-to-terminal children will restore the same model, optimizer,
-absolute update, and sampler state. No independent random-start annealed long
-run is planned.
+dense-to-terminal children will restore the same model, optimizer, absolute
+update, and sampler state. The treatment fades for 5,000 updates and then runs
+1,000 updates at exactly terminal objective; the dense control receives the
+same 6,000-update budget. No independent random-start annealed long run is
+planned.
 
 The original dense-only job is retained in the ledger until both replacement
 architecture smokes pass:

@@ -40,10 +40,11 @@ random-start map-curriculum run. Once both sampler families reach depth 2 (or
 are fully mastered) and the nearest retained checkpoint has fixed promotion
 and development evidence, two children resume the same model, optimizer,
 update count, and sampler state. One remains dense; the other irreversibly
-fades to the terminal objective over 5,000 updates. Fixed source-disjoint
-panels, not reward return or online success, decide both comparisons. The exact
-launch and evaluation contract is recorded in the authoritative design
-document linked above.
+fades to the terminal objective over 5,000 updates and then trains for 1,000
+updates at the exact terminal objective. Fixed source-disjoint panels, not
+reward return or online success, decide both comparisons. The exact launch and
+evaluation contract is recorded in the authoritative design document linked
+above.
 
 The mechanism is informed by, but does not copy constants from:
 

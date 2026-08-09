@@ -887,21 +887,23 @@ families have active depth at least 2 (or are fully mastered) and fixed
 promotion and development results have been archived. Fork that exact
 checkpoint into two true-resume children:
 
-| Child | Reward over the next 5,000 updates |
+| Child | Reward over the next 6,000 updates |
 |---|---|
 | dense control | remain at `dense_skill` |
-| annealed treatment | start at terminal mix 0 and linearly reach the terminal objective over 5,000 updates |
+| annealed treatment | start at terminal mix 0, fade for 5,000 updates, then run 1,000 updates at terminal mix 1 |
 
 Both children restore the same model, optimizer and optimizer step, absolute
 PPO update, continuous-sampler mastery/probabilities/windows/RNG, and original
-20,000-update entropy schedule. Environment trajectory and action history are
-not bit-exact across resumed jobs, so this is a matched statistical fork rather
-than a trajectory-identical counterfactual. The source checkpoint hash and its
-fixed-panel receipt are part of both child contracts. Compare exact success,
-macro completion, family/depth/cell tails, and anchor retention on the same
-fixed identities; compare workspace cycles and steps only for identities both
-children solve. A one-seed effect is a screen and must be replicated before a
-reward claim.
+20,000-update entropy schedule. With the current absolute-update convention,
+the first 5,000 treatment rollouts use mixes `0/5000` through `4999/5000`; the
+following 1,000 rollouts use exactly `1.0`. Environment trajectory and action
+history are not bit-exact across resumed jobs, so this is a matched statistical
+fork rather than a trajectory-identical counterfactual. The source checkpoint
+hash and its fixed-panel receipt are part of both child contracts. Compare
+exact success, macro completion, family/depth/cell tails, and anchor retention
+on the same fixed identities; compare workspace cycles and steps only for
+identities both children solve. A one-seed effect is a screen and must be
+replicated before a reward claim.
 
 The previous update-1 jobs `10022782` and `10022786` remain engineering smokes
 only. Their reward mix never left zero, no 20,000-update pair was submitted,
