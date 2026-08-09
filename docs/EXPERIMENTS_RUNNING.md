@@ -37,18 +37,19 @@ bands independently from exact completed training episodes. The permanent
 10% all-condition term gives every map type support from update 0. Fixed
 source-disjoint panels select and audit checkpoints but never update sampler
 state. The original dense-only implementation base is commit
-`0982b7803777fee81a227ce26f30bd85004a9aaa`; the new architecture pair records
-its common terra-baselines and runtime Terra revisions after the launch source
-is committed and its update-1 smokes pass.
+`0982b7803777fee81a227ce26f30bd85004a9aaa`. The active architecture pair uses
+terra-baselines `dcc4f955347182e57e6f16e9df81a3f170564d97` and runtime Terra
+`eb3835c1d17af81e970b973ed5abf687ca6f3a26`; the bank protocol remains frozen
+at Terra `a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4`.
 
 The next scientific launch is a constant-dense architecture pair. Both arms
 retain that map curriculum, data, transition budget, PPO shape, seed, horizon,
 and fixed evaluations:
 
-| Arm | Architecture | Parameters | Target | State |
-|---|---|---|---:|---|
-| `compact_xattn` | compact deep SE plus cross-attention | 2,856,685 | 20,000 updates | implementation complete; update-1 smoke pending |
-| `atari_base` | original Atari CNN plus base heads | 480,137 | 20,000 updates | implementation complete; update-1 smoke pending |
+| Arm | Architecture | Parameters | Smoke | Long job | Current state |
+|---|---|---:|---:|---:|---|
+| `compact_xattn` | compact deep SE plus cross-attention | 2,856,685 | `10128202` PASS | `10128518` | RUNNING, past update 20 |
+| `atari_base` | original Atari CNN plus base heads | 480,137 | `10128203` PASS | `10128519` | RUNNING, past update 190 |
 
 Both arms use seed `20260807`, 47 x 96 maps, `continuous_banded_v1`, full
 450-step resets, dense reward, checkpoints every 500 updates, and fixed-panel
@@ -69,7 +70,7 @@ architecture smokes pass:
 
 | Prior arm | Update-1 smoke | Long job | Current state |
 |---|---:|---:|---|
-| `G-V8-XATTN-CONTINUOUS-BANDED` | `10012150` PASS | `10015084` | PENDING, held by user (`JobHeldUser`), zero runtime; cancel only after both new architecture smokes pass |
+| `G-V8-XATTN-CONTINUOUS-BANDED` | `10012150` PASS | `10015084` | CANCELLED after replacement smokes passed; elapsed `0:00` |
 
 Smoke `10012150` completed `0:0` in 13m55s. Both update-1 and final
 checkpoints reloaded; the receipt records all 47 conditions, family counts
@@ -84,6 +85,16 @@ the terminal mix remained zero. No long reward pair was submitted. The two
 independent GPU updates diverged numerically despite matching sampler and
 transition receipts, so these jobs are implementation evidence only and are
 not a reward result.
+
+The replacement smokes completed `0:0` in 13m53s (compact) and 12m16s
+(Atari). Each passed the in-job CUDA convolution-backward and NCCL all-reduce
+preflight, generic finite checkpoint reload, all-47 continuous-sampler receipt,
+and exact architecture receipt. Both long jobs then started immediately on
+4xRTX4090. Their W&B IDs are
+`v8_architecture_dcc4f95534_screen_compact_xattn_10128518` and
+`v8_architecture_dcc4f95534_screen_atari_base_10128519`. Initial steady-state
+throughput is approximately 19.7k and 108k transitions/s respectively. These
+are operational admission facts, not fixed-panel learning results.
 
 ## Cancelled nearby-only reward diagnostic
 

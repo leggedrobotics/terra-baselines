@@ -907,6 +907,19 @@ The previous update-1 jobs `10022782` and `10022786` remain engineering smokes
 only. Their reward mix never left zero, no 20,000-update pair was submitted,
 and independent GPU execution diverged numerically after one update despite
 matching sampler and transition receipts. They are neither positive nor
-negative reward evidence. Pending legacy dense job `10015084` may be cancelled
-only after the new compact and Atari update-1 smokes pass; it has consumed zero
-runtime.
+negative reward evidence. Legacy dense job `10015084` remained held at zero
+runtime until the new compact and Atari update-1 smokes passed, then was
+cancelled without consuming compute.
+
+### Launch receipt (2026-08-09)
+
+The immutable training source is terra-baselines
+`dcc4f955347182e57e6f16e9df81a3f170564d97` with runtime Terra
+`eb3835c1d17af81e970b973ed5abf687ca6f3a26`. Update-1 smokes `10128202`
+(compact) and `10128203` (Atari) completed `0:0` and passed CUDA convolution
+backward, NCCL all-reduce, finite checkpoint reload, sampler-state, graph, and
+architecture receipts. Legacy held job `10015084` was then cancelled with zero
+runtime. Long jobs `10128518` (compact, `gpuhe.120h`) and `10128519` (Atari,
+`gpuhe.24h`) are running on 4xRTX4090 and have passed update 1. Initial
+steady-state throughput is approximately 19.7k and 108k transitions/s. This is
+launch admission only; fixed held-out evaluations remain the learning evidence.
