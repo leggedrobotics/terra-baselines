@@ -10,7 +10,7 @@ FAMILIES = ("foundation",) * 4 + ("trench",) * 4
 DEPTHS = (0, 1, 1, 2, 0, 1, 1, 2)
 
 
-def _sampler(seed=7):
+def _sampler(seed=7, rule="continuous_banded_v1"):
     labels = {
         name: {
             "family": family,
@@ -22,7 +22,7 @@ def _sampler(seed=7):
     return PooledConditionSampler(
         list(NAMES),
         SamplerSettings(
-            rule="continuous_banded_v1",
+            rule=rule,
             update_interval=150,
             mastery_threshold=0.80,
             min_episodes=32,
@@ -176,3 +176,84 @@ def test_held_out_payload_is_rejected_and_fixed_boundaries_are_enforced():
         sampler.refresh(149)
     with pytest.raises(ValueError, match="cannot skip"):
         sampler.refresh(300)
+
+
+def test_v2_initial_distribution_is_depth_weighted_with_full_support():
+    sampler = _sampler(rule="continuous_banded_v2")
+    probabilities = dict(zip(NAMES, sampler.probabilities))
+
+    assert all(value > 0.0 for value in probabilities.values())
+    assert sum(probabilities[name] for name in NAMES[:4]) == pytest.approx(0.5)
+    assert sum(probabilities[name] for name in NAMES[4:]) == pytest.approx(0.5)
+    for offset in (0, 4):
+        # Per family: 10% uniform floor over four conditions and 90% over the
+        # unmastered frontier weighted 2**(2 - depth): 4 + 2 + 2 + 1 = 9.
+        assert probabilities[NAMES[offset]] == pytest.approx(
+            0.5 * (0.10 / 4 + 0.90 * 4 / 9)
+        )
+        assert probabilities[NAMES[offset + 1]] == pytest.approx(
+            0.5 * (0.10 / 4 + 0.90 * 2 / 9)
+        )
+        assert probabilities[NAMES[offset + 3]] == pytest.approx(
+            0.5 * (0.10 / 4 + 0.90 * 1 / 9)
+        )
+
+
+def test_v2_straggler_cannot_pin_family_and_any_depth_graduates():
+    sampler = _sampler(rule="continuous_banded_v2")
+    sampler.start(0)
+    _refresh(sampler, 150, {"f0": 1.0, "f1a": 1.0, "t0": 0.0})
+
+    receipt = sampler.receipt()["mastery"]
+    mastered = dict(zip(NAMES, receipt["mastered"]))
+    assert mastered["f0"] is True
+    assert mastered["f1a"] is True  # v1 would lock this measured preview
+    assert receipt["role"][NAMES.index("f1a")] == "replay"
+    assert receipt["role"][NAMES.index("f2")] == "frontier"
+
+    probabilities = dict(zip(NAMES, sampler.probabilities))
+    # Foundation frontier is now f1b (weight 2) and f2 (weight 1).
+    assert probabilities["f1b"] == pytest.approx(0.5 * (0.10 / 4 + 0.90 * 2 / 3))
+    assert probabilities["f2"] == pytest.approx(0.5 * (0.10 / 4 + 0.90 * 1 / 3))
+
+    # The depth-2 cell graduates although its depth-1 sibling is unmastered.
+    _refresh(sampler, 300, {"f2": 1.0})
+    mastered = dict(zip(NAMES, sampler.receipt()["mastery"]["mastered"]))
+    assert mastered["f2"] is True
+    assert mastered["f1b"] is False
+    probabilities = dict(zip(NAMES, sampler.probabilities))
+    assert probabilities["f1b"] == pytest.approx(0.5 * (0.10 / 4 + 0.90))
+
+
+def test_v2_restores_v1_checkpoint_and_recomputes_probabilities():
+    source = _sampler(seed=11)
+    source.start(0)
+    drawn = source.sample_levels((2, 64))
+    counts = np.bincount(drawn.ravel(), minlength=len(NAMES))
+    source.observe_reset_exposures(counts)
+    source.observe_transition_exposures(counts * 16)
+    _refresh(source, 150, {"f0": 1.0, "f1a": 1.0, "t0": 1.0})
+    state = source.state_dict()
+    assert state["settings"]["rule"] == "continuous_banded_v1"
+
+    migrated = _sampler(seed=11, rule="continuous_banded_v2")
+    migrated.restore_state_dict(deepcopy(state))
+    mastered = np.asarray(state["mastery"]["mastered"], dtype=bool)
+    np.testing.assert_array_equal(migrated._mastered, mastered)
+    np.testing.assert_allclose(
+        migrated.probabilities,
+        migrated._continuous_distribution_v2(mastered),
+        rtol=0.0,
+        atol=1e-15,
+    )
+
+    # The migrated state round-trips as a native v2 checkpoint.
+    v2_state = migrated.state_dict()
+    assert v2_state["settings"]["rule"] == "continuous_banded_v2"
+    resumed = _sampler(seed=11, rule="continuous_banded_v2")
+    resumed.restore_state_dict(deepcopy(v2_state))
+    assert resumed.state_dict() == v2_state
+
+    # Migration is one-way: a v1 sampler must reject a v2 checkpoint.
+    with pytest.raises(ValueError, match="settings changed"):
+        _sampler(seed=11).restore_state_dict(deepcopy(v2_state))

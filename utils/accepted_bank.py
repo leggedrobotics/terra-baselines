@@ -37,7 +37,9 @@ V8_SAMPLER_PROFILES = (
     "bounded_replay25_v1",
     "banded_preview15_v1",
     "continuous_banded_v1",
+    "continuous_banded_v2",
 )
+V8_CONTINUOUS_PROFILES = ("continuous_banded_v1", "continuous_banded_v2")
 V8_CONTINUOUS_GRAPH_PATH = (
     Path(__file__).resolve().parents[1]
     / "configs"
@@ -710,9 +712,9 @@ def _v8_stage_selection(
             f"got {sampler_profile!r}"
         )
     by_id = {level.condition_id: level for level in levels}
-    if sampler_profile == "continuous_banded_v1" and stage != "full":
+    if sampler_profile in V8_CONTINUOUS_PROFILES and stage != "full":
         raise ValueError(
-            "continuous_banded_v1 requires full support; use "
+            f"{sampler_profile} requires full support; use "
             "curriculum_stage='full' only as a bank-selection compatibility flag"
         )
     if stage == "capability":
@@ -737,7 +739,7 @@ def _v8_stage_selection(
         selected_ids = set(capability_ids) | set(core_ids) | set(constraint_ids)
         if sampler_profile == "bank_v4":
             slice_mass = {"capability": 0.25, "core": 0.25, "constraint": 0.5}
-        elif sampler_profile == "continuous_banded_v1":
+        elif sampler_profile in V8_CONTINUOUS_PROFILES:
             # Selection is full-support; the live sampler owns the dynamic
             # probability vector and therefore consumes no frozen weights.
             slice_mass = {"capability": 1.0, "core": 1.0, "constraint": 1.0}
@@ -790,7 +792,7 @@ def _v8_stage_selection(
             )
         raise ValueError(f"V8 stage selected unknown condition {level.condition_id!r}")
 
-    if sampler_profile == "continuous_banded_v1":
+    if sampler_profile in V8_CONTINUOUS_PROFILES:
         return selected, ()
     probabilities = tuple(probability(level) for level in selected)
     if abs(sum(probabilities) - 1.0) > 1e-12 or any(
@@ -1323,7 +1325,7 @@ def load_accepted_bank(
             )
     curriculum_depths: tuple[int, ...] = ()
     curriculum_graph_sha256 = None
-    if sampler_profile == "continuous_banded_v1":
+    if sampler_profile in V8_CONTINUOUS_PROFILES:
         curriculum_depths, curriculum_graph_sha256 = _v8_continuous_graph(
             selected,
             capability_floor_condition_ids,

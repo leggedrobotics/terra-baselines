@@ -21,7 +21,7 @@ def verify_sampler_state(state: object) -> dict:
     if state.get("schema") != "terra_continuous_banded_sampler_state_v1":
         raise ValueError("checkpoint has the wrong sampler schema")
     settings = SamplerSettings(**state.get("settings", {}))
-    if settings.rule != "continuous_banded_v1":
+    if settings.rule not in ("continuous_banded_v1", "continuous_banded_v2"):
         raise ValueError("checkpoint has the wrong sampler rule")
     conditions = state.get("conditions")
     labels = state.get("labels")
