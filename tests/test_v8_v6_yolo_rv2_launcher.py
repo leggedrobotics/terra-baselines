@@ -35,13 +35,14 @@ RETUNED_FLAGS = {
     "--map_encoder": ("resnet_spatial_8x8_se_xattn", "resnet_spatial_8x8_se_sa_xattn"),
     "--resnet_blocks_per_stage": ("2,2,3,3", "3,3,2,2"),
 }
-# Five flags the baseline does not pass at all.
+# Six flags the baseline does not pass at all (D3 masking is value-less).
 ADDED_FLAGS = {
     "--token_mixer_residual_init_scale": "0.1",
     "--flatten_reduce_channels": "32",
     "--attn_latent_queries": "8",
     "--aux_coef": "0.25",
     "--vf_coef": "0.5",
+    "--action_logit_masking": None,
 }
 
 
@@ -60,7 +61,7 @@ def train_flags(path: Path) -> dict[str, str | None]:
 
 
 class PairedLauncherTest(unittest.TestCase):
-    def test_treatment_differs_from_the_baseline_only_in_the_seven_flags(self):
+    def test_treatment_differs_from_the_baseline_only_in_the_declared_flags(self):
         baseline = train_flags(BASELINE_RUNNER)
         treatment = train_flags(TREATMENT_RUNNER)
         self.assertGreater(len(baseline), 30)
@@ -108,19 +109,31 @@ class PairedLauncherTest(unittest.TestCase):
             ROOT / "scripts" / "euler_v8_r2_reward_v2" / "run.sbatch"
         ).read_text()
         for shared in (
-            "UPDATES=40000",
+            "UPDATES=14000",
             "export ENTROPY_SCHEDULE_STEPS=20000",
             "export NUM_DEVICES=4 NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 NUM_MINIBATCHES=32",
-            "EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a",
             "PROTOCOL_TERRA_REVISION=a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4",
             'test "${#GPU_NAMES[@]}" -eq 4',
             "#SBATCH --gpus=rtx_4090:4",
-            "#SBATCH --partition=gpuhe.120h",
+            "#SBATCH --partition=gpuhe.24h",
             "used < 45.0",
             "EXPECTED_RELEASE=terra_v8_v6_constraints_v7_adjacent_train96_v5",
         ):
             self.assertIn(shared, sbatch, shared)
             self.assertIn(shared, baseline_sbatch, shared)
+        # Runtime terra diverges BY DESIGN: the treatment runs the D3-mask
+        # terra (reward-v2 base + obs['action_mask']); the baseline stays on
+        # the reward-v2 revision it launched with.
+        self.assertIn(
+            "EXPECTED_RUNTIME_TERRA_REVISION="
+            "04c67bbafce2cb3d1a1de35384dfde477d244349",
+            sbatch,
+        )
+        self.assertIn(
+            "EXPECTED_RUNTIME_TERRA_REVISION="
+            "3051054bc4c713d95905d3f954e6eabf55d6a85a",
+            baseline_sbatch,
+        )
         self.assertIn("scripts/run_v8_v6_yolo_rv2.sh", sbatch)
         self.assertIn(f"model_parameter_count={V6_3M_RV2_PARAMETERS}", sbatch)
         self.assertIn(

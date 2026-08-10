@@ -4,14 +4,14 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=rtx_4090:4
 #SBATCH --mem-per-cpu=8G
-#SBATCH --partition=gpuhe.120h
-#SBATCH --time=119:45:00
+#SBATCH --partition=gpuhe.24h
+#SBATCH --time=23:45:00
 #SBATCH --no-requeue
 
 set -euo pipefail
 umask 002
 
-EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a
+EXPECTED_RUNTIME_TERRA_REVISION=04c67bbafce2cb3d1a1de35384dfde477d244349
 EXPECTED_HORIZON=450
 EXPECTED_RELEASE=terra_v8_v6_constraints_v7_adjacent_train96_v5
 PROTOCOL_TERRA_REVISION=a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4
@@ -41,11 +41,11 @@ case "$PHASE" in
         FINITE_CHECK_INTERVAL=1
         CACHE_CLEAR_INTERVAL=0
         ;;
-    screen)
-        test "${SLURM_JOB_PARTITION:-}" = gpuhe.120h
+    phase1)
+        test "${SLURM_JOB_PARTITION:-}" = gpuhe.24h
         [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
         [[ "$SMOKE_RUN" = /* ]]
-        UPDATES=40000
+        UPDATES=14000
         CHECKPOINT_INTERVAL=500
         EVAL_INTERVAL=1000
         LOG_TRAIN_INTERVAL=10
@@ -71,7 +71,7 @@ done
 test "${SLURM_CPUS_PER_TASK:-}" = 4
 test -d "$RUN_DIR" -a ! -e "$RUN_DIR/run_contract.env"
 
-if [ "$PHASE" = screen ]; then
+if [ "$PHASE" = phase1 ]; then
     SMOKE_STATE="$(sacct -n -X -P -j "$SMOKE_JOB_ID" --format=JobIDRaw,State | awk -F'|' -v id="$SMOKE_JOB_ID" '$1==id {sub(/\+.*/, "", $2); print $2}')"
     test "$SMOKE_STATE" = COMPLETED
     test -f "$SMOKE_RUN/smoke_validation.json" -a -f "$SMOKE_RUN/run_contract.env"
@@ -93,7 +93,7 @@ tar --zstd -xf "$BANK_ARCHIVE" -C "$TMPDIR" bank
 BANK="$TMPDIR/bank"
 test "$(sha256sum "$BANK/dataset.json" | awk '{print $1}')" = "$BANK_DATASET_SHA"
 module load stack/2024-06 cuda/12.1.1
-if [ "$PHASE" = screen ]; then
+if [ "$PHASE" = phase1 ]; then
     module load eth_proxy
     test -r "$HOME/.netrc"
 fi
@@ -257,10 +257,12 @@ printf '%s\n' \
     "paired_baseline_arm=reward_v2_scratch" \
     "paired_baseline_launcher=scripts/run_v8_r2_reward_v2.sh" \
     "screen_semantics=combined_architecture_and_optimization_not_decomposable" \
-    "full_system_selection_updates=1000_to_40000_promotion_only" \
+    "full_system_selection_updates=1000_to_${UPDATES}_promotion_only" \
     "promotion_selection_rule=combined_exact_then_47_condition_macro_then_worst_then_earliest" \
-    "bundled_changes=v6_readout+se_sa_xattn+blocks_3322+token_mixer_0.1+flatten32+latent_queries8+aux_bce_0.25+vf_coef_0.5" \
-    "inherited_from_baseline=reward_v2+global_distance_ledger+carry_input+continuous_banded_v2+runtime_3051054+budget_40000" \
+    "bundled_changes=v6_readout+se_sa_xattn+blocks_3322+token_mixer_0.1+flatten32+latent_queries8+aux_bce_0.25+vf_coef_0.5+action_logit_masking_d3" \
+    "inherited_from_baseline=reward_v2+global_distance_ledger+carry_input+continuous_banded_v2+phase1_14000_of_40000" \
+    "runtime_terra_base=3051054b_reward_v2_plus_d3_mask_04c67bba" \
+    "action_logit_masking=true" \
     "phase=$PHASE" \
     "seed=$SEED" \
     "absolute_start_update=0" \
@@ -298,8 +300,8 @@ printf '%s\n' \
     "reward_v2_beta=1.5" \
     "reward_v2_step_cost_total=1.0" \
     "reward_v2_shaping_weight=1.0" \
-    "resume_supported=false" \
-    "restart_policy=discard_run_restart_from_update0" \
+    "resume_supported=phase_boundaries_only" \
+    "restart_policy=phase1_restart_from_update0_later_phases_resume_exact" \
     "protocol_terra_revision=$PROTOCOL_TERRA_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
     "terra_baselines_revision=$BASELINES_REVISION" \
@@ -337,7 +339,7 @@ export NUM_DEVICES=4 NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 NUM_MINIBATCHES=32
 export CHECKPOINT_INTERVAL LOG_TRAIN_INTERVAL FINITE_CHECK_INTERVAL CACHE_CLEAR_INTERVAL
 export ENTROPY_SCHEDULE_STEPS=20000
 "$BASELINES_ROOT/scripts/run_v8_v6_yolo_rv2.sh" \
-    "$BANK" "$RUN_NAME" "$UPDATES" "$RUN_DIR" "$DISTANCE_ARTIFACT_SHA"
+    "$BANK" "$RUN_NAME" "$UPDATES" "$RUN_DIR" "$DISTANCE_ARTIFACT_SHA" none
 
 find_one() {
     local pattern="$1"
@@ -358,7 +360,7 @@ if [ "$PHASE" = smoke ]; then
     exit 0
 fi
 
-find_one "${RUN_NAME}_update_040000.pkl" >/dev/null
+find_one "${RUN_NAME}_update_$(printf '%06d' "$UPDATES").pkl" >/dev/null
 printf '%s\n' status=TRAINING_TARGET_REACHED >> "$RUN_DIR/run_contract.env"
 CHECKPOINT_ARGS=()
 for UPDATE in $(seq "$EVAL_INTERVAL" "$EVAL_INTERVAL" "$UPDATES"); do

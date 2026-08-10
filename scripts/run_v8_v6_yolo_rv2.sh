@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # v6_3m_yolo_rv2: the V6 readout redesign carried on top of reward-v2.
 #
-# This is scripts/run_v8_r2_reward_v2.sh with seven flags changed and nothing
+# This is scripts/run_v8_r2_reward_v2.sh with eight flags changed and nothing
 # else: map_encoder se_sa_xattn, blocks (3,3,2,2), token mixer residual 0.1,
-# 1x1 flatten shrink to 32, 8 latent queries, aux decoder 0.25, vf_coef 0.5.
+# 1x1 flatten shrink to 32, 8 latent queries, aux decoder 0.25, vf_coef 0.5,
+# and --action_logit_masking (D3; requires the terra runtime that exposes
+# obs['action_mask'], branch experiment/v8-v6-yolo-rv2-20260810 @ 04c67bba).
 # Every reward-v2 contract flag (preset, sampler profile, carry-work channel,
 # distance protocol + sidecar SHA, reward stage, value-clip, minibatch shuffle,
 # dtypes, critic, LR, entropy schedule) is byte-identical to the baseline, and
 # so is the 4 x 512 x 32 / 32 batch shape, so updates AND transitions match.
 set -euo pipefail
 
-if [ "$#" -ne 5 ]; then
-    echo "usage: run_v8_v6_yolo_rv2.sh BANK_ROOT RUN_NAME UPDATES RUN_ROOT SIDECAR_SHA256" >&2
+if [ "$#" -ne 6 ]; then
+    echo "usage: run_v8_v6_yolo_rv2.sh BANK_ROOT RUN_NAME UPDATES RUN_ROOT SIDECAR_SHA256 RESUME_CHECKPOINT_OR_NONE" >&2
     exit 2
 fi
 
@@ -20,6 +22,15 @@ RUN_NAME="$2"
 UPDATES="$3"
 RUN_ROOT="$4"
 SIDECAR_SHA256="$5"
+RESUME_CHECKPOINT="$6"
+RESUME_ARGS=()
+if [ "$RESUME_CHECKPOINT" != none ]; then
+    test -f "$RESUME_CHECKPOINT" || {
+        echo "resume checkpoint does not exist: $RESUME_CHECKPOINT" >&2
+        exit 2
+    }
+    RESUME_ARGS=(--resume_from "$RESUME_CHECKPOINT" --load_env_from_checkpoint)
+fi
 [[ "$UPDATES" =~ ^[1-9][0-9]*$ ]] || {
     echo "UPDATES must be positive" >&2
     exit 2
@@ -81,6 +92,7 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --attn_latent_queries 8 \
     --aux_coef 0.25 \
     --vf_coef 0.5 \
+    --action_logit_masking \
     --ent_schedule_start 0.15 \
     --ent_schedule_end 0.02 \
     --ent_schedule_steps "$ENTROPY_SCHEDULE_STEPS" \
@@ -97,4 +109,5 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --checkpoint_interval "$CHECKPOINT_INTERVAL" \
     --cache_clear_interval "$CACHE_CLEAR_INTERVAL" \
     --keep_checkpoint_history \
-    --checkpoint_dir "$RUN_ROOT/checkpoints"
+    --checkpoint_dir "$RUN_ROOT/checkpoints" \
+    "${RESUME_ARGS[@]}"

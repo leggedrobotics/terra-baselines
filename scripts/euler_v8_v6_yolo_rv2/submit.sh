@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a
+EXPECTED_RUNTIME_TERRA_REVISION=04c67bbafce2cb3d1a1de35384dfde477d244349
 R2_HORIZON=450
 if [ "$#" -ne 1 ]; then
-    echo "usage: submit.sh smoke|screen" >&2
+    echo "usage: submit.sh smoke|phase1" >&2
     exit 2
 fi
 PHASE="$1"
-case "$PHASE" in smoke|screen) ;; *) echo "invalid phase '$PHASE'" >&2; exit 2 ;; esac
+case "$PHASE" in smoke|phase1) ;; *) echo "invalid phase '$PHASE'" >&2; exit 2 ;; esac
 SUBMIT="${SUBMIT:-0}"
 case "$SUBMIT" in 0|1) ;; *) echo "SUBMIT must be 0 or 1" >&2; exit 2 ;; esac
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_v8_r2_reward_v2_20260810}"
+TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_v8_v6_yolo_rv2_20260810}"
 ARTIFACT_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_training_inputs_20260810
 ADMISSION_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_admission_20260810
 BANK_ARCHIVE="$ARTIFACT_ROOT/treatment_bank.tar.zst"
@@ -164,7 +164,7 @@ BASELINES_REVISION="$(git -C "$REPO" rev-parse HEAD)"
 RUNTIME_TERRA_REVISION="$EXPECTED_RUNTIME_TERRA_REVISION"
 REMOTE_SOURCE="$REMOTE_WORK/$BASELINES_REVISION/terra-baselines"
 REMOTE_TERRA="$REMOTE_WORK/runtime-terra/$RUNTIME_TERRA_REVISION/terra"
-echo "phase=$PHASE arm=v6_3m_yolo_rv2 baseline=reward_v2_scratch seed=$SEED updates=$([ "$PHASE" = smoke ] && echo 1 || echo 40000)"
+echo "phase=$PHASE arm=v6_3m_yolo_rv2 baseline=reward_v2_scratch seed=$SEED updates=$([ "$PHASE" = smoke ] && echo 1 || echo 14000)"
 echo "terra_baselines_revision=$BASELINES_REVISION runtime_terra_revision=$RUNTIME_TERRA_REVISION"
 echo "d4a_receipt_sha256=$D4A_RECEIPT_SHA"
 if [ "$SUBMIT" = 0 ]; then
@@ -210,11 +210,11 @@ upload "$D4A_MANIFEST" "$REMOTE_D4A_MANIFEST" "$D4A_MANIFEST_SHA"
 
 case "$PHASE" in
     smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; GPU_TYPE=rtx_3090 ;;
-    screen) PARTITION=gpuhe.120h; WALLTIME=119:45:00; GPU_TYPE=rtx_4090 ;;
+    phase1) PARTITION=gpuhe.24h; WALLTIME=23:45:00; GPU_TYPE=rtx_4090 ;;
 esac
 SMOKE_JOB_ID=none
 SMOKE_RUN=none
-if [ "$PHASE" = screen ]; then
+if [ "$PHASE" = phase1 ]; then
     SMOKE_RUN="$REMOTE_RUNS/$BASELINES_REVISION/smoke/s$SEED/v6_3m_yolo_rv2"
     ssh "$REMOTE_HOST" "test -f '$SMOKE_RUN/smoke_validation.json' -a -f '$SMOKE_RUN/run_contract.env'"
     ssh "$REMOTE_HOST" "python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))[\"passed\"] is True' '$SMOKE_RUN/smoke_validation.json'"
