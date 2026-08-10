@@ -241,6 +241,46 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             f"(resnet_spatial_v5), not map_encoder={map_encoder!r}."
         )
 
+    # V6 readout block (spatial ResNet encoders only). Defaults reproduce the
+    # v3/v4/v5 param trees exactly, so existing checkpoints keep restoring.
+    spatial_encoders = (
+        "resnet_spatial_8x8",
+        "resnet_spatial_8x8_se",
+        "resnet_spatial_8x8_se_xattn",
+        "resnet_spatial_8x8_se_sa_xattn",
+    )
+    flatten_reduce_channels = _config_option(config, "flatten_reduce_channels", None)
+    if flatten_reduce_channels is not None:
+        flatten_reduce_channels = int(flatten_reduce_channels)
+        if flatten_reduce_channels < 1:
+            raise ValueError(
+                "flatten_reduce_channels must be >= 1, "
+                f"got {flatten_reduce_channels}."
+            )
+        if map_encoder not in spatial_encoders:
+            raise ValueError(
+                "flatten_reduce_channels only applies to the spatial ResNet "
+                f"encoders, not map_encoder={map_encoder!r}."
+            )
+        print(f"flatten_reduce_channels -> {flatten_reduce_channels}")
+    attn_latent_queries = int(_config_option(config, "attn_latent_queries", 4))
+    if attn_latent_queries < 1:
+        raise ValueError(
+            f"attn_latent_queries must be >= 1, got {attn_latent_queries}."
+        )
+    if attn_latent_queries != 4 and map_encoder not in attention_encoders:
+        raise ValueError(
+            "attn_latent_queries only applies to the v4/v5 attention encoders, "
+            f"not map_encoder={map_encoder!r}."
+        )
+    # The dense per-cell aux head exists exactly when its loss is trained.
+    use_aux_decoder = float(_config_option(config, "aux_coef", 0.0)) > 0.0
+    if use_aux_decoder and map_encoder not in spatial_encoders:
+        raise ValueError(
+            "aux_coef > 0 requires a spatial ResNet encoder (the aux decoder "
+            f"reads the 8x8 feature grid), not map_encoder={map_encoder!r}."
+        )
+
     model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=config["num_prev_actions"],
         num_embeddings_agent=num_embeddings_agent,
@@ -257,6 +297,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         carry_work_observation=bool(
             _config_option(config, "carry_work_observation", False)
         ),
+        attn_latent_queries=attn_latent_queries,
+        flatten_reduce_channels=flatten_reduce_channels,
+        use_aux_decoder=use_aux_decoder,
         **model_kwargs,
     )
 
@@ -714,6 +757,58 @@ class _TokenSelfAttentionBlock(nn.Module):
         return x
 
 
+def _upsample_nearest_2x(x):
+    """Nearest-neighbour 2x upsample of a [B, H, W, C] grid."""
+    return jnp.repeat(jnp.repeat(x, 2, axis=1), 2, axis=2)
+
+
+class _PerCellAuxDecoder(nn.Module):
+    """Per-cell auxiliary decode head over the final 8x8 feature grid (V6).
+
+    Decodes the 8x8xC grid back up to 32x32 and emits four per-cell logits in
+    the order ``(remaining_dig, dump_deficit, dumpability, obstacle)``. It gives
+    the encoder a dense supervised signal (the measured failure is rank-6
+    signal starvation at the 160-d exit, see V8_ARCH_SCALING_DIAGNOSIS), and it
+    doubles as the bandwidth test for the 8x8 exit: sub-cell layout must be
+    recoverable from each cell's channels.
+
+    The head is computed on every forward and published with ``sow``. Callers
+    that do not pass ``mutable=["intermediates"]`` never read it, so XLA drops
+    it from the rollout graph while the parameter tree stays the same either
+    way. Params are float32; compute follows the encoder dtype and the logits
+    are cast back to float32 for the loss.
+    """
+
+    compute_dtype: Any = jnp.float32
+
+    @nn.compact
+    def __call__(self, feature_grid):
+        x = nn.Conv(
+            features=64,
+            kernel_size=(1, 1),
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(feature_grid)
+        x = nn.relu(x)
+        x = _upsample_nearest_2x(x)
+        x = nn.Conv(
+            features=32,
+            kernel_size=(3, 3),
+            padding="SAME",
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(x)
+        x = nn.relu(x)
+        x = _upsample_nearest_2x(x)
+        x = nn.Conv(
+            features=4,
+            kernel_size=(1, 1),
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(x)
+        return x.astype(jnp.float32)
+
+
 class Spatial8x8MapResNet(nn.Module):
     """Residual map encoder with a flattened 8x8 spatial readout.
 
@@ -730,6 +825,14 @@ class Spatial8x8MapResNet(nn.Module):
     blocks let the tokens interact before BOTH readouts consume them. The mixer
     is the identity at init, so v4 param trees/numerics are unchanged when it is
     off and warm-starting from v3/v4 checkpoints is function-preserving.
+
+    The V6 readout block adds three independent knobs, all defaulting to the
+    historical behavior so existing checkpoints keep restoring unchanged:
+    ``flatten_reduce_channels`` shrinks the grid with a 1x1 conv before the
+    flatten readout (the flatten Dense is 41% of the compact params but gets
+    2-3% of the encoder gradient), ``attn_latent_queries`` widens the
+    cross-attention readout, and ``use_aux_decoder`` attaches the dense
+    per-cell decode head.
     """
 
     stage_channels: Sequence[int] = (16, 32, 48, 64)
@@ -742,9 +845,12 @@ class Spatial8x8MapResNet(nn.Module):
     attn_qkv: int = 64
     attn_out: int = 128
     attn_num_heads: int = 4
+    attn_latent_queries: int = 4
     use_token_mixer: bool = False
     mixer_blocks: int = 2
     token_mixer_residual_init_scale: float = 0.0
+    flatten_reduce_channels: int | None = None
+    use_aux_decoder: bool = False
 
     @nn.compact
     def __call__(self, x, agent_embedding=None):
@@ -815,8 +921,34 @@ class Spatial8x8MapResNet(nn.Module):
             xattn_feature_grid = mixed_grid
             feature_grid = mixed_grid.astype(self.compute_dtype)
 
-        # Flatten readout (unchanged from the non-xattn encoder).
-        h = feature_grid.reshape((feature_grid.shape[0], -1))
+        # V6 dense per-cell supervision, off the same (mixed) grid both readouts
+        # consume. ``sow`` is a no-op unless the caller asks for the
+        # "intermediates" collection, so only the PPO loss pays for it.
+        if self.use_aux_decoder:
+            self.sow(
+                "intermediates",
+                "aux_logits",
+                _PerCellAuxDecoder(
+                    compute_dtype=self.compute_dtype, name="aux_decoder"
+                )(feature_grid),
+            )
+
+        # Flatten readout (unchanged from the non-xattn encoder). V6 optionally
+        # shrinks the channel axis with a 1x1 conv first, so the flatten Dense
+        # reads 8*8*flatten_reduce_channels rows instead of 8*8*C; the xattn
+        # branch and the aux head still see the full-width grid.
+        h = feature_grid
+        if self.flatten_reduce_channels is not None:
+            h = nn.Conv(
+                features=self.flatten_reduce_channels,
+                kernel_size=(1, 1),
+                use_bias=False,
+                dtype=self.compute_dtype,
+                param_dtype=jnp.float32,
+            )(h)
+            h = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(h)
+            h = nn.relu(h)
+        h = h.reshape((h.shape[0], -1))
         for features in self.dense_layers[:-1]:
             h = nn.relu(
                 nn.Dense(
@@ -844,8 +976,9 @@ class Spatial8x8MapResNet(nn.Module):
         """Agent-conditioned cross-attention over the 8x8 feature grid (F13).
 
         Tokens are the 64 grid cells (dim C) plus a learned positional table.
-        Five queries attend over them: one projected from the active agent's
-        embedding and four learned latent queries. Attention submodules run in
+        ``1 + attn_latent_queries`` queries attend over them: one projected from
+        the active agent's embedding and ``attn_latent_queries`` learned latent
+        queries (4 historically). Attention submodules run in
         ``attention_compute_dtype`` with float32 params (bf16 path per F3).
 
         ``add_pos_embed`` adds the learned positional table here (v4). With the
@@ -876,7 +1009,8 @@ class Spatial8x8MapResNet(nn.Module):
             tokens = tokens + pos_embed.astype(compute_dtype)
         tokens = nn.LayerNorm(dtype=compute_dtype, param_dtype=jnp.float32)(tokens)
 
-        # Queries: active-agent projection + 4 learned latent vectors -> [B, 5, Q].
+        # Queries: active-agent projection + N learned latent vectors -> [B, 1+N, Q].
+        num_latent_queries = self.attn_latent_queries
         agent_query = nn.Dense(
             features=self.attn_qkv,
             dtype=compute_dtype,
@@ -885,12 +1019,12 @@ class Spatial8x8MapResNet(nn.Module):
         latent_queries = self.param(
             "attn_latent_queries",
             nn.initializers.lecun_normal(),
-            (4, self.attn_qkv),
+            (num_latent_queries, self.attn_qkv),
             jnp.float32,
         )
         latent_queries = jnp.broadcast_to(
             latent_queries.astype(compute_dtype)[None],
-            (batch, 4, self.attn_qkv),
+            (batch, num_latent_queries, self.attn_qkv),
         )
         queries = jnp.concatenate((agent_query, latent_queries), axis=1)
         queries = nn.LayerNorm(dtype=compute_dtype, param_dtype=jnp.float32)(queries)
@@ -961,6 +1095,9 @@ class MapsNet(nn.Module):
     encoder_compute_dtype: Any = jnp.float32
     attention_compute_dtype: Any = None
     token_mixer_residual_init_scale: float = 0.0
+    attn_latent_queries: int = 4
+    flatten_reduce_channels: int | None = None
+    use_aux_decoder: bool = False
 
     def setup(self) -> None:
         encoder_type = canonical_map_encoder(self.encoder_type)
@@ -1007,8 +1144,11 @@ class MapsNet(nn.Module):
                 use_xattn=use_xattn,
                 attn_qkv=self.resnet_attn_qkv,
                 attn_out=self.resnet_attn_out,
+                attn_latent_queries=self.attn_latent_queries,
                 use_token_mixer=use_token_mixer,
                 token_mixer_residual_init_scale=self.token_mixer_residual_init_scale,
+                flatten_reduce_channels=self.flatten_reduce_channels,
+                use_aux_decoder=self.use_aux_decoder,
             )
             return
         raise AssertionError(f"Unhandled map encoder: {encoder_type}")
@@ -1222,6 +1362,9 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     attention_compute_dtype: Any = None
     token_mixer_residual_init_scale: float = 0.0
     carry_work_observation: bool = False
+    attn_latent_queries: int = 4
+    flatten_reduce_channels: int | None = None
+    use_aux_decoder: bool = False
     transformer_model_dim: int = 128
     transformer_num_layers: int = 2
     transformer_num_heads: int = 4
@@ -1268,6 +1411,9 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             encoder_compute_dtype=self.encoder_compute_dtype,
             attention_compute_dtype=self.attention_compute_dtype,
             token_mixer_residual_init_scale=self.token_mixer_residual_init_scale,
+            attn_latent_queries=self.attn_latent_queries,
+            flatten_reduce_channels=self.flatten_reduce_channels,
+            use_aux_decoder=self.use_aux_decoder,
         )
 
         self.actions_net = PreviousActionsNet(
