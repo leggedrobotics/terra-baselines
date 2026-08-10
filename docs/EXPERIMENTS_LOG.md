@@ -51,6 +51,7 @@ remain separate. Exact is solved maps / evaluated maps.
 | 08-02 | P5b `G-MEDIUM-UNIFORM-WARM` | `9378176` | 1,000 | 0.647 / 0.664 | 2/512 / 6/512 | completed 2,000, `PASSED`; best selected development family floor, transient at 2,000 |
 | 08-03 | all-free capability-floor evaluation | local fixed eval | selected P5/P5b checkpoints | 0.385--0.718 / 0.465--0.736 | generalists 0/32; trench specialist 1/32 promotion only | integrity-clean diagnostic; physically easier but target-mask OOD, excluded from constrained macro |
 | 08-03 | P5c five-arm low-entropy screen | `9461489`, `9461500`, `9461504`, `9461507`, `9461512` | none | deep latest 0.624 / 0.586 | deep latest 168/512 / 143/512 | all fixed evaluations clean; no arm passed the long-run gate at two consecutive checkpoints |
+| 08-10 | V8 Atari-base small-system control | `10128519` | 19,000 (descriptive promotion selection) | 0.457 / 0.428 | 16/752 / 20/752 | completed 20k; zero mastered conditions and depth 0/0; negative 480k-system result, not an encoder-only ablation |
 
 P5b result root:
 `/home/lorenzo/moleworks/.artifacts/terra_p5b_results_20260802_6c56610e`.

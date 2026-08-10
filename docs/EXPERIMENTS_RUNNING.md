@@ -1,4 +1,4 @@
-# Experiments — current state (updated 2026-08-09 CEST)
+# Experiments — current state (updated 2026-08-10 CEST)
 
 Current design and decision authority:
 
@@ -42,14 +42,14 @@ terra-baselines `dcc4f955347182e57e6f16e9df81a3f170564d97` and runtime Terra
 `eb3835c1d17af81e970b973ed5abf687ca6f3a26`; the bank protocol remains frozen
 at Terra `a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4`.
 
-The next scientific launch is a constant-dense architecture pair. Both arms
-retain that map curriculum, data, transition budget, PPO shape, seed, horizon,
-and fixed evaluations:
+The current scientific comparison is a constant-dense architecture pair. Both
+arms retain that map curriculum, data, transition budget, PPO shape, seed,
+horizon, and fixed evaluations:
 
 | Arm | Architecture | Parameters | Smoke | Long job | Current state |
 |---|---|---:|---:|---:|---|
-| `compact_xattn` | compact deep SE plus cross-attention | 2,856,685 | `10128202` PASS | `10128518` | RUNNING, past update 20 |
-| `atari_base` | original Atari CNN plus base heads | 480,137 | `10128203` PASS | `10128519` | RUNNING, past update 190 |
+| `compact_xattn` | compact deep SE plus cross-attention | 2,856,685 | `10128202` PASS | `10128518` | TRAINING TARGET REACHED; fixed evaluation running |
+| `atari_base` | original Atari CNN plus base heads | 480,137 | `10128203` PASS | `10128519` | COMPLETED `0:0`; all fixed panels complete |
 
 Both arms use seed `20260807`, 47 x 96 maps, `continuous_banded_v1`, full
 450-step resets, dense reward, checkpoints every 500 updates, and fixed-panel
@@ -65,7 +65,8 @@ dense-to-terminal children will restore the same model, optimizer, absolute
 update, and sampler state. The treatment fades for 5,000 updates and then runs
 1,000 updates at exactly terminal objective; the dense control receives the
 same 6,000-update budget. No independent random-start annealed long run is
-planned.
+planned. At compact update 20,000, trenches are fully mastered but foundations
+remain at depth 1, so the formal reward-fork trigger has not yet fired.
 
 The original dense-only job is retained in the ledger until both replacement
 architecture smokes pass:
@@ -94,9 +95,17 @@ preflight, generic finite checkpoint reload, all-47 continuous-sampler receipt,
 and exact architecture receipt. Both long jobs then started immediately on
 4xRTX4090. Their W&B IDs are
 `v8_architecture_dcc4f95534_screen_compact_xattn_10128518` and
-`v8_architecture_dcc4f95534_screen_atari_base_10128519`. Initial steady-state
-throughput is approximately 19.7k and 108k transitions/s respectively. These
-are operational admission facts, not fixed-panel learning results.
+`v8_architecture_dcc4f95534_screen_atari_base_10128519`.
+
+Atari completed all 20,000 updates and fixed evaluations. Its
+promotion-selected update-19,000 checkpoint scores 16/752 exact and 0.457
+macro on promotion, then 20/752 and 0.428 on development. The terminal
+checkpoint scores 15/752 and 0.403 on development. It mastered zero conditions
+and ended at depth 0 for both families, so it is a negative small-system
+replication result and not a reward-fork parent. The detailed paper-facing
+receipt and caveats are in
+[`research/V8_10M_SCALEUP.md`](research/V8_10M_SCALEUP.md), section
+"Completed result: Atari-base small-system control (2026-08-10)."
 
 ## Cancelled nearby-only reward diagnostic
 

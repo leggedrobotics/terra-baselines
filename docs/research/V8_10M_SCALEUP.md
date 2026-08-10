@@ -925,3 +925,56 @@ runtime. Long jobs `10128518` (compact, `gpuhe.120h`) and `10128519` (Atari,
 `gpuhe.24h`) are running on 4xRTX4090 and have passed update 1. Initial
 steady-state throughput is approximately 19.7k and 108k transitions/s. This is
 launch admission only; fixed held-out evaluations remain the learning evidence.
+
+### Completed result: Atari-base small-system control (2026-08-10)
+
+Atari job `10128519` completed `0:0` after all 20,000 PPO updates and all four
+fixed-panel sweeps. It used 1,310,720,000 environment transitions. The run is a
+small-system capacity/replication control: its 480,137-parameter Atari CNN,
+actor, critic, and local-map heads are all smaller than the 2,856,685-parameter
+compact deep+xattn policy. It is therefore not an encoder-only ablation.
+
+The promotion-selected descriptive checkpoint is update 19,000, SHA-256
+`652d2a1fa2fa8f171b8141aa2acb371016106a01bdd3f8599d2c618f682470c5`.
+It is the Atari checkpoint with the best combined promotion exact count and
+macro completion. Main and all-free capability panels are reported together
+below: 720 main episodes plus 32 capability-anchor episodes, giving 47
+conditions x 16 identities = 752 episodes per split:
+
+| Atari checkpoint | Promotion exact / macro | Development exact / macro |
+|---|---:|---:|
+| update 18,000, best development macro | 14/752 / 0.424 | 14/752 / **0.444** |
+| update 19,000, promotion-selected | **16/752 / 0.457** | **20/752 / 0.428** |
+| update 20,000, terminal | 15/752 / 0.418 | 15/752 / 0.403 |
+
+At the promotion-selected checkpoint, development exact success is 1/400 for
+foundations and 19/352 for trenches: the remaining exact capability is almost
+entirely trench-side. At the terminal checkpoint those counts are 1/400 and
+14/352; its all-free capability contribution is 0/16 for the foundation anchor
+and 10/16 for the trench anchor. Every fixed-evaluation record is deterministic,
+exactly enumerates its manifest, matches its checkpoint hash, and passes reset
+and map-integrity checks with zero integrity failures.
+
+The online metrics do not rescue the result. The final rollout reports graded
+absolute completion 0.874 and success 0.414, but the trailing 1,000-update mean
+online success is only 0.235. More importantly, the adaptive sampler finishes
+with zero mastered conditions, both families at depth 0, and approximately
+76.6% of assignment probability on the two anchors. High sampler-weighted
+graded completion therefore does not imply broad exact completion.
+
+Paper-safe interpretation: under the matched V8 training distribution,
+continuous sampler, PPO shape, seed, horizon, dense reward, and transition
+budget, the original 480k Atari-base system did not learn broad source-disjoint
+exact completion. This supports retaining the larger spatial policy for the
+main study. It does not isolate encoder topology from head width, establish a
+general parameter-scaling law, or support a multi-seed statistical claim. The
+paired effect size against compact should be added only after compact job
+`10128518` finishes its development and capability-development sweeps.
+
+Evidence:
+
+- W&B: `v8_architecture_dcc4f95534_screen_atari_base_10128519`
+- terminal checkpoint SHA-256:
+  `2362a77b234a5f9e9baebf74ee1fb7a2918023a56eda6b73e87c05bed9fc0913`
+- Euler result root:
+  `/cluster/work/rsl/lterenzi/terra_v8_architecture_control_v1/dcc4f955347182e57e6f16e9df81a3f170564d97/screen/all47/s20260807/atari_base`
