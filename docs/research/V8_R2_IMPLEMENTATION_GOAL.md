@@ -68,7 +68,7 @@ horizon `450`, with protocol IDs checked from that exact runtime revision.
 
 ## Simple implementation boundary
 
-Follow `$simple-research-code`:
+Follow [`$simple-research-code`](/home/lorenzo/git/codex_skills/skills/simple-research-code/SKILL.md):
 
 - one named `continuous_banded_v2` preset;
 - one named prepared-fork initializer;
@@ -191,11 +191,11 @@ The goal is complete only when all of the following exist:
 
 - [x] G0 goal activated; clean implementation worktrees created
 - [x] G1 D0 receipt complete
-- [ ] G2 D4a durable replay receipt complete
+- [x] G2 D4a durable replay receipt complete
 - [x] G3 D4b scale/overlap/dwell receipt and dominance proof complete
 - [x] G4 Terra reward-v2 and carry-observation path implemented and committed
 - [x] G5 baselines prepared fork, v2 preset, warmup, receipts, and launcher implemented and committed
-- [ ] G6 focused CPU tests and independent code review pass
+- [x] G6 focused CPU tests and independent code review pass
 - [ ] G7 both Euler update-1 smokes pass
 - [ ] G8 matched 6,000-update R2 jobs jointly released and verified beyond update 1; failed pairs restart from the prepared fork
 - [ ] G9 fixed evaluations complete and R2 decision recorded
@@ -267,3 +267,24 @@ The goal is complete only when all of the following exist:
   location, and float32 spacing before gating and uses the explicit
   four-ULP bound. This changes the verifier only; a clean identical D4a rerun
   remains required before smoke submission.
+- 2026-08-10: final launch hardening committed as
+  `a94780d2099db57d500901f9b07c879fa51f2e74`. It pins Terra `3051054b`, the
+  complete reward-v2 constant tuple and horizon, removes the unsupported resume
+  promise, and submits the two arms held before releasing them together. The
+  final focused suite passed `83` tests. Independent review additionally passed
+  `147` relevant baselines tests and `12` Terra tests plus `4` subtests, with no
+  remaining code or launcher blocker.
+- 2026-08-10: final-authority D4a job `10289611` completed on one RTX 4090 in
+  `12:19` with W&B disabled and no PPO. It exactly reproduced the frozen
+  `546/720` panel and all nine targeted traces. Across `7179` lifts, zero failed
+  the four-ULP gate; the largest absolute residual was exactly one ULP at slot
+  `517`, step `9`, the maximum ULP residual was `2`, inert error was `0`, and
+  telescope error was `4.1961669921875e-05 < 1e-4`. The durable receipt SHA-256
+  is `6905300337310456a28ec6177a8c7d74f73892ebe052d11d29e9e0fa5bec7362`,
+  manifest SHA-256 is
+  `cc969a69810b5ed0d14b85d58a0932ae26659a34686c4eadb760ae24b7cc87a4`,
+  and the successful execution receipt SHA-256 is
+  `b472620f299bee3c174a9691064ae04a7208bbebf586ee0c8c25bd3a671c7ed3`.
+  Failed job `10285183` remains archived separately. The final local
+  `SUBMIT=0` smoke gate passed against this receipt; no PPO job had yet been
+  launched at this checkpoint.
