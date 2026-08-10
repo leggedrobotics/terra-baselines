@@ -11,7 +11,7 @@ from terra.actions import (
     TrackedActionType,
 )
 import jax.numpy as jnp
-from utils.utils_ppo import obs_to_model_input, wrap_action
+from utils.utils_ppo import _config_option, obs_to_model_input, wrap_action
 from train_mixed_agents import MixedAgentTrainConfig
 
 #sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
@@ -90,6 +90,12 @@ def rollout_episode(
         if model is not None:
             obs_model = obs_to_model_input(timestep.observation, prev_actions, rl_config)
             v, logits_pi = model.apply(model_params, obs_model)
+            # D3: evaluation must respect the same masked distribution the
+            # policy trained under (obs_model[22] when the flag is on).
+            if _config_option(rl_config, "action_logit_masking", False):
+                logits_pi = jnp.where(
+                    obs_model[22], logits_pi, jnp.float32(-1e9)
+                )
             if deterministic:
                 action = np.argmax(logits_pi, axis=-1)
             else:

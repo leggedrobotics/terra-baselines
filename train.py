@@ -344,6 +344,7 @@ def ppo_update_networks(
     # V6 dense per-cell auxiliary supervision. 0.0 = off, and the branch is
     # Python-static so the traced loss graph of existing runs is unchanged.
     aux_coef = float(_config_option(config, "aux_coef", 0.0))
+    action_logit_masking = bool(_config_option(config, "action_logit_masking", False))
 
     raw_advantages_finite = _finite_fraction(advantages)
     raw_targets_finite = _finite_fraction(targets)
@@ -392,16 +393,21 @@ def ppo_update_networks(
             config,
         )
         model_obs_finite = _tree_finite_fraction(obs)
+        # D3: the loss must build the same masked distribution the rollout
+        # sampled from, or log_prob/entropy would disagree across the ratio.
+        loss_action_mask = obs[22] if action_logit_masking else None
         if aux_coef > 0.0:
             # One forward feeds the PPO heads and the aux decoder logits.
             value, dist, intermediates = policy_with_intermediates(
-                train_state.apply_fn, params, obs
+                train_state.apply_fn, params, obs, action_mask=loss_action_mask
             )
             aux_loss = aux_decoder_loss(
                 intermediates["maps_net"]["cnn"]["aux_logits"][0], obs
             )
         else:
-            value, dist = policy(train_state.apply_fn, params, obs)
+            value, dist = policy(
+                train_state.apply_fn, params, obs, action_mask=loss_action_mask
+            )
             aux_loss = jnp.zeros((), dtype=jnp.float32)
         value = value[:, 0]
         student_logits = dist.logits_parameter()

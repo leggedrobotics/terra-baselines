@@ -46,6 +46,12 @@ def scale_local_maps_in_obs(obs, scale):
 
 
 def obs_to_model_input(obs, prev_actions, train_cfg):
+    # Capture the env's action mask before ``obs`` is rebound to the list.
+    action_mask = (
+        obs["action_mask"]
+        if _config_option(train_cfg, "action_logit_masking", False)
+        else None
+    )
     # Feature engineering
     if _config_option(train_cfg, "clip_action_maps", True):
         obs = clip_action_map_in_obs(obs)
@@ -81,16 +87,33 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs["interaction_mask"],         # [20] - Interaction map
         prev_actions,                    # [21] - Previous actions history
     ]
+    if _config_option(train_cfg, "action_logit_masking", False):
+        # [22] - Effect-based action mask from the env (D3). Appended last so
+        # every existing index and the len>=22 layout checks stay valid; the
+        # model consumes nothing at [22], only policy() masking reads it.
+        obs = obs + [action_mask]
     return obs
+
+
+def _masked_logits(logits_pi, action_mask):
+    """Invalid-action masking (D3): finite large negative keeps gradients safe.
+
+    The env guarantees at least one valid action per row (DO_NOTHING is always
+    selectable), so the masked softmax can never see an all-invalid row.
+    """
+    if action_mask is None:
+        return logits_pi
+    return jnp.where(action_mask, logits_pi, jnp.float32(-1e9))
 
 
 def policy(
     apply_fn,
     params,
     obs,
+    action_mask=None,
 ):
     value, logits_pi = apply_fn(params, obs)
-    pi = tfp.distributions.Categorical(logits=logits_pi)
+    pi = tfp.distributions.Categorical(logits=_masked_logits(logits_pi, action_mask))
     return value, pi
 
 
@@ -98,6 +121,7 @@ def policy_with_intermediates(
     apply_fn,
     params,
     obs,
+    action_mask=None,
 ):
     """``policy`` that also returns the encoder's sown ``intermediates``.
 
@@ -105,7 +129,7 @@ def policy_with_intermediates(
     the encoder publishes with ``sow`` (a no-op without this mutable request).
     """
     (value, logits_pi), model_state = apply_fn(params, obs, mutable=["intermediates"])
-    pi = tfp.distributions.Categorical(logits=logits_pi)
+    pi = tfp.distributions.Categorical(logits=_masked_logits(logits_pi, action_mask))
     return value, pi, model_state["intermediates"]
 
 
@@ -119,7 +143,14 @@ def select_action_ppo(
     # Prepare policy input from Terra State
     obs = obs_to_model_input(obs, prev_actions, config)
 
-    value, pi = policy(train_state.apply_fn, train_state.params, obs)
+    action_mask = (
+        obs[22]
+        if _config_option(config, "action_logit_masking", False)
+        else None
+    )
+    value, pi = policy(
+        train_state.apply_fn, train_state.params, obs, action_mask=action_mask
+    )
     action = pi.sample(seed=rng)
     log_prob = pi.log_prob(action)
     return action, log_prob, value[:, 0], pi

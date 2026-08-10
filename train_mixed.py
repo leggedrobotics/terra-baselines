@@ -436,6 +436,9 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "flatten_reduce_channels": None,
         "attn_latent_queries": 4,
         "aux_coef": 0.0,
+        # D3: no parameter shapes change, but the sampling distribution
+        # contract does — a resume must not silently flip masking.
+        "action_logit_masking": False,
     }
     tuple_fields = (
         "critic_hidden_dims",
@@ -471,7 +474,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             "--critic_hidden_dims, --resnet_stage_channels, "
             "--resnet_blocks_per_stage, --flatten_reduce_channels, "
             "--attn_latent_queries, and --aux_coef values, and the "
-            "carry-work observation contract."
+            "carry-work observation and action-logit-masking contracts."
         )
 
 
@@ -1324,6 +1327,9 @@ class MixedAgentTrainConfig:
     # One global reward objective. Map-level rewards_type remains frozen.
     reward_stage: str = "dense_skill"
     carry_work_observation: bool = False
+    # D3: mask provably-ineffective actions out of the sampling distribution
+    # (env supplies obs["action_mask"]; DO_NOTHING always stays valid).
+    action_logit_masking: bool = False
     distance_protocol_id: str | None = None
     distance_sidecar_sha256: str | None = None
 
@@ -4155,6 +4161,12 @@ if __name__ == "__main__":
         help="Consume normalized carry work from agent_states[..., 8].",
     )
     parser.add_argument(
+        "--action_logit_masking",
+        action="store_true",
+        help="Mask provably-ineffective actions out of the sampling "
+        "distribution using the env's obs['action_mask'] (D3).",
+    )
+    parser.add_argument(
         "--distance_protocol_id",
         default=None,
         help="R2 map-distance protocol selected by the matched launcher.",
@@ -4553,6 +4565,7 @@ if __name__ == "__main__":
         relocation_progress_mult=relocation_progress_mult,
         reward_stage=args.reward_stage,
         carry_work_observation=args.carry_work_observation,
+        action_logit_masking=args.action_logit_masking,
         distance_protocol_id=args.distance_protocol_id,
         distance_sidecar_sha256=args.distance_sidecar_sha256,
         truck_capacity=truck_capacity,
