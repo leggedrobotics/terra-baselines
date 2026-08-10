@@ -5,6 +5,10 @@ import pytest
 from scripts.euler_v8_r2_reward_v2 import select_promotion
 
 
+def test_phase1_selector_uses_exact_retained_checkpoint_set():
+    assert select_promotion.UPDATES == tuple(range(1_000, 14_001, 1_000))
+
+
 def record(path, update, exact, macro, worst, episodes):
     return {
         "checkpoint": str(path),

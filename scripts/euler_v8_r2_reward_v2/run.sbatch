@@ -4,8 +4,8 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --gpus=rtx_4090:4
 #SBATCH --mem-per-cpu=8G
-#SBATCH --partition=gpuhe.120h
-#SBATCH --time=119:45:00
+#SBATCH --partition=gpuhe.24h
+#SBATCH --time=23:45:00
 #SBATCH --no-requeue
 
 set -euo pipefail
@@ -41,11 +41,11 @@ case "$PHASE" in
         FINITE_CHECK_INTERVAL=1
         CACHE_CLEAR_INTERVAL=0
         ;;
-    screen)
-        test "${SLURM_JOB_PARTITION:-}" = gpuhe.120h
+    phase1)
+        test "${SLURM_JOB_PARTITION:-}" = gpuhe.24h
         [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
         [[ "$SMOKE_RUN" = /* ]]
-        UPDATES=40000
+        UPDATES=14000
         CHECKPOINT_INTERVAL=500
         EVAL_INTERVAL=1000
         LOG_TRAIN_INTERVAL=10
@@ -71,7 +71,7 @@ done
 test "${SLURM_CPUS_PER_TASK:-}" = 4
 test -d "$RUN_DIR" -a ! -e "$RUN_DIR/run_contract.env"
 
-if [ "$PHASE" = screen ]; then
+if [ "$PHASE" = phase1 ]; then
     SMOKE_STATE="$(sacct -n -X -P -j "$SMOKE_JOB_ID" --format=JobIDRaw,State | awk -F'|' -v id="$SMOKE_JOB_ID" '$1==id {sub(/\+.*/, "", $2); print $2}')"
     test "$SMOKE_STATE" = COMPLETED
     test -f "$SMOKE_RUN/smoke_validation.json" -a -f "$SMOKE_RUN/run_contract.env"
@@ -92,7 +92,7 @@ tar --zstd -xf "$BANK_ARCHIVE" -C "$TMPDIR" bank
 BANK="$TMPDIR/bank"
 test "$(sha256sum "$BANK/dataset.json" | awk '{print $1}')" = "$BANK_DATASET_SHA"
 module load stack/2024-06 cuda/12.1.1
-if [ "$PHASE" = screen ]; then
+if [ "$PHASE" = phase1 ]; then
     module load eth_proxy
     test -r "$HOME/.netrc"
 fi
@@ -190,9 +190,9 @@ printf '%s\n' \
     "comparison_role=historical_descriptive_reference" \
     "historical_baseline_job_id=10128518" \
     "historical_baseline_checkpoint_sha256=0948a230a5c0929237a7adbdb6c1231691caab728238a600c0e819f02e200834" \
-    "full_system_selection_updates=1000_to_40000_promotion_only" \
+    "phase1_selection_updates=1000_to_14000_promotion_only" \
     "promotion_selection_rule=combined_exact_then_47_condition_macro_then_worst_then_earliest" \
-    "bundled_changes=reward_v2+global_distance_ledger+carry_input+continuous_banded_v2+runtime_3051054+budget_40000" \
+    "bundled_changes=reward_v2+global_distance_ledger+carry_input+continuous_banded_v2+runtime_3051054+target_40000" \
     "phase=$PHASE" \
     "seed=$SEED" \
     "absolute_start_update=0" \
@@ -230,8 +230,11 @@ printf '%s\n' \
     "reward_v2_beta=1.5" \
     "reward_v2_step_cost_total=1.0" \
     "reward_v2_shaping_weight=1.0" \
-    "resume_supported=false" \
-    "restart_policy=discard_run_restart_from_update0" \
+    "statistical_continuation_supported=true" \
+    "bit_exact_continuation=false" \
+    "continuation_preserves=model+optimizer+absolute_update+entropy_schedule+sampler_state" \
+    "continuation_restarts=environment+jax_rng+action_history+episode_accumulators" \
+    "resume_checkpoint=none" \
     "protocol_terra_revision=$PROTOCOL_TERRA_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
     "terra_baselines_revision=$BASELINES_REVISION" \
@@ -260,7 +263,7 @@ export NUM_DEVICES=4 NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 NUM_MINIBATCHES=32
 export CHECKPOINT_INTERVAL LOG_TRAIN_INTERVAL FINITE_CHECK_INTERVAL CACHE_CLEAR_INTERVAL
 export ENTROPY_SCHEDULE_STEPS=20000
 "$BASELINES_ROOT/scripts/run_v8_r2_reward_v2.sh" \
-    "$BANK" "$RUN_NAME" "$UPDATES" "$RUN_DIR" "$DISTANCE_ARTIFACT_SHA"
+    "$BANK" "$RUN_NAME" "$UPDATES" "$RUN_DIR" "$DISTANCE_ARTIFACT_SHA" none
 
 find_one() {
     local pattern="$1"
@@ -281,7 +284,7 @@ if [ "$PHASE" = smoke ]; then
     exit 0
 fi
 
-find_one "${RUN_NAME}_update_040000.pkl" >/dev/null
+find_one "${RUN_NAME}_update_014000.pkl" >/dev/null
 printf '%s\n' status=TRAINING_TARGET_REACHED >> "$RUN_DIR/run_contract.env"
 CHECKPOINT_ARGS=()
 for UPDATE in $(seq "$EVAL_INTERVAL" "$EVAL_INTERVAL" "$UPDATES"); do
@@ -342,4 +345,4 @@ printf '%s\n' \
     "selected_checkpoint_update=$SELECTED_UPDATE" \
     "selected_checkpoint_sha256=$SELECTED_SHA" \
     "promotion_selection_receipt_sha256=$SELECTION_SHA" >> "$RUN_DIR/run_contract.env"
-echo "V8_R2_SCRATCH_EVALUATED"
+echo "V8_R2_SCRATCH_PHASE1_EVALUATED"
