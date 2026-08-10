@@ -1,6 +1,6 @@
 # V8 R2 reward-v2 implementation and experiment goal
 
-Status: ready to activate
+Status: active
 
 Authority:
 
@@ -47,15 +47,24 @@ Both arms must share:
   state;
 - absolute PPO update 20,000, fresh optimizer-local step zero, identical short
   LR warmup, and entropy fixed at the parent endpoint `0.02`;
-- map identities, graph, initial poses, horizon, reset mode, architecture,
-  PPO settings, source seed, transition budget, checkpoint cadence, and fixed
-  evaluation panels;
+- physical map/source identities, target/dump/obstacle/action/pose arrays,
+  graph, horizon, reset mode, architecture, PPO settings, source seed,
+  transition budget, checkpoint cadence, and fixed evaluation panels;
 - source-disjoint promotion/development plus all-free capability evaluations.
 
-Only the reward-plus-ledger bundle may differ. Each arm records and validates
-its carry-channel protocol ID and distance-sidecar hash. No arm-specific
-sampler, action-mask, horizon, observation, bank, architecture, or dynamics
-change is allowed.
+Only the reward-plus-ledger bundle may differ. The treatment uses a derived
+bank whose physical/reset arrays are byte-identical to the control but whose
+distance sidecar, scenario hashes, and protocol metadata are intentionally
+different. Each arm records and validates its carry-channel protocol ID and
+distance-sidecar hash. No arm-specific sampler, action mask, horizon, physical
+map distribution, architecture, or dynamics change is allowed; both arms get
+the same output-preserving carry-observation expansion.
+
+Both arms execute Terra revision
+`3051054bc4c713d95905d3f954e6eabf55d6a85a`. The reward-v2 tuple is frozen as
+`D_ref=16 m`, `D_bound=2.5`, `gamma=0.9984`, success `B=6`, horizon failure
+`F=1`, `alpha=1`, `beta=1.5`, total step cost `1`, shaping weight `1`, and
+horizon `450`, with protocol IDs checked from that exact runtime revision.
 
 ## Simple implementation boundary
 
@@ -70,6 +79,14 @@ Follow `$simple-research-code`:
 - one reversible implementation commit per repository;
 - one to four new claim-driving contract tests per repository unless a silent
   reward/termination error requires more.
+
+The 6,000-update comparison has no resume path. If either arm fails or is
+interrupted, that attempted pair is not evidence: retain its failure receipt,
+discard both training continuations, and restart both arms from the exact same
+prepared update-20,000 fork. Never resume one arm, continue from an intermediate
+checkpoint, or splice jobs from different paired attempts. A retry uses a new
+committed baselines revision and therefore a new immutable run namespace; prior
+run directories are retained and never reused.
 
 The old R1 whole-objective anneal remains historical code and receives no
 compute. If R2 loses, retain its receipts and revert or abandon the experiment
@@ -90,7 +107,7 @@ R2 cannot launch until all blocking gates pass:
   maximum horizon-failure return.
 - **Implementation:** dense endpoint parity, signed-cycle accounting,
   output-preserving carry expansion, prepared-fork state, v1-to-v2 migration,
-  LR warmup, checkpoint/resume, and finite-value tests pass.
+  LR warmup, paired restart contract, and finite-value tests pass.
 - **Runtime:** each arm independently completes a W&B-disabled update-1 smoke
   after CUDA convolution-backward and NCCL all-reduce preflight on an approved
   RTX 3090/4090 allocation.
@@ -144,9 +161,10 @@ trigger paired-seed replication, not post-hoc gate changes.
 
 - Do not loosen exact excavation, accepted dump mask, cleanup, unloaded final
   state, mass conservation, or fixed evaluation.
-- Do not change the map bank, sampler between arms, horizon, architecture,
-  seed, PPO shape, or action/observation contract beyond the common carry
-  expansion.
+- Do not change the physical map distribution, sampler between arms, horizon,
+  architecture, seed, PPO shape, or action/observation contract beyond the
+  common carry expansion. Only the treatment's canonical reward-distance
+  sidecar and identities derived from that reset array may differ.
 - Do not select on development, sealed results, online success, or reward.
 - Do not call a queued job, running job, finite checkpoint, or update-1 smoke a
   learning result.
@@ -161,8 +179,8 @@ The goal is complete only when all of the following exist:
 - checked D0, D4a, D4b, dominance, CPU, and GPU-smoke receipts;
 - exact parent, prepared-fork, dataset, graph, sampler, reward-protocol, source,
   and sidecar identities in both run contracts;
-- two Euler job IDs (plus continuation IDs if needed) that each advanced beyond
-  update 1 and completed the declared 6,000-update screen;
+- one jointly released pair of Euler job IDs that each advanced beyond update 1
+  and completed the declared 6,000-update screen from the shared prepared fork;
 - fixed promotion/development/capability results for both arms with integrity
   checks;
 - a result table and causal interpretation in the experiment ledger;
@@ -171,17 +189,81 @@ The goal is complete only when all of the following exist:
 
 ## Status checklist
 
-- [ ] G0 goal activated; clean implementation worktrees created
-- [ ] G1 D0 receipt complete
+- [x] G0 goal activated; clean implementation worktrees created
+- [x] G1 D0 receipt complete
 - [ ] G2 D4a durable replay receipt complete
-- [ ] G3 D4b scale/overlap/dwell receipt and dominance proof complete
-- [ ] G4 Terra reward-v2 and carry-observation path implemented and committed
-- [ ] G5 baselines prepared fork, v2 preset, warmup, receipts, and launcher implemented and committed
+- [x] G3 D4b scale/overlap/dwell receipt and dominance proof complete
+- [x] G4 Terra reward-v2 and carry-observation path implemented and committed
+- [x] G5 baselines prepared fork, v2 preset, warmup, receipts, and launcher implemented and committed
 - [ ] G6 focused CPU tests and independent code review pass
 - [ ] G7 both Euler update-1 smokes pass
-- [ ] G8 matched 6,000-update R2 jobs submitted and verified beyond update 1
+- [ ] G8 matched 6,000-update R2 jobs jointly released and verified beyond update 1; failed pairs restart from the prepared fork
 - [ ] G9 fixed evaluations complete and R2 decision recorded
 
 ## Worklog
 
 - 2026-08-10: goal drafted from audit commit `9f34f6d`; no R2 code or job yet.
+- 2026-08-10: activated goal; created clean Terra and baselines R2 worktrees
+  from `eb3835c1` and `129a56d` respectively.
+- 2026-08-10: copied and rehashed the selected parent locally at
+  `.artifacts/terra_v8_r2_parent_20260810/`; verified update `20000`, optimizer
+  step `1280000`, `2856685` parameters, seed `20260807`, all 47 sampler
+  conditions, and saved `continuous_banded_v1` state. The exact parent SHA is
+  unchanged at `0948a230a5c0929237a7adbdb6c1231691caab728238a600c0e819f02e200834`.
+- 2026-08-10: authoritative static admission receipts passed under
+  `.artifacts/terra_v8_r2_admission_20260810/static_v2/`; this supersedes the
+  provisional `static/` tree and additionally pins episode/reset-pose
+  identity. D0 reproduced main
+  development `546/720` (`0.860913` macro), main promotion `549/720`
+  (`0.853249`), and both capability panels at `31/32`. D4b reproduced the
+  legacy relocation budget range `0.052710--15.335504` (`290.938x`) and the
+  exact 34-map high-budget overlap. The global-distance scan covered all
+  `7520` admitted scenarios with `D_ref=16 m`, `D_bound=2.5`, and no
+  disconnected traversable cells. Analytic terminal dominance passed:
+  minimum success `0.771014`, maximum horizon failure `-0.815476`, margin
+  `1.586490`. Receipt-manifest file SHA-256 is
+  `9b16c391dbe0c108f4b79833f1940c5fc0ba31903a1e7edbfec1797aa53740d9`;
+  its canonical receipt-tree SHA-256 is
+  `5d5f31d5dc73a850e23a023e33a11efb7f296f6ddff80ddbfda3d0af29c7f291`,
+  the sidecar-root SHA-256 is
+  `f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980`,
+  and the protocol SHA-256 is
+  `ea7bf132f4d4f11265c30c443754619f1fb3ed0c6a07db229a72eb29c4b12ca3`.
+  D4a remains pending.
+- 2026-08-10: Terra reward-v2 committed as
+  `3051054bc4c713d95905d3f954e6eabf55d6a85a`. The final focused/broader CPU
+  gate passed `73` tests plus `4` subtests; exact dense reward goldens remain
+  unchanged. The runtime now has one frozen reward-v2 formula, one canonical
+  distance protocol, one ninth carry-work observation, and fail-loud full-reset
+  validation. Dense control skips the unused reward-v2 computation.
+- 2026-08-10: the first D4a attempt exposed an over-strict full-panel parity
+  check: the local full-graph replay produced `549` successes while D0's frozen
+  Euler panel records `546`. D0 remains the authoritative 720-map result under
+  its declared Terra `a6e6e5bc` source. D4a instead uses the documented
+  `dcc4f955`/`eb3835c1` targeted-replay source and gates exact ledger/terminal
+  parity only for its nine preselected rows; it reports full-panel hardware
+  drift without treating it as evidence. The invalid/contended attempt emitted
+  no receipt and was stopped without touching the unrelated GPU job.
+- 2026-08-10: the direct baselines path committed as
+  `47e39f193d74003ceb27fc090c939a33d4a0bf4b`. Its focused integration suite
+  passed `80` tests; Python compilation, Black, shell syntax, diff checks, and
+  dry-rendered control/treatment commands passed. The shared prepared fork has
+  SHA-256
+  `8e01ebd3dfd99b36cea90a251dfe4a4e305228abeb2f5ecba633a9fc6805b1d0`
+  and receipt SHA-256
+  `d119f443613d4959d5f63918971c50c5ad204e4b6c1d65ec985c3fc31b005185`.
+  Its value/logit deltas are exactly zero, and its saved config, accepted-bank
+  profile, and sampler state all consistently select `continuous_banded_v2`.
+  An independent baselines review and D4a remain pending; no PPO job has been
+  launched.
+- 2026-08-10: independent review found two launch blockers in the prepared
+  training path. Commit `1bb4fedc1f358a3f6a8a2b1f86bcba4cebb07d8a`
+  now overlays the arm-selected reward stage after loading the parent
+  environment and leaves Terra's complete reset reward-component tree intact;
+  the focused suite passed `82` tests. No PPO job was launched.
+- 2026-08-10: D4a job `10285183` reproduced `546/720`, but its audit-only
+  absolute lift gate rejected a float32 residual of `2^-15`. Commit
+  `82b7de4a429761d895cb2d538247ad57ded30daf` records every lift's magnitude,
+  location, and float32 spacing before gating and uses the explicit
+  four-ULP bound. This changes the verifier only; a clean identical D4a rerun
+  remains required before smoke submission.

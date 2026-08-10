@@ -11,8 +11,12 @@
 set -euo pipefail
 umask 002
 
+EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a
+EXPECTED_HORIZON=450
+
 for REQUIRED in PHASE ARM REWARD_STAGE DISTANCE_PROTOCOL_ID DISTANCE_ARTIFACT_SHA \
     BASELINES_ROOT BASELINES_REVISION RUNTIME_TERRA_ROOT RUNTIME_TERRA_REVISION \
+    R2_HORIZON \
     SEED BANK_ARCHIVE BANK_SHA BANK_DATASET_SHA BANK_TREE_SHA BANK_RELEASE_ID \
     PREPARED_FORK PREPARED_SHA PREPARED_RECEIPT PREPARED_RECEIPT_SHA \
     MATERIALIZATION_RECEIPT MATERIALIZATION_RECEIPT_SHA STATIC_RECEIPT_MANIFEST \
@@ -21,6 +25,8 @@ for REQUIRED in PHASE ARM REWARD_STAGE DISTANCE_PROTOCOL_ID DISTANCE_ARTIFACT_SH
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 test "$SEED" = 20260807
+test "$RUNTIME_TERRA_REVISION" = "$EXPECTED_RUNTIME_TERRA_REVISION"
+test "$R2_HORIZON" -eq "$EXPECTED_HORIZON"
 case "$PHASE" in
     smoke)
         test "${SLURM_JOB_PARTITION:-}" = gpuhe.4h
@@ -139,18 +145,39 @@ print(jax.devices(), float(jnp.linalg.norm(gradient)))
 PY
 "$PYTHON" - <<'PY'
 from terra.config import (
-    DENSE_REWARD_PROTOCOL_ID, REWARD_V2_DISTANCE_BOUND,
-    REWARD_V2_DISTANCE_REF_M, REWARD_V2_POTENTIAL_GAMMA,
-    REWARD_V2_PROTOCOL_ID, RewardStage,
+    DENSE_REWARD_PROTOCOL_ID,
+    REWARD_V2_ALPHA,
+    REWARD_V2_BETA,
+    REWARD_V2_DISTANCE_BOUND,
+    REWARD_V2_DISTANCE_REF_M,
+    REWARD_V2_HORIZON_FAILURE_PENALTY,
+    REWARD_V2_POTENTIAL_GAMMA,
+    REWARD_V2_PROTOCOL_ID,
+    REWARD_V2_SHAPING_WEIGHT,
+    REWARD_V2_STEP_COST_TOTAL,
+    REWARD_V2_SUCCESS_BONUS,
+    RewardStage,
 )
 from terra.env_generation.distance import REWARD_V2_DISTANCE_PROTOCOL_ID
 from terra.maps_buffer import LEGACY_DISTANCE_PROTOCOL_ID
+from terra.state import CORRECTED_DENSE_CONTRACT
 assert int(RewardStage.REWARD_V2) == 3
 assert DENSE_REWARD_PROTOCOL_ID == "dense_skill_legacy_relocation_v1"
 assert REWARD_V2_PROTOCOL_ID == "material_potential_v2"
 assert LEGACY_DISTANCE_PROTOCOL_ID == "legacy_dataset_distance"
 assert REWARD_V2_DISTANCE_PROTOCOL_ID == "obstacle_geodesic_8_physical_global_v1"
-assert (REWARD_V2_DISTANCE_REF_M, REWARD_V2_DISTANCE_BOUND, REWARD_V2_POTENTIAL_GAMMA) == (16.0, 2.5, 0.9984)
+assert CORRECTED_DENSE_CONTRACT == "exact_visible_dump_v1"
+assert (
+    REWARD_V2_DISTANCE_REF_M,
+    REWARD_V2_DISTANCE_BOUND,
+    REWARD_V2_POTENTIAL_GAMMA,
+    REWARD_V2_SUCCESS_BONUS,
+    REWARD_V2_HORIZON_FAILURE_PENALTY,
+    REWARD_V2_ALPHA,
+    REWARD_V2_BETA,
+    REWARD_V2_STEP_COST_TOTAL,
+    REWARD_V2_SHAPING_WEIGHT,
+) == (16.0, 2.5, 0.9984, 6.0, 1.0, 1.0, 1.5, 1.0, 1.0)
 PY
 OBSERVED_MAPS="$("$PYTHON" "$BASELINES_ROOT/scripts/euler_accepted_bank_v1/validate_training_bank.py" "$BANK" --expected-maps-per-condition 96 --expected-release-id "$EXPECTED_RELEASE")"
 test "$OBSERVED_MAPS" = 96
@@ -191,7 +218,7 @@ printf '%s\n' \
     "distance_protocol_id=$DISTANCE_PROTOCOL_ID" \
     "distance_artifact_sha256=$DISTANCE_ARTIFACT_SHA" \
     "carry_channel=agent_states_8_normalized_carry_work" \
-    "horizon=450" \
+    "horizon=$R2_HORIZON" \
     "full_resets=true" \
     "initialization=prepared_output_preserving_compact_u20_fork" \
     "source_parent_sha256=$EXPECTED_PARENT_SHA" \
@@ -201,6 +228,16 @@ printf '%s\n' \
     "lr_warmup_updates=100" \
     "entropy_fixed=0.02" \
     "ppo_gamma=0.9984" \
+    "reward_v2_distance_ref_m=16.0" \
+    "reward_v2_distance_bound=2.5" \
+    "reward_v2_success_bonus=6.0" \
+    "reward_v2_horizon_failure_penalty=1.0" \
+    "reward_v2_alpha=1.0" \
+    "reward_v2_beta=1.5" \
+    "reward_v2_step_cost_total=1.0" \
+    "reward_v2_shaping_weight=1.0" \
+    "resume_supported=false" \
+    "restart_policy=discard_pair_restart_from_prepared_u20" \
     "protocol_terra_revision=$PROTOCOL_TERRA_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
     "terra_baselines_revision=$BASELINES_REVISION" \
@@ -264,7 +301,7 @@ esac
 for PANEL in promotion development; do
     "$PYTHON" "$BASELINES_ROOT/eval_fixed_bank.py" \
         "${CHECKPOINT_ARGS[@]}" --bank-root "$BANK" --accepted-panel "$PANEL" \
-        --terra-revision "$PROTOCOL_TERRA_REVISION" --horizon 450 --seed "$SEED" \
+        --terra-revision "$PROTOCOL_TERRA_REVISION" --horizon "$R2_HORIZON" --seed "$SEED" \
         --expect-completion-contract exact_visible_dump_v1 \
         --expect-reward-protocol-id "$EXPECTED_REWARD_PROTOCOL" \
         --expect-distance-protocol-id "$DISTANCE_PROTOCOL_ID" \
@@ -273,7 +310,7 @@ for PANEL in promotion development; do
         --output "$RUN_DIR/eval/${PANEL}.json"
     "$PYTHON" "$BASELINES_ROOT/eval_fixed_bank.py" \
         "${CHECKPOINT_ARGS[@]}" --bank-root "$BANK" --capability-panel "$PANEL" \
-        --terra-revision "$PROTOCOL_TERRA_REVISION" --horizon 450 --seed "$SEED" \
+        --terra-revision "$PROTOCOL_TERRA_REVISION" --horizon "$R2_HORIZON" --seed "$SEED" \
         --expect-completion-contract exact_visible_dump_v1 \
         --expect-reward-protocol-id "$EXPECTED_REWARD_PROTOCOL" \
         --expect-distance-protocol-id "$DISTANCE_PROTOCOL_ID" \

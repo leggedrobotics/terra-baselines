@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-    echo "usage: submit.sh smoke|screen RUNTIME_TERRA_REVISION" >&2
+EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a
+R2_HORIZON=450
+if [ "$#" -ne 1 ]; then
+    echo "usage: submit.sh smoke|screen" >&2
     exit 2
 fi
 PHASE="$1"
-RUNTIME_TERRA_REVISION="$2"
+RUNTIME_TERRA_REVISION="$EXPECTED_RUNTIME_TERRA_REVISION"
 case "$PHASE" in smoke|screen) ;; *) echo "invalid phase '$PHASE'" >&2; exit 2 ;; esac
-[[ "$RUNTIME_TERRA_REVISION" =~ ^[0-9a-f]{40}$ ]] || {
-    echo "RUNTIME_TERRA_REVISION must be a full commit SHA" >&2
-    exit 2
-}
 SUBMIT="${SUBMIT:-0}"
 case "$SUBMIT" in 0|1) ;; *) echo "SUBMIT must be 0 or 1" >&2; exit 2 ;; esac
 
@@ -54,9 +52,48 @@ test -z "$(git -C "$REPO" status --porcelain)" || {
 test -z "$(git -C "$TERRA_REPO" status --porcelain)" || {
     echo "runtime Terra must be committed and clean" >&2; exit 3;
 }
-test "$(git -C "$TERRA_REPO" rev-parse "$RUNTIME_TERRA_REVISION^{commit}")" = "$RUNTIME_TERRA_REVISION"
-git -C "$TERRA_REPO" show "$RUNTIME_TERRA_REVISION:terra/config.py" | grep -q 'REWARD_V2_PROTOCOL_ID'
-git -C "$TERRA_REPO" show "$RUNTIME_TERRA_REVISION:terra/state.py" | grep -q 'material_potential_v2'
+test "$(git -C "$TERRA_REPO" rev-parse HEAD)" = "$EXPECTED_RUNTIME_TERRA_REVISION"
+LOCAL_TERRA_PYTHON=/home/lorenzo/moleworks/.venv-terra-uv/bin/python
+test -x "$LOCAL_TERRA_PYTHON"
+PYTHONPATH="$TERRA_REPO" JAX_PLATFORMS=cpu PYGAME_HIDE_SUPPORT_PROMPT=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    "$LOCAL_TERRA_PYTHON" - <<'PY'
+from terra.config import (
+    DENSE_REWARD_PROTOCOL_ID,
+    REWARD_V2_ALPHA,
+    REWARD_V2_BETA,
+    REWARD_V2_DISTANCE_BOUND,
+    REWARD_V2_DISTANCE_REF_M,
+    REWARD_V2_HORIZON_FAILURE_PENALTY,
+    REWARD_V2_POTENTIAL_GAMMA,
+    REWARD_V2_PROTOCOL_ID,
+    REWARD_V2_SHAPING_WEIGHT,
+    REWARD_V2_STEP_COST_TOTAL,
+    REWARD_V2_SUCCESS_BONUS,
+    RewardStage,
+)
+from terra.env_generation.distance import REWARD_V2_DISTANCE_PROTOCOL_ID
+from terra.maps_buffer import LEGACY_DISTANCE_PROTOCOL_ID
+from terra.state import CORRECTED_DENSE_CONTRACT
+
+assert int(RewardStage.REWARD_V2) == 3
+assert DENSE_REWARD_PROTOCOL_ID == "dense_skill_legacy_relocation_v1"
+assert REWARD_V2_PROTOCOL_ID == "material_potential_v2"
+assert LEGACY_DISTANCE_PROTOCOL_ID == "legacy_dataset_distance"
+assert REWARD_V2_DISTANCE_PROTOCOL_ID == "obstacle_geodesic_8_physical_global_v1"
+assert CORRECTED_DENSE_CONTRACT == "exact_visible_dump_v1"
+assert (
+    REWARD_V2_DISTANCE_REF_M,
+    REWARD_V2_DISTANCE_BOUND,
+    REWARD_V2_POTENTIAL_GAMMA,
+    REWARD_V2_SUCCESS_BONUS,
+    REWARD_V2_HORIZON_FAILURE_PENALTY,
+    REWARD_V2_ALPHA,
+    REWARD_V2_BETA,
+    REWARD_V2_STEP_COST_TOTAL,
+    REWARD_V2_SHAPING_WEIGHT,
+) == (16.0, 2.5, 0.9984, 6.0, 1.0, 1.0, 1.5, 1.0, 1.0)
+PY
 
 for SPEC in \
     "$BASE_BANK_ARCHIVE:$BASE_BANK_SHA" \
@@ -223,7 +260,31 @@ fi
 
 RUN_PARENT="$REMOTE_RUNS/$BASELINES_REVISION/$PHASE/s$SEED"
 ssh "$REMOTE_HOST" "mkdir -p '$RUN_PARENT'"
-for ARM in "${ARMS[@]}"; do ssh "$REMOTE_HOST" "test ! -e '$RUN_PARENT/$ARM' && mkdir '$RUN_PARENT/$ARM'"; done
+declare -a NEW_JOB_IDS=()
+declare -a NEW_RUN_DIRS=()
+declare -A PAIR_JOB_IDS=()
+
+cleanup_new_pair() {
+    local status="$1"
+    trap - ERR INT TERM
+    set +e
+    if [ "${#NEW_JOB_IDS[@]}" -gt 0 ]; then
+        ssh "$REMOTE_HOST" "scancel -- ${NEW_JOB_IDS[*]}"
+    fi
+    for RUN_DIR in "${NEW_RUN_DIRS[@]}"; do
+        # rmdir is intentionally the only cleanup: non-empty evidence survives.
+        ssh "$REMOTE_HOST" "rmdir -- '$RUN_DIR'" || true
+    done
+    exit "$status"
+}
+trap 'cleanup_new_pair $?' ERR
+trap 'cleanup_new_pair 130' INT TERM
+
+for ARM in "${ARMS[@]}"; do
+    RUN_DIR="$RUN_PARENT/$ARM"
+    ssh "$REMOTE_HOST" "test ! -e '$RUN_DIR' && mkdir '$RUN_DIR'"
+    NEW_RUN_DIRS+=("$RUN_DIR")
+done
 for ARM in "${ARMS[@]}"; do
     case "$ARM" in
         control)
@@ -246,7 +307,17 @@ for ARM in "${ARMS[@]}"; do
             ;;
     esac
     RUN_DIR="$RUN_PARENT/$ARM"
-    EXPORTS="ALL,PHASE=$PHASE,ARM=$ARM,REWARD_STAGE=$REWARD_STAGE,DISTANCE_PROTOCOL_ID=$DISTANCE_PROTOCOL_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_ARTIFACT_SHA,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,SEED=$SEED,BANK_ARCHIVE=$BANK_ARCHIVE,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,PREPARED_FORK=$REMOTE_PREPARED,PREPARED_SHA=$PREPARED_SHA,PREPARED_RECEIPT=$REMOTE_PREPARED_RECEIPT,PREPARED_RECEIPT_SHA=$PREPARED_RECEIPT_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=${SMOKE_JOB_IDS[$ARM]:-none},SMOKE_RUN=${SMOKE_RUNS[$ARM]:-none}"
-    JOB_ID="$(ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_r2_reward_v2/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --exclude='eu-g6-064' --job-name='terra-r2-$ARM' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
-    echo "$PHASE $ARM $JOB_ID"
+    EXPORTS="ALL,PHASE=$PHASE,ARM=$ARM,REWARD_STAGE=$REWARD_STAGE,DISTANCE_PROTOCOL_ID=$DISTANCE_PROTOCOL_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_ARTIFACT_SHA,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$BANK_ARCHIVE,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,PREPARED_FORK=$REMOTE_PREPARED,PREPARED_SHA=$PREPARED_SHA,PREPARED_RECEIPT=$REMOTE_PREPARED_RECEIPT,PREPARED_RECEIPT_SHA=$PREPARED_RECEIPT_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=${SMOKE_JOB_IDS[$ARM]:-none},SMOKE_RUN=${SMOKE_RUNS[$ARM]:-none}"
+    JOB_ID_RAW="$(ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_r2_reward_v2/run.sbatch' | sbatch --hold --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --exclude='eu-g6-064' --job-name='terra-r2-$ARM' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
+    JOB_ID="${JOB_ID_RAW%%;*}"
+    [[ "$JOB_ID" =~ ^[0-9]+$ ]]
+    NEW_JOB_IDS+=("$JOB_ID")
+    PAIR_JOB_IDS[$ARM]="$JOB_ID"
+    ssh "$REMOTE_HOST" "scontrol show job '$JOB_ID' -o | grep -q 'JobState=PENDING' && scontrol show job '$JOB_ID' -o | grep -q 'Reason=JobHeldUser'"
+done
+test "${#NEW_JOB_IDS[@]}" -eq "${#ARMS[@]}"
+ssh "$REMOTE_HOST" "scontrol release ${NEW_JOB_IDS[*]}"
+trap - ERR INT TERM
+for ARM in "${ARMS[@]}"; do
+    echo "$PHASE $ARM ${PAIR_JOB_IDS[$ARM]}"
 done

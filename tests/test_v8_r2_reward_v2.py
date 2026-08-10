@@ -207,6 +207,10 @@ def test_launcher_is_one_matched_prepared_fork_screen():
     root = Path(__file__).parents[1]
     runner = (root / "scripts/run_v8_r2_reward_v2.sh").read_text()
     batch = (root / "scripts/euler_v8_r2_reward_v2/run.sbatch").read_text()
+    submit = (root / "scripts/euler_v8_r2_reward_v2/submit.sh").read_text()
+    normalized_batch = " ".join(batch.split())
+    normalized_submit = " ".join(submit.split())
+    goal = (root / "docs/research/V8_R2_IMPLEMENTATION_GOAL.md").read_text()
     assert "--config G-V8-CONTINUOUS-V2" in runner
     assert "--prepared_fork_from" in runner
     assert "--carry_work_observation" in runner
@@ -218,3 +222,24 @@ def test_launcher_is_one_matched_prepared_fork_screen():
     assert "/cluster/scratch/lterenzi/codex_terra_edge_runs/" in batch
     assert "--accepted-panel" in batch and "--capability-panel" in batch
     assert "sealed" not in batch
+    assert "3051054bc4c713d95905d3f954e6eabf55d6a85a" in batch
+    assert "3051054bc4c713d95905d3f954e6eabf55d6a85a" in submit
+    assert ") == (16.0, 2.5, 0.9984, 6.0, 1.0, 1.0, 1.5, 1.0, 1.0)" in normalized_batch
+    for contract in (
+        '"horizon=$R2_HORIZON"',
+        '"resume_supported=false"',
+        '"restart_policy=discard_pair_restart_from_prepared_u20"',
+    ):
+        assert contract in batch
+    assert "The 6,000-update comparison has no resume path." in goal
+    assert "restart both arms" in goal
+    assert "R2_HORIZON=450" in submit
+    assert 'test "$R2_HORIZON" -eq "$EXPECTED_HORIZON"' in batch
+    assert ") == (16.0, 2.5, 0.9984, 6.0, 1.0, 1.0, 1.5, 1.0, 1.0)" in normalized_submit
+    assert "sbatch --hold --parsable" in submit
+    assert "trap 'cleanup_new_pair $?' ERR" in submit
+    assert '"scancel -- ${NEW_JOB_IDS[*]}"' in submit
+    assert "\"rmdir -- '$RUN_DIR'\"" in submit
+    assert '"scontrol release ${NEW_JOB_IDS[*]}"' in submit
+    assert submit.index("sbatch --hold --parsable") < submit.index("scontrol release")
+    assert "rm -rf" not in submit
