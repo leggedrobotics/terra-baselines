@@ -920,6 +920,31 @@ def _r2_protocol_receipt(config) -> dict | None:
     }
 
 
+def _validate_r2_resume_checkpoint(
+    checkpoint: dict, current_receipt: dict | None, config
+) -> None:
+    """Fail if an R2 continuation would change its protocol or optimizer clock."""
+    if current_receipt is None:
+        return
+    if checkpoint.get("r2_protocol_receipt") != current_receipt:
+        raise ValueError(
+            "R2 resume checkpoint protocol receipt does not match this run"
+        )
+    for field in ("optimizer_state", "train_state_step", "next_update"):
+        if field not in checkpoint:
+            raise ValueError(f"R2 resume checkpoint is missing {field!r}")
+    next_update = int(checkpoint["next_update"])
+    optimizer_step = int(np.asarray(checkpoint["train_state_step"]).reshape(()))
+    expected_step = (
+        next_update * int(config.update_epochs) * int(config.num_minibatches)
+    )
+    if optimizer_step != expected_step:
+        raise ValueError(
+            "R2 resume optimizer clock mismatch: "
+            f"step={optimizer_step}, expected={expected_step}"
+        )
+
+
 def pooled_sampler_settings(config) -> SamplerSettings | None:
     raw = getattr(config, "pooled_sampler", None)
     if not raw or not raw.get("enabled", False):
@@ -2221,6 +2246,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             if checkpoint_mode == "prepared_fork":
                 _validate_r2_prepared_fork(checkpoint)
                 r2_prepared_receipt = dict(checkpoint["r2_prepared_fork"])
+            if checkpoint_mode == "resume":
+                _validate_r2_resume_checkpoint(checkpoint, r2_protocol_receipt, config)
             _validate_checkpoint_architecture(checkpoint, config)
             if (
                 checkpoint_mode in ("resume", "prepared_fork")

@@ -10,7 +10,7 @@ import math
 import re
 from pathlib import Path
 
-UPDATES = tuple(range(1_000, 40_001, 1_000))
+UPDATES = tuple(range(1_000, 14_001, 1_000))
 PROTOCOL_ID = "material_potential_v2"
 DISTANCE_PROTOCOL_ID = "obstacle_geodesic_8_physical_global_v1"
 

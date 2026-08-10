@@ -71,14 +71,17 @@ random initialization, not another dense arm. It uses all 47 conditions,
 fresh `continuous_banded_v2`, the nine-feature carry observation, canonical
 global distance ledger, reward-v2, seed `20260807`, and the prior
 compact PPO recipe. Entropy decays `0.15 -> 0.02` over the first 20,000 updates
-and remains `0.02` through the 40,000-update target. Promotion main and
-capability panels evaluate every 1,000-update checkpoint and select one;
-development evaluates only that selected checkpoint. The completed dense run
+and remains `0.02` through the 40,000-update target. A conservative first phase
+runs to update 14,000 in `gpuhe.24h`; promotion main and capability panels
+evaluate every 1,000-update checkpoint and development evaluates only the
+promotion-selected checkpoint. A statistically continuous resume toward the
+absolute 40,000-update target is launched only if that held-out result is
+promising. The completed dense run
 above is a descriptive reference. This is one bundled system change and does
 not isolate its reward, sampler, distance ledger, carry input, runtime,
 or extra-compute contributions. The active goal and exact contract are in
 [`research/V8_R2_IMPLEMENTATION_GOAL.md`](research/V8_R2_IMPLEMENTATION_GOAL.md).
-No new scratch job is submitted yet.
+No revised phase-1 scratch job is submitted yet.
 
 The superseded prepared-fork smokes `10292301` and `10292324` both failed
 before checkpointing on the same Optax `FrozenDict`/plain-dict tree mismatch.

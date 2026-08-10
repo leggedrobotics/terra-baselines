@@ -1,6 +1,6 @@
 # V8 reward-v2 system-improvement goal
 
-Status: **IMPLEMENTATION IN PROGRESS; DO NOT SUBMIT WITHOUT LORENZO'S APPROVAL**
+Status: **PHASE-1 LAUNCH AUTHORIZED; SAME-REVISION UPDATE-1 SMOKE REQUIRED**
 
 Authority:
 
@@ -19,15 +19,17 @@ reference only; no second dense job is launched.
 The active implementation has one path:
 
 - compact deep SE encoder plus cross-attention;
-- random initialization with seed `20260807`, no teacher, warm start, prepared
-  fork, or resume;
+- random initialization with seed `20260807`, no teacher, warm start, or
+  prepared fork;
 - common nine-feature agent input including normalized carry work;
 - all 47 V8 conditions from update 0 under `continuous_banded_v2`;
 - reward-v2 with the canonical global physical-distance ledger;
-- 40,000 PPO updates and checkpoints every 500 updates;
-- promotion main and capability panels evaluate every 1,000-update checkpoint
-  from updates 1,000--40,000. They select by combined exact success, then
-  47-condition macro completion, then worst condition, then earliest update;
+- a conservative 14,000-update first phase in `gpuhe.24h`, with checkpoints
+  every 500 updates and a statistical continuation to the absolute 40,000
+  target only if fixed held-out results warrant it;
+- phase-1 promotion main and capability panels evaluate every 1,000-update
+  checkpoint from updates 1,000--14,000. They select by combined exact success,
+  then 47-condition macro completion, then worst condition, then earliest update;
 - development main and capability panels evaluate only that promotion-selected
   checkpoint. Sealed evaluation remains unused.
 
@@ -96,14 +98,19 @@ the improved system.
 - Reward-v2: success `6`, horizon failure `1`, alpha `1`, beta `1.5`, total
   step cost `1`, shaping weight `1`, distance reference `16 m`, distance bound
   `2.5`.
-- Compute: one 4xRTX4090 `gpuhe.120h` job after one independent 4xRTX3090
-  update-1 smoke.
+- Compute: one 4xRTX4090 `gpuhe.24h` phase through update 14,000 after one
+  independent 4xRTX3090 update-1 smoke. A positive fixed-panel decision may
+  launch a continuation to absolute update 40,000.
 - Storage: live logs, W&B, and checkpoints under Euler scratch; immutable
   source and receipt hashes in the run contract.
 
-There is no resume path. If the 40,000-update job fails or is interrupted, keep
-its failure evidence and restart a reviewed revision from update 0. Do not
-splice or promote an incomplete continuation as the declared system result.
+Continuation restores model parameters, optimizer state and step, absolute PPO
+update, entropy-schedule position, and the complete `continuous_banded_v2`
+sampler state. Live environments, JAX RNG, action history, and episode
+accumulators restart, so continuation is statistical rather than bit-exact.
+The current and saved reward/distance receipts and optimizer clock must match
+exactly. Phase 1 always ends cleanly and runs fixed held-out evaluation before
+the continuation decision; the launcher does not rely on a wall-time kill.
 
 ## Admission and interpretation
 
@@ -124,19 +131,21 @@ use jointly solved identities. Raw reward is never compared with the dense
 reference.
 
 An update-1 smoke proves only executable integration. A queued or running job
-is not learning evidence. The 40,000-update result is one seed and should be
-presented as a system screen unless later replicated.
+is not learning evidence. Phase 1 is an intermediate decision point; any
+eventual 40,000-update result is one seed and should be presented as a system
+screen unless later replicated.
 
 ## Status checklist
 
 - [x] A0 reward-v2 runtime, distance, carry observation, and v2 sampler implemented
 - [x] A1 D0/D4a/D4b/materialization/dominance receipts passed
 - [x] A2 obsolete prepared-fork attempt archived; no repair planned
-- [ ] A3 scratch-only launcher, checkpoint receipt, verifier, and docs committed
+- [x] A3 scratch-only launcher, checkpoint receipt, verifier, and docs committed
 - [ ] A4 scratch update-1 smoke passes
-- [ ] A5 40,000-update run explicitly approved, submitted, and verified beyond update 1
+- [ ] A5 14,000-update phase 1 submitted and verified beyond update 1
 - [ ] A6 fixed evaluations complete and promotion-selected result recorded
-- [ ] A7 promotion-selection receipt, selected and final checkpoints, run contract, and fixed-evaluation JSONs copied from Euler scratch to durable work/local artifacts with hashes verified
+- [ ] A7 positive phase-1 result, if any, continued toward absolute update 40,000
+- [ ] A8 promotion-selection receipt, selected and final checkpoints, run contract, and fixed-evaluation JSONs copied from Euler scratch to durable work/local artifacts with hashes verified
 
 ## Worklog
 
@@ -165,3 +174,8 @@ presented as a system screen unless later replicated.
   instead of another dense control. The target was extended to 40,000 updates
   because the prior compact dense curve was still improving at update 20,000;
   its established entropy decay remains frozen to the first 20,000 updates.
+- 2026-08-10: Lorenzo selected a clean 24-hour decision phase followed by
+  statistical continuation if held-out results are promising. Exact timing
+  from the prior compact run supports update 14,000 plus promotion and selected
+  development evaluation within `23:45`, including a conservative reward-v2
+  overhead allowance.

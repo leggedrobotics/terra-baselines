@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from flax.core import freeze
 from terra.actions import TrackedAction
 from terra.config import BatchConfig, EnvConfig, MapsDimsConfig, RewardStage
@@ -166,6 +167,27 @@ def test_restored_environment_uses_selected_arm_reward_stage_only():
             assert getattr(treatment, field) is getattr(restored, field)
 
 
+def test_r2_resume_requires_identical_protocol_and_optimizer_clock():
+    receipt = {"schema": "terra_v8_r2_reward_protocol_v1", "value": 1}
+    config = SimpleNamespace(update_epochs=2, num_minibatches=32)
+    checkpoint = {
+        "r2_protocol_receipt": receipt,
+        "optimizer_state": {},
+        "train_state_step": np.asarray(64_000),
+        "next_update": 1_000,
+    }
+    train_mixed._validate_r2_resume_checkpoint(checkpoint, receipt, config)
+
+    with pytest.raises(ValueError, match="protocol receipt"):
+        train_mixed._validate_r2_resume_checkpoint(
+            {**checkpoint, "r2_protocol_receipt": {"value": 2}}, receipt, config
+        )
+    with pytest.raises(ValueError, match="optimizer clock"):
+        train_mixed._validate_r2_resume_checkpoint(
+            {**checkpoint, "train_state_step": np.asarray(63_999)}, receipt, config
+        )
+
+
 def test_terra_reset_reward_components_match_step_inside_jax_scan():
     assert "dummy_components" not in Path(train_mixed.__file__).read_text()
     state = reward_v2_state()
@@ -239,8 +261,8 @@ def test_launcher_is_one_from_scratch_reward_v2_system_run():
     assert "--ent_schedule_start 0.15" in runner
     assert "--ent_schedule_end 0.02" in runner
     assert 'ENTROPY_SCHEDULE_STEPS="${ENTROPY_SCHEDULE_STEPS:-20000}"' in runner
-    assert "UPDATES=40000" in batch
-    assert '"full_system_selection_updates=1000_to_40000_promotion_only"' in batch
+    assert "UPDATES=14000" in batch
+    assert '"phase1_selection_updates=1000_to_14000_promotion_only"' in batch
     assert (
         '"promotion_selection_rule=combined_exact_then_47_condition_macro_then_worst_then_earliest"'
         in batch
@@ -259,8 +281,8 @@ def test_launcher_is_one_from_scratch_reward_v2_system_run():
     assert ") == (16.0, 2.5, 0.9984, 6.0, 1.0, 1.0, 1.5, 1.0, 1.0)" in normalized_batch
     for contract in (
         '"horizon=$R2_HORIZON"',
-        '"resume_supported=false"',
-        '"restart_policy=discard_run_restart_from_update0"',
+        '"statistical_continuation_supported=true"',
+        '"bit_exact_continuation=false"',
         '"initialization=random_no_teacher"',
         '"comparison_role=historical_descriptive_reference"',
     ):
@@ -268,6 +290,7 @@ def test_launcher_is_one_from_scratch_reward_v2_system_run():
     assert "one from-scratch compact reward-v2 system" in goal
     assert "descriptive" in goal and "reference only" in goal
     assert "40,000" in goal
+    assert "14,000" in goal
     assert "R2_HORIZON=450" in submit
     assert 'test "$R2_HORIZON" -eq "$EXPECTED_HORIZON"' in batch
     assert ") == (16.0, 2.5, 0.9984, 6.0, 1.0, 1.0, 1.5, 1.0, 1.0)" in normalized_submit

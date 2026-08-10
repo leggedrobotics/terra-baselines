@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 5 ]; then
-    echo "usage: run_v8_r2_reward_v2.sh BANK_ROOT RUN_NAME UPDATES RUN_ROOT SIDECAR_SHA256" >&2
+if [ "$#" -ne 6 ]; then
+    echo "usage: run_v8_r2_reward_v2.sh BANK_ROOT RUN_NAME UPDATES RUN_ROOT SIDECAR_SHA256 RESUME_CHECKPOINT_OR_NONE" >&2
     exit 2
 fi
 
@@ -11,6 +11,7 @@ RUN_NAME="$2"
 UPDATES="$3"
 RUN_ROOT="$4"
 SIDECAR_SHA256="$5"
+RESUME_CHECKPOINT="$6"
 [[ "$UPDATES" =~ ^[1-9][0-9]*$ ]] || {
     echo "UPDATES must be positive" >&2
     exit 2
@@ -36,6 +37,15 @@ LOG_TRAIN_INTERVAL="${LOG_TRAIN_INTERVAL:-10}"
 CACHE_CLEAR_INTERVAL="${CACHE_CLEAR_INTERVAL:-1000}"
 ENTROPY_SCHEDULE_STEPS="${ENTROPY_SCHEDULE_STEPS:-20000}"
 TOTAL_TIMESTEPS=$((NUM_DEVICES * NUM_ENVS_PER_DEVICE * NUM_STEPS * UPDATES))
+
+RESUME_ARGS=()
+if [ "$RESUME_CHECKPOINT" != none ]; then
+    test -f "$RESUME_CHECKPOINT" || {
+        echo "resume checkpoint does not exist: $RESUME_CHECKPOINT" >&2
+        exit 2
+    }
+    RESUME_ARGS=(--resume_from "$RESUME_CHECKPOINT" --load_env_from_checkpoint)
+fi
 
 mkdir -p "$RUN_ROOT/checkpoints" "$RUN_ROOT/wandb"
 export PYTHONPATH="$TERRA_ROOT:$REPO${PYTHONPATH:+:$PYTHONPATH}"
@@ -83,4 +93,5 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --checkpoint_interval "$CHECKPOINT_INTERVAL" \
     --cache_clear_interval "$CACHE_CLEAR_INTERVAL" \
     --keep_checkpoint_history \
-    --checkpoint_dir "$RUN_ROOT/checkpoints"
+    --checkpoint_dir "$RUN_ROOT/checkpoints" \
+    "${RESUME_ARGS[@]}"
