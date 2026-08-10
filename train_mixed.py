@@ -430,6 +430,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         # vs an explicit tuple are different trunks, so they must match too.
         "resnet_stage_channels": None,
         "resnet_blocks_per_stage": None,
+        "carry_work_observation": False,
     }
     tuple_fields = (
         "critic_hidden_dims",
@@ -459,7 +460,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             + "; ".join(mismatches)
             + ". Pass matching --map_encoder, --model_core, --model_size, "
             "--critic_hidden_dims, --resnet_stage_channels, and "
-            "--resnet_blocks_per_stage values."
+            "--resnet_blocks_per_stage values, and carry-work observation contract."
         )
 
 
@@ -490,14 +491,28 @@ def _validate_resume_update(resume_update: int, num_updates: int) -> None:
 
 
 def _checkpoint_load_mode(config) -> str | None:
-    if config.resume_from is not None and config.warm_start_from is not None:
-        raise ValueError("--resume_from and --warm_start_from are mutually exclusive")
-    if config.warm_start_from is not None:
-        if config.resume_update is not None:
+    selected = (
+        getattr(config, "resume_from", None) is not None,
+        getattr(config, "warm_start_from", None) is not None,
+        getattr(config, "prepared_fork_from", None) is not None,
+    )
+    if sum(selected) > 1:
+        raise ValueError(
+            "--resume_from, --warm_start_from, and --prepared_fork_from are "
+            "mutually exclusive"
+        )
+    if getattr(config, "warm_start_from", None) is not None:
+        if getattr(config, "resume_update", None) is not None:
             raise ValueError("--resume_update is incompatible with --warm_start_from")
         return "warm_start"
-    if config.resume_from is not None:
+    if getattr(config, "resume_from", None) is not None:
         return "resume"
+    if getattr(config, "prepared_fork_from", None) is not None:
+        if getattr(config, "resume_update", None) is not None:
+            raise ValueError(
+                "--resume_update is incompatible with --prepared_fork_from"
+            )
+        return "prepared_fork"
     return None
 
 
@@ -791,6 +806,115 @@ def _build_mixed_dataset_pool(
 PER_ENV_RATCHET_DISABLED_THRESHOLD = 1_000_000
 REWARD_ANNEAL_SCHEMA = "terra_reward_anneal_v1"
 REWARD_ANNEAL_DURATION_UPDATES = 5_000
+R2_PREPARED_FORK_SCHEMA = "terra_v8_r2_prepared_fork_v1"
+R2_PARENT_SHA256 = (
+    "0948a230a5c0929237a7adbdb6c1231691caab728238a600c0e819f02e200834"
+)
+R2_PARENT_UPDATE = 20_000
+
+
+def _validate_r2_prepared_fork(checkpoint: dict) -> None:
+    receipt = checkpoint.get("r2_prepared_fork")
+    if not isinstance(receipt, dict) or receipt.get("schema") != R2_PREPARED_FORK_SCHEMA:
+        raise ValueError("prepared R2 fork is missing its protocol receipt")
+    if receipt.get("source_checkpoint_sha256") != R2_PARENT_SHA256:
+        raise ValueError("prepared R2 fork does not derive from compact-u20")
+    if checkpoint.get("next_update") != R2_PARENT_UPDATE:
+        raise ValueError("prepared R2 fork must retain absolute update 20000")
+    if "optimizer_state" in checkpoint or "train_state_step" in checkpoint:
+        raise ValueError("prepared R2 fork must not contain optimizer state")
+    state = checkpoint.get("pooled_sampler_state")
+    if not isinstance(state, dict) or state.get("settings", {}).get("rule") != (
+        "continuous_banded_v2"
+    ):
+        raise ValueError("prepared R2 fork must contain migrated v2 sampler state")
+    if not bool(_checkpoint_config_value(checkpoint, "carry_work_observation", False)):
+        raise ValueError("prepared R2 fork must consume the carry-work observation")
+    if (
+        _checkpoint_config_value(checkpoint, "config_name", None)
+        != "G-V8-CONTINUOUS-V2"
+    ):
+        raise ValueError("prepared R2 fork must name the v2 training preset")
+    sampler_config = _checkpoint_config_value(checkpoint, "pooled_sampler", None)
+    if not isinstance(sampler_config, dict) or sampler_config.get("rule") != (
+        "continuous_banded_v2"
+    ):
+        raise ValueError("prepared R2 fork config must select the v2 sampler")
+    bank = _checkpoint_config_value(checkpoint, "accepted_bank", None)
+    bank_profile = (
+        bank.get("sampler_profile")
+        if isinstance(bank, dict)
+        else getattr(bank, "sampler_profile", None)
+    )
+    if bank_profile != "continuous_banded_v2":
+        raise ValueError("prepared R2 fork bank must select the v2 sampler profile")
+
+
+def _r2_protocol_receipt(config) -> dict | None:
+    if getattr(config, "prepared_fork_from", None) is None:
+        return None
+    from terra.config import (
+        DENSE_REWARD_PROTOCOL_ID,
+        REWARD_V2_ALPHA,
+        REWARD_V2_BETA,
+        REWARD_V2_DISTANCE_BOUND,
+        REWARD_V2_DISTANCE_REF_M,
+        REWARD_V2_HORIZON_FAILURE_PENALTY,
+        REWARD_V2_POTENTIAL_GAMMA,
+        REWARD_V2_PROTOCOL_ID,
+        REWARD_V2_SHAPING_WEIGHT,
+        REWARD_V2_STEP_COST_TOTAL,
+        REWARD_V2_SUCCESS_BONUS,
+    )
+    from terra.env_generation.distance import REWARD_V2_DISTANCE_PROTOCOL_ID
+    from terra.maps_buffer import LEGACY_DISTANCE_PROTOCOL_ID
+
+    expected = {
+        "dense_skill": (DENSE_REWARD_PROTOCOL_ID, LEGACY_DISTANCE_PROTOCOL_ID),
+        "reward_v2": (REWARD_V2_PROTOCOL_ID, REWARD_V2_DISTANCE_PROTOCOL_ID),
+    }
+    if config.reward_stage not in expected:
+        raise ValueError("R2 prepared forks support only control or reward_v2")
+    if float(config.gamma) != float(REWARD_V2_POTENTIAL_GAMMA):
+        raise ValueError("R2 PPO gamma must match the potential gamma")
+    reward_protocol_id, distance_protocol_id = expected[config.reward_stage]
+    if config.distance_protocol_id != distance_protocol_id:
+        raise ValueError(
+            "R2 distance protocol mismatch: "
+            f"expected {distance_protocol_id!r}, got {config.distance_protocol_id!r}"
+        )
+    sidecar_sha = config.distance_sidecar_sha256
+    if not isinstance(sidecar_sha, str) or len(sidecar_sha) != 64 or any(
+        char not in "0123456789abcdef" for char in sidecar_sha
+    ):
+        raise ValueError("R2 requires a lowercase 64-character sidecar SHA-256")
+    return {
+        "schema": "terra_v8_r2_reward_protocol_v1",
+        "reward_stage": config.reward_stage,
+        "reward_protocol_id": reward_protocol_id,
+        "distance_protocol_id": distance_protocol_id,
+        "distance_sidecar_sha256": sidecar_sha,
+        "distance_artifact_kind": (
+            "accepted_bank_dataset_json"
+            if config.reward_stage == "dense_skill"
+            else "canonical_distance_sidecar_dataset_json"
+        ),
+        "carry_channel": "agent_states_8_normalized_carry_work",
+        "carry_ledger_semantics": reward_protocol_id,
+        "constants": {
+            "distance_ref_m": float(REWARD_V2_DISTANCE_REF_M),
+            "distance_bound": float(REWARD_V2_DISTANCE_BOUND),
+            "potential_gamma": float(REWARD_V2_POTENTIAL_GAMMA),
+            "success_bonus": float(REWARD_V2_SUCCESS_BONUS),
+            "horizon_failure_penalty": float(
+                REWARD_V2_HORIZON_FAILURE_PENALTY
+            ),
+            "alpha": float(REWARD_V2_ALPHA),
+            "beta": float(REWARD_V2_BETA),
+            "step_cost_total": float(REWARD_V2_STEP_COST_TOTAL),
+            "shaping_weight": float(REWARD_V2_SHAPING_WEIGHT),
+        },
+    }
 
 
 def pooled_sampler_settings(config) -> SamplerSettings | None:
@@ -833,8 +957,8 @@ def _restore_pooled_sampler_checkpoint(
     checkpoint: dict | None,
     checkpoint_mode: str | None,
 ) -> None:
-    """Restore sampler history only for a true ``--resume_from`` load."""
-    if checkpoint_mode != "resume":
+    """Restore sampler history for a resume or the one prepared R2 fork."""
+    if checkpoint_mode not in ("resume", "prepared_fork"):
         return
 
     saved_state = (
@@ -849,7 +973,7 @@ def _restore_pooled_sampler_checkpoint(
         return
     if saved_state is None:
         raise ValueError(
-            "resume with a pooled sampler requires checkpoint field "
+            f"{checkpoint_mode} with a pooled sampler requires checkpoint field "
             "'pooled_sampler_state'; use --warm_start_from for a fresh sampler"
         )
     sampler.restore_state_dict(saved_state)
@@ -1147,6 +1271,9 @@ class MixedAgentTrainConfig:
     # Load only model parameters. Optimizer, update counter, environment,
     # curriculum state, RNG, and action history are always fresh.
     warm_start_from: str | None = None
+    # R2-only prepared parent: restore expanded params, the absolute update,
+    # and migrated sampler history while starting a fresh optimizer.
+    prepared_fork_from: str | None = None
     load_env_from_checkpoint: bool = True  # If true, use env_config from checkpoint
     resume_update: int | None = None  # Optional override for old param-only checkpoints
 
@@ -1157,6 +1284,9 @@ class MixedAgentTrainConfig:
     relocation_progress_mult: float | None = None
     # One global reward objective. Map-level rewards_type remains frozen.
     reward_stage: str = "dense_skill"
+    carry_work_observation: bool = False
+    distance_protocol_id: str | None = None
+    distance_sidecar_sha256: str | None = None
 
     # Capacity overrides
     truck_capacity: int | None = None
@@ -1235,11 +1365,17 @@ class MixedAgentTrainConfig:
             "dense_skill",
             "annealed_objective",
             "terminal_objective",
+            "reward_v2",
         ):
             raise ValueError(
-                "reward_stage must be 'dense_skill', 'annealed_objective', or "
-                f"'terminal_objective', got {self.reward_stage!r}"
+                "reward_stage must be 'dense_skill', 'annealed_objective', "
+                "'terminal_objective', or 'reward_v2', "
+                f"got {self.reward_stage!r}"
             )
+        if self.reward_stage == "reward_v2" and not self.carry_work_observation:
+            raise ValueError("reward_v2 requires --carry_work_observation")
+        if self.prepared_fork_from is not None and not self.carry_work_observation:
+            raise ValueError("the R2 prepared fork requires --carry_work_observation")
         if self.reward_stage == "annealed_objective":
             sampler = self.pooled_sampler or {}
             if sampler.get("rule") not in (
@@ -1368,6 +1504,7 @@ def _reward_stage_value(reward_stage: str) -> RewardStage:
         "dense_skill": RewardStage.DENSE_SKILL,
         "annealed_objective": RewardStage.ANNEALED_OBJECTIVE,
         "terminal_objective": RewardStage.TERMINAL_OBJECTIVE,
+        "reward_v2": RewardStage.REWARD_V2,
     }
     try:
         return values[reward_stage]
@@ -1644,10 +1781,14 @@ def make_mixed_agent_states(
         print("📍 Using default maps from config.py")
 
     # Initialize environment with configurable agents
+    env_kwargs = {}
+    if config.distance_protocol_id is not None:
+        env_kwargs["distance_protocol_id"] = config.distance_protocol_id
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,
         shuffle_maps=False,
         single_map_path=single_map_path,
+        **env_kwargs,
     )
     if single_map_path is not None:
         print(f"📍 Using single map path: {single_map_path}")
@@ -1847,12 +1988,13 @@ def make_mixed_agent_states(
         print(f"🛠️ Debug: Failed to read number of actions: {e}", flush=True)
 
     # Optimizer with mixed agent considerations.
-    # F7: when a kickstart teacher is set, warm the LR up linearly from lr/3 to
-    # lr over kickstart_lr_warmup_updates PPO updates, then hold constant. Each
-    # PPO update runs update_epochs*num_minibatches optax steps, so convert the
-    # warmup window from updates to optimizer steps. Without a teacher the LR is
-    # the plain constant, keeping default runs bit-identical.
-    if getattr(config, "teacher_checkpoint", None) is not None:
+    # A teacher warm start and the R2 prepared fork both restart Adam. Warm the
+    # LR from the optimizer-local step zero in either case; ordinary scratch and
+    # true-resume paths remain unchanged.
+    if (
+        getattr(config, "teacher_checkpoint", None) is not None
+        or getattr(config, "prepared_fork_from", None) is not None
+    ):
         warmup_updates = int(getattr(config, "kickstart_lr_warmup_updates", 0))
         grad_steps_per_update = config.update_epochs * config.num_minibatches
         warmup_steps = max(1, warmup_updates * grad_steps_per_update)
@@ -1869,7 +2011,7 @@ def make_mixed_agent_states(
         )
         adam_learning_rate = lr_schedule
         print(
-            "🔥 Kickstart LR warmup: "
+            "🔥 Fresh-optimizer LR warmup: "
             f"{config.lr / 3.0:.2e} -> {config.lr:.2e} over "
             f"{warmup_updates} updates ({warmup_steps} optax steps)",
             flush=True,
@@ -1955,7 +2097,9 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
     if sampler_config.get("enabled", False):
         tags.append(f"sampler:{_tag_value(sampler_config.get('rule', 'uniform'))}")
     if config.accepted_bank is not None:
-        if config.warm_start_from is not None:
+        if config.prepared_fork_from is not None:
+            initialization = "prepared-r2-fork"
+        elif config.warm_start_from is not None:
             initialization = "params-only-warm"
         elif config.resume_from is not None:
             initialization = "resume"
@@ -1999,8 +2143,11 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
 def train_mixed_agents(config: MixedAgentTrainConfig):
     """Main training function for mixed agents - with full feature parity to original train.py"""
 
+    r2_protocol_receipt = _r2_protocol_receipt(config)
     wandb_config = asdict(config)
     wandb_config["logging_schema"] = LOGGING_SCHEMA
+    if r2_protocol_receipt is not None:
+        wandb_config["r2_protocol_receipt"] = r2_protocol_receipt
     run = wandb.init(
         project=config.project,
         group=config.group,
@@ -2041,13 +2188,18 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
     # Optionally load checkpoint before creating states
     checkpoint = None
+    r2_prepared_receipt = None
     env_params_override = None
     resume_update = 0
     checkpoint_mode = _checkpoint_load_mode(config)
     checkpoint_path = (
         config.warm_start_from
         if checkpoint_mode == "warm_start"
-        else config.resume_from
+        else (
+            config.prepared_fork_from
+            if checkpoint_mode == "prepared_fork"
+            else config.resume_from
+        )
     )
     if checkpoint_path is not None:
         if not os.path.exists(checkpoint_path):
@@ -2056,9 +2208,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             checkpoint = helpers.load_pkl_object(checkpoint_path)
             if "model" not in checkpoint:
                 raise KeyError("checkpoint has no 'model' parameters")
+            if checkpoint_mode == "prepared_fork":
+                _validate_r2_prepared_fork(checkpoint)
+                r2_prepared_receipt = dict(checkpoint["r2_prepared_fork"])
             _validate_checkpoint_architecture(checkpoint, config)
             if (
-                checkpoint_mode == "resume"
+                checkpoint_mode in ("resume", "prepared_fork")
                 and config.load_env_from_checkpoint
                 and "env_config" in checkpoint
             ):
@@ -2066,14 +2221,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     checkpoint["env_config"],
                     config.num_envs_per_device,
                 )
-            if checkpoint_mode == "resume":
+            if checkpoint_mode in ("resume", "prepared_fork"):
                 if "next_update" in checkpoint:
                     resume_update = int(checkpoint["next_update"])
                 elif "update" in checkpoint:
                     resume_update = int(checkpoint["update"]) + 1
                 if config.resume_update is not None:
                     resume_update = int(config.resume_update)
-                print(f"Loaded resume checkpoint from {checkpoint_path}")
+                print(
+                    f"Loaded {checkpoint_mode.replace('_', ' ')} checkpoint "
+                    f"from {checkpoint_path}"
+                )
             else:
                 print(
                     "Loaded parameters-only warm start from "
@@ -2127,8 +2285,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "parameters-only warm start did not keep a fresh optimizer step"
                     )
                 print(
-                    "Verified parameters-only warm start: train_state.step=0 "
-                    "and PPO update range starts at 0."
+                    f"Verified {checkpoint_mode.replace('_', ' ')}: "
+                    "train_state.step=0 with a fresh optimizer."
                 )
         except Exception as e:
             raise RuntimeError("Failed to restore checkpoint training state") from e
@@ -2350,8 +2508,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             checkpoint,
             checkpoint_mode,
         )
-        if pooled_sampler is not None and checkpoint_mode == "resume":
-            print("📊 Restored pooled condition sampler state.", flush=True)
+        if pooled_sampler is not None and checkpoint_mode in (
+            "resume",
+            "prepared_fork",
+        ):
+            print(
+                "📊 Restored pooled condition sampler state "
+                f"for {checkpoint_mode.replace('_', ' ')}.",
+                flush=True,
+            )
         reward_anneal_state = _restore_reward_anneal_checkpoint(
             config.reward_stage,
             checkpoint,
@@ -3127,6 +3292,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             for key, value in (transition_integrity_single.items())
                         },
                     }
+                    if r2_protocol_receipt is not None:
+                        checkpoint["r2_protocol_receipt"] = r2_protocol_receipt
+                        checkpoint["r2_prepared_fork"] = r2_prepared_receipt
                     if pooled_sampler is not None:
                         checkpoint["pooled_sampler_state"] = pooled_sampler.state_dict()
                     if reward_anneal_state is not None:
@@ -3365,6 +3533,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             "training_duration": elapsed_time,
             "final_reward": train_info.get("final_reward", None),
         }
+        if r2_protocol_receipt is not None:
+            final_checkpoint["r2_protocol_receipt"] = r2_protocol_receipt
+            final_checkpoint["r2_prepared_fork"] = r2_prepared_receipt
         if train_info["pooled_sampler_state"] is not None:
             final_checkpoint["pooled_sampler_state"] = train_info[
                 "pooled_sampler_state"
@@ -3862,7 +4033,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--reward_stage",
-        choices=("dense_skill", "annealed_objective", "terminal_objective"),
+        choices=(
+            "dense_skill",
+            "annealed_objective",
+            "terminal_objective",
+            "reward_v2",
+        ),
         default="dense_skill",
         help=(
             "Global reward objective. annealed_objective starts a one-way "
@@ -3886,6 +4062,30 @@ if __name__ == "__main__":
             "Load model parameters only. Optimizer, update counter, "
             "environment, curriculum, RNG, and histories start fresh."
         ),
+    )
+    parser.add_argument(
+        "--prepared_fork_from",
+        type=str,
+        default=None,
+        help=(
+            "R2-only prepared compact-u20 fork: restore expanded params, "
+            "absolute update, and migrated v2 sampler with a fresh optimizer."
+        ),
+    )
+    parser.add_argument(
+        "--carry_work_observation",
+        action="store_true",
+        help="Consume normalized carry work from agent_states[..., 8].",
+    )
+    parser.add_argument(
+        "--distance_protocol_id",
+        default=None,
+        help="R2 map-distance protocol selected by the matched launcher.",
+    )
+    parser.add_argument(
+        "--distance_sidecar_sha256",
+        default=None,
+        help="Aggregate distance-sidecar SHA-256 recorded by the R2 bank receipt.",
     )
     parser.add_argument(
         "--resume_update",
@@ -4264,6 +4464,7 @@ if __name__ == "__main__":
         ent_schedule_steps=args.ent_schedule_steps,
         resume_from=args.resume_from,
         warm_start_from=args.warm_start_from,
+        prepared_fork_from=args.prepared_fork_from,
         resume_update=args.resume_update,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,
@@ -4274,6 +4475,9 @@ if __name__ == "__main__":
         config_name=args.config,
         relocation_progress_mult=relocation_progress_mult,
         reward_stage=args.reward_stage,
+        carry_work_observation=args.carry_work_observation,
+        distance_protocol_id=args.distance_protocol_id,
+        distance_sidecar_sha256=args.distance_sidecar_sha256,
         truck_capacity=truck_capacity,
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,

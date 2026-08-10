@@ -733,6 +733,24 @@ G-V8-CONTINUOUS:
     min_episodes: 32
     competence_ema: 0.30
 
+G-V8-CONTINUOUS-V2:
+  description: V8 continuous full-support per-condition curriculum for R2 forks
+  accepted_bank_arm: G-UNIFORM
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: continuous_banded_v2
+    update_interval: 150
+    mastery_threshold: 0.80
+    min_episodes: 32
+    competence_ema: 0.30
+
 G-ADAPTIVE:
   description: All accepted conditions, adaptive-progressive condition mass, scratch
   accepted_bank_arm: G-ADAPTIVE

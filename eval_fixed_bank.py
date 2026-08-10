@@ -127,6 +127,9 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             "action_types": _jsonable(_field(config, "action_types_override")),
             "relocation_progress_mult": _field(config, "relocation_progress_mult"),
             "reward_stage": _field(config, "reward_stage"),
+            "carry_work_observation": _field(config, "carry_work_observation"),
+            "distance_protocol_id": _field(config, "distance_protocol_id"),
+            "distance_sidecar_sha256": _field(config, "distance_sidecar_sha256"),
             "curriculum_levels": _jsonable(curriculum),
         },
         "sampler": _jsonable(_field(config, "pooled_sampler")),
@@ -867,6 +870,24 @@ def grouped_results(
             ],
         }
 
+    def carry_work_summary(selected: list[dict]) -> dict:
+        if not selected or "terminal_carry_work_normalized" not in selected[0]:
+            return {"available": False}
+        terminal = np.asarray(
+            [row["terminal_carry_work_normalized"] for row in selected],
+            dtype=np.float64,
+        )
+        maximum = np.asarray(
+            [row["maximum_carry_work_normalized"] for row in selected],
+            dtype=np.float64,
+        )
+        return {
+            "available": True,
+            "terminal_mean": float(terminal.mean()),
+            "terminal_max": float(terminal.max()),
+            "trajectory_max": float(maximum.max()),
+        }
+
     def summarize(field: str) -> dict:
         values = sorted({row[field] for row in per_map})
         result = {}
@@ -879,6 +900,7 @@ def grouped_results(
                 "success_rate": successes_here / len(selected),
                 "terminations": sum(int(row["terminated"]) for row in selected),
                 "successful_efficiency": successful_efficiency(selected),
+                "carry_work": carry_work_summary(selected),
             }
         return result
 
@@ -890,6 +912,7 @@ def grouped_results(
             "success_rate": total_successes / len(rows),
             "terminations": int(terminations.sum()),
             "successful_efficiency": successful_efficiency(per_map),
+            "carry_work": carry_work_summary(per_map),
         },
         "by_family": summarize("family"),
         "by_primary_cell": summarize("primary_cell"),
@@ -1061,6 +1084,9 @@ def main() -> None:
             "productive_workspace_cycles counter."
         ),
     )
+    parser.add_argument("--expect-reward-protocol-id")
+    parser.add_argument("--expect-distance-protocol-id")
+    parser.add_argument("--expect-distance-sidecar-sha256")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.horizon != 450:
@@ -1159,6 +1185,23 @@ def main() -> None:
         )
     )
     reference_treatment = validate_checkpoint_sequence(checkpoints)
+    expected_protocol = {
+        "reward_protocol_id": args.expect_reward_protocol_id,
+        "distance_protocol_id": args.expect_distance_protocol_id,
+        "distance_sidecar_sha256": args.expect_distance_sidecar_sha256,
+    }
+    if any(value is not None for value in expected_protocol.values()):
+        if any(value is None for value in expected_protocol.values()):
+            raise ValueError("all three R2 protocol expectations are required together")
+        for path, checkpoint in checkpoints:
+            receipt = checkpoint.get("r2_protocol_receipt")
+            if not isinstance(receipt, dict):
+                raise ValueError(f"{path}: missing R2 reward protocol receipt")
+            observed = {key: receipt.get(key) for key in expected_protocol}
+            if observed != expected_protocol:
+                raise ValueError(
+                    f"{path}: R2 reward protocol mismatch: {observed!r}"
+                )
     reference_train_config = checkpoints[0][1]["train_config"]
     for _, checkpoint in checkpoints:
         if "model" not in checkpoint:
@@ -1316,6 +1359,35 @@ def main() -> None:
                 key: np.asarray(value, dtype=np.float32)
                 for key, value in stats.get("terminal_completion", {}).items()
             }
+            carry_work = {
+                key: np.asarray(value, dtype=np.float32)
+                for key, value in stats.get("carry_work", {}).items()
+            }
+            require_carry_work = bool(
+                _field(config, "carry_work_observation", False)
+            )
+            if require_carry_work:
+                for key in ("terminal_normalized", "maximum_normalized"):
+                    if key not in carry_work or carry_work[key].shape != (count,):
+                        raise RuntimeError(
+                            f"fixed evaluation lacks R2 carry diagnostic {key!r}"
+                        )
+            carry_metrics = (
+                {
+                    "terminal_carry_work_normalized": carry_work[
+                        "terminal_normalized"
+                    ],
+                    "maximum_carry_work_normalized": carry_work[
+                        "maximum_normalized"
+                    ],
+                }
+                if require_carry_work
+                else {}
+            )
+            if require_carry_work and np.any(
+                carry_work["terminal_normalized"][successes] > 1e-6
+            ):
+                raise RuntimeError("successful R2 episode retained carry work")
             raw_integrity = stats.get("integrity", {})
             integrity_supported = bool(raw_integrity.get("supported", False))
             if (
@@ -1380,7 +1452,8 @@ def main() -> None:
                 completion_metrics={
                     f"terminal_{key}": values
                     for key, values in terminal_completion.items()
-                },
+                }
+                | carry_metrics,
                 integrity_metrics=integrity_metrics,
                 productive_workspace_cycles=workspace_cycles,
                 productive_workspace_cycles_available=workspace_cycles_available,
@@ -1400,6 +1473,9 @@ def main() -> None:
                 "checkpoint_sha256": sha256_file(checkpoint_path),
                 "checkpoint_update": int(checkpoint.get("next_update", 0)),
                 "treatment_fingerprint": reference_treatment,
+                "r2_protocol_receipt": checkpoints[0][1].get(
+                    "r2_protocol_receipt"
+                ),
                 "bank_root": str(bank_root),
                 "accepted_bank": (
                     None

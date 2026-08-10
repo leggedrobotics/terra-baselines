@@ -378,6 +378,12 @@ def rollout_episode(
     productive_workspace_cycles_available = jnp.zeros(
         rl_config.num_test_rollouts, dtype=jnp.bool_
     )
+    terminal_carry_work_normalized = jnp.zeros(
+        rl_config.num_test_rollouts, dtype=jnp.float32
+    )
+    maximum_carry_work_normalized = jnp.zeros_like(
+        terminal_carry_work_normalized
+    )
     if expected_slot_indices is None:
         expected_slot_indices = jnp.arange(rl_config.num_test_rollouts, dtype=jnp.int32)
     else:
@@ -558,6 +564,19 @@ def rollout_episode(
         ).astype(jnp.int32)
 
         reward_components = timestep.info.get("reward_components", {})
+        if next_obs["agent_states"].shape[-1] >= 9:
+            carry_work = next_obs["agent_states"][..., 8].astype(jnp.float32).sum(
+                axis=-1
+            )
+            maximum_carry_work_normalized = jnp.maximum(
+                maximum_carry_work_normalized,
+                jnp.where(active_env_mask, carry_work, 0.0),
+            )
+            terminal_carry_work_normalized = jnp.where(
+                active_env_mask & step_done,
+                carry_work,
+                terminal_carry_work_normalized,
+            )
         if record_completion:
             for name, component_name in completion_components:
                 if component_name not in reward_components:
@@ -877,6 +896,10 @@ def rollout_episode(
         "productive_workspace_cycles_available": (
             productive_workspace_cycles_available
         ),
+        "carry_work": {
+            "terminal_normalized": terminal_carry_work_normalized,
+            "maximum_normalized": maximum_carry_work_normalized,
+        },
         "terminal_completion": {
             "absolute": terminal_absolute_completion,
             "dig": terminal_dig_completion,
@@ -1214,11 +1237,16 @@ def main():
     )
 
     shuffle_maps = single_map_path is None
+    env_kwargs = {}
+    distance_protocol_id = getattr(config, "distance_protocol_id", None)
+    if distance_protocol_id is not None:
+        env_kwargs["distance_protocol_id"] = distance_protocol_id
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,
         rendering=False,
         shuffle_maps=shuffle_maps,
         single_map_path=single_map_path,
+        **env_kwargs,
     )
     config.num_embeddings_agent_min = 60
 

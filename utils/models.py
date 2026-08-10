@@ -254,6 +254,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         encoder_compute_dtype=encoder_compute_dtype,
         attention_compute_dtype=attention_compute_dtype,
         token_mixer_residual_init_scale=token_mixer_residual_init_scale,
+        carry_work_observation=bool(
+            _config_option(config, "carry_work_observation", False)
+        ),
         **model_kwargs,
     )
 
@@ -378,6 +381,7 @@ class AgentStateNet(nn.Module):
     loaded_max: int
     agent_types_max: int  # Maximum agent type value (0..agent_types_max), e.g., 2 includes skidsteer
     mlp_use_layernorm: bool
+    carry_work_observation: bool = False
     num_embedding_features: int = 8
     hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
     hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
@@ -417,7 +421,8 @@ class AgentStateNet(nn.Module):
         )
 
     def __call__(self, agent_state_obs: Array):
-        # Per-agent feature contains: [pos_x, pos_y, angle_base, angle_cabin, wheel_angle, loaded, agent_type, shovel_lifted]
+        # R2 appends normalized reward-bearing carry work at index 8. The
+        # legacy path ignores it so the compact-u20 parent remains loadable.
         x_one_hot = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)  # pos_base (x, y)
         x_two_hot = agent_state_obs[..., 2:5].astype(dtype=jnp.int32)  # angle_base, angle_cabin, wheel_angle
         x_loaded = agent_state_obs[..., [5]].astype(dtype=jnp.int32)   # loaded
@@ -445,7 +450,16 @@ class AgentStateNet(nn.Module):
         x_shovel_lifted = normalize(x_shovel_lifted, 0, 1)  # Binary feature (0 or 1)
         
         # Combine continuous features
-        x_continuous = jnp.concatenate([x_loaded, x_shovel_lifted], axis=-1)
+        continuous = [x_loaded, x_shovel_lifted]
+        if self.carry_work_observation:
+            if agent_state_obs.shape[-1] < 9:
+                raise ValueError(
+                    "carry_work_observation requires agent state width >= 9"
+                )
+            continuous.append(
+                agent_state_obs[..., [8]].astype(dtype=jnp.float32)
+            )
+        x_continuous = jnp.concatenate(continuous, axis=-1)
         x_continuous = self.mlp_continuous(x_continuous)
         
         # Process agent type embedding
@@ -1207,6 +1221,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     encoder_compute_dtype: Any = jnp.float32
     attention_compute_dtype: Any = None
     token_mixer_residual_init_scale: float = 0.0
+    carry_work_observation: bool = False
     transformer_model_dim: int = 128
     transformer_num_layers: int = 2
     transformer_num_heads: int = 4
@@ -1237,6 +1252,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             loaded_max=self.loaded_max,
             agent_types_max=self.agent_types_max,
             mlp_use_layernorm=self.mlp_use_layernorm,
+            carry_work_observation=self.carry_work_observation,
         )
 
         self.maps_net = MapsNet(
