@@ -344,7 +344,12 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     ]
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
-    params = model.init(rng, obs)
+    # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
+    # Euler 3090s (CUDNN_STATUS_EXECUTION_FAILED, jobs 10307312/10307751) and
+    # placement is irrelevant here — values are PRNG-identical and training
+    # replicates params to devices before the first update.
+    with jax.default_device(jax.devices("cpu")[0]):
+        params = model.init(rng, obs)
 
     print(f"Model: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
     return model, params
