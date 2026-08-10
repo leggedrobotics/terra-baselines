@@ -46,6 +46,15 @@ reward return or online success, decide both comparisons. The exact launch and
 evaluation contract is recorded in the authoritative design document linked
 above.
 
+The active reward and termination audit is
+[V8 reward and termination audit](docs/research/V8_REWARD_TERMINATION_AUDIT.md).
+It preserves exact success, separates strict completion from continuous
+material progress, and records the failure diagnostics required before the
+matched dense-to-terminal screen. Its explicit fixed-checkpoint experiment
+proposal supersedes the older use of sampler depth as a reward-admission gate
+only after that amendment is implemented and recorded in the authoritative V8
+design.
+
 The mechanism is informed by, but does not copy constants from:
 
 - [Prioritized Level Replay](https://proceedings.mlr.press/v139/jiang21b.html),

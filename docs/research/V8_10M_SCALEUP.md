@@ -922,9 +922,10 @@ The immutable training source is terra-baselines
 backward, NCCL all-reduce, finite checkpoint reload, sampler-state, graph, and
 architecture receipts. Legacy held job `10015084` was then cancelled with zero
 runtime. Long jobs `10128518` (compact, `gpuhe.120h`) and `10128519` (Atari,
-`gpuhe.24h`) are running on 4xRTX4090 and have passed update 1. Initial
-steady-state throughput is approximately 19.7k and 108k transitions/s. This is
-launch admission only; fixed held-out evaluations remain the learning evidence.
+`gpuhe.24h`) subsequently completed on 4xRTX4090 without runtime failure.
+Initial steady-state throughput was approximately 19.7k and 108k
+transitions/s. The smokes and launch checks are admission evidence; the fixed
+held-out results below are the learning evidence.
 
 ### Completed result: Atari-base small-system control (2026-08-10)
 
@@ -967,9 +968,7 @@ continuous sampler, PPO shape, seed, horizon, dense reward, and transition
 budget, the original 480k Atari-base system did not learn broad source-disjoint
 exact completion. This supports retaining the larger spatial policy for the
 main study. It does not isolate encoder topology from head width, establish a
-general parameter-scaling law, or support a multi-seed statistical claim. The
-paired effect size against compact should be added only after compact job
-`10128518` finishes its development and capability-development sweeps.
+general parameter-scaling law, or support a multi-seed statistical claim.
 
 Evidence:
 
@@ -978,3 +977,42 @@ Evidence:
   `2362a77b234a5f9e9baebf74ee1fb7a2918023a56eda6b73e87c05bed9fc0913`
 - Euler result root:
   `/cluster/work/rsl/lterenzi/terra_v8_architecture_control_v1/dcc4f955347182e57e6f16e9df81a3f170564d97/screen/all47/s20260807/atari_base`
+
+### Completed result: compact continuous-dense trunk (2026-08-10)
+
+Compact job `10128518` completed `0:0` after all 20,000 PPO updates and all
+four fixed-panel sweeps. Promotion selects update 20,000, SHA-256
+`0948a230a5c0929237a7adbdb6c1231691caab728238a600c0e819f02e200834`.
+It scores 580/752 exact and 0.859 macro across promotion main plus capability.
+On source-disjoint development, the same checkpoint scores 546/720 exact and
+0.861 macro on the main panel, then 31/32 and 0.977 on capability. Combining
+the two development panels descriptively gives 577/752 exact and 0.866 macro.
+
+Development foundations score 221/384 on the main panel and 15/16 on the
+all-free anchor; trenches score 325/336 and 16/16. The remaining 174 main-panel
+failures are all timeouts and 163 are foundations. Their decomposition and the
+resulting reward/termination experiment plan are recorded in
+[V8 reward and termination audit](V8_REWARD_TERMINATION_AUDIT.md). Relative to
+the promotion-selected Atari control, compact development exact completion is
+577/752 versus 20/752. This is a one-seed small-system comparison, not a
+parameter-scaling law.
+
+Evidence:
+
+- W&B: `v8_architecture_dcc4f95534_screen_compact_xattn_10128518`
+- main development JSON SHA-256:
+  `dd8c3b381e57889827462222c81f29003a8b19f6285abd87247db5e60a2fea26`
+- capability development JSON SHA-256:
+  `8b9733b6d542f851d141803ec8bdaef7e4ef2db939a0e4bcb3fcad663e6df6be`
+- Euler result root:
+  `/cluster/work/rsl/lterenzi/terra_v8_architecture_control_v1/dcc4f955347182e57e6f16e9df81a3f170564d97/screen/all47/s20260807/compact_xattn`
+
+## Active reward and termination audit (2026-08-10)
+
+The compact result motivates a semantics and failure-mechanism audit before
+the reward fork. The shared working note is
+[V8 reward and termination audit](V8_REWARD_TERMINATION_AUDIT.md). It keeps the
+exact visible-dump success contract frozen, separates strict success from
+continuous material progress, and preregisters inference diagnostics before a
+single matched dense-to-terminal screen. Until its amendments are implemented
+and recorded here, the existing launch contract remains authoritative.

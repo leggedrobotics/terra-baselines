@@ -42,31 +42,38 @@ terra-baselines `dcc4f955347182e57e6f16e9df81a3f170564d97` and runtime Terra
 `eb3835c1d17af81e970b973ed5abf687ca6f3a26`; the bank protocol remains frozen
 at Terra `a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4`.
 
-The current scientific comparison is a constant-dense architecture pair. Both
+The completed scientific comparison is a constant-dense architecture pair. Both
 arms retain that map curriculum, data, transition budget, PPO shape, seed,
 horizon, and fixed evaluations:
 
 | Arm | Architecture | Parameters | Smoke | Long job | Current state |
 |---|---|---:|---:|---:|---|
-| `compact_xattn` | compact deep SE plus cross-attention | 2,856,685 | `10128202` PASS | `10128518` | TRAINING TARGET REACHED; fixed evaluation running |
+| `compact_xattn` | compact deep SE plus cross-attention | 2,856,685 | `10128202` PASS | `10128518` | COMPLETED `0:0`; all fixed panels complete |
 | `atari_base` | original Atari CNN plus base heads | 480,137 | `10128203` PASS | `10128519` | COMPLETED `0:0`; all fixed panels complete |
 
 Both arms use seed `20260807`, 47 x 96 maps, `continuous_banded_v1`, full
 450-step resets, dense reward, checkpoints every 500 updates, and fixed-panel
-evaluation every 1,000 retained updates. Compact requests the 120-hour queue
+evaluation every 1,000 retained updates. Compact used the 120-hour queue
 because the previous compact 20,000-update run took about 25h53. Atari is a
 small-system replication control, not a pure encoder ablation, because its
 policy, value, and local-map heads are also smaller.
 
 Reward fading is deferred to a true-resume fork of a qualified compact dense
-checkpoint. Once both sampler families reach depth 2 (or finish all depths)
-and fixed promotion/development evidence is archived, matched dense and
-dense-to-terminal children will restore the same model, optimizer, absolute
-update, and sampler state. The treatment fades for 5,000 updates and then runs
+checkpoint. The existing contract requires both sampler families to reach
+depth 2 (or finish all depths) and fixed promotion/development evidence to be
+archived before matched dense and dense-to-terminal children restore the same
+model, optimizer, absolute update, and sampler state. The treatment fades for
+5,000 updates and then runs
 1,000 updates at exactly terminal objective; the dense control receives the
 same 6,000-update budget. No independent random-start annealed long run is
 planned. At compact update 20,000, trenches are fully mastered but foundations
 remain at depth 1, so the formal reward-fork trigger has not yet fired.
+
+Compact's promotion-selected update-20,000 checkpoint scores 580/752 exact and
+0.859 macro on the combined promotion panels. On development it scores 546/720
+and 0.861 on the main panel plus 31/32 and 0.977 on all-free capability. The
+failure-mechanism and reward-semantics audit is in
+[`research/V8_REWARD_TERMINATION_AUDIT.md`](research/V8_REWARD_TERMINATION_AUDIT.md).
 
 The original dense-only job is retained in the ledger until both replacement
 architecture smokes pass:
@@ -92,8 +99,9 @@ not a reward result.
 The replacement smokes completed `0:0` in 13m53s (compact) and 12m16s
 (Atari). Each passed the in-job CUDA convolution-backward and NCCL all-reduce
 preflight, generic finite checkpoint reload, all-47 continuous-sampler receipt,
-and exact architecture receipt. Both long jobs then started immediately on
-4xRTX4090. Their W&B IDs are
+and exact architecture receipt. Both long jobs then ran on 4xRTX4090 and
+completed training plus every fixed panel without runtime failure. Their W&B
+IDs are
 `v8_architecture_dcc4f95534_screen_compact_xattn_10128518` and
 `v8_architecture_dcc4f95534_screen_atari_base_10128519`.
 
