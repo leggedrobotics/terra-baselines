@@ -115,7 +115,9 @@ for GPU_NAME in "${GPU_NAMES[@]}"; do
         test "$GPU_NAME" = "NVIDIA GeForce RTX 4090"
     fi
 done
-export JAX_PLATFORMS=cuda
+# cuda first keeps every default on GPU; cpu must be reachable for the
+# host-side model.init (see utils/models.py get_model_ready).
+export JAX_PLATFORMS=cuda,cpu
 "$PYTHON" - <<'PY'
 import jax
 import jax.numpy as jnp
