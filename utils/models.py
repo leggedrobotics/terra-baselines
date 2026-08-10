@@ -925,12 +925,16 @@ class Spatial8x8MapResNet(nn.Module):
         # consume. ``sow`` is a no-op unless the caller asks for the
         # "intermediates" collection, so only the PPO loss pays for it.
         if self.use_aux_decoder:
+            # The aux head runs in float32 regardless of the encoder dtype: its
+            # convs are tiny (no measurable cost), the BCE targets prefer f32,
+            # and eager bf16 init of these convs tripped
+            # CUDNN_STATUS_EXECUTION_FAILED on Euler 3090s (job 10307312).
             self.sow(
                 "intermediates",
                 "aux_logits",
-                _PerCellAuxDecoder(
-                    compute_dtype=self.compute_dtype, name="aux_decoder"
-                )(feature_grid),
+                _PerCellAuxDecoder(compute_dtype=jnp.float32, name="aux_decoder")(
+                    feature_grid.astype(jnp.float32)
+                ),
             )
 
         # Flatten readout (unchanged from the non-xattn encoder). V6 optionally
