@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from utils.models import get_model_ready
+from utils.models import get_model_ready, _config_option
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
 from flax.training.train_state import TrainState
@@ -16,7 +16,13 @@ from functools import partial
 from flax.jax_utils import replicate, unreplicate
 from flax import struct
 import utils.helpers as helpers
-from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, policy
+from utils.utils_ppo import (
+    select_action_ppo,
+    wrap_action,
+    obs_to_model_input,
+    policy,
+    policy_with_intermediates,
+)
 import os
 
 jax.config.update("jax_threefry_partitionable", True)
@@ -258,6 +264,55 @@ def downsample_teacher_obs(obs, downsample):
     return obs
 
 
+def _pool_to_grid(x, size):
+    """Average-pool a [B, H, W, C] map down to [B, size, size, C]."""
+    batch, height, width, channels = x.shape
+    return x.reshape(batch, size, height // size, size, width // size, channels).mean(
+        axis=(2, 4)
+    )
+
+
+def aux_decoder_loss(aux_logits, obs):
+    """Masked BCE of the V6 per-cell aux head against downsampled obs targets.
+
+    Targets are the map semantics the encoder itself derives, on the SAME
+    (already clipped, pre-normalization) maps the model consumes: remaining
+    dig, dump deficit, dumpability, obstacle. Each binary 64x64 map is average
+    pooled to the head's 32x32 resolution, so a target is the fraction of the
+    2x2 block carrying the property (soft label in [0, 1]).
+
+    Padded cells carry no learning signal: terra's padding mask is 1 on
+    padding/obstacle tiles and 0 on real map (terra/state.py builds the static
+    traversability base as ``padding_mask == 1``), so blocks that are more than
+    half padding are dropped from the mean.
+    """
+    traversability_map = obs[12]
+    action_map = obs[14]
+    target_map = obs[15]
+    padding_mask = obs[18]
+    dumpability_mask = obs[19]
+    size = aux_logits.shape[1]
+
+    # Same derivation as MapsNet's derived input channels (F1).
+    remaining_dig = (target_map < 0) & (action_map > target_map)
+    dump_deficit = (target_map > 0) & (action_map <= 0)
+    targets = jnp.stack(
+        (
+            remaining_dig,
+            dump_deficit,
+            dumpability_mask != 0,
+            traversability_map != 0,
+        ),
+        axis=-1,
+    ).astype(jnp.float32)
+    targets = _pool_to_grid(targets, size)
+    padded = _pool_to_grid((padding_mask != 0).astype(jnp.float32)[..., None], size)
+    valid = (padded <= 0.5).astype(jnp.float32)
+
+    losses = optax.sigmoid_binary_cross_entropy(aux_logits.astype(jnp.float32), targets)
+    return jnp.sum(losses * valid) / (jnp.sum(valid) * targets.shape[-1] + 1e-8)
+
+
 def ppo_update_networks(
     train_state: TrainState,
     transitions: Transition,
@@ -286,6 +341,9 @@ def ppo_update_networks(
     # off (teacher sees the student obs unchanged, historical behavior). This is
     # a Python-static int, so the transform is traced/specialized at compile.
     teacher_obs_downsample = int(getattr(config, "teacher_obs_downsample", 1))
+    # V6 dense per-cell auxiliary supervision. 0.0 = off, and the branch is
+    # Python-static so the traced loss graph of existing runs is unchanged.
+    aux_coef = float(_config_option(config, "aux_coef", 0.0))
 
     raw_advantages_finite = _finite_fraction(advantages)
     raw_targets_finite = _finite_fraction(targets)
@@ -334,7 +392,17 @@ def ppo_update_networks(
             config,
         )
         model_obs_finite = _tree_finite_fraction(obs)
-        value, dist = policy(train_state.apply_fn, params, obs)
+        if aux_coef > 0.0:
+            # One forward feeds the PPO heads and the aux decoder logits.
+            value, dist, intermediates = policy_with_intermediates(
+                train_state.apply_fn, params, obs
+            )
+            aux_loss = aux_decoder_loss(
+                intermediates["maps_net"]["cnn"]["aux_logits"][0], obs
+            )
+        else:
+            value, dist = policy(train_state.apply_fn, params, obs)
+            aux_loss = jnp.zeros((), dtype=jnp.float32)
         value = value[:, 0]
         student_logits = dist.logits_parameter()
         value_finite = _finite_fraction(value)
@@ -430,6 +498,8 @@ def ppo_update_networks(
         ratio_abs_max = _nan_safe_abs_max(ratio)
 
         total_loss = actor_loss + vf_coef * value_loss - ent_coef * entropy
+        if aux_coef > 0.0:
+            total_loss = total_loss + aux_coef * aux_loss
         if teacher_apply_fn is not None:
             total_loss = (
                 total_loss
@@ -444,6 +514,7 @@ def ppo_update_networks(
             clip_fraction,
             kickstart_kl,
             kickstart_value_mse,
+            aux_loss,
             rollout_finite,
             rollout_obs_finite,
             rollout_value_finite,
@@ -483,6 +554,7 @@ def ppo_update_networks(
             clip_fraction,
             k_kl,
             k_vmse,
+            aux_loss,
             rollout_finite,
             rollout_obs_finite,
             rollout_value_finite,
@@ -521,6 +593,7 @@ def ppo_update_networks(
         clip_fraction,
         k_kl,
         k_vmse,
+        aux_loss,
         rollout_finite,
         rollout_obs_finite,
         rollout_value_finite,
@@ -559,6 +632,7 @@ def ppo_update_networks(
             clip_fraction,
             k_kl,
             k_vmse,
+            aux_loss,
             rollout_finite,
             rollout_obs_finite,
             rollout_value_finite,
@@ -635,6 +709,8 @@ def ppo_update_networks(
     if teacher_apply_fn is not None:
         update_info["kickstart/kl"] = k_kl
         update_info["kickstart/value_mse"] = k_vmse
+    if aux_coef > 0.0:
+        update_info["aux_loss"] = aux_loss
     return train_state, update_info
 
 

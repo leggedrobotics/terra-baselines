@@ -199,6 +199,7 @@ _OPTIONAL_FINITE_LOSS_KEYS = (
     "clip_fraction",
     "kickstart/kl",
     "kickstart/value_mse",
+    "aux_loss",
     "diagnostics/grad_global_norm",
 )
 _FINITE_FRACTION_KEYS = (
@@ -431,6 +432,10 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "resnet_stage_channels": None,
         "resnet_blocks_per_stage": None,
         "carry_work_observation": False,
+        # V6 readout block: all three change parameter shapes.
+        "flatten_reduce_channels": None,
+        "attn_latent_queries": 4,
+        "aux_coef": 0.0,
     }
     tuple_fields = (
         "critic_hidden_dims",
@@ -450,6 +455,10 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             # as equal, while None stays distinct from any tuple.
             saved = tuple(saved) if saved is not None else None
             current = tuple(current) if current is not None else None
+        elif field_name == "aux_coef":
+            # Only the head's presence is architectural; its weight may change.
+            saved = float(saved) > 0.0
+            current = float(current) > 0.0
         if saved != current:
             mismatches.append(
                 f"{field_name}: checkpoint={saved!r}, current={current!r}"
@@ -459,8 +468,10 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             "Checkpoint architecture does not match the requested model: "
             + "; ".join(mismatches)
             + ". Pass matching --map_encoder, --model_core, --model_size, "
-            "--critic_hidden_dims, --resnet_stage_channels, and "
-            "--resnet_blocks_per_stage values, and carry-work observation contract."
+            "--critic_hidden_dims, --resnet_stage_channels, "
+            "--resnet_blocks_per_stage, --flatten_reduce_channels, "
+            "--attn_latent_queries, and --aux_coef values, and the "
+            "carry-work observation contract."
         )
 
 
@@ -1324,6 +1335,13 @@ class MixedAgentTrainConfig:
     # F16: optional small nonzero init for v5 token-mixer residual projections.
     # Default 0.0 preserves the exact identity-at-init mixer.
     token_mixer_residual_init_scale: float = 0.0
+    # V6 readout block. None/4/0.0 keep every existing architecture and the PPO
+    # loss byte-identical; the spatial_v6_3m arm sets 32 / 8 / 0.25.
+    flatten_reduce_channels: int | None = None
+    attn_latent_queries: int = 4
+    # Weight of the dense per-cell auxiliary decoder loss. > 0 also builds the
+    # decode head (it exists exactly when it is trained).
+    aux_coef: float = 0.0
     # Optional critic-head width override; None keeps the model_size preset.
     critic_hidden_dims: tuple | None = None
     # F5: PPO value-clipping toggle. Default True preserves current behavior;
@@ -1423,6 +1441,21 @@ class MixedAgentTrainConfig:
                 "map_encoder=resnet_spatial_8x8_se_sa_xattn "
                 f"(resnet_spatial_v5), not map_encoder={self.map_encoder!r}."
             )
+        if self.flatten_reduce_channels is not None:
+            self.flatten_reduce_channels = int(self.flatten_reduce_channels)
+            if self.flatten_reduce_channels < 1:
+                raise ValueError(
+                    "--flatten_reduce_channels must be >= 1, "
+                    f"got {self.flatten_reduce_channels}."
+                )
+        self.attn_latent_queries = int(self.attn_latent_queries)
+        if self.attn_latent_queries < 1:
+            raise ValueError(
+                f"--attn_latent_queries must be >= 1, got {self.attn_latent_queries}."
+            )
+        self.aux_coef = float(self.aux_coef)
+        if self.aux_coef < 0.0:
+            raise ValueError(f"--aux_coef must be >= 0, got {self.aux_coef}.")
         # F15: loaded_max_override rescales the model-side loaded normalizer
         # (tile-count quantity, ~x4 at 128). Fold it into loaded_max so
         # get_model_ready and the teacher preprocessing check read one value.
@@ -1970,6 +2003,16 @@ def make_mixed_agent_states(
         f"{getattr(config, 'token_mixer_residual_init_scale', 0.0)}",
         flush=True,
     )
+    print(
+        f"   flatten_reduce_channels: "
+        f"{getattr(config, 'flatten_reduce_channels', None)}",
+        flush=True,
+    )
+    print(
+        f"   attn_latent_queries: {getattr(config, 'attn_latent_queries', 4)}",
+        flush=True,
+    )
+    print(f"   aux_coef: {getattr(config, 'aux_coef', 0.0)}", flush=True)
     if model_core == "transformer":
         max_agents = 4
         token_count = max_agents + 3  # agent tokens + actions/local/maps tokens
@@ -3706,6 +3749,40 @@ if __name__ == "__main__":
             "projections. 0.0 preserves exact identity-at-init behavior."
         ),
     )
+    # V6 readout block.
+    parser.add_argument(
+        "--flatten_reduce_channels",
+        type=int,
+        default=None,
+        help=(
+            "Channels of the 1x1 conv applied before the spatial flatten readout, "
+            "e.g. 32. Omit to flatten the full-width 8x8 grid as before."
+        ),
+    )
+    parser.add_argument(
+        "--attn_latent_queries",
+        type=int,
+        default=4,
+        help=(
+            "Learned latent queries in the v4/v5 cross-attention readout "
+            "(plus the agent-conditioned query). 4 is the historical value."
+        ),
+    )
+    parser.add_argument(
+        "--aux_coef",
+        type=float,
+        default=0.0,
+        help=(
+            "Weight of the dense per-cell auxiliary decoder loss. > 0 builds and "
+            "trains the decode head; 0.0 leaves the PPO loss unchanged."
+        ),
+    )
+    parser.add_argument(
+        "--vf_coef",
+        type=float,
+        default=MixedAgentTrainConfig.vf_coef,
+        help="Value-loss coefficient in the PPO objective.",
+    )
     parser.add_argument(
         "--critic_hidden_dims",
         type=str,
@@ -4470,6 +4547,10 @@ if __name__ == "__main__":
         encoder_compute_dtype=args.encoder_compute_dtype,
         attention_compute_dtype=args.attention_compute_dtype,
         token_mixer_residual_init_scale=args.token_mixer_residual_init_scale,
+        flatten_reduce_channels=args.flatten_reduce_channels,
+        attn_latent_queries=args.attn_latent_queries,
+        aux_coef=args.aux_coef,
+        vf_coef=args.vf_coef,
         critic_hidden_dims=critic_hidden_dims,
         use_value_clip=args.use_value_clip,
         flat_minibatch_shuffle=args.flat_minibatch_shuffle,

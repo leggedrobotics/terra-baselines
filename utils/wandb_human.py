@@ -78,6 +78,7 @@ TRAINING_SCALAR_KEYS = frozenset(
         "ppo/clip_fraction",
         "ppo/explained_variance",
         "ppo/grad_norm",
+        "ppo/aux_loss",
         "kickstart/kl",
         "kickstart/value_mse",
         "kickstart/kl_coef",
@@ -171,6 +172,8 @@ def loss_metrics(
         "ppo/explained_variance": scalar("explained_variance"),
         "ppo/grad_norm": scalar("diagnostics/grad_global_norm"),
     }
+    if "aux_loss" in loss_info:
+        metrics["ppo/aux_loss"] = scalar("aux_loss")
     if teacher_enabled:
         metrics.update(
             {

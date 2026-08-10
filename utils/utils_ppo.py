@@ -94,6 +94,21 @@ def policy(
     return value, pi
 
 
+def policy_with_intermediates(
+    apply_fn,
+    params,
+    obs,
+):
+    """``policy`` that also returns the encoder's sown ``intermediates``.
+
+    One forward serves both the PPO heads and the V6 aux decoder logits, which
+    the encoder publishes with ``sow`` (a no-op without this mutable request).
+    """
+    (value, logits_pi), model_state = apply_fn(params, obs, mutable=["intermediates"])
+    pi = tfp.distributions.Categorical(logits=logits_pi)
+    return value, pi, model_state["intermediates"]
+
+
 def select_action_ppo(
     train_state,
     obs: jnp.ndarray,
