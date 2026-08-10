@@ -8,6 +8,7 @@ from scripts.analysis.build_v8_r2_admission_receipts import (
     build_dominance,
     canonical_distance_tiles,
 )
+from scripts.analysis.d4a_ledger import lift_conservation_diagnostic
 
 
 def test_canonical_distance_is_8_connected_and_permits_diagonal_corners():
@@ -68,3 +69,31 @@ def test_dwell_grid_exposes_implicit_time_pressure(tmp_path):
     np.testing.assert_allclose(
         rows[(0.0, 0.0)]["explicit_step_cost_per_step"], 1.0 / 450.0
     )
+
+
+def test_lift_conservation_gate_scales_with_float32_spacing():
+    high_before = np.float32(300.0)
+    high_after = np.nextafter(high_before, np.float32(np.inf), dtype=np.float32)
+    high = lift_conservation_diagnostic(
+        high_before,
+        high_after,
+        slot_index=575,
+        step=42,
+        targeted_label=None,
+    )
+    assert high["absolute_residual"] == 2**-15
+    assert high["ulp_residual"] == 1.0
+    assert high["tolerance"] == 4 * 2**-15
+    assert high["passed"] is True
+
+    low = lift_conservation_diagnostic(
+        np.float32(20.0),
+        np.float32(20.0 + 2**-15),
+        slot_index=177,
+        step=42,
+        targeted_label="obstacle_no_effect_loop",
+    )
+    assert low["absolute_residual"] == 2**-15
+    assert low["ulp_residual"] == 16.0
+    assert low["tolerance"] == 4 * 2**-19
+    assert low["passed"] is False

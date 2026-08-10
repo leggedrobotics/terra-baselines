@@ -95,7 +95,7 @@ test -f "$D4A_RECEIPT" -a -f "$D4A_MANIFEST" || {
 D4A_RECEIPT_SHA="$(sha256sum "$D4A_RECEIPT" | awk '{print $1}')"
 D4A_MANIFEST_SHA="$(sha256sum "$D4A_MANIFEST" | awk '{print $1}')"
 python3 - "$D4A_RECEIPT" "$D4A_MANIFEST" "$D4A_RECEIPT_SHA" <<'PY'
-import json, sys
+import hashlib, json, pathlib, sys
 receipt = json.load(open(sys.argv[1]))
 manifest = json.load(open(sys.argv[2]))
 assert receipt["schema"] == "terra_v8_r2_d4a_replay_v1"
@@ -112,10 +112,30 @@ assert receipt["action_tensor"]["dtype"] == "int32"
 command = receipt["command_contract"]
 assert command["seed"] == 20260807 and command["horizon"] == 450
 assert command["deterministic"] is True and command["wandb"] == "disabled"
+assert command["baselines_revision"] == "dcc4f955347182e57e6f16e9df81a3f170564d97"
+assert command["terra_revision"] == "eb3835c1d17af81e970b973ed5abf687ca6f3a26"
+assert command["bank_declared_terra_revision"] == "a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4"
+assert receipt["analysis_script_sha256"] == "268f73abfbfea05eff0ee3a41b7995fd6900b5a3268ba5ae91e7153a5d8dc7a4"
+assert receipt["analysis_support_sha256"] == "8c182bbcb906d581222b6637ad7d45ca45b196fe748b5a867cee44c46510e3a7"
+assert receipt["source_file_sha256"]["scripts/analysis/d4a_ledger.py"] == receipt["analysis_support_sha256"]
 ledger = receipt["ledger"]
-assert ledger["max_lift_conservation_error"] <= ledger["tolerance"]["lift"]
+lift_tolerance = ledger["tolerance"]["lift"]
+assert lift_tolerance["rule"] == "max(absolute_floor, ulp_multiplier * max_float32_spacing)"
+assert lift_tolerance["absolute_floor"] == 1e-6
+assert lift_tolerance["ulp_multiplier"] == 4.0
+assert ledger["lift_gate_passed"] is True
+assert ledger["failed_lift_event_count"] == 0
 assert ledger["max_inert_transition_error"] <= ledger["tolerance"]["inert"]
 assert ledger["max_dump_progress_telescope_error"] <= ledger["tolerance"]["telescope"]
+diagnostics_path = pathlib.Path(sys.argv[1]).parent / receipt["lift_diagnostics"]
+diagnostics = json.load(open(diagnostics_path))
+assert diagnostics["schema"] == "terra_v8_r2_d4a_lift_diagnostics_v1"
+assert diagnostics["status"] == "passed"
+assert diagnostics["failed_lift_event_count"] == 0
+assert diagnostics["written_before_gate_raise"] is True
+diagnostics_sha = hashlib.sha256(diagnostics_path.read_bytes()).hexdigest()
+assert diagnostics_sha == receipt["lift_diagnostics_sha256"]
+assert manifest["files"][diagnostics_path.name]["sha256"] == diagnostics_sha
 assert manifest["files"]["d4a_receipt.json"]["sha256"] == sys.argv[3]
 PY
 

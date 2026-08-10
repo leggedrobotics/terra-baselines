@@ -39,7 +39,15 @@ from utils.accepted_bank import load_accepted_bank
 from utils.helpers import load_pkl_object
 from utils.utils_ppo import wrap_action
 
+from d4a_ledger import (
+    LIFT_ABSOLUTE_FLOOR,
+    LIFT_ULP_MULTIPLIER,
+    lift_conservation_diagnostic,
+)
+
 SCHEMA = "terra_v8_r2_d4a_replay_v1"
+LIFT_DIAGNOSTICS_SCHEMA = "terra_v8_r2_d4a_lift_diagnostics_v1"
+LIFT_DIAGNOSTICS_TOP_K = 32
 EXPECTED_CHECKPOINT_SHA256 = (
     "0948a230a5c0929237a7adbdb6c1231691caab728238a600c0e819f02e200834"
 )
@@ -482,6 +490,7 @@ def main() -> None:
     max_lift_error = 0.0
     max_lift_location = None
     max_inert_error = 0.0
+    lift_diagnostics: list[dict[str, Any]] = []
     rng = jrandom.PRNGKey(args.seed)
     rng, _ = jrandom.split(rng)
     for step in range(450):
@@ -519,10 +528,25 @@ def main() -> None:
         dumped = (load_after < load_before) & active
         inert = active & ~lifted & ~dumped
         if np.any(lifted):
-            local = np.abs(h_progress[lifted])
+            if h_before.dtype != np.float32 or h_after.dtype != np.float32:
+                raise TypeError(
+                    "D4a lift diagnostics require float32 H values, got "
+                    f"{h_before.dtype} and {h_after.dtype}"
+                )
+            active_indices = np.flatnonzero(lifted)
+            local = np.abs(h_progress[active_indices])
+            for index in active_indices:
+                lift_diagnostics.append(
+                    lift_conservation_diagnostic(
+                        h_before[index],
+                        h_after[index],
+                        slot_index=int(index + 1),
+                        step=step + 1,
+                        targeted_label=TARGET_TRACES.get(int(index + 1)),
+                    )
+                )
             observed = float(local.max())
             if observed > max_lift_error:
-                active_indices = np.flatnonzero(lifted)
                 local_index = int(np.argmax(local))
                 max_lift_error = observed
                 max_lift_location = {
@@ -608,10 +632,60 @@ def main() -> None:
     final_h = final_snapshot[0]
     telescope_error = dump_progress_all - (initial_h.astype(np.float64) - final_h)
     max_telescope_error = float(np.max(np.abs(telescope_error)))
-    if max_lift_error > 1e-5 or max_inert_error > 1e-6 or max_telescope_error > 1e-4:
+    failed_lifts = [row for row in lift_diagnostics if not row["passed"]]
+    top_by_absolute_error = sorted(
+        lift_diagnostics,
+        key=lambda row: (-row["absolute_residual"], row["slot_index"], row["step"]),
+    )[:LIFT_DIAGNOSTICS_TOP_K]
+    top_by_ulp_error = sorted(
+        lift_diagnostics,
+        key=lambda row: (-row["ulp_residual"], row["slot_index"], row["step"]),
+    )[:LIFT_DIAGNOSTICS_TOP_K]
+    top_failed_events = sorted(
+        failed_lifts,
+        key=lambda row: (
+            -(row["absolute_residual"] / row["tolerance"]),
+            row["slot_index"],
+            row["step"],
+        ),
+    )[:LIFT_DIAGNOSTICS_TOP_K]
+    diagnostics_path = output / "d4a_lift_diagnostics.json"
+    write_json(
+        diagnostics_path,
+        {
+            "schema": LIFT_DIAGNOSTICS_SCHEMA,
+            "status": (
+                "passed"
+                if not failed_lifts
+                and max_inert_error <= 1e-6
+                and max_telescope_error <= 1e-4
+                else "failed"
+            ),
+            "gate": {
+                "rule": "max(absolute_floor, ulp_multiplier * max_float32_spacing)",
+                "absolute_floor": LIFT_ABSOLUTE_FLOOR,
+                "ulp_multiplier": LIFT_ULP_MULTIPLIER,
+                "inert_absolute": 1e-6,
+                "telescope_absolute": 1e-4,
+            },
+            "lift_event_count": len(lift_diagnostics),
+            "failed_lift_event_count": len(failed_lifts),
+            "max_lift_conservation_error": max_lift_error,
+            "max_lift_error_location": max_lift_location,
+            "max_inert_transition_error": max_inert_error,
+            "max_dump_progress_telescope_error": max_telescope_error,
+            "top_by_absolute_error": top_by_absolute_error,
+            "top_by_ulp_error": top_by_ulp_error,
+            "top_failed_events": top_failed_events,
+            "written_before_gate_raise": True,
+        },
+    )
+    if failed_lifts or max_inert_error > 1e-6 or max_telescope_error > 1e-4:
         raise ValueError(
             "material ledger parity failed: "
-            f"lift={max_lift_error}, inert={max_inert_error}, telescope={max_telescope_error}"
+            f"failed_lifts={len(failed_lifts)}, max_lift={max_lift_error}, "
+            f"inert={max_inert_error}, telescope={max_telescope_error}, "
+            f"diagnostics={diagnostics_path}"
         )
 
     trace_summaries = []
@@ -659,6 +733,9 @@ def main() -> None:
         "eval_mcts.py": args.baselines_source / "eval_mcts.py",
         "train_mixed.py": args.baselines_source / "train_mixed.py",
         "utils/models.py": args.baselines_source / "utils/models.py",
+        "scripts/analysis/d4a_ledger.py": Path(__file__)
+        .resolve()
+        .with_name("d4a_ledger.py"),
         "terra/env.py": args.terra_source / "terra" / "env.py",
         "terra/state.py": args.terra_source / "terra" / "state.py",
     }
@@ -703,15 +780,27 @@ def main() -> None:
             "max_lift_error_location": max_lift_location,
             "max_inert_transition_error": max_inert_error,
             "max_dump_progress_telescope_error": max_telescope_error,
+            "lift_gate_passed": not failed_lifts,
+            "failed_lift_event_count": len(failed_lifts),
+            "lift_event_count": len(lift_diagnostics),
             "tolerance": {
-                "lift": 1e-5,
+                "lift": {
+                    "rule": "max(absolute_floor, ulp_multiplier * max_float32_spacing)",
+                    "absolute_floor": LIFT_ABSOLUTE_FLOOR,
+                    "ulp_multiplier": LIFT_ULP_MULTIPLIER,
+                },
                 "inert": 1e-6,
                 "telescope": 1e-4,
             },
         },
+        "lift_diagnostics": diagnostics_path.name,
+        "lift_diagnostics_sha256": sha256_file(diagnostics_path),
         "targeted_trace_count": len(trace_summaries),
         "targeted_slots": sorted(TARGET_TRACES),
         "all_targeted_traces_match_frozen_rows": True,
+        "analysis_support_sha256": sha256_file(
+            Path(__file__).resolve().with_name("d4a_ledger.py")
+        ),
         "trace_rows": "d4a_trace_rows.jsonl",
         "trace_rows_sha256": trace_rows_sha,
         "trace_summaries": "d4a_trace_summaries.json",
