@@ -2,9 +2,10 @@
 
 Current design and decision authority:
 
-- [`research/V8_10M_SCALEUP.md`](research/V8_10M_SCALEUP.md), section
-  "Accepted amendment: compact trunk, small Atari control, reward fork
-  (2026-08-09)"
+- [`research/V8_IMPROVEMENT_SET_20260810.md`](research/V8_IMPROVEMENT_SET_20260810.md)
+- [`research/V8_REWARD_TERMINATION_AUDIT.md`](research/V8_REWARD_TERMINATION_AUDIT.md)
+- [`research/V8_10M_SCALEUP.md`](research/V8_10M_SCALEUP.md), current-successor
+  amendment; older v1/reward-fade sections are historical
 
 Supporting historical evidence:
 
@@ -20,11 +21,10 @@ current scheduler state.
 
 ## Current map-curriculum decision
 
-The accepted successor uses one uninterrupted random-start compact deep+xattn
-training process per matched arm over all 47 V8 conditions. It has no
-capability-only, nearby-only, or constraint-only training jobs. Immutable depth
-0/1/2 labels describe map difficulty; live family-specific bands only
-redistribute target-assignment probability inside the same run:
+The completed compact/Atari comparison used one uninterrupted random-start
+process per arm over all 47 V8 conditions. It had no capability-only,
+nearby-only, or constraint-only training jobs. Its `continuous_banded_v1`
+sampler used immutable depth 0/1/2 labels and live family-specific bands:
 
 ```text
 0.10 * Uniform(all family conditions)
@@ -42,6 +42,12 @@ terra-baselines `dcc4f955347182e57e6f16e9df81a3f170564d97` and runtime Terra
 `eb3835c1d17af81e970b973ed5abf687ca6f3a26`; the bank protocol remains frozen
 at Terra `a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4`.
 
+Future matched reward work uses `continuous_banded_v2` from `60e7510`: within
+each family, 10% remains uniform support and 90% is spread over every
+unmastered condition with depth weights `4:2:1`; eligible conditions graduate
+independently. Both R2 arms restore one common sampler state produced by the
+explicit v1-to-v2 migration.
+
 The completed scientific comparison is a constant-dense architecture pair. Both
 arms retain that map curriculum, data, transition budget, PPO shape, seed,
 horizon, and fixed evaluations:
@@ -58,16 +64,17 @@ because the previous compact 20,000-update run took about 25h53. Atari is a
 small-system replication control, not a pure encoder ablation, because its
 policy, value, and local-map heads are also smaller.
 
-Reward fading is deferred to a true-resume fork of a qualified compact dense
-checkpoint. The existing contract requires both sampler families to reach
-depth 2 (or finish all depths) and fixed promotion/development evidence to be
-archived before matched dense and dense-to-terminal children restore the same
-model, optimizer, absolute update, and sampler state. The treatment fades for
-5,000 updates and then runs
-1,000 updates at exactly terminal objective; the dense control receives the
-same 6,000-update budget. No independent random-start annealed long run is
-planned. At compact update 20,000, trenches are fully mastered but foundations
-remain at depth 1, so the formal reward-fork trigger has not yet fired.
+The next reward experiment is R2, not the old sampler-depth-triggered fade.
+Starting from compact update 20,000, one narrow prepared-fork initializer will
+expand the carry input without changing parent outputs, migrate the v1 sampler
+once to v2, preserve absolute PPO update and sampler history, create a fresh
+optimizer at local step zero, pin entropy at `0.02`, and apply the same short LR
+warmup in both children. R2 compares current dense reward with the normalized
+material-potential reward-v2 bundle. D0 parity, durable D4a replay, a
+materialized D4b scale/overlap-and-dwell receipt, and analytic
+terminal-dominance proof are required before launch. Only if reward-v2 wins
+does R3 test an episode-latched shaping fade. The former whole-objective fade
+is retired from the mainline; no reward job is currently submitted.
 
 Compact's promotion-selected update-20,000 checkpoint scores 580/752 exact and
 0.859 macro on the combined promotion panels. On development it scores 546/720
@@ -90,11 +97,11 @@ checkpoints reloaded; the receipt records all 47 conditions, family counts
 This is engineering admission evidence, not a learning result.
 
 The same-binary random-start reward smokes `10022782` (dense) and `10022786`
-(annealed) both passed individually, but the anneal trigger had not fired and
-the terminal mix remained zero. No long reward pair was submitted. The two
-independent GPU updates diverged numerically despite matching sampler and
-transition receipts, so these jobs are implementation evidence only and are
-not a reward result.
+(old whole-objective anneal) both passed individually, but the anneal trigger
+had not fired and the terminal mix remained zero. No long reward pair was
+submitted. The two independent GPU updates diverged numerically despite
+matching sampler and transition receipts, so these jobs are historical
+implementation evidence only and are not a reward result or an R2 admission.
 
 The replacement smokes completed `0:0` in 13m53s (compact) and 12m16s
 (Atari). Each passed the in-job CUDA convolution-backward and NCCL all-reduce

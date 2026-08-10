@@ -11,49 +11,52 @@ checkpoints, and cluster execution.
 ## Current V8 curriculum
 
 The authoritative design, evidence, decisions, and operational contract are in
-[V8 10M scale-up and curriculum](docs/research/V8_10M_SCALEUP.md). The accepted
-map treatment is one uninterrupted `continuous_banded_v1` process per arm, not
-separate Stage A/B/C jobs:
+[V8 improvement set](docs/research/V8_IMPROVEMENT_SET_20260810.md) and the
+[reward and termination audit](docs/research/V8_REWARD_TERMINATION_AUDIT.md).
+The accepted follow-up map treatment is one uninterrupted
+`continuous_banded_v2` process per arm, not separate Stage A/B/C jobs:
 
 - all 47 V8 conditions have positive probability from update 0;
 - foundation and trench each receive 50% of target assignment probability;
-- within each family, 10% is uniform over every condition, 75% is uniform over
-  the entire active depth, and 15% is uniform over the next depth;
-- exact completed training episodes update the mastery EMA; and
+- within each family, 10% is uniform over every condition and 90% is spread
+  over every unmastered condition with shallow-to-deep weights `4:2:1`;
+- any eligible condition can graduate independently from exact completed
+  training episodes, so one straggler cannot pin its family; and
 - source-disjoint fixed panels audit and select checkpoints but never control
   the online sampler.
+
+The completed compact/Atari experiment used `continuous_banded_v1`; that fact
+is historical evidence, not the sampler contract for the next reward screen.
+An explicit one-way migration validates and preserves its sampler state before
+both matched R2 arms recompute probabilities under v2.
 
 Here, depth is immutable map-difficulty metadata and band is a changing sampler
 role. Online success is weighted by the live sampler distribution; it is not a
 whole-V8 benchmark result. Map allocation and reward design remain separate
 causal variables.
 
-The current primary experiment holds reward dense and trains two random-start
+The completed primary experiment held reward dense and trained two random-start
 all-47 controls: the 2.856M compact deep+xattn policy and the original 480k
-Atari-base policy. They share the map sampler, transition budget, PPO shape,
+Atari-base policy. They shared the map sampler, transition budget, PPO shape,
 seed, horizon, and fixed evaluations. The Atari policy is a deliberately small
 system control, not a pure encoder ablation, because its actor, critic, and
 local-map heads are also smaller.
 
-Reward fading is a later fork of the compact dense trunk, not a second
-random-start map-curriculum run. Once both sampler families reach depth 2 (or
-are fully mastered) and the nearest retained checkpoint has fixed promotion
-and development evidence, two children resume the same model, optimizer,
-update count, and sampler state. One remains dense; the other irreversibly
-fades to the terminal objective over 5,000 updates and then trains for 1,000
-updates at the exact terminal objective. Fixed source-disjoint panels, not
-reward return or online success, decide both comparisons. The exact launch and
-evaluation contract is recorded in the authoritative design document linked
-above.
+The next mainline reward question is R2: compare the current dense recipe with
+one normalized material-potential reward-v2 bundle after both arms take the
+same v1-to-v2 sampler migration, output-preserving carry-input expansion,
+fresh optimizer, and LR warmup. Only if reward-v2 wins does R3 fork the selected
+v2 checkpoint into fixed-shaping and episode-latched dense-to-sparse children.
+The former whole-objective anneal is retired from the mainline because it
+changes several reward semantics at once. Fixed source-disjoint panels, not
+reward return or online success, decide both comparisons.
 
 The active reward and termination audit is
 [V8 reward and termination audit](docs/research/V8_REWARD_TERMINATION_AUDIT.md).
 It preserves exact success, separates strict completion from continuous
-material progress, and records the failure diagnostics required before the
-matched dense-to-terminal screen. Its explicit fixed-checkpoint experiment
-proposal supersedes the older use of sampler depth as a reward-admission gate
-only after that amendment is implemented and recorded in the authoritative V8
-design.
+material progress, and records the diagnostics and analytic admission gates
+required before R2. Its fixed-checkpoint experiment proposal supersedes the
+older sampler-depth reward trigger and whole-objective fade.
 
 The mechanism is informed by, but does not copy constants from:
 

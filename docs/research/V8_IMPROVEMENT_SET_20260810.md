@@ -30,10 +30,11 @@ Change (v1 behavior untouched, new named rule):
   stored probabilities are validated against the v1 rule for the restored
   mastery, then recomputed under v2.
 
-Application rule: the dense trunk continuation and **both** R1 children use v2
-identically, so reward stays the only difference inside the R1 pair. The
-before/after-v2 trunk comparison is deliberately informal; the mechanistic
-mass evidence above is the justification, not a paired run.
+Application rule: both R2 children restore one common sampler state produced by
+the explicit v1-to-v2 migration. The migration is a pre-fork prerequisite, not
+an arm-level treatment. The before/after-v2 trunk comparison is deliberately
+informal; the mechanistic mass evidence above is the justification, not a
+paired run.
 
 Files: `utils/pooled_sampler.py`, `utils/accepted_bank.py`, `train_mixed.py`,
 `scripts/verify_continuous_sampler_checkpoint.py`,
@@ -45,9 +46,10 @@ any-depth graduation; v1-to-v2 migration and round-trip). Local failures in
 pre-existing terra-revision mismatch (`RewardStage`,
 `jax.experimental.maps`) and occur identically without this change. A new
 fork launcher must pass `--accepted-bank-sampler-profile continuous_banded_v2`
-and sampler rule `continuous_banded_v2`; existing v1 launchers are untouched.
+and sampler rule `continuous_banded_v2`; the existing named preset remains v1,
+so R2 needs one explicit v2 preset rather than mismatched CLI overrides.
 
-## P1 — diagnostics before the reward screen (audit D0–D5, endorsed)
+## P1 — R2-gating diagnostics and independent treatments (audit D0–D6)
 
 Run as specified in the audit. Two sharpenings:
 
@@ -58,22 +60,37 @@ Run as specified in the audit. Two sharpenings:
 - D3: the runtime computes an action-mask helper but emits an all-zero
   informational mask to the policy; obstacle feasibility is a mechanics/action
   treatment, never a reward bonus.
+- D4b: the provisional 34-map overlap query found only large depth-1 adjacent
+  foundations (19 slab, 9 bearing walls, 3 irregular, 2 courtyard-pads, 1
+  courtyard), with no `d12`, `d16`, or apron maps. Materialize the rows and
+  dwell-cost grid before freezing constants; the supported mechanism is
+  volume/per-map normalization, not excessive remote-haul reward magnitude.
 
-## P2 — R1 matched fork (dense control vs annealed), amended
+## P2 — R2 normalized material-potential screen (accepted design, not implemented)
 
 - Parent: the development-confirmed compact update-20k checkpoint.
-- Both children: v2 sampler (identical), entropy coefficient pinned at its
-  terminal 0.02 through the fade, optimizer/LR unchanged.
-- Pre-registered freeze rule: any currently-mastered condition dropping more
-  than 2/16 on two consecutive 1,000-update sweeps freezes the fade
-  coefficient where it stands.
-- Falsifiable prediction: the annealed child converts the conversion cluster
-  (bearing-walls, side1, proc-ring3x, apron-c1p2, split, ring3x-obj1; graded
-  0.65–0.81, exact 7–11/16) and reduces steps on jointly-solved identities;
-  it does not move remote dumping (d12/d16) or obstacle stalls. Either
-  deviation is a finding.
-- The old online depth-2 reward trigger is superseded by an explicit
-  fixed-evaluated parent receipt, per the audit's proposal.
+- Common prepared fork: output-preserving carry-input expansion, one explicit
+  v1-to-v2 sampler migration, one materialized v2 sampler state, fresh optimizer,
+  parent-terminal entropy `0.02`, and identical short LR warmup. Existing
+  warm-start and resume modes cannot express this combination without losing
+  sampler history or retaining the old optimizer, so implement one narrow named
+  fork initializer rather than another generic checkpoint mode. Retain absolute
+  PPO update 20,000, but key the warmup from fresh optimizer-local step zero.
+- Control: current dense reward and its frozen legacy carry ledger.
+- Treatment: constant exact-success payment, fixed horizon-failure and step
+  terms, globally normalized physical-distance ledger, and normalized
+  excavation/relocation potential at fixed shaping weight.
+- Both arms: identical map identities, v2 sampler state, horizon, PPO settings,
+  seed, warmup, and 4,000--6,000-update budget. Their carry channel is labelled
+  with the arm-specific exact ledger in every receipt; run, checkpoint, and
+  evaluation receipts pin its protocol ID and sidecar hash and reject mismatch.
+- Admission: D0 parity, durable D4a receipt, analytic exact-success dominance,
+  implied dwell-cost grid, and reproduction of the scale/overlap findings.
+
+The previously implemented whole-objective anneal, formerly R1, is retired
+from the mainline. It changes action costs, timeout reward, success scale, and
+efficiency bonuses simultaneously. Do not launch it as a prerequisite or
+substitute for R2.
 
 ## P3 — progress-vector separation (audit accepted)
 
@@ -83,12 +100,16 @@ material progress of 30 of 174 failures. Expose
 failures first, and keep the combined scalar dashboard-only until loaded and
 illegal handling is explicit. Never a promotion metric.
 
-## P4 — conditional R2 (normalized material potential)
+## P4 — conditional R3 shaping fade
 
-Only if D4 confirms fragmented low-volume digging under the flat +1 dig
-reward. Requires gamma-consistent potential shaping or a discounted-cycle
-regression test. Never combined with a horizon, sampler, mask, bank, or
-dynamics change.
+Only if reward-v2 wins R2, fork the selected reward-v2 checkpoint into fixed
+shaping and episode-latched fade children. Restore identical model, optimizer,
+sampler state, source seed, and map identities; the sampler NumPy RNG restores,
+while JAX rollout RNG and live environments restart and diverge. Only the frozen
+shaping-weight schedule differs. Resolve the time-to-go observation decision
+before calling the result a final fixed-horizon recipe. A later scratch run
+must confirm that the selected recipe can teach rather than only preserve a
+competent checkpoint.
 
 ## P5 — later, separate treatments
 

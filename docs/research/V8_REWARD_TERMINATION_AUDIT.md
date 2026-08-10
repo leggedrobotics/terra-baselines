@@ -170,6 +170,38 @@ Foundation median is 0.959, trench median is 0.108, and 34 maps have more
 available relocation return than the approximately 6.857 exact-success bonus.
 This is a reward-budget mismatch, not meaningful task difficulty.
 
+A read-only overlap query reproduced all of those aggregates and classified
+the 34 maps. Contrary to the motivating hypothesis, none is `d12`, `d16`, or
+any apron map. All are depth-1 `adjacent_generous` foundations:
+
+| Condition | Above 6.857 | Budget range | Required-volume range |
+|---|---:|---:|---:|
+| `v7-fnd-slab-adjacent` | 19/96 | 6.926--15.336 | 511--792 |
+| `v7-fnd-bearing-walls-adjacent` | 9/96 | 6.957--9.421 | 395--518 |
+| `v7-fnd-irregular-adjacent` | 3/96 | 7.067--8.298 | 530--595 |
+| `v7-fnd-courtyard-pads-adjacent` | 2/96 | 7.064--7.728 | 404--441 |
+| `v7-fnd-courtyard-adjacent` | 1/96 | 6.957 | 397 |
+
+`d12` has median/p95/max projected budgets `1.541/2.976/4.388`; `d16`
+has `1.585/2.936/3.816`. The defect therefore connects most directly to the
+large-foundation workload class: current shaping can rival finishing because
+it multiplies excavation volume by a per-map-normalized distance field. It
+does not explain the remote failures by excessive reward magnitude. Trenches
+receive about nine times less median relocation budget yet have much higher
+fixed-policy macro graded completion (`0.981` versus foundation `0.756`); this
+is confounded by task difficulty but rejects any simple "more shaping mass
+means more success" narrative.
+
+The provisional read-only query used
+`H_reset * 1.5 * clip(170 / max(negative_target_cells, 1), 2, 5) / 2 / 70`,
+where `H_reset` is the current per-map-normalized initial haul ledger,
+and the threshold `200 * 1.2 * 2 / 70`. Under that ad-hoc serialization, the
+sorted 34-map ID set has SHA-256
+`658a5abb657f5dd73b1bedbae6026b004eadd3c014e48f251764082995a781a2`;
+this is not yet a durable receipt. D4b must materialize the full per-map rows,
+serialization, and input provenance before using this as a paper figure or
+freezing constants.
+
 The per-map finite-maximum distance normalization also destroys physical
 comparability. A roughly 1.09-tile source distance is stored near 0.774 for an
 all-free straight trench but near 0.034 for an adjacent straight trench, about
@@ -337,7 +369,9 @@ dense success component is effectively a fixed bonus.
 3. **Action costs are anti-navigation.** A no-op is cheaper than every valid
    motion or rotation. Replace the six action-specific costs with one uniform
    step cost in reward-v2; do not add a generic invalid-action knob until the
-   uniform treatment is measured.
+   uniform treatment is measured. This removes the reward-only collision
+   surcharge, not collision mechanics; keep collision counts as diagnostics
+   and deployment safety in action feasibility/mechanics.
 4. **Accepted-zone rehandling is over-penalized.** The explicit volume penalty
    can oppose necessary rearrangement in constrained zones. Let signed material
    potential and time cost judge the complete sequence.
@@ -458,6 +492,12 @@ r_t = B * exact_success_transition
       + shaping_weight * [potential_gamma * Phi(s_t+1) - Phi(s_t)]
 ```
 
+`B` is one flat, map-independent exact-success payment. Reward-v2 does not
+reintroduce productive-workspace, step-efficiency, family, or geometry bonuses
+inside `B`; those quantities remain evaluation diagnostics. Earlier exact
+success is preferred through discounting and the uniform step cost, not by
+changing `B`.
+
 `H_reset` is an additive baseline only; it is never the denominator. Dividing
 by reset haul work would amplify legal regressions on nearby tasks by as much
 as 34.6x and would give trivial and remote jobs the same relocation budget.
@@ -514,6 +554,24 @@ cumulative unit of explicit step cost over 450 actions), but this document does
 not approve those numbers. `D_bound` and the nonnegative shift must be included
 when rescoring these coefficients.
 
+The shifted potential also creates an implicit state-dependent dwell cost,
+including a constant-shift component, of
+`shaping_weight * (1 - potential_gamma) * Phi` on a flat transition. This
+may be the dominant time pressure and must be chosen deliberately. For example,
+with the illustrative but unapproved values `potential_gamma=0.9984`,
+`alpha=1`, `beta=1.5`, `D_bound=2`, and `shaping_weight=1`, the per-step cost is:
+
+| `P` | `Q=0` | `Q=0.5` | `Q=1` |
+|---:|---:|---:|---:|
+| `-D_bound` | 0.0000 | 0.0008 | 0.0016 |
+| `0` | 0.0048 | 0.0056 | 0.0064 |
+| `+D_bound` | 0.0096 | 0.0104 | 0.0112 |
+
+The illustrative explicit step cost `1/450 = 0.00222` is smaller over much of
+that grid. The offline receipt must reproduce the grid using the proposed
+constants, tabulate the admitted extrema, and include both implicit and
+explicit time pressure before any coefficient is frozen.
+
 This form has the desired qualitative properties:
 
 - excavation credit scales with volume rather than action count;
@@ -561,18 +619,33 @@ development identities. They do not change training.
 | D2 | categorical action sampling at temperature 1 with eight frozen action seeds on the same failures | distinguish greedy attractors from missing capability |
 | D3 | oracle immediate-effect masking on the seven severe obstacle-loop cases and matched successful obstacle cases | upper-bound action-feasibility benefit and guard regressions; not a deployable mask result |
 | D4a | exact full-graph replay of nine targeted traces | complete read-only: ledger correct; scale, hidden-state, discount, and flat-potential defects confirmed; durable receipt pending |
-| D4b | log per-action fresh volume, normalized potential, material-neutral cycles, longest stagnation, load, and illegal soil on the full failure set | quantify flat-dig and remaining failure mechanisms |
+| D4b | log per-action fresh volume, normalized potential, material-neutral cycles, longest stagnation, load, and illegal soil on the full failure set; materialize the 34-map query and the dwell-cost/bound grid | quantify flat-dig and remaining mechanisms; confirm the high-budget overlap with large nearby foundations and freeze shaping constants knowingly |
 | D5 | constructed saturated-legal-cone dump test, followed by inference on any matching failures | verify the control-flow risk and decide between repositioning and accepted-first two-pass fallback |
 | D6 | append normalized time-to-go with output-preserving initialization | separate finite-horizon observation ablation; do not bundle with reward-v2 |
 
-After D0 parity, a durable D4a receipt, and offline reward-v2 rescoring, run at
-most one initial PPO reward-repair screen. D1--D3 may run in parallel for
-interpretation. D5 and D6 are independent mechanics/observation follow-ups and
-do not belong in the reward arm.
+R2 admission requires D0 parity, a durable D4a replay receipt, a materialized
+D4b scale/overlap and dwell-cost receipt, offline reward-v2 rescoring, and the
+analytic terminal-dominance proof. D1--D3 and D5--D6 are nonblocking
+diagnostics or independent treatments and do not belong in the reward arm.
+After those R2 gates pass, run at most one initial PPO reward-repair screen.
+
+R2 pins `continuous_banded_v2` from terra-baselines `60e7510` in both arms.
+The selected compact checkpoint contains v1 sampler state. Before creating the
+two children, one prepared-fork path must validate its saved probability vector
+under v1; preserve competence, mastery, current/closed windows, exposure
+counters, refresh state, and NumPy RNG; recompute only probabilities under v2;
+and materialize one common migrated sampler state. Both arms restore that exact
+state. The run contract records source rule, target rule, migration receipt,
+post-migration state hash, and explicitly asserts `settings.rule` rather than
+accepting the shared v1 schema name as proof of the active rule. The
+reward-plus-ledger bundle is the only arm-level treatment after this common
+migration. This is necessary because v1 would leave the depth-2 foundation
+targets of the relocation repair at preview-level exposure during a short
+screen.
 
 | Arm | Common parent and budget | Reward |
 |---|---|---|
-| R2-control | same output-preserving carry-input expansion of compact u20, same restored sampler state, fresh optimizer, map identities, horizon, seed, and 4,000--6,000-update budget | continue current dense reward and its frozen carry ledger |
+| R2-control | same output-preserving carry-input expansion of compact u20, migrated `continuous_banded_v2` state, fresh optimizer, entropy 0.02, map identities, horizon, seed, LR warmup, and 4,000--6,000-update budget | continue current dense reward and its frozen carry ledger |
 | R2-reward-v2 | same | normalized `Phi` bundle above, with `shaping_weight=1` |
 
 R2 is deliberately one repair bundle: volume-normalized digging, globally
@@ -580,20 +653,30 @@ normalized relocation, gamma-consistent timing, fixed success, and one step
 cost. It can determine whether the simpler reward is better, but cannot assign
 credit to one constituent change. Add normalized carry work to both policies,
 zero-initialize its contribution so the parent outputs are unchanged, and use
-the same fresh-optimizer treatment in both arms. The two children are a matched
-statistical fork, not a trajectory-identical counterfactual: environment state,
-action history, execution RNG, and GPU numerics restart or diverge.
+the same fresh-optimizer treatment and short frozen LR warmup in both arms.
+Each receipt labels the carry channel with that arm's exact ledger and distance
+protocol. Run, checkpoint, and evaluation receipts store the protocol ID and
+distance-sidecar hash and fail closed on mismatch; observation arrays from
+different arms must never be concatenated as if the channel had identical
+numerical semantics. The two children are a matched statistical fork, not a
+trajectory-identical counterfactual:
+environment state, action history, execution RNG, and GPU numerics restart or
+diverge.
 
 Only if reward-v2 wins R2 should R3 fork the same selected reward-v2 checkpoint,
-optimizer, sampler state, RNG state, and map identities into two true-resume
-children. One keeps `shaping_weight=1`; the other follows the episode-latched
-fade. Only the frozen weight schedule may differ. This is the clean
+optimizer, sampler state, source seed, and map identities into two statistical
+resume children. The sampler's NumPy RNG is restored, but JAX rollout RNG,
+live environments, and action history restart and then diverge. One child keeps
+`shaping_weight=1`; the other follows the episode-latched fade. Only the frozen
+weight schedule may differ. This is the clean
 sparse-reward question. Resolve D6 before declaring a final fixed-horizon
 recipe or running the later scratch confirmation that must show the recipe can
 teach the full V8 distribution rather than only preserve or repair an already
-competent checkpoint. The currently implemented whole-objective anneal remains
-a distinct historical ablation because it simultaneously changes action costs,
-timeout reward, success scale, and efficiency bonuses. Use an explicit
+competent checkpoint. The previously implemented whole-objective anneal,
+formerly called R1, is retired from the mainline and will not be launched: it
+simultaneously changes action costs, timeout reward, success scale, and
+efficiency bonuses. It may be reconsidered only as nonblocking paper color
+after R2/R3, under a separately recorded decision. Use an explicit
 fixed-evaluated parent receipt; online sampler depth does not authorize the
 transition. The map curriculum has continuous bands, not external stages.
 
@@ -604,8 +687,25 @@ return between reward schemes. A material screen effect requires at least
 three paired resume seeds, with promotion used for checkpoint selection and
 development only for confirmation, before a paper claim.
 
-Do not combine R2 or R3 with a horizon, sampler, action-mask, time-observation,
-map-bank, or dynamics change.
+No sampler change beyond the pinned common R2 migration is allowed, and neither
+matched fork may change its sampler. The migration is a pre-fork prerequisite,
+not the R2 treatment. Do not combine R2 or R3 with a horizon, action-mask,
+time-observation, map-bank, or dynamics change.
+
+Implementation follows `$simple-research-code`: add one named v2 preset and one
+named prepared-fork initializer that expands the model, retains absolute PPO
+update 20,000 and migrated sampler history, creates a fresh optimizer at local
+step zero, freezes entropy at the parent's `0.02` endpoint, and keys one
+treatment-local LR warmup from that optimizer-local step before emitting the
+two matched children. Existing warm-start drops sampler history and existing
+true-resume keeps the old optimizer, so neither is silently repurposed. Add one
+common
+carry channel, one global distance routine, one potential formula, and one
+episode-latched fade. Use only claim-driving tests for the distance/ledger
+math, discounted cycles and terminal dominance, v1-to-v2 sampler migration,
+output-preserving input expansion, and prepared-fork/latch state. Do not build
+a generic reward framework or compatibility matrix. Keep the work as a
+reversible experiment commit and revert it if the matched screen loses.
 
 ## Decision table
 
@@ -622,16 +722,18 @@ map-bank, or dynamics change.
 | per-map maximum distance normalization | rejected for reward-v2 | physically identical hauling receives incomparable credit |
 | globally normalized physical distance | proposed for R2 | one family-neutral unit and bounded reward budget |
 | flat productive-dig event reward | replace in R2 | rewards fragmented excavation rather than moved volume |
-| action-specific valid-motion costs | replace in R2 | no-op is currently cheaper than navigation; one step cost is simpler |
+| action-specific valid-motion costs | replace in R2 | no-op is currently cheaper than navigation; one step cost is simpler and also removes the reward-only collision surcharge while physical collision mechanics remain unchanged |
 | accepted-zone relift penalty | remove in R2 | can oppose necessary rearrangement; signed potential and time already price it |
 | positive graded timeout bonus | remove in R2 | `absolute_completion` is a strict gate-min and collapses while loaded |
 | workspace/step terminal bonuses | diagnostics for now | structural rehandling and gamma already confound these soft bonuses |
 | carry-work observation | common channel and output-preserving parent for both R2 arms | values follow each arm's exact hashed ledger, so R2 is explicitly a reward-plus-state bundle |
 | terminal objective dominance | analytic admission gate for R2 | bounded exact-success return must exceed every admitted horizon-failure return; trace rescoring alone is insufficient |
 | reward fade schedule | latch per episode | prevents mid-episode coefficient changes from invalidating the fixed-weight potential accounting |
+| R2 sampler | pin `continuous_banded_v2` in both arms | per-condition graduation prevents v1 from starving the depth-2 maps targeted by reward-v2 |
+| optimizer restart | fresh optimizer plus identical short LR warmup in both R2 arms | matched treatment for input expansion and critic-target refitting |
 | normalized time-to-go | separate D6 treatment | required for a fully observed fixed-horizon policy, but not a reward ablation |
 | dump reachable-capacity fallback | confirmed code-path risk; behavioral decision pending D5 | may create localized endgame no-ops |
-| current whole-objective anneal | historical ablation only | changes several causal variables simultaneously |
+| former R1 whole-objective anneal | retired; do not launch on the mainline | changes several causal variables simultaneously and answers a weaker question than R2/R3 |
 | normalized material reward R2 | proposed after durable D4a/offline rescore | traces now support testing the mechanism as one repair bundle |
 | shaping-only fade R3 | proposed only if reward-v2 wins R2 | clean dense-to-sparse question; keep success and step objective fixed |
 | obstacle action masking | separate treatment | action feasibility is not reward design |
@@ -689,3 +791,7 @@ decision.
 | 2026-08-10 | rejected | normalize relocation by reset haul work; use original required volume and one global physical-distance reference |
 | 2026-08-10 | proposed | R2 tests one normalized material-potential bundle; R3 later fades only selected shaping |
 | 2026-08-10 | experiment | complete D0 and durable D4a receipt before R2; run D1--D3, D5, and D6 as separate diagnostics/treatments |
+| 2026-08-10 | accepted | both R2 arms use one prepared `continuous_banded_v2` sampler migration; v1 starvation cannot confound the reward screen |
+| 2026-08-10 | observation | all 34 train maps whose projected relocation budget exceeds the current success bonus are large nearby V7 foundations, not remote/apron maps; durable D4b receipt pending |
+| 2026-08-10 | accepted | reward-v2 uses flat `B`, explicit dwell-cost and dominance receipts, arm-labelled carry semantics, and matched optimizer-local LR warmup |
+| 2026-08-10 | rejected | former R1 whole-objective anneal as a mainline run; retain implementation history but spend no compute before R2/R3 |

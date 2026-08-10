@@ -1,7 +1,7 @@
 # V8 10M scale-up experiment
 
-- Status: **STAGE-B EVIDENCE FROZEN; CONTINUOUS ALL-47 SUCCESSOR PREPARED; NO NEW RUN LAUNCHED**
-- Updated: 2026-08-07
+- Status: **COMPACT/ATARI EVIDENCE FROZEN; REWARD-V2 DIAGNOSTICS AND PREPARED FORK NEXT; NO NEW RUN LAUNCHED**
+- Updated: 2026-08-10
 - Parent campaign:
   [`V8_DEEP_XATTN_CURRICULUM.md`](V8_DEEP_XATTN_CURRICULUM.md)
 - Implementation policy:
@@ -14,6 +14,34 @@ provenance. Imperative or future-tense wording in that record describes the
 decision at the time; it is not a current launch instruction. Hard A/B/C map
 launches are rejected for the successor. The authoritative 2026-08-07
 continuous all-47 decision is recorded at the end of this document.
+
+The 2026-08-07 `continuous_banded_v1` and whole-objective anneal sections are
+also retained as historical design provenance. They are superseded for future
+work by the current decision below and by
+[`V8_IMPROVEMENT_SET_20260810.md`](V8_IMPROVEMENT_SET_20260810.md) and
+[`V8_REWARD_TERMINATION_AUDIT.md`](V8_REWARD_TERMINATION_AUDIT.md).
+
+## Current successor decision (2026-08-10)
+
+The completed compact/Atari comparison used `continuous_banded_v1` and remains
+valid evidence. Future matched reward work pins `continuous_banded_v2`; one
+prepared-fork path migrates the selected compact-u20 sampler once, expands the
+carry observation without changing parent outputs, resets the optimizer, and
+applies the same short LR warmup before emitting both children.
+
+The mainline reward experiment is R2: current dense control versus the
+normalized material-potential reward-v2 bundle, with identical migrated v2
+sampler state, map identities, PPO settings, horizon, seed, and budget. Its
+admission requires D0 parity, a durable D4a replay receipt, a materialized D4b
+scale/overlap and dwell-cost receipt, and an analytic proof that every admitted
+exact success dominates every horizon failure. Only if reward-v2 wins does R3
+compare fixed shaping with an episode-latched fade from the same selected
+reward-v2 checkpoint.
+
+The previously implemented whole-objective fade, formerly R1, is retired from
+the mainline and will not be launched. It changes several reward semantics at
+once and cannot substitute for R2. This current decision authorizes no job by
+itself.
 
 ## Question
 
@@ -811,7 +839,7 @@ for the warning that masking contexts changes learning. Those primary results
 motivate the mechanism, not Terra's exact `0.10/0.75/0.15` masses or mastery
 thresholds; the fixed Terra panels remain the deciding evidence.
 
-## Accepted experiment: continuous reward fade (2026-08-07)
+## Historical accepted experiment: continuous reward fade (2026-08-07; superseded)
 
 Run one matched, random-start compact pair on the accepted all-47 continuous
 curriculum:
@@ -854,7 +882,7 @@ is superseded only after both new same-binary update-1 smokes pass, at which
 point it should be explicitly cancelled before the pair is submitted. The
 launcher itself performs no job cancellation.
 
-## Accepted amendment: compact trunk, small Atari control, reward fork (2026-08-09)
+## Historical accepted amendment: compact trunk, small Atari control, reward fork (2026-08-09; reward fork superseded)
 
 This amendment supersedes the random-start two-arm reward pair immediately
 above. It retains the same all-47 continuous map curriculum and reward
@@ -1010,9 +1038,11 @@ Evidence:
 ## Active reward and termination audit (2026-08-10)
 
 The compact result motivates a semantics and failure-mechanism audit before
-the reward fork. The shared working note is
-[V8 reward and termination audit](V8_REWARD_TERMINATION_AUDIT.md). It keeps the
-exact visible-dump success contract frozen, separates strict success from
-continuous material progress, and preregisters inference diagnostics before a
-single matched dense-to-terminal screen. Until its amendments are implemented
-and recorded here, the existing launch contract remains authoritative.
+the reward fork. The authoritative successor is R2 in
+[V8 reward and termination audit](V8_REWARD_TERMINATION_AUDIT.md) and
+[V8 improvement set](V8_IMPROVEMENT_SET_20260810.md): current dense control
+versus normalized material reward-v2 after the common v1-to-v2 sampler
+migration and prepared-fork initialization. D0, durable D4a, materialized D4b,
+and analytic terminal dominance gate its launch. The former R1
+whole-objective dense-to-terminal screen is retired and no older launch
+contract is authoritative for new reward compute.
