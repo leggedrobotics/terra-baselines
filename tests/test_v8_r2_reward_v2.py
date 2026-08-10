@@ -1,13 +1,62 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 from flax.core import freeze
+from terra.actions import TrackedAction
+from terra.config import BatchConfig, EnvConfig, MapsDimsConfig, RewardStage
+from terra.env import TerraEnv, TerraEnvBatch
+from terra.state import State
 
 import train_mixed
 from scripts import materialize_v8_r2_distance_bank as materialize
 from scripts.prepare_v8_r2_fork import CARRY_KERNEL, expand_carry_input
+
+
+def reward_v2_state() -> State:
+    shape = (64, 64)
+    batch_env = object.__new__(TerraEnvBatch)
+    batch_env.batch_cfg = BatchConfig()._replace(
+        maps_dims=MapsDimsConfig(maps_edge_length=shape[0])
+    )
+    base = EnvConfig()
+    updated = batch_env.update_env_cfgs(
+        base._replace(
+            agent=base.agent._replace(dig_depth=jnp.ones((1,), dtype=jnp.int32))
+        )
+    )
+    env_config = base._replace(
+        tile_size=float(np.asarray(updated.tile_size)[0]),
+        agent=base.agent._replace(
+            width=int(np.asarray(updated.agent.width)[0]),
+            height=int(np.asarray(updated.agent.height)[0]),
+        ),
+        maps=base.maps._replace(edge_length_px=shape[0]),
+        max_steps_in_episode=450,
+        agent_types=(0,),
+        action_types=(0,),
+        reward_stage=RewardStage.REWARD_V2,
+    )
+    target = np.zeros(shape, dtype=np.int8)
+    target[20, 20:24] = -1
+    target[40, 40:48] = 1
+    distance = np.ones(shape, dtype=np.float32)
+    distance[target > 0] = 0.0
+    return State.new(
+        jax.random.PRNGKey(20260810),
+        env_config,
+        target,
+        np.zeros(shape, dtype=np.int8),
+        -97.0 * np.ones((4, 3), dtype=np.float32),
+        np.int32(-1),
+        -97.0 * np.ones((64, 3), dtype=np.float32),
+        np.int32(-1),
+        np.ones(shape, dtype=np.bool_),
+        np.zeros(shape, dtype=np.int8),
+        distance_map_override=distance,
+    )
 
 
 def test_carry_expansion_adds_one_zero_input_and_preserves_parent_weights():
@@ -77,6 +126,67 @@ def test_prepared_fork_and_arm_protocols_fail_closed():
         "canonical_distance_sidecar_dataset_json"
     )
     assert treatment["constants"]["potential_gamma"] == 0.9984
+
+
+def test_restored_environment_uses_selected_arm_reward_stage_only():
+    restored = train_mixed._strip_checkpoint_env_axis(
+        EnvConfig()._replace(relocation_progress_mult=7.25),
+        num_envs_per_device=512,
+    )
+    control = train_mixed._overlay_env_reward_stage(restored, "dense_skill")
+    treatment = train_mixed._overlay_env_reward_stage(restored, "reward_v2")
+
+    assert control.reward_stage == RewardStage.DENSE_SKILL
+    assert treatment.reward_stage == RewardStage.REWARD_V2
+    for field in restored._fields:
+        if field != "reward_stage":
+            assert getattr(control, field) is getattr(restored, field)
+            assert getattr(treatment, field) is getattr(restored, field)
+
+
+def test_terra_reset_reward_components_match_step_inside_jax_scan():
+    assert "dummy_components" not in Path(train_mixed.__file__).read_text()
+    state = reward_v2_state()
+    reset_components = TerraEnv._zero_reward_components(state)
+    _, step_components = state._get_reward(
+        state._replace(env_steps=1), TrackedAction.do_nothing()
+    )
+    r2_keys = {
+        "reward_v2_q",
+        "reward_v2_q_next",
+        "reward_v2_p",
+        "reward_v2_p_next",
+        "reward_v2_phi",
+        "reward_v2_phi_next",
+        "reward_v2_material_work",
+        "reward_v2_h_reset",
+        "reward_v2_carry_work",
+        "reward_v2_shaping",
+        "reward_v2_success",
+        "reward_v2_horizon_failure",
+        "reward_v2_step",
+        "reward_v2_valid",
+    }
+    assert r2_keys <= reset_components.keys()
+    assert jax.tree_util.tree_structure(reset_components) == (
+        jax.tree_util.tree_structure(step_components)
+    )
+
+    def scan_components(initial):
+        def body(_, index):
+            components = jax.lax.cond(
+                index == 0,
+                lambda: reset_components,
+                lambda: step_components,
+            )
+            return components, components["reward_v2_phi"]
+
+        return jax.lax.scan(body, initial, jnp.arange(2))[0]
+
+    scanned = jax.jit(scan_components)(reset_components)
+    assert jax.tree_util.tree_structure(scanned) == (
+        jax.tree_util.tree_structure(step_components)
+    )
 
 
 def test_materializer_pins_authoritative_static_v2_only():

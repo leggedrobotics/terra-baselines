@@ -1512,6 +1512,15 @@ def _reward_stage_value(reward_stage: str) -> RewardStage:
         raise ValueError(f"unsupported reward_stage {reward_stage!r}") from exc
 
 
+def _overlay_env_reward_stage(env_params: EnvConfig, reward_stage: str) -> EnvConfig:
+    """Apply the selected arm's reward stage to a restored environment config."""
+    expected = _reward_stage_value(reward_stage)
+    updated = env_params._replace(reward_stage=expected)
+    if int(np.asarray(updated.reward_stage).reshape(())) != int(expected):
+        raise RuntimeError("failed to apply the selected reward stage")
+    return updated
+
+
 def create_mixed_agent_env_config(
     agent_types=(0, 2),
     action_types=(0, 0),
@@ -1860,10 +1869,8 @@ def make_mixed_agent_states(
 
     # The command-line treatment wins over a checkpoint's reward selector. The
     # mix itself is assigned from explicit host-side anneal state every update.
-    env_params = env_params._replace(
-        reward_stage=_reward_stage_value(config.reward_stage),
-        terminal_reward_mix=0.0,
-    )
+    env_params = _overlay_env_reward_stage(env_params, config.reward_stage)
+    env_params = env_params._replace(terminal_reward_mix=0.0)
 
     # Report the effective value after preset, CLI, and checkpoint precedence.
     print(
@@ -2585,45 +2592,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             timestep = assert_initial_env_steps_zero(timestep)
             # Removed one-time debug sanity prints
 
-            # Initialize reward_components in timestep.info to maintain consistent pytree structure
-            # This prevents JAX scan errors when reward_components is added later
-            if hasattr(timestep, "info") and isinstance(timestep.info, dict):
-                # Add empty reward_components to match the structure produced in env.step/state._get_reward
-                # Shapes follow timestep.reward's batch shape; agent vectors add a MAX_AGENTS axis (4)
-                batch_shape = timestep.reward.shape
-                MAX_AGENTS = 4
-                dummy_components = {
-                    "agent_rewards": jnp.zeros(
-                        batch_shape + (MAX_AGENTS,), dtype=jnp.float32
-                    ),
-                    "agent_active": jnp.zeros(
-                        batch_shape + (MAX_AGENTS,), dtype=jnp.int32
-                    ),
-                    "num_agents": jnp.zeros(batch_shape, dtype=jnp.int32),
-                    "terminal": jnp.zeros_like(timestep.reward),
-                    "trench": jnp.zeros_like(timestep.reward),
-                    "existence": jnp.zeros_like(timestep.reward),
-                    "dig_completion_edge": jnp.zeros_like(timestep.reward),
-                    "dig_completion_inner": jnp.zeros_like(timestep.reward),
-                    "dig_completion_total": jnp.zeros_like(timestep.reward),
-                    "dig_completion_min_edge_inner": jnp.zeros_like(timestep.reward),
-                    "dump_completion_action_map": jnp.zeros_like(timestep.reward),
-                    "total_dig_dump_completion": jnp.zeros_like(timestep.reward),
-                    "absolute_completion": jnp.zeros_like(timestep.reward),
-                    "unloaded_completion": jnp.zeros_like(timestep.reward),
-                    "task_present": jnp.zeros_like(timestep.reward),
-                    "dump_mask_integrity": jnp.zeros_like(timestep.reward),
-                    "accepted_dump_volume": jnp.zeros_like(timestep.reward),
-                    "illegal_dump_volume": jnp.zeros_like(timestep.reward),
-                    "remaining_edge_dig_tiles": jnp.zeros_like(timestep.reward),
-                    "remaining_inner_dig_tiles": jnp.zeros_like(timestep.reward),
-                    "workspace_efficiency": jnp.zeros_like(timestep.reward),
-                    "step_efficiency": jnp.zeros_like(timestep.reward),
-                }
-                # Create new timestep with reward_components added to info
-                timestep = timestep._replace(
-                    info={**timestep.info, "reward_components": dummy_components}
-                )
             prev_actions = jnp.zeros(
                 (
                     config.num_devices,
