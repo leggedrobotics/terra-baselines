@@ -8,7 +8,6 @@ if [ "$#" -ne 1 ]; then
     exit 2
 fi
 PHASE="$1"
-RUNTIME_TERRA_REVISION="$EXPECTED_RUNTIME_TERRA_REVISION"
 case "$PHASE" in smoke|screen) ;; *) echo "invalid phase '$PHASE'" >&2; exit 2 ;; esac
 SUBMIT="${SUBMIT:-0}"
 case "$SUBMIT" in 0|1) ;; *) echo "SUBMIT must be 0 or 1" >&2; exit 2 ;; esac
@@ -17,10 +16,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_v8_r2_reward_v2_20260810}"
 ARTIFACT_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_training_inputs_20260810
 ADMISSION_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_admission_20260810
-BASE_BANK_ARCHIVE=/home/lorenzo/moleworks/.artifacts/terra_v8_combined_accepted_20260803_v5r2.tar.zst
-TREATMENT_BANK_ARCHIVE="$ARTIFACT_ROOT/treatment_bank.tar.zst"
-PREPARED_FORK="$ARTIFACT_ROOT/prepared_fork.pkl"
-PREPARED_RECEIPT="$ARTIFACT_ROOT/prepared_fork_receipt.json"
+BANK_ARCHIVE="$ARTIFACT_ROOT/treatment_bank.tar.zst"
 MATERIALIZATION_RECEIPT="$ARTIFACT_ROOT/treatment_bank_receipt.json"
 STATIC_RECEIPT_MANIFEST="$ADMISSION_ROOT/static_v2/receipt_manifest.json"
 D4A_RECEIPT="$ADMISSION_ROOT/d4a/d4a_receipt.json"
@@ -29,22 +25,18 @@ D4A_MANIFEST="$ADMISSION_ROOT/d4a/receipt_manifest.json"
 SEED=20260807
 CAMPAIGN=terra_v8_r2_reward_v2
 RELEASE_ID=terra_v8_v6_constraints_v7_adjacent_train96_v5
-BASE_BANK_SHA=dedbbbfcd1aae648094bb7bcb25d7a28e80b96bdf2469bb941c2e321b7aaf82b
-BASE_DATASET_SHA=715fa0b25cdb5c96a0f0768b532b29fa754d3c2844cbbff1ecfff5bbcc75e798
-BASE_TREE_SHA=08d32fd198803dc6a7539b43c818534ad09e8a0bbe21daf7770ede9cd13b7528
-TREATMENT_BANK_SHA=b04513ffd1d6a33721802538f76b521bddc81fac492e0ad923ce790d0edec725
-TREATMENT_DATASET_SHA=5f19861b1ca8feb1ffce909fdf173f2131fb3cb05682b849c948a08573ad7851
-TREATMENT_TREE_SHA=225e13aacd9047e7f241facd3397fd66794e3094a883cc6dc26304decc24d388
+BANK_SHA=b04513ffd1d6a33721802538f76b521bddc81fac492e0ad923ce790d0edec725
+BANK_DATASET_SHA=5f19861b1ca8feb1ffce909fdf173f2131fb3cb05682b849c948a08573ad7851
+BANK_TREE_SHA=225e13aacd9047e7f241facd3397fd66794e3094a883cc6dc26304decc24d388
 DISTANCE_SIDECAR_SHA=f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980
-STATIC_RECEIPT_MANIFEST_SHA=9b16c391dbe0c108f4b79833f1940c5fc0ba31903a1e7edbfec1797aa53740d9
-PREPARED_SHA=8e01ebd3dfd99b36cea90a251dfe4a4e305228abeb2f5ecba633a9fc6805b1d0
-PREPARED_RECEIPT_SHA=d119f443613d4959d5f63918971c50c5ad204e4b6c1d65ec985c3fc31b005185
 MATERIALIZATION_RECEIPT_SHA=631fac8c3b78ff2c5a9e94ea4032244c9ef05dc6c984b603e4318121a263d3f1
+STATIC_RECEIPT_MANIFEST_SHA=9b16c391dbe0c108f4b79833f1940c5fc0ba31903a1e7edbfec1797aa53740d9
+EXPECTED_D4A_RECEIPT_SHA=6905300337310456a28ec6177a8c7d74f73892ebe052d11d29e9e0fa5bec7362
+EXPECTED_D4A_MANIFEST_SHA=cc969a69810b5ed0d14b85d58a0932ae26659a34686c4eadb760ae24b7cc87a4
 REMOTE_HOST="${REMOTE_HOST:-euler}"
 REMOTE_WORK=/cluster/home/lterenzi/codex_terra_edge_validation/$CAMPAIGN
 REMOTE_RUNS=/cluster/scratch/lterenzi/codex_terra_edge_runs/$CAMPAIGN/runs
 REMOTE_INPUTS=/cluster/scratch/lterenzi/codex_terra_edge_runs/$CAMPAIGN/inputs
-ARMS=(control reward_v2)
 
 test -z "$(git -C "$REPO" status --porcelain)" || {
     echo "terra-baselines must be committed and clean" >&2; exit 3;
@@ -59,7 +51,6 @@ PYTHONPATH="$TERRA_REPO" JAX_PLATFORMS=cpu PYGAME_HIDE_SUPPORT_PROMPT=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     "$LOCAL_TERRA_PYTHON" - <<'PY'
 from terra.config import (
-    DENSE_REWARD_PROTOCOL_ID,
     REWARD_V2_ALPHA,
     REWARD_V2_BETA,
     REWARD_V2_DISTANCE_BOUND,
@@ -73,13 +64,10 @@ from terra.config import (
     RewardStage,
 )
 from terra.env_generation.distance import REWARD_V2_DISTANCE_PROTOCOL_ID
-from terra.maps_buffer import LEGACY_DISTANCE_PROTOCOL_ID
 from terra.state import CORRECTED_DENSE_CONTRACT
 
 assert int(RewardStage.REWARD_V2) == 3
-assert DENSE_REWARD_PROTOCOL_ID == "dense_skill_legacy_relocation_v1"
 assert REWARD_V2_PROTOCOL_ID == "material_potential_v2"
-assert LEGACY_DISTANCE_PROTOCOL_ID == "legacy_dataset_distance"
 assert REWARD_V2_DISTANCE_PROTOCOL_ID == "obstacle_geodesic_8_physical_global_v1"
 assert CORRECTED_DENSE_CONTRACT == "exact_visible_dump_v1"
 assert (
@@ -96,43 +84,40 @@ assert (
 PY
 
 for SPEC in \
-    "$BASE_BANK_ARCHIVE:$BASE_BANK_SHA" \
-    "$TREATMENT_BANK_ARCHIVE:$TREATMENT_BANK_SHA" \
-    "$PREPARED_FORK:$PREPARED_SHA" \
-    "$PREPARED_RECEIPT:$PREPARED_RECEIPT_SHA" \
+    "$BANK_ARCHIVE:$BANK_SHA" \
     "$MATERIALIZATION_RECEIPT:$MATERIALIZATION_RECEIPT_SHA" \
     "$STATIC_RECEIPT_MANIFEST:$STATIC_RECEIPT_MANIFEST_SHA"; do
     PATH_LOCAL="${SPEC%:*}"
     EXPECTED_SHA="${SPEC##*:}"
     test "$(sha256sum "$PATH_LOCAL" | awk '{print $1}')" = "$EXPECTED_SHA"
 done
-test "$(tar --zstd -xOf "$BASE_BANK_ARCHIVE" bank/dataset.json | sha256sum | awk '{print $1}')" = "$BASE_DATASET_SHA"
-test "$(tar --zstd -xOf "$TREATMENT_BANK_ARCHIVE" bank/dataset.json | sha256sum | awk '{print $1}')" = "$TREATMENT_DATASET_SHA"
-python3 - "$MATERIALIZATION_RECEIPT" "$PREPARED_RECEIPT" <<'PY'
+test "$(tar --zstd -xOf "$BANK_ARCHIVE" bank/dataset.json | sha256sum | awk '{print $1}')" = "$BANK_DATASET_SHA"
+python3 - "$MATERIALIZATION_RECEIPT" <<'PY'
 import json, sys
-material, prepared = (json.load(open(path)) for path in sys.argv[1:])
+
+material = json.load(open(sys.argv[1]))
 assert material["schema"] == "terra_v8_r2_materialized_distance_bank_v1"
 assert material["status"] == "passed"
 assert material["base_bank"]["unchanged"] is True
 assert material["pair_equivalence"]["scenarios"] == 7520
 assert material["pair_equivalence"]["physical_arrays_preserved"] is True
 assert material["pair_equivalence"]["metadata_and_pose_sidecars_preserved"] is True
-assert prepared["schema"] == "terra_v8_r2_prepared_fork_v1"
-assert prepared["passed"] is True and prepared["output_preserving"] is True
-assert prepared["source_checkpoint_sha256"] == "0948a230a5c0929237a7adbdb6c1231691caab728238a600c0e819f02e200834"
-assert prepared["target_sampler_rule"] == "continuous_banded_v2"
-assert prepared["target_config_name"] == "G-V8-CONTINUOUS-V2"
-assert prepared["target_bank_sampler_profile"] == "continuous_banded_v2"
+assert material["treatment_bank"]["dataset_json_sha256"] == "5f19861b1ca8feb1ffce909fdf173f2131fb3cb05682b849c948a08573ad7851"
+assert material["treatment_bank"]["tree_sha256"] == "225e13aacd9047e7f241facd3397fd66794e3094a883cc6dc26304decc24d388"
+assert material["canonical_sidecar"]["dataset_json_sha256"] == "f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980"
 PY
 
 test -f "$D4A_RECEIPT" -a -f "$D4A_MANIFEST" || {
-    echo "D4a durable replay receipt is still missing; R2 launch remains blocked" >&2
+    echo "D4a durable replay receipt is missing; reward-v2 launch remains blocked" >&2
     exit 4
 }
-D4A_RECEIPT_SHA="$(sha256sum "$D4A_RECEIPT" | awk '{print $1}')"
-D4A_MANIFEST_SHA="$(sha256sum "$D4A_MANIFEST" | awk '{print $1}')"
+test "$(sha256sum "$D4A_RECEIPT" | awk '{print $1}')" = "$EXPECTED_D4A_RECEIPT_SHA"
+test "$(sha256sum "$D4A_MANIFEST" | awk '{print $1}')" = "$EXPECTED_D4A_MANIFEST_SHA"
+D4A_RECEIPT_SHA="$EXPECTED_D4A_RECEIPT_SHA"
+D4A_MANIFEST_SHA="$EXPECTED_D4A_MANIFEST_SHA"
 python3 - "$D4A_RECEIPT" "$D4A_MANIFEST" "$D4A_RECEIPT_SHA" <<'PY'
 import hashlib, json, pathlib, sys
+
 receipt = json.load(open(sys.argv[1]))
 manifest = json.load(open(sys.argv[2]))
 assert receipt["schema"] == "terra_v8_r2_d4a_replay_v1"
@@ -154,7 +139,6 @@ assert command["terra_revision"] == "eb3835c1d17af81e970b973ed5abf687ca6f3a26"
 assert command["bank_declared_terra_revision"] == "a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4"
 assert receipt["analysis_script_sha256"] == "268f73abfbfea05eff0ee3a41b7995fd6900b5a3268ba5ae91e7153a5d8dc7a4"
 assert receipt["analysis_support_sha256"] == "8c182bbcb906d581222b6637ad7d45ca45b196fe748b5a867cee44c46510e3a7"
-assert receipt["source_file_sha256"]["scripts/analysis/d4a_ledger.py"] == receipt["analysis_support_sha256"]
 ledger = receipt["ledger"]
 lift_tolerance = ledger["tolerance"]["lift"]
 assert lift_tolerance["rule"] == "max(absolute_floor, ulp_multiplier * max_float32_spacing)"
@@ -177,9 +161,10 @@ assert manifest["files"]["d4a_receipt.json"]["sha256"] == sys.argv[3]
 PY
 
 BASELINES_REVISION="$(git -C "$REPO" rev-parse HEAD)"
+RUNTIME_TERRA_REVISION="$EXPECTED_RUNTIME_TERRA_REVISION"
 REMOTE_SOURCE="$REMOTE_WORK/$BASELINES_REVISION/terra-baselines"
 REMOTE_TERRA="$REMOTE_WORK/runtime-terra/$RUNTIME_TERRA_REVISION/terra"
-echo "phase=$PHASE seed=$SEED absolute_start=20000 additional_updates=$([ "$PHASE" = smoke ] && echo 1 || echo 6000) arms=${ARMS[*]}"
+echo "phase=$PHASE system=reward_v2_scratch seed=$SEED updates=$([ "$PHASE" = smoke ] && echo 1 || echo 40000)"
 echo "terra_baselines_revision=$BASELINES_REVISION runtime_terra_revision=$RUNTIME_TERRA_REVISION"
 echo "d4a_receipt_sha256=$D4A_RECEIPT_SHA"
 if [ "$SUBMIT" = 0 ]; then
@@ -212,18 +197,12 @@ upload() {
     ssh "$REMOTE_HOST" "test \"\$(sha256sum '$destination' | awk '{print \$1}')\" = '$expected_sha'"
 }
 
-REMOTE_BASE_BANK="$REMOTE_INPUTS/base-bank-$BASE_BANK_SHA.tar.zst"
-REMOTE_TREATMENT_BANK="$REMOTE_INPUTS/treatment-bank-$TREATMENT_BANK_SHA.tar.zst"
-REMOTE_PREPARED="$REMOTE_INPUTS/prepared-$PREPARED_SHA.pkl"
-REMOTE_PREPARED_RECEIPT="$REMOTE_INPUTS/prepared-receipt-$PREPARED_RECEIPT_SHA.json"
+REMOTE_BANK="$REMOTE_INPUTS/treatment-bank-$BANK_SHA.tar.zst"
 REMOTE_MATERIALIZATION_RECEIPT="$REMOTE_INPUTS/materialization-$MATERIALIZATION_RECEIPT_SHA.json"
 REMOTE_STATIC_MANIFEST="$REMOTE_INPUTS/static-admission-$STATIC_RECEIPT_MANIFEST_SHA.json"
 REMOTE_D4A_RECEIPT="$REMOTE_INPUTS/d4a-$D4A_RECEIPT_SHA.json"
 REMOTE_D4A_MANIFEST="$REMOTE_INPUTS/d4a-manifest-$D4A_MANIFEST_SHA.json"
-upload "$BASE_BANK_ARCHIVE" "$REMOTE_BASE_BANK" "$BASE_BANK_SHA"
-upload "$TREATMENT_BANK_ARCHIVE" "$REMOTE_TREATMENT_BANK" "$TREATMENT_BANK_SHA"
-upload "$PREPARED_FORK" "$REMOTE_PREPARED" "$PREPARED_SHA"
-upload "$PREPARED_RECEIPT" "$REMOTE_PREPARED_RECEIPT" "$PREPARED_RECEIPT_SHA"
+upload "$BANK_ARCHIVE" "$REMOTE_BANK" "$BANK_SHA"
 upload "$MATERIALIZATION_RECEIPT" "$REMOTE_MATERIALIZATION_RECEIPT" "$MATERIALIZATION_RECEIPT_SHA"
 upload "$STATIC_RECEIPT_MANIFEST" "$REMOTE_STATIC_MANIFEST" "$STATIC_RECEIPT_MANIFEST_SHA"
 upload "$D4A_RECEIPT" "$REMOTE_D4A_RECEIPT" "$D4A_RECEIPT_SHA"
@@ -231,93 +210,47 @@ upload "$D4A_MANIFEST" "$REMOTE_D4A_MANIFEST" "$D4A_MANIFEST_SHA"
 
 case "$PHASE" in
     smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; GPU_TYPE=rtx_3090 ;;
-    screen) PARTITION=gpuhe.24h; WALLTIME=23:45:00; GPU_TYPE=rtx_4090 ;;
+    screen) PARTITION=gpuhe.120h; WALLTIME=119:45:00; GPU_TYPE=rtx_4090 ;;
 esac
-declare -A SMOKE_JOB_IDS=()
-declare -A SMOKE_RUNS=()
+SMOKE_JOB_ID=none
+SMOKE_RUN=none
 if [ "$PHASE" = screen ]; then
-    for ARM in "${ARMS[@]}"; do
-        SMOKE_RUN="$REMOTE_RUNS/$BASELINES_REVISION/smoke/s$SEED/$ARM"
-        SMOKE_RUNS[$ARM]="$SMOKE_RUN"
-        ssh "$REMOTE_HOST" "test -f '$SMOKE_RUN/smoke_validation.json' -a -f '$SMOKE_RUN/run_contract.env'"
-        ssh "$REMOTE_HOST" "python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))[\"passed\"] is True' '$SMOKE_RUN/smoke_validation.json'"
-        SMOKE_JOB_ID="$(ssh "$REMOTE_HOST" "awk -F= '\$1==\"slurm_job_id\" {print \$2}' '$SMOKE_RUN/run_contract.env'")"
-        [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
-        SMOKE_JOB_IDS[$ARM]="$SMOKE_JOB_ID"
-        SMOKE_STATE="$(ssh "$REMOTE_HOST" "sacct -n -X -P -j '$SMOKE_JOB_ID' --format=JobIDRaw,State | awk -F'|' -v id='$SMOKE_JOB_ID' '\$1==id {sub(/\\+.*/, \"\", \$2); print \$2}'")"
-        test "$SMOKE_STATE" = COMPLETED
-        for EXPECTED in \
-            "arm=$ARM" \
-            "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
-            "terra_baselines_revision=$BASELINES_REVISION" \
-            "prepared_fork_sha256=$PREPARED_SHA" \
-            "d4a_receipt_sha256=$D4A_RECEIPT_SHA"; do
-            KEY="${EXPECTED%%=*}" VALUE="${EXPECTED#*=}"
-            ssh "$REMOTE_HOST" "test \"\$(awk -F= -v key='$KEY' '\$1==key {print \$2}' '$SMOKE_RUN/run_contract.env')\" = '$VALUE'"
-        done
+    SMOKE_RUN="$REMOTE_RUNS/$BASELINES_REVISION/smoke/s$SEED/reward_v2_scratch"
+    ssh "$REMOTE_HOST" "test -f '$SMOKE_RUN/smoke_validation.json' -a -f '$SMOKE_RUN/run_contract.env'"
+    ssh "$REMOTE_HOST" "python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))[\"passed\"] is True' '$SMOKE_RUN/smoke_validation.json'"
+    SMOKE_JOB_ID="$(ssh "$REMOTE_HOST" "awk -F= '\$1==\"slurm_job_id\" {print \$2}' '$SMOKE_RUN/run_contract.env'")"
+    [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
+    SMOKE_STATE="$(ssh "$REMOTE_HOST" "sacct -n -X -P -j '$SMOKE_JOB_ID' --format=JobIDRaw,State | awk -F'|' -v id='$SMOKE_JOB_ID' '\$1==id {sub(/\\+.*/, \"\", \$2); print \$2}'")"
+    test "$SMOKE_STATE" = COMPLETED
+    for EXPECTED in \
+        "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
+        "terra_baselines_revision=$BASELINES_REVISION" \
+        "distance_artifact_sha256=$DISTANCE_SIDECAR_SHA"; do
+        KEY="${EXPECTED%%=*}" VALUE="${EXPECTED#*=}"
+        ssh "$REMOTE_HOST" "test \"\$(awk -F= -v key='$KEY' '\$1==key {print \$2}' '$SMOKE_RUN/run_contract.env')\" = '$VALUE'"
     done
 fi
 
-RUN_PARENT="$REMOTE_RUNS/$BASELINES_REVISION/$PHASE/s$SEED"
-ssh "$REMOTE_HOST" "mkdir -p '$RUN_PARENT'"
-declare -a NEW_JOB_IDS=()
-declare -a NEW_RUN_DIRS=()
-declare -A PAIR_JOB_IDS=()
-
-cleanup_new_pair() {
+RUN_DIR="$REMOTE_RUNS/$BASELINES_REVISION/$PHASE/s$SEED/reward_v2_scratch"
+ssh "$REMOTE_HOST" "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
+JOB_ID=""
+cleanup_new_job() {
     local status="$1"
     trap - ERR INT TERM
     set +e
-    if [ "${#NEW_JOB_IDS[@]}" -gt 0 ]; then
-        ssh "$REMOTE_HOST" "scancel -- ${NEW_JOB_IDS[*]}"
+    if [[ "$JOB_ID" =~ ^[0-9]+$ ]]; then
+        ssh "$REMOTE_HOST" "scancel -- '$JOB_ID'"
     fi
-    for RUN_DIR in "${NEW_RUN_DIRS[@]}"; do
-        # rmdir is intentionally the only cleanup: non-empty evidence survives.
-        ssh "$REMOTE_HOST" "rmdir -- '$RUN_DIR'" || true
-    done
+    # rmdir is intentionally the only cleanup: non-empty evidence survives.
+    ssh "$REMOTE_HOST" "rmdir -- '$RUN_DIR'" || true
     exit "$status"
 }
-trap 'cleanup_new_pair $?' ERR
-trap 'cleanup_new_pair 130' INT TERM
+trap 'cleanup_new_job $?' ERR
+trap 'cleanup_new_job 130' INT TERM
 
-for ARM in "${ARMS[@]}"; do
-    RUN_DIR="$RUN_PARENT/$ARM"
-    ssh "$REMOTE_HOST" "test ! -e '$RUN_DIR' && mkdir '$RUN_DIR'"
-    NEW_RUN_DIRS+=("$RUN_DIR")
-done
-for ARM in "${ARMS[@]}"; do
-    case "$ARM" in
-        control)
-            REWARD_STAGE=dense_skill
-            DISTANCE_PROTOCOL_ID=legacy_dataset_distance
-            DISTANCE_ARTIFACT_SHA=$BASE_DATASET_SHA
-            BANK_ARCHIVE=$REMOTE_BASE_BANK
-            BANK_SHA=$BASE_BANK_SHA
-            BANK_DATASET_SHA=$BASE_DATASET_SHA
-            BANK_TREE_SHA=$BASE_TREE_SHA
-            ;;
-        reward_v2)
-            REWARD_STAGE=reward_v2
-            DISTANCE_PROTOCOL_ID=obstacle_geodesic_8_physical_global_v1
-            DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA
-            BANK_ARCHIVE=$REMOTE_TREATMENT_BANK
-            BANK_SHA=$TREATMENT_BANK_SHA
-            BANK_DATASET_SHA=$TREATMENT_DATASET_SHA
-            BANK_TREE_SHA=$TREATMENT_TREE_SHA
-            ;;
-    esac
-    RUN_DIR="$RUN_PARENT/$ARM"
-    EXPORTS="ALL,PHASE=$PHASE,ARM=$ARM,REWARD_STAGE=$REWARD_STAGE,DISTANCE_PROTOCOL_ID=$DISTANCE_PROTOCOL_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_ARTIFACT_SHA,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$BANK_ARCHIVE,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,PREPARED_FORK=$REMOTE_PREPARED,PREPARED_SHA=$PREPARED_SHA,PREPARED_RECEIPT=$REMOTE_PREPARED_RECEIPT,PREPARED_RECEIPT_SHA=$PREPARED_RECEIPT_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=${SMOKE_JOB_IDS[$ARM]:-none},SMOKE_RUN=${SMOKE_RUNS[$ARM]:-none}"
-    JOB_ID_RAW="$(ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_r2_reward_v2/run.sbatch' | sbatch --hold --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --exclude='eu-g6-064' --job-name='terra-r2-$ARM' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
-    JOB_ID="${JOB_ID_RAW%%;*}"
-    [[ "$JOB_ID" =~ ^[0-9]+$ ]]
-    NEW_JOB_IDS+=("$JOB_ID")
-    PAIR_JOB_IDS[$ARM]="$JOB_ID"
-    ssh "$REMOTE_HOST" "scontrol show job '$JOB_ID' -o | grep -q 'JobState=PENDING' && scontrol show job '$JOB_ID' -o | grep -q 'Reason=JobHeldUser'"
-done
-test "${#NEW_JOB_IDS[@]}" -eq "${#ARMS[@]}"
-ssh "$REMOTE_HOST" "scontrol release ${NEW_JOB_IDS[*]}"
+EXPORTS="ALL,PHASE=$PHASE,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN"
+JOB_ID_RAW="$(ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_r2_reward_v2/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --exclude='eu-g6-064' --job-name='terra-r2-scratch' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
+JOB_ID="${JOB_ID_RAW%%;*}"
+[[ "$JOB_ID" =~ ^[0-9]+$ ]]
 trap - ERR INT TERM
-for ARM in "${ARMS[@]}"; do
-    echo "$PHASE $ARM ${PAIR_JOB_IDS[$ARM]}"
-done
+echo "$PHASE reward_v2_scratch $JOB_ID"

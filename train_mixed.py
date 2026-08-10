@@ -851,7 +851,10 @@ def _validate_r2_prepared_fork(checkpoint: dict) -> None:
 
 
 def _r2_protocol_receipt(config) -> dict | None:
-    if getattr(config, "prepared_fork_from", None) is None:
+    if (
+        config.reward_stage != "reward_v2"
+        and getattr(config, "prepared_fork_from", None) is None
+    ):
         return None
     from terra.config import (
         DENSE_REWARD_PROTOCOL_ID,
@@ -874,7 +877,7 @@ def _r2_protocol_receipt(config) -> dict | None:
         "reward_v2": (REWARD_V2_PROTOCOL_ID, REWARD_V2_DISTANCE_PROTOCOL_ID),
     }
     if config.reward_stage not in expected:
-        raise ValueError("R2 prepared forks support only control or reward_v2")
+        raise ValueError("R2 protocol receipts support only control or reward_v2")
     if float(config.gamma) != float(REWARD_V2_POTENTIAL_GAMMA):
         raise ValueError("R2 PPO gamma must match the potential gamma")
     reward_protocol_id, distance_protocol_id = expected[config.reward_stage]
@@ -3262,6 +3265,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     }
                     if r2_protocol_receipt is not None:
                         checkpoint["r2_protocol_receipt"] = r2_protocol_receipt
+                    if r2_prepared_receipt is not None:
                         checkpoint["r2_prepared_fork"] = r2_prepared_receipt
                     if pooled_sampler is not None:
                         checkpoint["pooled_sampler_state"] = pooled_sampler.state_dict()
@@ -3503,6 +3507,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         }
         if r2_protocol_receipt is not None:
             final_checkpoint["r2_protocol_receipt"] = r2_protocol_receipt
+        if r2_prepared_receipt is not None:
             final_checkpoint["r2_prepared_fork"] = r2_prepared_receipt
         if train_info["pooled_sampler_state"] is not None:
             final_checkpoint["pooled_sampler_state"] = train_info[

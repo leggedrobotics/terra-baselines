@@ -42,11 +42,13 @@ terra-baselines `dcc4f955347182e57e6f16e9df81a3f170564d97` and runtime Terra
 `eb3835c1d17af81e970b973ed5abf687ca6f3a26`; the bank protocol remains frozen
 at Terra `a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4`.
 
-Future matched reward work uses `continuous_banded_v2` from `60e7510`: within
+The active reward-v2 system uses `continuous_banded_v2` from update 0: within
 each family, 10% remains uniform support and 90% is spread over every
 unmastered condition with depth weights `4:2:1`; eligible conditions graduate
-independently. Both R2 arms restore one common sampler state produced by the
-explicit v1-to-v2 migration.
+independently. Foundation/trench mass is `0.5/0.5`. On the 47-condition V8
+graph, fresh-v2 aggregate depth mass is `0.113464 / 0.383608 / 0.502928` for
+d0/d1/d2, versus approximately `0.754 / 0.178 / 0.068` at the historical v1
+start.
 
 The completed scientific comparison is a constant-dense architecture pair. Both
 arms retain that map curriculum, data, transition budget, PPO shape, seed,
@@ -64,17 +66,24 @@ because the previous compact 20,000-update run took about 25h53. Atari is a
 small-system replication control, not a pure encoder ablation, because its
 policy, value, and local-map heads are also smaller.
 
-The next reward experiment is R2, not the old sampler-depth-triggered fade.
-Starting from compact update 20,000, one narrow prepared-fork initializer will
-expand the carry input without changing parent outputs, migrate the v1 sampler
-once to v2, preserve absolute PPO update and sampler history, create a fresh
-optimizer at local step zero, pin entropy at `0.02`, and apply the same short LR
-warmup in both children. R2 compares current dense reward with the normalized
-material-potential reward-v2 bundle. D0 parity, durable D4a replay, a
-materialized D4b scale/overlap-and-dwell receipt, and analytic
-terminal-dominance proof are required before launch. Only if reward-v2 wins
-does R3 test an episode-latched shaping fade. The former whole-objective fade
-is retired from the mainline; no reward job is currently submitted.
+The next experiment is one practical compact reward-v2 system trained from
+random initialization, not another dense arm. It uses all 47 conditions,
+fresh `continuous_banded_v2`, the nine-feature carry observation, canonical
+global distance ledger, reward-v2, seed `20260807`, and the prior
+compact PPO recipe. Entropy decays `0.15 -> 0.02` over the first 20,000 updates
+and remains `0.02` through the 40,000-update target. Promotion main and
+capability panels evaluate every 1,000-update checkpoint and select one;
+development evaluates only that selected checkpoint. The completed dense run
+above is a descriptive reference. This is one bundled system change and does
+not isolate its reward, sampler, distance ledger, carry input, runtime,
+or extra-compute contributions. The active goal and exact contract are in
+[`research/V8_R2_IMPLEMENTATION_GOAL.md`](research/V8_R2_IMPLEMENTATION_GOAL.md).
+No new scratch job is submitted yet.
+
+The superseded prepared-fork smokes `10292301` and `10292324` both failed
+before checkpointing on the same Optax `FrozenDict`/plain-dict tree mismatch.
+They are archived implementation failures; the scratch path does not repair
+or use that loader.
 
 Compact's promotion-selected update-20,000 checkpoint scores 580/752 exact and
 0.859 macro on the combined promotion panels. On development it scores 546/720
