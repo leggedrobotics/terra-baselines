@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-EXPECTED_RUNTIME_TERRA_REVISION=04c67bbafce2cb3d1a1de35384dfde477d244349
 R2_HORIZON=450
 if [ "$#" -ne 1 ]; then
-    echo "usage: submit.sh smoke|phase1" >&2
+    echo "usage: submit.sh smoke|phase1  (MASK_VARIANT=mask|nomask, default mask)" >&2
     exit 2
 fi
 PHASE="$1"
@@ -12,8 +11,28 @@ case "$PHASE" in smoke|phase1) ;; *) echo "invalid phase '$PHASE'" >&2; exit 2 ;
 SUBMIT="${SUBMIT:-0}"
 case "$SUBMIT" in 0|1) ;; *) echo "SUBMIT must be 0 or 1" >&2; exit 2 ;; esac
 
+# D3 masking variant. The no-mask ablation runs on the baseline's exact terra
+# (the mask terra computes the mask unconditionally, so flag-off there would
+# still pay its per-step cost).
+MASK_VARIANT="${MASK_VARIANT:-mask}"
+case "$MASK_VARIANT" in
+    mask)
+        EXPECTED_RUNTIME_TERRA_REVISION=04c67bbafce2cb3d1a1de35384dfde477d244349
+        TERRA_REPO_DEFAULT=/home/lorenzo/moleworks/.worktrees/terra_v8_v6_yolo_rv2_20260810
+        ARM_NAME=v6_3m_yolo_rv2
+        ACTION_LOGIT_MASKING=1
+        ;;
+    nomask)
+        EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a
+        TERRA_REPO_DEFAULT=/home/lorenzo/moleworks/.worktrees/terra_v8_r2_reward_v2_20260810
+        ARM_NAME=v6_3m_yolo_rv2_nomask
+        ACTION_LOGIT_MASKING=0
+        ;;
+    *) echo "invalid MASK_VARIANT '$MASK_VARIANT'" >&2; exit 2 ;;
+esac
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_v8_v6_yolo_rv2_20260810}"
+TERRA_REPO="${TERRA_REPO:-$TERRA_REPO_DEFAULT}"
 ARTIFACT_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_training_inputs_20260810
 ADMISSION_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_admission_20260810
 BANK_ARCHIVE="$ARTIFACT_ROOT/treatment_bank.tar.zst"
@@ -164,7 +183,7 @@ BASELINES_REVISION="$(git -C "$REPO" rev-parse HEAD)"
 RUNTIME_TERRA_REVISION="$EXPECTED_RUNTIME_TERRA_REVISION"
 REMOTE_SOURCE="$REMOTE_WORK/$BASELINES_REVISION/terra-baselines"
 REMOTE_TERRA="$REMOTE_WORK/runtime-terra/$RUNTIME_TERRA_REVISION/terra"
-echo "phase=$PHASE arm=v6_3m_yolo_rv2 baseline=reward_v2_scratch seed=$SEED updates=$([ "$PHASE" = smoke ] && echo 1 || echo 14000)"
+echo "phase=$PHASE arm=$ARM_NAME baseline=reward_v2_scratch seed=$SEED updates=$([ "$PHASE" = smoke ] && echo 1 || echo 14000)"
 echo "terra_baselines_revision=$BASELINES_REVISION runtime_terra_revision=$RUNTIME_TERRA_REVISION"
 echo "d4a_receipt_sha256=$D4A_RECEIPT_SHA"
 if [ "$SUBMIT" = 0 ]; then
@@ -215,7 +234,7 @@ esac
 SMOKE_JOB_ID=none
 SMOKE_RUN=none
 if [ "$PHASE" = phase1 ]; then
-    SMOKE_RUN="$REMOTE_RUNS/$BASELINES_REVISION/smoke/s$SEED/v6_3m_yolo_rv2"
+    SMOKE_RUN="$REMOTE_RUNS/$BASELINES_REVISION/smoke/s$SEED/$ARM_NAME"
     ssh "$REMOTE_HOST" "test -f '$SMOKE_RUN/smoke_validation.json' -a -f '$SMOKE_RUN/run_contract.env'"
     ssh "$REMOTE_HOST" "python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))[\"passed\"] is True' '$SMOKE_RUN/smoke_validation.json'"
     SMOKE_JOB_ID="$(ssh "$REMOTE_HOST" "awk -F= '\$1==\"slurm_job_id\" {print \$2}' '$SMOKE_RUN/run_contract.env'")"
@@ -231,7 +250,7 @@ if [ "$PHASE" = phase1 ]; then
     done
 fi
 
-RUN_DIR="$REMOTE_RUNS/$BASELINES_REVISION/$PHASE/s$SEED/v6_3m_yolo_rv2"
+RUN_DIR="$REMOTE_RUNS/$BASELINES_REVISION/$PHASE/s$SEED/$ARM_NAME"
 ssh "$REMOTE_HOST" "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
 JOB_ID=""
 cleanup_new_job() {
@@ -248,9 +267,9 @@ cleanup_new_job() {
 trap 'cleanup_new_job $?' ERR
 trap 'cleanup_new_job 130' INT TERM
 
-EXPORTS="ALL,PHASE=$PHASE,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN"
+EXPORTS="ALL,PHASE=$PHASE,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN,ARM_NAME=$ARM_NAME,ACTION_LOGIT_MASKING=$ACTION_LOGIT_MASKING"
 JOB_ID_RAW="$(ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_v6_yolo_rv2/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --exclude='eu-g6-064' --job-name='terra-v6-yolo-rv2' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
 JOB_ID="${JOB_ID_RAW%%;*}"
 [[ "$JOB_ID" =~ ^[0-9]+$ ]]
 trap - ERR INT TERM
-echo "$PHASE v6_3m_yolo_rv2 $JOB_ID"
+echo "$PHASE $ARM_NAME $JOB_ID"

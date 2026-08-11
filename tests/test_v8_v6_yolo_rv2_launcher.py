@@ -35,14 +35,15 @@ RETUNED_FLAGS = {
     "--map_encoder": ("resnet_spatial_8x8_se_xattn", "resnet_spatial_8x8_se_sa_xattn"),
     "--resnet_blocks_per_stage": ("2,2,3,3", "3,3,2,2"),
 }
-# Six flags the baseline does not pass at all (D3 masking is value-less).
+# Five flags the baseline does not pass at all. D3 masking is passed via the
+# MASK_ARGS conditional (default ON, MASK_VARIANT=nomask disables it), so it
+# is asserted textually below rather than through the flag parser.
 ADDED_FLAGS = {
     "--token_mixer_residual_init_scale": "0.1",
     "--flatten_reduce_channels": "32",
     "--attn_latent_queries": "8",
     "--aux_coef": "0.25",
     "--vf_coef": "0.5",
-    "--action_logit_masking": None,
 }
 
 
@@ -75,6 +76,12 @@ class PairedLauncherTest(unittest.TestCase):
         for name, (before, after) in RETUNED_FLAGS.items():
             self.assertEqual(baseline[name], before, name)
             self.assertEqual(treatment[name], after, name)
+        # D3 masking rides in the MASK_ARGS conditional: default on, and the
+        # no-mask ablation is selected by ACTION_LOGIT_MASKING=0.
+        text = TREATMENT_RUNNER.read_text()
+        self.assertIn('ACTION_LOGIT_MASKING="${ACTION_LOGIT_MASKING:-1}"', text)
+        self.assertIn("MASK_ARGS=(--action_logit_masking)", text)
+        self.assertIn('"${MASK_ARGS[@]}"', text)
 
     def test_reward_v2_contract_flags_survive_the_port(self):
         treatment = train_flags(TREATMENT_RUNNER)

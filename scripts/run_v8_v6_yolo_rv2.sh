@@ -44,6 +44,16 @@ fi
 : "${PROTOCOL_TERRA_REVISION:?set the immutable V8 bank protocol revision}"
 : "${SEED:?set the R2 system seed}"
 
+# D3 masking variant: 1 (default) passes --action_logit_masking and requires
+# the terra runtime that exposes obs['action_mask'] (04c67bba); 0 launches the
+# no-mask ablation arm on the baseline's terra (3051054b) — flag-off on the
+# mask terra would still pay the mask's per-step simulation cost for nothing.
+ACTION_LOGIT_MASKING="${ACTION_LOGIT_MASKING:-1}"
+MASK_ARGS=()
+if [ "$ACTION_LOGIT_MASKING" = 1 ]; then
+    MASK_ARGS=(--action_logit_masking)
+fi
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 NUM_DEVICES="${NUM_DEVICES:-4}"
@@ -92,7 +102,7 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --attn_latent_queries 8 \
     --aux_coef 0.25 \
     --vf_coef 0.5 \
-    --action_logit_masking \
+    "${MASK_ARGS[@]}" \
     --ent_schedule_start 0.15 \
     --ent_schedule_end 0.02 \
     --ent_schedule_steps "$ENTROPY_SCHEDULE_STEPS" \

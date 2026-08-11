@@ -11,7 +11,13 @@
 set -euo pipefail
 umask 002
 
-EXPECTED_RUNTIME_TERRA_REVISION=04c67bbafce2cb3d1a1de35384dfde477d244349
+# Variant-dependent: the mask arm runs the D3 terra, the no-mask ablation
+# runs the baseline's exact terra (see submit.sh MASK_VARIANT).
+case "${ACTION_LOGIT_MASKING:?}" in
+    1) EXPECTED_RUNTIME_TERRA_REVISION=04c67bbafce2cb3d1a1de35384dfde477d244349 ;;
+    0) EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a ;;
+    *) echo "ACTION_LOGIT_MASKING must be 0 or 1" >&2; exit 2 ;;
+esac
 EXPECTED_HORIZON=450
 EXPECTED_RELEASE=terra_v8_v6_constraints_v7_adjacent_train96_v5
 PROTOCOL_TERRA_REVISION=a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4
@@ -24,7 +30,7 @@ for REQUIRED in PHASE BASELINES_ROOT BASELINES_REVISION RUNTIME_TERRA_ROOT \
     MATERIALIZATION_RECEIPT MATERIALIZATION_RECEIPT_SHA \
     STATIC_RECEIPT_MANIFEST STATIC_RECEIPT_MANIFEST_SHA D4A_RECEIPT \
     D4A_RECEIPT_SHA D4A_MANIFEST D4A_MANIFEST_SHA SMOKE_JOB_ID SMOKE_RUN \
-    SLURM_JOB_ID TMPDIR; do
+    ARM_NAME ACTION_LOGIT_MASKING SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 test "$SEED" = 20260807
@@ -55,7 +61,7 @@ case "$PHASE" in
     *) echo "unsupported phase '$PHASE'" >&2; exit 2 ;;
 esac
 
-RUN_DIR="$RUN_BASE/$BASELINES_REVISION/$PHASE/s$SEED/v6_3m_yolo_rv2"
+RUN_DIR="$RUN_BASE/$BASELINES_REVISION/$PHASE/s$SEED/$ARM_NAME"
 test "$BANK_RELEASE_ID" = "$EXPECTED_RELEASE"
 test "$(cat "$BASELINES_ROOT/REVISION")" = "$BASELINES_REVISION"
 test "$(cat "$RUNTIME_TERRA_ROOT/REVISION")" = "$RUNTIME_TERRA_REVISION"
@@ -240,7 +246,7 @@ GRAPH_SHA="$("$PYTHON" -c 'import collections,sys; from utils.accepted_bank impo
 
 mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/eval" "$RUN_DIR/wandb"
 export WANDB_ENTITY=aless-weber-eth WANDB_PROJECT=mixed-agents
-export WANDB_RUN_ID="v8_v6_yolo_rv2_${BASELINES_REVISION:0:10}_${PHASE}_${SLURM_JOB_ID}"
+export WANDB_RUN_ID="${RUN_PREFIX}_${BASELINES_REVISION:0:10}_${PHASE}_${SLURM_JOB_ID}"
 export WANDB_RESUME=never
 if [ "$PHASE" = smoke ]; then
     export WANDB_MODE=disabled WANDB_DIR="$TMPDIR/wandb"
@@ -249,7 +255,9 @@ else
 fi
 scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/slurm_job.txt"
 nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
-RUN_NAME="v8_v6_yolo_rv2_${BASELINES_REVISION:0:12}_s${SEED}"
+RUN_PREFIX="v8_v6_yolo_rv2"
+if [ "$ACTION_LOGIT_MASKING" = 0 ]; then RUN_PREFIX="${RUN_PREFIX}_nomask"; fi
+RUN_NAME="${RUN_PREFIX}_${BASELINES_REVISION:0:12}_s${SEED}"
 if [ "$PHASE" = smoke ]; then RUN_NAME="${RUN_NAME}_smoke"; fi
 TRANSITIONS=$((4 * 512 * 32 * UPDATES))
 printf '%s\n' \
@@ -261,10 +269,10 @@ printf '%s\n' \
     "screen_semantics=combined_architecture_and_optimization_not_decomposable" \
     "full_system_selection_updates=1000_to_${UPDATES}_promotion_only" \
     "promotion_selection_rule=combined_exact_then_47_condition_macro_then_worst_then_earliest" \
-    "bundled_changes=v6_readout+se_sa_xattn+blocks_3322+token_mixer_0.1+flatten32+latent_queries8+aux_bce_0.25+vf_coef_0.5+action_logit_masking_d3" \
+    "bundled_changes=v6_readout+se_sa_xattn+blocks_3322+token_mixer_0.1+flatten32+latent_queries8+aux_bce_0.25+vf_coef_0.5$([ "$ACTION_LOGIT_MASKING" = 1 ] && echo +action_logit_masking_d3)" \
     "inherited_from_baseline=reward_v2+global_distance_ledger+carry_input+continuous_banded_v2+phase1_14000_of_40000" \
-    "runtime_terra_base=3051054b_reward_v2_plus_d3_mask_04c67bba" \
-    "action_logit_masking=true" \
+    "runtime_terra_base=$([ "$ACTION_LOGIT_MASKING" = 1 ] && echo 3051054b_reward_v2_plus_d3_mask_04c67bba || echo 3051054b_reward_v2_baseline_exact)" \
+    "action_logit_masking=$([ "$ACTION_LOGIT_MASKING" = 1 ] && echo true || echo false)" \
     "phase=$PHASE" \
     "seed=$SEED" \
     "absolute_start_update=0" \
@@ -337,6 +345,7 @@ printf '%s\n' \
     "slurm_job_id=$SLURM_JOB_ID" > "$RUN_DIR/run_contract.env"
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PROTOCOL_TERRA_REVISION PYTHON_BIN="$PYTHON" MACHINE=euler
+export ACTION_LOGIT_MASKING
 export NUM_DEVICES=4 NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 NUM_MINIBATCHES=32
 export CHECKPOINT_INTERVAL LOG_TRAIN_INTERVAL FINITE_CHECK_INTERVAL CACHE_CLEAR_INTERVAL
 export ENTROPY_SCHEDULE_STEPS=20000
