@@ -8,10 +8,11 @@ exactly, while the architecture/optimization flags must be the treatment's.
 
 The arm is selected by the ARM_NAME environment variable (run.sbatch passes the
 same value it wrote into run_contract.env), and every arm-dependent expectation
-lives in ARMS. Parameter counts are per arm because the stage rebalance moves
-them: 2,134,771 at blocks (3,3,2,2), 2,328,225 at the baseline's (2,2,3,3).
-Those are the carry-work counts; the 16 fewer weights of the without-carry tree
-are the same +16 that separates the compact baseline's 2,856,685 from 2,856,701.
+lives in ARMS. Parameter counts are per arm because the stage rebalance and the
+aux head both move them: 2,134,771 at blocks (3,3,2,2) with the head, 2,303,421
+at the baseline's (2,2,3,3) without it. Those are the carry-work counts; the 16
+fewer weights of the without-carry tree are the same +16 that separates the
+compact baseline's 2,856,685 from 2,856,701.
 """
 
 from __future__ import annotations
@@ -35,7 +36,6 @@ from terra.env_generation.distance import REWARD_V2_DISTANCE_PROTOCOL_ID
 from utils import helpers
 
 PROTOCOL_SCHEMA = "terra_v8_r2_reward_protocol_v1"
-AUX_DECODER_LEAVES = 6
 
 # The V6 readout flags every arm shares.
 ARCHITECTURE = {
@@ -45,10 +45,13 @@ ARCHITECTURE = {
     "attn_latent_queries": 8,
 }
 # The flags that separate the arms, plus the parameter count each one implies.
+# aux_decoder_leaves is 6 where the head is trained and 0 where aux_coef is 0:
+# get_model_ready builds the decoder exactly when aux_coef > 0.
 ARMS = {
     "v6_3m_yolo_rv2": {
         "resnet_blocks_per_stage": (3, 3, 2, 2),
         "aux_coef": 0.25,
+        "aux_decoder_leaves": 6,
         "vf_coef": 0.5,
         "action_logit_masking": True,
         "parameter_count": 2_134_771,
@@ -57,21 +60,24 @@ ARMS = {
     "v6_3m_yolo_rv2_nomask": {
         "resnet_blocks_per_stage": (3, 3, 2, 2),
         "aux_coef": 0.25,
+        "aux_decoder_leaves": 6,
         "vf_coef": 0.5,
         "action_logit_masking": False,
         "parameter_count": 2_134_771,
         "parameter_count_without_carry_work": 2_134_755,
     },
-    # v6.1: the full-res rebalance, vf_coef 0.5 and D3 masking are all reverted
-    # to the baseline; aux drops 0.25 -> 0.1. vf_coef 2.0 is the trainer default
-    # the launcher reaches by not passing the flag at all.
+    # v6.1: the full-res rebalance, the aux decoder, vf_coef 0.5 and D3 masking
+    # are all reverted to the baseline, leaving the 3-delta readout bundle.
+    # aux_coef is the int 0 so str() renders the contract's "0"; vf_coef 2.0 is
+    # the trainer default the launcher reaches by not passing the flag at all.
     "v6_1_rv2": {
         "resnet_blocks_per_stage": (2, 2, 3, 3),
-        "aux_coef": 0.1,
+        "aux_coef": 0,
+        "aux_decoder_leaves": 0,
         "vf_coef": 2.0,
         "action_logit_masking": False,
-        "parameter_count": 2_328_225,
-        "parameter_count_without_carry_work": 2_328_209,
+        "parameter_count": 2_303_421,
+        "parameter_count_without_carry_work": 2_303_405,
     },
 }
 
@@ -102,15 +108,17 @@ def one(path: Path, *, arm: dict[str, object], distance_artifact_sha256: str) ->
             f"{path}: this arm under carry-work must have {expected_count} "
             f"parameters, got {count}"
         )
-    # The aux decode head must be trained, not merely allocated.
+    # Where the head is trained it must be in the tree; where aux_coef is 0 it
+    # must be absent, not merely untrained.
+    expected_leaves = arm["aux_decoder_leaves"]
     aux_leaves = [
         jax.tree_util.keystr(keys)
         for keys, _ in jax.tree_util.tree_flatten_with_path(model)[0]
         if "aux_decoder" in jax.tree_util.keystr(keys)
     ]
-    if len(aux_leaves) != AUX_DECODER_LEAVES:
+    if len(aux_leaves) != expected_leaves:
         raise ValueError(
-            f"{path}: expected {AUX_DECODER_LEAVES} aux decoder leaves, "
+            f"{path}: expected {expected_leaves} aux decoder leaves, "
             f"got {len(aux_leaves)}"
         )
     finite(model, f"{path}.model")

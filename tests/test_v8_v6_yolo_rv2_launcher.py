@@ -22,11 +22,12 @@ SUBMIT = ROOT / "scripts" / "euler_v8_v6_yolo_rv2" / "submit.sh"
 VERIFY_SMOKE = ROOT / "scripts" / "euler_v8_v6_yolo_rv2" / "verify_smoke.py"
 
 # Frozen: the v6 readout block consuming terra's 9-wide (carry-work) agent state,
-# at the yolo arms' (3,3,2,2) and at v6.1's reverted (2,2,3,3).
+# at the yolo arms' (3,3,2,2) with the aux head, and at v6.1's reverted (2,2,3,3)
+# without it (the head is 24,804 parameters).
 V6_3M_RV2_PARAMETERS = 2_134_771
 V6_3M_PARAMETERS_WITHOUT_CARRY_WORK = 2_134_755
-V6_1_RV2_PARAMETERS = 2_328_225
-V6_1_PARAMETERS_WITHOUT_CARRY_WORK = 2_328_209
+V6_1_RV2_PARAMETERS = 2_303_421
+V6_1_PARAMETERS_WITHOUT_CARRY_WORK = 2_303_405
 
 
 class AttrDict(dict):
@@ -113,14 +114,15 @@ class PairedLauncherTest(unittest.TestCase):
         for default in LAUNCHER_DEFAULTS:
             self.assertIn(default, text)
 
-    def test_v61_reverts_three_of_the_bundled_changes(self):
-        """v6.1: baseline blocks, baseline vf_coef, no masking, aux 0.1."""
+    def test_v61_reverts_four_of_the_bundled_changes(self):
+        """v6.1: baseline blocks, no aux head, baseline vf_coef, no masking."""
         yolo = sbatch_arm_case("v6_3m_yolo_rv2")
         nomask = sbatch_arm_case("v6_3m_yolo_rv2_nomask")
         v61 = sbatch_arm_case("v6_1_rv2")
         for arm in (yolo, nomask):
             self.assertEqual(arm["BLOCKS_PER_STAGE"], "3,3,2,2")
             self.assertEqual(arm["AUX_COEF"], "0.25")
+            self.assertEqual(arm["EXPECTED_AUX_LEAVES"], "6")
             self.assertEqual(arm["VF_COEF"], "0.5")
             self.assertEqual(arm["EXPECTED_PARAMETERS"], str(V6_3M_RV2_PARAMETERS))
             self.assertEqual(
@@ -133,7 +135,8 @@ class PairedLauncherTest(unittest.TestCase):
         self.assertEqual(nomask["RUN_PREFIX"], "v8_v6_yolo_rv2_nomask")
 
         self.assertEqual(v61["BLOCKS_PER_STAGE"], "2,2,3,3")
-        self.assertEqual(v61["AUX_COEF"], "0.1")
+        self.assertEqual(v61["AUX_COEF"], "0")  # head is built iff aux_coef > 0
+        self.assertEqual(v61["EXPECTED_AUX_LEAVES"], "0")
         self.assertEqual(v61["VF_COEF"], "")  # flag dropped -> trainer default
         self.assertEqual(v61["CONTRACT_VF_COEF"], "2.0")
         self.assertEqual(v61["EXPECTED_MASKING"], "0")
@@ -144,9 +147,17 @@ class PairedLauncherTest(unittest.TestCase):
             str(V6_1_PARAMETERS_WITHOUT_CARRY_WORK),
         )
         self.assertNotIn("blocks_3322", v61["BUNDLED_CHANGES"])
+        self.assertNotIn("aux_bce", v61["BUNDLED_CHANGES"])
         self.assertNotIn("vf_coef", v61["BUNDLED_CHANGES"])
         self.assertNotIn("masking", v61["BUNDLED_CHANGES"])
-        self.assertIn("aux_bce_0.1", v61["BUNDLED_CHANGES"])
+        self.assertIn("aux_coef_0", v61["BUNDLED_CHANGES"])
+        # The three surviving deltas, and nothing else.
+        self.assertEqual(
+            v61["BUNDLED_CHANGES"].split("+")[2:],
+            ["token_mixer_0.1", "flatten32", "latent_queries8", "aux_coef_0"],
+        )
+        self.assertEqual(ARMS["v6_1_rv2"]["aux_decoder_leaves"], 0)
+        self.assertEqual(ARMS["v6_1_rv2"]["aux_coef"], 0)
         # The baseline never passes --vf_coef either: 2.0 is the trainer default.
         self.assertNotIn("--vf_coef", train_flags(BASELINE_RUNNER))
         # submit.sh reaches v6.1 through MASK_VARIANT=v61 on the baseline terra.
@@ -341,7 +352,7 @@ class CarryWorkObservationContractTest(unittest.TestCase):
                     for path, _ in jax.tree_util.tree_flatten_with_path(params)[0]
                     if "aux_decoder" in jax.tree_util.keystr(path)
                 ]
-                self.assertEqual(len(aux), 6, arm)
+                self.assertEqual(len(aux), expected["aux_decoder_leaves"], arm)
             self.assertEqual(
                 counts[False], expected["parameter_count_without_carry_work"], arm
             )

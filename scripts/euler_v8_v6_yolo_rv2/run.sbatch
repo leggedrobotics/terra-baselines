@@ -18,11 +18,12 @@ case "${ACTION_LOGIT_MASKING:?}" in
     0) EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a ;;
     *) echo "ACTION_LOGIT_MASKING must be 0 or 1" >&2; exit 2 ;;
 esac
-# The v6.1 arm reverts three of the eight bundled changes (full-res stage
-# rebalance, vf_coef 0.5, D3 masking) and retunes aux 0.25 -> 0.1; everything
-# else is the v6 readout on the reward-v2 baseline.
+# The v6.1 arm reverts four of the eight bundled changes (full-res stage
+# rebalance, per-cell aux decoder, vf_coef 0.5, D3 masking), leaving the pure
+# 3-delta readout bundle on the reward-v2 baseline.
 case "${ARM_NAME:?}" in
     v6_3m_yolo_rv2)
+        EXPECTED_AUX_LEAVES=6
         EXPECTED_MASKING=1
         RUN_PREFIX=v8_v6_yolo_rv2
         BLOCKS_PER_STAGE=3,3,2,2
@@ -34,6 +35,7 @@ case "${ARM_NAME:?}" in
         BUNDLED_CHANGES=v6_readout+se_sa_xattn+blocks_3322+token_mixer_0.1+flatten32+latent_queries8+aux_bce_0.25+vf_coef_0.5+action_logit_masking_d3
         ;;
     v6_3m_yolo_rv2_nomask)
+        EXPECTED_AUX_LEAVES=6
         EXPECTED_MASKING=0
         RUN_PREFIX=v8_v6_yolo_rv2_nomask
         BLOCKS_PER_STAGE=3,3,2,2
@@ -48,13 +50,16 @@ case "${ARM_NAME:?}" in
         EXPECTED_MASKING=0
         RUN_PREFIX=v8_v6_yolo_rv2_v61
         BLOCKS_PER_STAGE=2,2,3,3
-        AUX_COEF=0.1
+        # 0 drops the aux decoder entirely: get_model_ready builds the head iff
+        # aux_coef > 0, so the arm is a pure 3-delta readout bundle.
+        AUX_COEF=0
+        EXPECTED_AUX_LEAVES=0
         # empty: --vf_coef is not passed, so train_mixed's default 2.0 applies
         VF_COEF=
         CONTRACT_VF_COEF=2.0
-        EXPECTED_PARAMETERS=2328225
-        EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK=2328209
-        BUNDLED_CHANGES=v6_readout+se_sa_xattn+token_mixer_0.1+flatten32+latent_queries8+aux_bce_0.1
+        EXPECTED_PARAMETERS=2303421
+        EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK=2303405
+        BUNDLED_CHANGES=v6_readout+se_sa_xattn+token_mixer_0.1+flatten32+latent_queries8+aux_coef_0
         ;;
     *) echo "unsupported ARM_NAME '$ARM_NAME'" >&2; exit 2 ;;
 esac
@@ -216,12 +221,15 @@ assert (
 ) == (16.0, 2.5, 0.9984, 6.0, 1.0, 1.0, 1.5, 1.0, 1.0)
 PY
 # The architecture receipt: the v6 readout block under the carry-work channel is
-# 2,134,771 parameters at blocks (3,3,2,2) and 2,328,225 at the baseline's
-# (2,2,3,3) (v6.1). The without-carry counts are the same trees under the 8-wide
+# 2,134,771 parameters at blocks (3,3,2,2) with the aux head, and 2,303,421 at
+# the baseline's (2,2,3,3) without it (v6.1; the head is 24,804 of the 2,328,225
+# it would cost). The without-carry counts are the same trees under the 8-wide
 # agent state, which costs 16 fewer weights in the continuous MLP — exactly the
 # +16 that separates 2,856,685 from 2,856,701 in the compact baseline. Both
-# counts are asserted here so a silent agent-state width change cannot pass.
+# counts are asserted here so a silent agent-state width change cannot pass, and
+# the aux-leaf count pins whether the head exists at all.
 BLOCKS_PER_STAGE="$BLOCKS_PER_STAGE" AUX_COEF="$AUX_COEF" \
+    EXPECTED_AUX_LEAVES="$EXPECTED_AUX_LEAVES" \
     EXPECTED_PARAMETERS="$EXPECTED_PARAMETERS" \
     EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK="$EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK" \
     "$PYTHON" - <<'PY'
@@ -236,6 +244,7 @@ from utils.models import get_model_ready
 
 BLOCKS = tuple(int(x) for x in os.environ["BLOCKS_PER_STAGE"].split(","))
 AUX_COEF = float(os.environ["AUX_COEF"])
+EXPECTED_AUX_LEAVES = int(os.environ["EXPECTED_AUX_LEAVES"])
 EXPECTED = int(os.environ["EXPECTED_PARAMETERS"])
 EXPECTED_WITHOUT_CARRY_WORK = int(os.environ["EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK"])
 
@@ -284,7 +293,7 @@ for carry in (False, True):
         for path, _ in jax.tree_util.tree_flatten_with_path(params)[0]
         if "aux_decoder" in jax.tree_util.keystr(path)
     ]
-    assert len(aux) == 6, aux
+    assert len(aux) == EXPECTED_AUX_LEAVES, aux
 assert counts[False] == EXPECTED_WITHOUT_CARRY_WORK, counts
 assert counts[True] == EXPECTED, counts
 print("v6 readout parameters", BLOCKS, counts)
