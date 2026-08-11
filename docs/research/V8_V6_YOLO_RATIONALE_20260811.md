@@ -122,3 +122,21 @@ fnd-slab-split (dump-choice canary), trn-straight-allfree,
 v7-trn-tee-adjacent, fnd-slab-allfree. Note: halving w also halves the
 relocation-progress guidance through Φ — this doubles as the first data on
 the relocation-ablation question (see the β discussion of 2026-08-10).
+
+### Review claim audit (2026-08-11, second pass)
+
+- "Compact ~44% online exact at u10.5–11.5k" — **VERIFIED** (window mean
+  0.437, p90 0.482); my earlier lower reading was a stale tail. Withdrawn.
+- "d12/d16 failures ~75–85% illegal-dump" — provenance unresolved: no
+  reward-v2 panel existed at review time, so this can only come from
+  dense-run artifacts. Being re-measured natively from the observer evals
+  (per_map terminal_illegal_dump_volume / dump_purity on the rv2
+  checkpoints); the answer feeds the shaping_weight pilot trigger.
+- "Success/timeout returns separated ≥7.46 in every rated condition" —
+  treated as the analytic admission bound (design guarantee), not an
+  empirical per-condition measurement, until sourced otherwise.
+- Process rule going forward: quantitative claims in reviews carry a
+  provenance line (metric key + window, or file + field).
+- Eval-shim crash (missed by the review, found while chasing its stale
+  observer note): fixed in 9925ebb; both phase1 in-job eval stages would
+  have crashed; observers on the fixed tree are the recovery path.
