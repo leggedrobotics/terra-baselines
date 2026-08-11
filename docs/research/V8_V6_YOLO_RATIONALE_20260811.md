@@ -102,3 +102,23 @@ head, `7fca4eb`+`ae951d4` host-side init (cuDNN eager-init failures
 10311471; nomask smoke 10387993 (phase1 auto-chained); observers
 10388070/10388071. Tests: 408 passed at launch revision; smoke receipts pin
 2,134,771 params.
+
+## External review response (2026-08-11)
+
+Reviewer verdict accepted: finish the screen; current evidence favors compact
+at matched updates; reward-v2 needs no broad retune. Adopted from the review:
+paper-facing name = **"V6 spatial-auxiliary system"** (eight-change bundle,
+never an encoder ablation); V6 is not the cheap model for reward pilots; the
+nomask arm is essential (was already chained). Stale item: the failed
+observers were fixed+resubmitted (10388599/10388600) before the review
+landed. Pre-registered next reward experiment, gated on the compact u14k
+panels remaining ambiguous: `shaping_weight ∈ {1.0, 0.5}`, two 1-GPU arms,
+~1M spatial ResNet pilot, 4k updates (extend to 10k only if both anchors
+≥12/16), confirm any winner on compact; one fixed manifest, one scalar, one
+runner. Proposed 8-condition manifest (shaping-sensitive + anchors):
+v7-fnd-slab-adjacent, v7-fnd-bearing-walls-adjacent (D4b overlap cells),
+fnd-slab-apron-d12, fnd-slab-apron-d16 (illegal-dump planning cells),
+fnd-slab-split (dump-choice canary), trn-straight-allfree,
+v7-trn-tee-adjacent, fnd-slab-allfree. Note: halving w also halves the
+relocation-progress guidance through Φ — this doubles as the first data on
+the relocation-ablation question (see the β discussion of 2026-08-10).
