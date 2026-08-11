@@ -246,6 +246,8 @@ GRAPH_SHA="$("$PYTHON" -c 'import collections,sys; from utils.accepted_bank impo
 
 mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/eval" "$RUN_DIR/wandb"
 export WANDB_ENTITY=aless-weber-eth WANDB_PROJECT=mixed-agents
+RUN_PREFIX="v8_v6_yolo_rv2"
+if [ "$ACTION_LOGIT_MASKING" = 0 ]; then RUN_PREFIX="${RUN_PREFIX}_nomask"; fi
 export WANDB_RUN_ID="${RUN_PREFIX}_${BASELINES_REVISION:0:10}_${PHASE}_${SLURM_JOB_ID}"
 export WANDB_RESUME=never
 if [ "$PHASE" = smoke ]; then
@@ -255,8 +257,6 @@ else
 fi
 scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/slurm_job.txt"
 nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
-RUN_PREFIX="v8_v6_yolo_rv2"
-if [ "$ACTION_LOGIT_MASKING" = 0 ]; then RUN_PREFIX="${RUN_PREFIX}_nomask"; fi
 RUN_NAME="${RUN_PREFIX}_${BASELINES_REVISION:0:12}_s${SEED}"
 if [ "$PHASE" = smoke ]; then RUN_NAME="${RUN_NAME}_smoke"; fi
 TRANSITIONS=$((4 * 512 * 32 * UPDATES))
