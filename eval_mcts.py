@@ -28,7 +28,7 @@ from utils.helpers import (
     load_pkl_object,
     replicate_checkpoint_env_config,
 )
-from utils.utils_ppo import obs_to_model_input, wrap_action
+from utils.utils_ppo import _config_option, obs_to_model_input, wrap_action
 from terra.env import TerraEnvBatch
 from terra.actions import (
     WheeledAction,
@@ -299,9 +299,14 @@ def rollout_episode(
                 "workspace_efficiency": jnp.zeros_like(timestep.reward),
                 "step_efficiency": jnp.zeros_like(timestep.reward),
             }
-            timestep = timestep._replace(
-                info={**timestep.info, "reward_components": dummy_components}
-            )
+            # Inject ONLY when the env did not provide the field: reward-v2
+            # envs emit a 36-key components dict, and overwriting it with this
+            # legacy 22-key template breaks the preserve-terminal-states
+            # tree_map (observers 10388599/10388600).
+            if "reward_components" not in timestep.info:
+                timestep = timestep._replace(
+                    info={**timestep.info, "reward_components": dummy_components}
+                )
     except Exception:
         pass
 
@@ -463,6 +468,12 @@ def rollout_episode(
                 timestep.observation, prev_actions, rl_config
             )
             v, logits_pi = model.apply(model_params, obs_model)
+            # D3: evaluation must respect the same masked distribution the
+            # policy trained under (obs_model[22] when the flag is on).
+            if _config_option(rl_config, "action_logit_masking", False):
+                logits_pi = jnp.where(
+                    obs_model[22], logits_pi, jnp.float32(-1e9)
+                )
             if deterministic:
                 action = jnp.argmax(logits_pi, axis=-1)
             else:
