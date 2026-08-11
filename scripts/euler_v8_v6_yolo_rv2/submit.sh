@@ -3,7 +3,7 @@ set -euo pipefail
 
 R2_HORIZON=450
 if [ "$#" -ne 1 ]; then
-    echo "usage: submit.sh smoke|phase1  (MASK_VARIANT=mask|nomask, default mask)" >&2
+    echo "usage: submit.sh smoke|phase1  (MASK_VARIANT=mask|nomask|v61, default mask)" >&2
     exit 2
 fi
 PHASE="$1"
@@ -11,9 +11,10 @@ case "$PHASE" in smoke|phase1) ;; *) echo "invalid phase '$PHASE'" >&2; exit 2 ;
 SUBMIT="${SUBMIT:-0}"
 case "$SUBMIT" in 0|1) ;; *) echo "SUBMIT must be 0 or 1" >&2; exit 2 ;; esac
 
-# D3 masking variant. The no-mask ablation runs on the baseline's exact terra
-# (the mask terra computes the mask unconditionally, so flag-off there would
-# still pay its per-step cost).
+# Arm selector. The no-mask arms run on the baseline's exact terra (the mask
+# terra computes the mask unconditionally, so flag-off there would still pay
+# its per-step cost). v61 is the post-day-2 arm: v6 readout without the
+# full-res rebalance, without vf_coef=0.5 and without masking, aux at 0.1.
 MASK_VARIANT="${MASK_VARIANT:-mask}"
 case "$MASK_VARIANT" in
     mask)
@@ -26,6 +27,12 @@ case "$MASK_VARIANT" in
         EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a
         TERRA_REPO_DEFAULT=/home/lorenzo/moleworks/.worktrees/terra_v8_r2_reward_v2_20260810
         ARM_NAME=v6_3m_yolo_rv2_nomask
+        ACTION_LOGIT_MASKING=0
+        ;;
+    v61)
+        EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a
+        TERRA_REPO_DEFAULT=/home/lorenzo/moleworks/.worktrees/terra_v8_r2_reward_v2_20260810
+        ARM_NAME=v6_1_rv2
         ACTION_LOGIT_MASKING=0
         ;;
     *) echo "invalid MASK_VARIANT '$MASK_VARIANT'" >&2; exit 2 ;;

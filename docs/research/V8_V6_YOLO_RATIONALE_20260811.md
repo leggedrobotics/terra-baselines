@@ -12,8 +12,9 @@ the design can be reviewed independently of the outcome.
 | arm | architecture | D3 masking | runtime terra | status |
 |---|---|---|---|---|
 | `reward_v2_scratch` (baseline) | compact `se_xattn`, 2,856,701 params | no | `3051054b` | phase1 running |
-| `v6_3m_yolo_rv2` | v6 bundle, 2,134,771 params | yes | `04c67bba` (= 3051054b + mask obs) | phase1 running |
-| `v6_3m_yolo_rv2_nomask` | v6 bundle | no | `3051054b` | smoke → phase1 chained |
+| `v6_3m_yolo_rv2` | v6 bundle, 2,134,771 params | yes | `04c67bba` (= 3051054b + mask obs) | killed (day 2) |
+| `v6_3m_yolo_rv2_nomask` | v6 bundle | no | `3051054b` | killed (day 2) |
+| `v6_1_rv2` | v6 readout only, 2,328,225 params | no | `3051054b` | replaces both, 2026-08-11 |
 
 All arms: reward-v2, `continuous_banded_v2`, carry-work obs, seed 20260807,
 4×512×32/32 minibatches, 2 epochs, LR 3e-4, entropy 0.15→0.02/20k, phase1 =
@@ -64,6 +65,40 @@ Full sources: `V8_ARCH_SCALING_DIAGNOSIS_20260810.md` (measurements),
 | 6 | vf_coef 2.0→0.5 | Evidence 5 | more policy-shaped trunk gradient | EV may drop (observed 0.99→0.94 online — within tolerance); non-architecture delta, listed so the pair is not read as pure-architecture |
 | 7 | D3 action-logit masking (`where(mask, logits, −1e9)` in rollout+loss+eval; mask appended as obs[22]; DO_NOTHING always valid) | Evidence 6; Huang & Ontañón invalid-action-masking for PPO | eliminates no-effect exploration/stalls | Lorenzo's prior masking attempts failed → the nomask arm isolates it; rollout/loss/eval provably share one distribution (unit-tested); no all-invalid rows possible; support-restricted entropy reads ~0.3 lower mechanically |
 | 8 | Params 2,134,771 (−25% vs baseline) | deliberate: a win at fewer params is the stronger result (Impoola won at −35%); rank evidence says width is not binding | — | a LOSS is ambiguous (shape vs size) — accepted for a screen |
+
+## v6.1 (`v6_1_rv2`, launched 2026-08-11)
+
+Day-2 evidence invalidated the premises behind three of the eight bundled
+changes, so both yolo arms were killed and replaced by one arm that keeps only
+the readout redesign. Exactly four deltas remain against
+`scripts/run_v8_r2_reward_v2.sh`:
+
+| # | flag | v6.1 | was (yolo) |
+|---|---|---|---|
+| 1 | `--map_encoder` + `--token_mixer_residual_init_scale` | `se_sa_xattn`, 0.1 | same |
+| 2 | `--flatten_reduce_channels` | 32 | same |
+| 3 | `--attn_latent_queries` | 8 | same |
+| 4 | `--aux_coef` | 0.1 | 0.25 |
+
+Reverted to the baseline: `--resnet_blocks_per_stage 2,2,3,3` (change 4, the
+full-res stage rebalance — also returns the ~25% steps/s it cost), `vf_coef`
+2.0 (change 6 — the flag is not passed at all, so the trainer default applies),
+and D3 action-logit masking (change 7), which also puts the arm back on the
+baseline's exact terra `3051054b`. Everything else — seed 20260807, bank,
+sidecar, sampler, reward-v2 flags, LR, entropy schedule, 4×512×32/32 — is the
+baseline's, so updates and transitions still match.
+
+Parameters: 2,328,225 under carry-work (2,328,209 without). The count rises vs
+the yolo arms only because the stage rebalance is reverted; it is still 18.5%
+below the compact baseline's 2,856,701.
+
+Wiring: `MASK_VARIANT=v61` in `scripts/euler_v8_v6_yolo_rv2/submit.sh`; the
+three reverted knobs are env-parameterized in the shared launcher
+(`BLOCKS_PER_STAGE`, `AUX_COEF`, `VF_COEF`; empty `VF_COEF` drops the flag),
+whose defaults still reproduce `v6_3m_yolo_rv2` exactly. Per-arm parameter
+counts and contract values live in one table each in `run.sbatch` and
+`verify_smoke.py`, cross-checked against a built model in
+`tests/test_v8_v6_yolo_rv2_launcher.py`.
 
 ## Deliberately NOT changed
 

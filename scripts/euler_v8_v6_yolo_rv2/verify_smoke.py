@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Fail closed on the v6_3m_yolo_rv2 update-1 smoke.
+"""Fail closed on the v6 yolo / v6.1 update-1 smoke.
 
 This is euler_v8_r2_reward_v2/verify_smoke.py's reward-v2 contract plus the V6
 architecture receipt: the reward stage, carry-work channel, distance protocol,
 sidecar SHA, sampler state and entropy schedule must match the paired baseline
-exactly, while the seven architecture/optimization flags must be the treatment.
+exactly, while the architecture/optimization flags must be the treatment's.
 
-PARAMETER_COUNT is 2,134,771, not the 2,134,755 frozen in
-tests/test_v6_encoder.py: the reward-v2 terra widens the agent state from 8 to 9
-features (index 8 = normalized carry work), which adds 16 weights to the
-AgentStateNet continuous MLP. That is the same +16 that separates the compact
-baseline's 2,856,685 (no carry) from the 2,856,701 the paired arm asserts.
+The arm is selected by the ARM_NAME environment variable (run.sbatch passes the
+same value it wrote into run_contract.env), and every arm-dependent expectation
+lives in ARMS. Parameter counts are per arm because the stage rebalance moves
+them: 2,134,771 at blocks (3,3,2,2), 2,328,225 at the baseline's (2,2,3,3).
+Those are the carry-work counts; the 16 fewer weights of the without-carry tree
+are the same +16 that separates the compact baseline's 2,856,685 from 2,856,701.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import jax
@@ -33,19 +35,44 @@ from terra.env_generation.distance import REWARD_V2_DISTANCE_PROTOCOL_ID
 from utils import helpers
 
 PROTOCOL_SCHEMA = "terra_v8_r2_reward_protocol_v1"
-PARAMETER_COUNT = 2_134_771
-PARAMETER_COUNT_WITHOUT_CARRY_WORK = 2_134_755
 AUX_DECODER_LEAVES = 6
 
-# The seven flags that make this the treatment arm.
+# The V6 readout flags every arm shares.
 ARCHITECTURE = {
     "map_encoder": "resnet_spatial_8x8_se_sa_xattn",
-    "resnet_blocks_per_stage": (3, 3, 2, 2),
     "token_mixer_residual_init_scale": 0.1,
     "flatten_reduce_channels": 32,
     "attn_latent_queries": 8,
-    "aux_coef": 0.25,
-    "vf_coef": 0.5,
+}
+# The flags that separate the arms, plus the parameter count each one implies.
+ARMS = {
+    "v6_3m_yolo_rv2": {
+        "resnet_blocks_per_stage": (3, 3, 2, 2),
+        "aux_coef": 0.25,
+        "vf_coef": 0.5,
+        "action_logit_masking": True,
+        "parameter_count": 2_134_771,
+        "parameter_count_without_carry_work": 2_134_755,
+    },
+    "v6_3m_yolo_rv2_nomask": {
+        "resnet_blocks_per_stage": (3, 3, 2, 2),
+        "aux_coef": 0.25,
+        "vf_coef": 0.5,
+        "action_logit_masking": False,
+        "parameter_count": 2_134_771,
+        "parameter_count_without_carry_work": 2_134_755,
+    },
+    # v6.1: the full-res rebalance, vf_coef 0.5 and D3 masking are all reverted
+    # to the baseline; aux drops 0.25 -> 0.1. vf_coef 2.0 is the trainer default
+    # the launcher reaches by not passing the flag at all.
+    "v6_1_rv2": {
+        "resnet_blocks_per_stage": (2, 2, 3, 3),
+        "aux_coef": 0.1,
+        "vf_coef": 2.0,
+        "action_logit_masking": False,
+        "parameter_count": 2_328_225,
+        "parameter_count_without_carry_work": 2_328_209,
+    },
 }
 
 
@@ -60,7 +87,8 @@ def finite(tree: object, label: str) -> None:
             raise ValueError(f"{label}: non-finite leaf {index}")
 
 
-def one(path: Path, *, distance_artifact_sha256: str) -> dict[str, object]:
+def one(path: Path, *, arm: dict[str, object], distance_artifact_sha256: str) -> dict:
+    expected_count = arm["parameter_count"]
     checkpoint = helpers.load_pkl_object(str(path))
     if checkpoint.get("update") != 0 or checkpoint.get("next_update") != 1:
         raise ValueError(f"{path}: scratch smoke must advance update 0 exactly once")
@@ -69,9 +97,9 @@ def one(path: Path, *, distance_artifact_sha256: str) -> dict[str, object]:
         raise ValueError(f"{path}: first PPO update must take 64 optimizer steps")
     model = checkpoint["model"]
     count = sum(int(np.asarray(x).size) for x in jax.tree_util.tree_leaves(model))
-    if count != PARAMETER_COUNT:
+    if count != expected_count:
         raise ValueError(
-            f"{path}: v6_3m under carry-work must have {PARAMETER_COUNT} "
+            f"{path}: this arm under carry-work must have {expected_count} "
             f"parameters, got {count}"
         )
     # The aux decode head must be trained, not merely allocated.
@@ -124,6 +152,15 @@ def one(path: Path, *, distance_artifact_sha256: str) -> dict[str, object]:
         "resume_from": None,
         "teacher_checkpoint": None,
         **ARCHITECTURE,
+        **{
+            name: arm[name]
+            for name in (
+                "resnet_blocks_per_stage",
+                "aux_coef",
+                "vf_coef",
+                "action_logit_masking",
+            )
+        },
     }
     for name, expected in expected_config.items():
         observed = config_value(config, name)
@@ -219,6 +256,10 @@ def main() -> None:
     args = parser.parse_args()
     if len(args.distance_artifact_sha256) != 64:
         raise ValueError("distance artifact SHA-256 must contain 64 characters")
+    arm_name = os.environ.get("ARM_NAME", "")
+    if arm_name not in ARMS:
+        raise ValueError(f"ARM_NAME must be one of {sorted(ARMS)}, got {arm_name!r}")
+    arm = ARMS[arm_name]
     periodic = list((args.run / "checkpoints").glob("*_update_000001.pkl"))
     final = list((args.run / "checkpoints").glob("*_FINAL.pkl"))
     if len(periodic) != 1 or len(final) != 1:
@@ -231,6 +272,7 @@ def main() -> None:
             contract[key] = value
     expected_contract = {
         "experiment": "v8_v6_3m_yolo_rv2_architecture_screen",
+        "arm": arm_name,
         "paired_baseline_arm": "reward_v2_scratch",
         "absolute_start_update": "0",
         "absolute_target_update": "1",
@@ -245,15 +287,18 @@ def main() -> None:
         "reward_protocol_id": "material_potential_v2",
         "distance_artifact_sha256": args.distance_artifact_sha256,
         "map_encoder": "resnet_spatial_8x8_se_sa_xattn",
-        "resnet_blocks_per_stage": "3,3,2,2",
+        "resnet_blocks_per_stage": ",".join(
+            str(x) for x in arm["resnet_blocks_per_stage"]
+        ),
         "token_mixer_residual_init_scale": "0.1",
         "flatten_reduce_channels": "32",
         "attn_latent_queries": "8",
-        "aux_coef": "0.25",
-        "vf_coef": "0.5",
-        "model_parameter_count": str(PARAMETER_COUNT),
+        "aux_coef": str(arm["aux_coef"]),
+        "vf_coef": str(arm["vf_coef"]),
+        "action_logit_masking": "true" if arm["action_logit_masking"] else "false",
+        "model_parameter_count": str(arm["parameter_count"]),
         "model_parameter_count_without_carry_work": str(
-            PARAMETER_COUNT_WITHOUT_CARRY_WORK
+            arm["parameter_count_without_carry_work"]
         ),
     }
     if any(contract.get(key) != value for key, value in expected_contract.items()):
@@ -261,15 +306,17 @@ def main() -> None:
     receipt = {
         "schema": "terra_v8_v6_yolo_rv2_update1_smoke_v1",
         "passed": True,
-        "arm": "v6_3m_yolo_rv2",
+        "arm": arm_name,
         "run_contract": expected_contract,
         "checkpoints": {
             "periodic": one(
                 periodic[0],
+                arm=arm,
                 distance_artifact_sha256=args.distance_artifact_sha256,
             ),
             "final": one(
                 final[0],
+                arm=arm,
                 distance_artifact_sha256=args.distance_artifact_sha256,
             ),
         },

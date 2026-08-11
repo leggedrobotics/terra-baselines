@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# v6_3m_yolo_rv2: the V6 readout redesign carried on top of reward-v2.
+# v6_3m_yolo_rv2 / v6_1_rv2: the V6 readout redesign carried on top of reward-v2.
 #
 # This is scripts/run_v8_r2_reward_v2.sh with eight flags changed and nothing
 # else: map_encoder se_sa_xattn, blocks (3,3,2,2), token mixer residual 0.1,
@@ -10,6 +10,13 @@
 # distance protocol + sidecar SHA, reward stage, value-clip, minibatch shuffle,
 # dtypes, critic, LR, entropy schedule) is byte-identical to the baseline, and
 # so is the 4 x 512 x 32 / 32 batch shape, so updates AND transitions match.
+#
+# Three of the eight are env-tunable because the v6.1 arm reverts them after
+# day-2 evidence: BLOCKS_PER_STAGE (v6.1 keeps the baseline's 2,2,3,3),
+# AUX_COEF (v6.1 uses 0.1) and VF_COEF (empty drops the flag entirely, so
+# train_mixed's default 2.0 applies, as in the baseline). The defaults below
+# are the original v6_3m_yolo_rv2 values, so an unset environment reproduces
+# that arm byte-for-byte.
 set -euo pipefail
 
 if [ "$#" -ne 6 ]; then
@@ -54,6 +61,16 @@ if [ "$ACTION_LOGIT_MASKING" = 1 ]; then
     MASK_ARGS=(--action_logit_masking)
 fi
 
+# The three v6.1-reverted knobs. VF_COEF="" drops --vf_coef so the trainer
+# default (2.0, the baseline's) applies; any other value is passed through.
+BLOCKS_PER_STAGE="${BLOCKS_PER_STAGE:-3,3,2,2}"
+AUX_COEF="${AUX_COEF:-0.25}"
+VF_COEF="${VF_COEF-0.5}"
+VF_COEF_ARGS=()
+if [ -n "$VF_COEF" ]; then
+    VF_COEF_ARGS=(--vf_coef "$VF_COEF")
+fi
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 NUM_DEVICES="${NUM_DEVICES:-4}"
@@ -96,12 +113,12 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --attention_compute_dtype float32 \
     --critic_hidden_dims 512,256 \
     --resnet_stage_channels 24,48,64,96 \
-    --resnet_blocks_per_stage 3,3,2,2 \
+    --resnet_blocks_per_stage "$BLOCKS_PER_STAGE" \
     --token_mixer_residual_init_scale 0.1 \
     --flatten_reduce_channels 32 \
     --attn_latent_queries 8 \
-    --aux_coef 0.25 \
-    --vf_coef 0.5 \
+    --aux_coef "$AUX_COEF" \
+    "${VF_COEF_ARGS[@]}" \
     "${MASK_ARGS[@]}" \
     --ent_schedule_start 0.15 \
     --ent_schedule_end 0.02 \
