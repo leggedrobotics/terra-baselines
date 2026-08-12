@@ -4,6 +4,13 @@ Terra launchers must keep the login identity separate from code, run, dataset,
 and runtime paths. Passwords never belong in this repository, exported Slurm
 environments, or launcher arguments; configure a named SSH host with a key.
 
+This runbook is tool- and agent-neutral: it applies to Codex, Claude Code,
+other coding agents, and human operators. In Codex sessions, independent review
+defaults to another Codex agent and does not imply Claude, Opus, Oracle, or
+another provider unless explicitly requested. Never pass credentials or
+secret-bearing content to a subagent. Existing `codex_terra_edge_*` directory
+names are stable storage identifiers, not tool requirements.
+
 ## Accounts and storage
 
 Resolve the standard roots with:

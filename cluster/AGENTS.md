@@ -4,12 +4,18 @@ Use this directory for account-neutral Euler setup and launch support. Read
 `cluster/README.md` and resolve storage with `cluster/euler_account.sh` before
 editing or invoking a campaign launcher.
 
+This guidance is tool- and agent-neutral. The audience, review, and delegation
+rules in `../AGENTS.md` apply here.
+
 ## Identity and secrets
 
 - Select the Unix account explicitly with `TERRA_EULER_USER` and use a matching
   named SSH alias. Verify `ssh -o BatchMode=yes HOST id -un` before writes.
 - Keep passwords, private keys, W&B API keys, `.netrc`, and environment files
   containing secrets out of the repository, Slurm exports, and logs.
+- Never pass credentials or secret-bearing files, environment values, logs, or
+  prompts to a subagent. Keep credentialed SSH and W&B steps in the primary
+  session.
 - Give each SSH account its own multiplexing socket (`ControlPath ~/.ssh/cm-%C`)
   so a cached connection cannot cross account boundaries.
 
