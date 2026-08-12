@@ -122,6 +122,46 @@ class RewardTimingLauncherTest(unittest.TestCase):
             "scripts/euler_v8_reward_timing_pilot/run.sbatch", body
         )
 
+    def test_launcher_is_account_aware(self):
+        """Every account-owned path derives from the selected Euler account."""
+        submit = SUBMIT.read_text()
+        # The shared resolver, not a hardcoded /cluster/home/<user>.
+        self.assertIn("source \"$REPO/cluster/euler_account.sh\"", submit)
+        self.assertIn('terra_euler_configure "${TERRA_EULER_USER:-lterenzi}"', submit)
+        self.assertIn('REMOTE_HOST="${REMOTE_HOST:-euler-$TERRA_EULER_USER}"', submit)
+        for derived in (
+            "${TERRA_REMOTE_WORK_ROOT:-$TERRA_EULER_SCRATCH_ROOT/",
+            "${TERRA_REMOTE_RUN_ROOT:-$TERRA_EULER_SCRATCH_ROOT/",
+        ):
+            self.assertIn(derived, submit)
+        # The venv is a shared /cluster/project/rsl tree: account-independent.
+        self.assertIn("/cluster/project/rsl/lterenzi/", submit)
+        # The quota gate reads the selected account's home, via the shared parser.
+        self.assertIn(
+            'remote lquota | "$REPO/cluster/lquota_home_used_gb.sh" "$TERRA_EULER_HOME_ROOT"',
+            submit,
+        )
+        # phase1 refuses to burn a GPU slot without W&B credentials.
+        self.assertIn("api.wandb.ai", submit)
+
+        sbatch = SBATCH.read_text()
+        self.assertIn('test "$(id -un)" = "$TERRA_EULER_USER"', sbatch)
+        self.assertIn('test "$HOME" = "$TERRA_EULER_HOME_ROOT"', sbatch)
+        self.assertIn(
+            'lquota | "$BASELINES_ROOT/cluster/lquota_home_used_gb.sh" "$TERRA_EULER_HOME_ROOT"',
+            sbatch,
+        )
+        self.assertIn('"euler_user=$TERRA_EULER_USER"', sbatch)
+        # W&B routing arrives from the launcher instead of being hardcoded.
+        self.assertNotIn("WANDB_ENTITY=aless-weber-eth", sbatch)
+        self.assertIn("export WANDB_ENTITY WANDB_PROJECT", sbatch)
+        self.assertIn("WANDB_ENTITY=$WANDB_ENTITY", submit)
+        # The smoke that gates phase1 must belong to the same account.
+        self.assertIn(
+            'test "$(stat -c %U "$SMOKE_RUN/run_contract.env")" = "$TERRA_EULER_USER"',
+            sbatch,
+        )
+
     def test_v3_preset_selects_the_capped_sampler(self):
         preset = get_config("G-V8-CONTINUOUS-V3")
         self.assertEqual(preset.accepted_bank_arm, "G-UNIFORM")

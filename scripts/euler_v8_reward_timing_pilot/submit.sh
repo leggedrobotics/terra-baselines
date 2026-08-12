@@ -47,7 +47,39 @@ REMOTE_RUN_ROOT="${TERRA_REMOTE_RUN_ROOT:-$TERRA_EULER_SCRATCH_ROOT/codex_terra_
 REMOTE_WORK="$REMOTE_WORK_ROOT/$CAMPAIGN"
 REMOTE_RUNS="$REMOTE_RUN_ROOT/$CAMPAIGN/runs"
 REMOTE_INPUTS="$REMOTE_RUN_ROOT/$CAMPAIGN/inputs"
+# The venv is a shared /cluster/project/rsl tree, readable by every account
+# that runs this arm; it is deliberately not derived from the launching user.
 REMOTE_VENV="${TERRA_REMOTE_VENV:-/cluster/project/rsl/lterenzi/terra_curriculum_20260730_c14bd7d_3ce0e84_py312_jax0426}"
+WANDB_ENTITY="${TERRA_WANDB_ENTITY:-aless-weber-eth}"
+WANDB_PROJECT="${TERRA_WANDB_PROJECT:-mixed-agents}"
+
+case "$REMOTE_HOST" in
+    ''|-*|*[!a-zA-Z0-9._@-]*)
+        echo "invalid REMOTE_HOST '$REMOTE_HOST'" >&2
+        exit 2
+        ;;
+esac
+for REMOTE_PATH in \
+    "$REMOTE_WORK_ROOT" "$REMOTE_RUN_ROOT" "$REMOTE_VENV"; do
+    case "$REMOTE_PATH" in
+        /cluster/*) ;;
+        *) echo "remote path must be absolute under /cluster: $REMOTE_PATH" >&2; exit 2 ;;
+    esac
+    case "$REMOTE_PATH" in
+        *[!a-zA-Z0-9_./-]*)
+            echo "remote path contains unsupported characters: $REMOTE_PATH" >&2
+            exit 2
+            ;;
+    esac
+done
+for WANDB_NAME in "$WANDB_ENTITY" "$WANDB_PROJECT"; do
+    case "$WANDB_NAME" in
+        ''|*[!a-zA-Z0-9_.-]*)
+            echo "invalid W&B entity/project '$WANDB_NAME'" >&2
+            exit 2
+            ;;
+    esac
+done
 
 test -z "$(git -C "$REPO" status --porcelain)" || {
     echo "terra-baselines must be committed and clean" >&2; exit 3;
@@ -126,42 +158,58 @@ echo "phase=$PHASE arm=$ARM_NAME seed=$SEED updates=$([ "$PHASE" = smoke ] && ec
 echo "reward_v2_timing=gamma1_stepcost_3.6 variant=$REWARD_V2_TIMING_VARIANT sampler=$SAMPLER_PROFILE"
 echo "terra_baselines_revision=$BASELINES_REVISION runtime_terra_revision=$RUNTIME_TERRA_REVISION"
 echo "euler_user=$TERRA_EULER_USER remote_host=$REMOTE_HOST remote_venv=$REMOTE_VENV"
+echo "remote_work=$REMOTE_WORK remote_runs=$REMOTE_RUNS"
+echo "wandb_entity=$WANDB_ENTITY wandb_project=$WANDB_PROJECT"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: local contracts passed; no SSH, upload, W&B, or Slurm mutation"
     exit 0
 fi
 
-REMOTE_ID="$(ssh -o BatchMode=yes "$REMOTE_HOST" 'id -un')"
+remote() {
+    ssh -o BatchMode=yes "$REMOTE_HOST" "$@"
+}
+
+REMOTE_ID="$(remote 'id -un')"
 test "$REMOTE_ID" = "$TERRA_EULER_USER" || {
     echo "remote account mismatch: expected $TERRA_EULER_USER, got $REMOTE_ID" >&2
     exit 3
 }
-ssh "$REMOTE_HOST" \
+remote \
     "test \"\$HOME\" = '$TERRA_EULER_HOME_ROOT' && test -w '$TERRA_EULER_SCRATCH_ROOT' && test -x '$REMOTE_VENV/bin/python'"
+HOME_USED_GB="$(remote lquota | "$REPO/cluster/lquota_home_used_gb.sh" "$TERRA_EULER_HOME_ROOT")"
+awk -v used="$HOME_USED_GB" 'BEGIN { exit !(used < 45.0) }' || {
+    echo "home quota launch gate failed: ${HOME_USED_GB} GB used" >&2
+    exit 3
+}
 
-if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_SOURCE/REVISION'"; then
+if ! remote "test -f '$REMOTE_SOURCE/REVISION'"; then
     PARTIAL="$REMOTE_WORK/.${BASELINES_REVISION}.partial.$$"
-    ssh "$REMOTE_HOST" "mkdir -p '$PARTIAL/terra-baselines'"
-    git -C "$REPO" archive --format=tar "$BASELINES_REVISION" | ssh "$REMOTE_HOST" "tar -xf - -C '$PARTIAL/terra-baselines'"
-    ssh "$REMOTE_HOST" "printf '%s\n' '$BASELINES_REVISION' > '$PARTIAL/terra-baselines/REVISION' && mv '$PARTIAL' '$REMOTE_WORK/$BASELINES_REVISION'"
+    remote "mkdir -p '$PARTIAL/terra-baselines'"
+    git -C "$REPO" archive --format=tar "$BASELINES_REVISION" | remote "tar -xf - -C '$PARTIAL/terra-baselines'"
+    remote "printf '%s\n' '$BASELINES_REVISION' > '$PARTIAL/terra-baselines/REVISION' && mv -T '$PARTIAL' '$REMOTE_WORK/$BASELINES_REVISION'"
 fi
-if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_TERRA/REVISION'"; then
+if ! remote "test -f '$REMOTE_TERRA/REVISION'"; then
     PARTIAL="$REMOTE_WORK/runtime-terra/.${RUNTIME_TERRA_REVISION}.partial.$$"
-    ssh "$REMOTE_HOST" "mkdir -p '$PARTIAL/terra'"
-    git -C "$TERRA_REPO" archive --format=tar "$RUNTIME_TERRA_REVISION" | ssh "$REMOTE_HOST" "tar -xf - -C '$PARTIAL/terra'"
-    ssh "$REMOTE_HOST" "printf '%s\n' '$RUNTIME_TERRA_REVISION' > '$PARTIAL/terra/REVISION' && mv '$PARTIAL' '$REMOTE_WORK/runtime-terra/$RUNTIME_TERRA_REVISION'"
+    remote "mkdir -p '$PARTIAL/terra'"
+    git -C "$TERRA_REPO" archive --format=tar "$RUNTIME_TERRA_REVISION" | remote "tar -xf - -C '$PARTIAL/terra'"
+    remote "printf '%s\n' '$RUNTIME_TERRA_REVISION' > '$PARTIAL/terra/REVISION' && mv -T '$PARTIAL' '$REMOTE_WORK/runtime-terra/$RUNTIME_TERRA_REVISION'"
 fi
-ssh "$REMOTE_HOST" "test \"\$(cat '$REMOTE_SOURCE/REVISION')\" = '$BASELINES_REVISION' && test \"\$(cat '$REMOTE_TERRA/REVISION')\" = '$RUNTIME_TERRA_REVISION'"
-ssh "$REMOTE_HOST" "mkdir -p '$REMOTE_INPUTS' '$REMOTE_RUNS'"
+remote "test \"\$(cat '$REMOTE_SOURCE/REVISION')\" = '$BASELINES_REVISION' && \
+    test -s '$REMOTE_SOURCE/train_mixed.py' && \
+    test -s '$REMOTE_SOURCE/scripts/euler_v8_reward_timing_pilot/run.sbatch' && \
+    test -s '$REMOTE_SOURCE/scripts/run_v8_reward_timing_pilot.sh' && \
+    test \"\$(cat '$REMOTE_TERRA/REVISION')\" = '$RUNTIME_TERRA_REVISION' && \
+    test -s '$REMOTE_TERRA/terra/state.py' && test -s '$REMOTE_TERRA/terra/config.py'"
+remote "mkdir -p '$REMOTE_INPUTS' '$REMOTE_RUNS'"
 
 upload() {
     local source="$1" destination="$2" expected_sha="$3"
-    if ! ssh "$REMOTE_HOST" "test -f '$destination'"; then
+    if ! remote "test -f '$destination'"; then
         local partial="$destination.partial.$$"
-        scp -q "$source" "$REMOTE_HOST:$partial"
-        ssh "$REMOTE_HOST" "test \"\$(sha256sum '$partial' | awk '{print \$1}')\" = '$expected_sha' && mv '$partial' '$destination'"
+        scp -q -o BatchMode=yes "$source" "$REMOTE_HOST:$partial"
+        remote "test \"\$(sha256sum '$partial' | awk '{print \$1}')\" = '$expected_sha' && mv -T '$partial' '$destination'"
     fi
-    ssh "$REMOTE_HOST" "test \"\$(sha256sum '$destination' | awk '{print \$1}')\" = '$expected_sha'"
+    remote "test \"\$(sha256sum '$destination' | awk '{print \$1}')\" = '$expected_sha'"
 }
 
 REMOTE_BANK="$REMOTE_INPUTS/treatment-bank-$BANK_SHA.tar.zst"
@@ -182,42 +230,49 @@ SMOKE_JOB_ID=none
 SMOKE_RUN=none
 if [ "$PHASE" = phase1 ]; then
     SMOKE_RUN="$REMOTE_RUNS/$BASELINES_REVISION/smoke/s$SEED/$ARM_NAME"
-    ssh "$REMOTE_HOST" "test -f '$SMOKE_RUN/smoke_validation.json' -a -f '$SMOKE_RUN/run_contract.env'"
-    ssh "$REMOTE_HOST" "python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))[\"passed\"] is True' '$SMOKE_RUN/smoke_validation.json'"
-    SMOKE_JOB_ID="$(ssh "$REMOTE_HOST" "awk -F= '\$1==\"slurm_job_id\" {print \$2}' '$SMOKE_RUN/run_contract.env'")"
+    remote "test -f '$SMOKE_RUN/smoke_validation.json' -a -f '$SMOKE_RUN/run_contract.env' && \
+        test \"\$(stat -c %U '$SMOKE_RUN/smoke_validation.json')\" = '$TERRA_EULER_USER' && \
+        test \"\$(stat -c %U '$SMOKE_RUN/run_contract.env')\" = '$TERRA_EULER_USER'"
+    remote "python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))[\"passed\"] is True' '$SMOKE_RUN/smoke_validation.json'"
+    SMOKE_JOB_ID="$(remote "awk -F= '\$1==\"slurm_job_id\" {print \$2}' '$SMOKE_RUN/run_contract.env'")"
     [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
-    SMOKE_STATE="$(ssh "$REMOTE_HOST" "sacct -n -X -P -j '$SMOKE_JOB_ID' --format=JobIDRaw,State | awk -F'|' -v id='$SMOKE_JOB_ID' '\$1==id {sub(/\\+.*/, \"\", \$2); print \$2}'")"
+    SMOKE_STATE="$(remote "sacct -n -X -P -j '$SMOKE_JOB_ID' --format=JobIDRaw,State | awk -F'|' -v id='$SMOKE_JOB_ID' '\$1==id {sub(/\\+.*/, \"\", \$2); print \$2}'")"
     test "$SMOKE_STATE" = COMPLETED
     for EXPECTED in \
         "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
         "terra_baselines_revision=$BASELINES_REVISION" \
         "distance_artifact_sha256=$DISTANCE_SIDECAR_SHA" \
         "reward_v2_timing_variant=$REWARD_V2_TIMING_VARIANT" \
-        "sampler_profile=$SAMPLER_PROFILE"; do
+        "sampler_profile=$SAMPLER_PROFILE" \
+        "euler_user=$TERRA_EULER_USER"; do
         KEY="${EXPECTED%%=*}" VALUE="${EXPECTED#*=}"
-        ssh "$REMOTE_HOST" "test \"\$(awk -F= -v key='$KEY' '\$1==key {print \$2}' '$SMOKE_RUN/run_contract.env')\" = '$VALUE'"
+        remote "test \"\$(awk -F= -v key='$KEY' '\$1==key {print \$2}' '$SMOKE_RUN/run_contract.env')\" = '$VALUE'"
     done
+    remote "python3 -c 'import netrc; assert netrc.netrc().authenticators(\"api.wandb.ai\")'" || {
+        echo "phase1 requires a W&B api.wandb.ai credential in the selected account's ~/.netrc" >&2
+        exit 3
+    }
 fi
 
 RUN_DIR="$REMOTE_RUNS/$BASELINES_REVISION/$PHASE/s$SEED/$ARM_NAME"
-ssh "$REMOTE_HOST" "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
+remote "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
 JOB_ID=""
 cleanup_new_job() {
     local status="$1"
     trap - ERR INT TERM
     set +e
     if [[ "$JOB_ID" =~ ^[0-9]+$ ]]; then
-        ssh "$REMOTE_HOST" "scancel -- '$JOB_ID'"
+        remote "scancel -- '$JOB_ID'"
     fi
     # rmdir is intentionally the only cleanup: non-empty evidence survives.
-    ssh "$REMOTE_HOST" "rmdir -- '$RUN_DIR'" || true
+    remote "rmdir -- '$RUN_DIR'" || true
     exit "$status"
 }
 trap 'cleanup_new_job $?' ERR
 trap 'cleanup_new_job 130' INT TERM
 
-EXPORTS="ALL,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,VENV=$REMOTE_VENV,RUN_BASE=$REMOTE_RUNS,PHASE=$PHASE,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN"
-JOB_ID_RAW="$(ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_reward_timing_pilot/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --exclude='eu-g6-064' --job-name='terra-rv2p1' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
+EXPORTS="ALL,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,VENV=$REMOTE_VENV,RUN_BASE=$REMOTE_RUNS,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,PHASE=$PHASE,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN"
+JOB_ID_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_v8_reward_timing_pilot/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --exclude='eu-g6-064' --job-name='terra-rv2p1' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
 JOB_ID="${JOB_ID_RAW%%;*}"
 [[ "$JOB_ID" =~ ^[0-9]+$ ]]
 trap - ERR INT TERM
