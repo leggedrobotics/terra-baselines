@@ -1,121 +1,108 @@
-# Running Terra Training on the Cluster
+# Terra on Euler
 
-This guide provides instructions for setting up and running Terra training jobs on the compute cluster using SLURM.
+Terra launchers must keep the login identity separate from code, run, dataset,
+and runtime paths. Passwords never belong in this repository, exported Slurm
+environments, or launcher arguments; configure a named SSH host with a key.
 
-## Prerequisites
+## Accounts and storage
 
-- Access to the cluster with SLURM workload manager
-- CUDA-compatible GPUs (RTX 3090)
-- Anaconda/Miniconda installed
-
-## Setup
-
-1. **Conda Environment Setup**:
-   ```bash
-   # Create the conda environment if you haven't already
-   conda env create -f /cluster/home/lterenzi/terra_jax/terra/environment.yml -n terra
-   ```
-
-2. **Update the Training Script**:
-   - The script `train_cluster.sh` has been prepared for you but may need adjustments:
-     - Ensure `CONDA_ROOT` points to your conda installation (currently set to `/home/lorenzo/anaconda3`)
-     - Verify `CONDA_ENV` is correct (currently set to `terra`)
-     - Update any paths if your file structure differs
-
-## Running Training Jobs
-
-### Submit a Training Job
-
-To submit a training job to the SLURM scheduler:
+Resolve the standard roots with:
 
 ```bash
-# Navigate to the project directory
-cd /cluster/home/lterenzi/terra_jax
-
-# Submit the job
-sbatch terra-baselines/cluster/train_cluster.sh
+cluster/euler_account.sh alesweber
+cluster/euler_account.sh lterenzi
 ```
 
-This will submit your job to the SLURM scheduler and return a job ID.
+The selected account owns these defaults:
 
-### Monitor Your Job
+- home: `/cluster/home/<account>` (credentials and small config only);
+- reproducible code snapshots: `/cluster/scratch/<account>/codex_terra_edge_validation`;
+- live logs, W&B files, checkpoints, and inputs:
+  `/cluster/scratch/<account>/codex_terra_edge_runs`;
+- persistent environments/archives: `/cluster/project/rsl/<account>` when
+  writable.
 
-You can monitor the status of your job using:
+Dataset and runtime ownership are independent. For example, jobs running as
+`alesweber` may read the dataset in
+`/cluster/project/rsl/alesweber/TerraProject/terra/data/terra/train` and a
+group-readable pinned venv owned by another RSL account. Record both paths in
+the run contract and validate the runtime inside every GPU allocation.
 
-```bash
-# Check job status
-squeue -u lterenzi
+Scratch files not accessed for roughly 15 days are purged. Archive final
+checkpoints to persistent project/work storage; do not keep the only copy on
+scratch.
 
-# View job details
-scontrol show job <job_id>
+## Local SSH aliases
 
-# Monitor output in real-time
-tail -f <job_id>_training.out
+Use distinct aliases and distinct multiplexing sockets for each account:
+
+```sshconfig
+Host euler-alesweber
+  HostName euler.ethz.ch
+  User alesweber
+  IdentityFile ~/.ssh/id_ed25519_euler_alesweber
+  IdentitiesOnly yes
+  ControlPath ~/.ssh/cm-%C
+
+Host euler-lterenzi
+  HostName euler.ethz.ch
+  User lterenzi
+  IdentityFile ~/.ssh/id_ed25519_github
+  IdentitiesOnly yes
+  ControlPath ~/.ssh/cm-%C
 ```
 
-### Common Commands
-
-- Cancel a job: `scancel <job_id>`
-- View job efficiency: `seff <job_id>`
-- Check resource availability: `sinfo`
-
-## Customizing Training Parameters
-
-The current training script uses these parameters:
-
-- `DATASET_PATH=/cluster/home/lterenzi/terra_jax/terra/data/terra/train`
-- `DATASET_SIZE=200`
-
-To modify these or add other parameters, edit the `train_cluster.sh` script.
-
-## Resource Allocation
-
-The current script requests:
-- 8 CPUs
-- 1 RTX 3090 GPU
-- 4048 MB memory per CPU
-- 3 hours maximum runtime
-
-To adjust these resources, modify the SLURM directives at the top of the `train_cluster.sh` script.
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Conda Activation Errors**:
-   - The script uses `eval "$($CONDA_ROOT/bin/conda shell.bash hook)"` which should work in most cluster environments
-   - If conda still fails to activate, you might need to use a module-based approach specific to your cluster
-
-2. **Module Not Found Errors**:
-   - The script sets `PYTHONPATH=$PYTHONPATH:/cluster/home/lterenzi/terra_jax` to find the `terra` module
-   - If you encounter "ModuleNotFoundError", verify that the path is correct and the module is present
-
-3. **GPU Memory Issues**:
-   - Adjust your batch size in the training code
-   - Monitor GPU usage with `nvidia-smi`
-
-### Getting Help
-
-If you encounter persistent issues:
-- Check SLURM logs: `less <job_id>_training.out`
-- Contact cluster administrators for cluster-specific issues
-
-## Advanced Configuration
-
-### Multi-GPU Training
-
-To utilize multiple GPUs, modify the SLURM parameter:
+Verify the identity before staging anything:
 
 ```bash
-#SBATCH --gpus=rtx_3090:2  # Using 2 GPUs
+ssh -o BatchMode=yes euler-alesweber 'id -un; printf "%s\n" "$HOME"; lquota'
 ```
 
-And ensure your training code is set up for distributed training.
+## Campaign launchers
 
-### Checkpointing
-
-If your training jobs are long-running, consider implementing checkpointing in your training code to save progress periodically. You can add a checkpoint directory to your script:
+Campaign launchers default to a non-mutating local contract check. The active
+V8/V6 campaign supports a staging-only step and an explicit submission step:
 
 ```bash
-export CHECKPOINT_DIR=/cluster/home/lterenzi/terra_jax/checkpoints
-``` 
+# Local validation only: no SSH, W&B, or Slurm mutation.
+SUBMIT=0 scripts/euler_v8_v6_yolo_rv2/submit.sh smoke
+
+# Upload immutable code/input snapshots and inspect Slurm eligibility, but submit no job.
+TERRA_EULER_USER=alesweber REMOTE_HOST=euler-alesweber \
+  SUBMIT=stage scripts/euler_v8_v6_yolo_rv2/submit.sh smoke
+
+# Only after staging, online-auth checks, and explicit run authorization.
+TERRA_EULER_USER=alesweber REMOTE_HOST=euler-alesweber \
+  SUBMIT=1 scripts/euler_v8_v6_yolo_rv2/submit.sh smoke
+```
+
+Useful overrides are:
+
+- `TERRA_REMOTE_WORK_ROOT` for reproducible code snapshots;
+- `TERRA_REMOTE_RUN_ROOT` for inputs and run artifacts;
+- `TERRA_REMOTE_VENV` for the pinned Python runtime;
+- `TERRA_EULER_{HOME,SCRATCH,PROJECT}_ROOT` for unusual storage layouts.
+
+To fall back to the legacy account, set both the account and SSH alias:
+
+```bash
+TERRA_EULER_USER=lterenzi REMOTE_HOST=euler-lterenzi ...
+```
+
+`SUBMIT=stage` queries the account association, partition state, and matching
+GPU inventory with `sacctmgr`, `scontrol`, and `sinfo`; it does not create a job
+or a per-run directory.
+
+Do not reuse a smoke receipt across Unix accounts. Run an account-local smoke,
+verify the requested/allocated GPU type plus the JAX convolution and NCCL
+preflight, and require a completed finite first update before production.
+
+## Monitoring
+
+```bash
+ssh euler-alesweber 'squeue -u "$USER" -o "%.18i %.9T %.12M %.30j %.20N %.24R"'
+ssh euler-alesweber 'sacct -j JOBID --format=JobID,State,ExitCode,Elapsed,AllocTRES -P'
+```
+
+`RUNNING` is not a health result. Inspect the run log, GPU allocation, W&B
+history, and the finite update receipt.

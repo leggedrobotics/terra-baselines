@@ -50,24 +50,33 @@ local lockfiles or run artifacts untouched.
 
 ## Euler Storage Contract
 
-`/cluster/home/lterenzi` is a hard 50 GB cap and is for code and small config
-only. On 2026-07-20 a Terra job died with `Disk quota exceeded` because
-`WANDB_DIR` and checkpoints were written under home (home was 44.2/50 GB). Run
-artifacts belong on scratch.
+Euler launchers must select the execution account explicitly and derive
+account-owned storage through `cluster/euler_account.sh`. The current default
+is `alesweber`; `lterenzi` remains a supported fallback. Never infer the
+storage owner from a historical path embedded in an experiment receipt.
 
-- sbatch scripts MUST set `WANDB_DIR` and checkpoint output dirs to
-  `/cluster/scratch/lterenzi/codex_terra_edge_runs/` (symlinked from the home
-  workspace), never `/cluster/home`. Run logs go there too.
+- Reproducible code snapshots go under
+  `$TERRA_EULER_SCRATCH_ROOT/codex_terra_edge_validation/`.
+- Pinned inputs, `WANDB_DIR`, checkpoints, run logs, and other live run artifacts go under
+  `$TERRA_EULER_SCRATCH_ROOT/codex_terra_edge_runs/`, never `/cluster/home`.
+- Long-lived environments and archives go under the selected account's
+  project storage. A group-readable pinned runtime may be shared across
+  accounts, but its exact path and package/runtime check remain part of the
+  run contract.
 - Scratch is purged when a file is not accessed for ~15 days. Anything needed
-  long-term must be `rsync`'d to `/cluster/work/rsl/lterenzi` (final large
-  checkpoints, tars) or `/cluster/project/rsl/lterenzi` (venvs, many small
-  files) — both verified writable — or be rebuildable. A venv left on scratch
-  was already corrupted by the purge (empty `jax` namespace package).
+  long-term must be copied to writable project/work storage or be rebuildable.
+  A venv left on scratch was already corrupted by the purge (empty `jax`
+  namespace package).
 - The dataset stays read-only at
   `/cluster/project/rsl/alesweber/TerraProject/...`; do not copy it into home.
-- Smoke gates MUST fail fast if home is near full: parse `lquota` and abort
-  before training when `/cluster/home/lterenzi` space usage exceeds ~90% of the
-  hard quota (i.e. above ~45 GB of 50 GB).
+- Launchers MUST verify `id -un`, `$HOME`, scratch writability, and the selected
+  runtime before staging or submission. Smoke gates parse the selected
+  account's `lquota` row and abort above 45 GB of the 50 GB hard home quota.
+- `SUBMIT=stage` may stage pinned code and inputs and run read-only Slurm
+  association/partition/GPU-inventory checks, but must not create a per-run
+  directory, contact W&B, or submit a job. A new account needs its own
+  update-1 smoke before any production phase; do not reuse a smoke receipt from
+  another Unix account or private scratch tree.
 
 ## Training Metric Contract
 

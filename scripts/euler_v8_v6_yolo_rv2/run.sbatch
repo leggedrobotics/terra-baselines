@@ -9,7 +9,7 @@
 #SBATCH --no-requeue
 
 set -euo pipefail
-umask 002
+umask 027
 
 # Variant-dependent: the mask arm runs the D3 terra, the no-mask arms run the
 # baseline's exact terra (see submit.sh MASK_VARIANT).
@@ -67,10 +67,10 @@ test "$ACTION_LOGIT_MASKING" = "$EXPECTED_MASKING"
 EXPECTED_HORIZON=450
 EXPECTED_RELEASE=terra_v8_v6_constraints_v7_adjacent_train96_v5
 PROTOCOL_TERRA_REVISION=a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4
-VENV=/cluster/project/rsl/lterenzi/terra_curriculum_20260730_c14bd7d_3ce0e84_py312_jax0426
-RUN_BASE=/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_v8_v6_yolo_rv2/runs
 
-for REQUIRED in PHASE BASELINES_ROOT BASELINES_REVISION RUNTIME_TERRA_ROOT \
+for REQUIRED in TERRA_EULER_USER TERRA_EULER_HOME_ROOT VENV RUN_BASE \
+    WANDB_ENTITY WANDB_PROJECT \
+    PHASE BASELINES_ROOT BASELINES_REVISION RUNTIME_TERRA_ROOT \
     RUNTIME_TERRA_REVISION R2_HORIZON SEED BANK_ARCHIVE BANK_SHA \
     BANK_DATASET_SHA BANK_TREE_SHA BANK_RELEASE_ID DISTANCE_ARTIFACT_SHA \
     MATERIALIZATION_RECEIPT MATERIALIZATION_RECEIPT_SHA \
@@ -79,9 +79,24 @@ for REQUIRED in PHASE BASELINES_ROOT BASELINES_REVISION RUNTIME_TERRA_ROOT \
     ARM_NAME ACTION_LOGIT_MASKING SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
+TERRA_EULER_USER="${TERRA_EULER_USER:?}"
+TERRA_EULER_HOME_ROOT="${TERRA_EULER_HOME_ROOT:?}"
+VENV="${VENV:?}"
+RUN_BASE="${RUN_BASE:?}"
+WANDB_ENTITY="${WANDB_ENTITY:?}"
+WANDB_PROJECT="${WANDB_PROJECT:?}"
 test "$SEED" = 20260807
 test "$RUNTIME_TERRA_REVISION" = "$EXPECTED_RUNTIME_TERRA_REVISION"
 test "$R2_HORIZON" -eq "$EXPECTED_HORIZON"
+test "$(id -un)" = "$TERRA_EULER_USER"
+test "$HOME" = "$TERRA_EULER_HOME_ROOT"
+for REMOTE_PATH in "$TERRA_EULER_HOME_ROOT" "$VENV" "$RUN_BASE"; do
+    case "$REMOTE_PATH" in /cluster/*) ;; *) exit 2 ;; esac
+    case "$REMOTE_PATH" in *[!a-zA-Z0-9_./-]*) exit 2 ;; esac
+done
+for WANDB_NAME in "$WANDB_ENTITY" "$WANDB_PROJECT"; do
+    case "$WANDB_NAME" in ''|*[!a-zA-Z0-9_.-]*) exit 2 ;; esac
+done
 
 case "$PHASE" in
     smoke)
@@ -124,18 +139,23 @@ test "${SLURM_CPUS_PER_TASK:-}" = 4
 test -d "$RUN_DIR" -a ! -e "$RUN_DIR/run_contract.env"
 
 if [ "$PHASE" = phase1 ]; then
+    EXPECTED_SMOKE_RUN="$RUN_BASE/$BASELINES_REVISION/smoke/s$SEED/$ARM_NAME"
+    test "$SMOKE_RUN" = "$EXPECTED_SMOKE_RUN"
     SMOKE_STATE="$(sacct -n -X -P -j "$SMOKE_JOB_ID" --format=JobIDRaw,State | awk -F'|' -v id="$SMOKE_JOB_ID" '$1==id {sub(/\+.*/, "", $2); print $2}')"
     test "$SMOKE_STATE" = COMPLETED
     test -f "$SMOKE_RUN/smoke_validation.json" -a -f "$SMOKE_RUN/run_contract.env"
+    test "$(stat -c %U "$SMOKE_RUN/smoke_validation.json")" = "$TERRA_EULER_USER"
+    test "$(stat -c %U "$SMOKE_RUN/run_contract.env")" = "$TERRA_EULER_USER"
     python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["passed"] is True' "$SMOKE_RUN/smoke_validation.json"
     test "$(awk -F= '$1=="runtime_terra_revision" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$RUNTIME_TERRA_REVISION"
     test "$(awk -F= '$1=="terra_baselines_revision" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$BASELINES_REVISION"
     test "$(awk -F= '$1=="distance_artifact_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$DISTANCE_ARTIFACT_SHA"
     test "$(awk -F= '$1=="model_parameter_count" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$EXPECTED_PARAMETERS"
     test "$(awk -F= '$1=="arm" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$ARM_NAME"
+    test "$(awk -F= '$1=="euler_user" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TERRA_EULER_USER"
 fi
 
-HOME_USED_GB="$(lquota | awk -F'|' '/\/cluster\/home\/lterenzi/ && /space/ {value=$4; gsub(/[^0-9.]/, "", value); print value}')"
+HOME_USED_GB="$(lquota | "$BASELINES_ROOT/cluster/lquota_home_used_gb.sh" "$TERRA_EULER_HOME_ROOT")"
 test -n "$HOME_USED_GB"
 awk -v used="$HOME_USED_GB" 'BEGIN { exit !(used < 45.0) }' || {
     echo "home quota launch gate failed: ${HOME_USED_GB} GB used" >&2
@@ -146,11 +166,12 @@ tar --zstd -xf "$BANK_ARCHIVE" -C "$TMPDIR" bank
 BANK="$TMPDIR/bank"
 test "$(sha256sum "$BANK/dataset.json" | awk '{print $1}')" = "$BANK_DATASET_SHA"
 module load stack/2024-06 cuda/12.1.1
+PYTHON="$VENV/bin/python"
+test -x "$PYTHON"
 if [ "$PHASE" = phase1 ]; then
     module load eth_proxy
-    test -r "$HOME/.netrc"
+    "$PYTHON" -c 'import netrc; assert netrc.netrc().authenticators("api.wandb.ai")'
 fi
-PYTHON="$VENV/bin/python"
 SITE_PACKAGES="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
@@ -305,7 +326,7 @@ GRAPH_SHA="$("$PYTHON" -c 'import collections,sys; from utils.accepted_bank impo
 [[ "$GRAPH_SHA" =~ ^[0-9a-f]{64}$ ]]
 
 mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/eval" "$RUN_DIR/wandb"
-export WANDB_ENTITY=aless-weber-eth WANDB_PROJECT=mixed-agents
+export WANDB_ENTITY WANDB_PROJECT
 export WANDB_RUN_ID="${RUN_PREFIX}_${BASELINES_REVISION:0:10}_${PHASE}_${SLURM_JOB_ID}"
 export WANDB_RESUME=never
 if [ "$PHASE" = smoke ]; then
@@ -374,6 +395,12 @@ printf '%s\n' \
     "protocol_terra_revision=$PROTOCOL_TERRA_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
     "terra_baselines_revision=$BASELINES_REVISION" \
+    "euler_user=$TERRA_EULER_USER" \
+    "euler_home_root=$TERRA_EULER_HOME_ROOT" \
+    "runtime_venv=$VENV" \
+    "wandb_entity=$WANDB_ENTITY" \
+    "wandb_project=$WANDB_PROJECT" \
+    "wandb_run_id=$WANDB_RUN_ID" \
     "training_bank_release_id=$EXPECTED_RELEASE" \
     "training_bank_archive_sha256=$BANK_SHA" \
     "training_bank_dataset_sha256=$BANK_DATASET_SHA" \

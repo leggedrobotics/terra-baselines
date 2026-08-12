@@ -9,7 +9,10 @@ fi
 PHASE="$1"
 case "$PHASE" in smoke|phase1) ;; *) echo "invalid phase '$PHASE'" >&2; exit 2 ;; esac
 SUBMIT="${SUBMIT:-0}"
-case "$SUBMIT" in 0|1) ;; *) echo "SUBMIT must be 0 or 1" >&2; exit 2 ;; esac
+case "$SUBMIT" in
+    0|stage|1) ;;
+    *) echo "SUBMIT must be 0, stage, or 1" >&2; exit 2 ;;
+esac
 
 # Arm selector. The no-mask arms run on the baseline's exact terra (the mask
 # terra computes the mask unconditionally, so flag-off there would still pay
@@ -39,6 +42,9 @@ case "$MASK_VARIANT" in
 esac
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=cluster/euler_account.sh
+source "$REPO/cluster/euler_account.sh"
+terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
 TERRA_REPO="${TERRA_REPO:-$TERRA_REPO_DEFAULT}"
 ARTIFACT_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_training_inputs_20260810
 ADMISSION_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_admission_20260810
@@ -59,10 +65,43 @@ MATERIALIZATION_RECEIPT_SHA=631fac8c3b78ff2c5a9e94ea4032244c9ef05dc6c984b603e431
 STATIC_RECEIPT_MANIFEST_SHA=9b16c391dbe0c108f4b79833f1940c5fc0ba31903a1e7edbfec1797aa53740d9
 EXPECTED_D4A_RECEIPT_SHA=6905300337310456a28ec6177a8c7d74f73892ebe052d11d29e9e0fa5bec7362
 EXPECTED_D4A_MANIFEST_SHA=cc969a69810b5ed0d14b85d58a0932ae26659a34686c4eadb760ae24b7cc87a4
-REMOTE_HOST="${REMOTE_HOST:-euler}"
-REMOTE_WORK=/cluster/home/lterenzi/codex_terra_edge_validation/$CAMPAIGN
-REMOTE_RUNS=/cluster/scratch/lterenzi/codex_terra_edge_runs/$CAMPAIGN/runs
-REMOTE_INPUTS=/cluster/scratch/lterenzi/codex_terra_edge_runs/$CAMPAIGN/inputs
+REMOTE_HOST="${REMOTE_HOST:-euler-$TERRA_EULER_USER}"
+REMOTE_WORK_ROOT="${TERRA_REMOTE_WORK_ROOT:-$TERRA_EULER_SCRATCH_ROOT/codex_terra_edge_validation}"
+REMOTE_RUN_ROOT="${TERRA_REMOTE_RUN_ROOT:-$TERRA_EULER_SCRATCH_ROOT/codex_terra_edge_runs}"
+REMOTE_WORK="$REMOTE_WORK_ROOT/$CAMPAIGN"
+REMOTE_RUNS="$REMOTE_RUN_ROOT/$CAMPAIGN/runs"
+REMOTE_INPUTS="$REMOTE_RUN_ROOT/$CAMPAIGN/inputs"
+REMOTE_VENV="${TERRA_REMOTE_VENV:-/cluster/project/rsl/lterenzi/terra_curriculum_20260730_c14bd7d_3ce0e84_py312_jax0426}"
+WANDB_ENTITY="${TERRA_WANDB_ENTITY:-aless-weber-eth}"
+WANDB_PROJECT="${TERRA_WANDB_PROJECT:-mixed-agents}"
+
+case "$REMOTE_HOST" in
+    ''|-*|*[!a-zA-Z0-9._@-]*)
+        echo "invalid REMOTE_HOST '$REMOTE_HOST'" >&2
+        exit 2
+        ;;
+esac
+for REMOTE_PATH in \
+    "$REMOTE_WORK_ROOT" "$REMOTE_RUN_ROOT" "$REMOTE_VENV"; do
+    case "$REMOTE_PATH" in
+        /cluster/*) ;;
+        *) echo "remote path must be absolute under /cluster: $REMOTE_PATH" >&2; exit 2 ;;
+    esac
+    case "$REMOTE_PATH" in
+        *[!a-zA-Z0-9_./-]*)
+            echo "remote path contains unsupported characters: $REMOTE_PATH" >&2
+            exit 2
+            ;;
+    esac
+done
+for WANDB_NAME in "$WANDB_ENTITY" "$WANDB_PROJECT"; do
+    case "$WANDB_NAME" in
+        ''|*[!a-zA-Z0-9_.-]*)
+            echo "invalid W&B entity/project '$WANDB_NAME'" >&2
+            exit 2
+            ;;
+    esac
+done
 
 test -z "$(git -C "$REPO" status --porcelain)" || {
     echo "terra-baselines must be committed and clean" >&2; exit 3;
@@ -193,34 +232,59 @@ REMOTE_TERRA="$REMOTE_WORK/runtime-terra/$RUNTIME_TERRA_REVISION/terra"
 echo "phase=$PHASE arm=$ARM_NAME baseline=reward_v2_scratch seed=$SEED updates=$([ "$PHASE" = smoke ] && echo 1 || echo 14000)"
 echo "terra_baselines_revision=$BASELINES_REVISION runtime_terra_revision=$RUNTIME_TERRA_REVISION"
 echo "d4a_receipt_sha256=$D4A_RECEIPT_SHA"
+echo "euler_user=$TERRA_EULER_USER remote_host=$REMOTE_HOST"
+echo "remote_work=$REMOTE_WORK remote_runs=$REMOTE_RUNS remote_venv=$REMOTE_VENV"
+echo "wandb_entity=$WANDB_ENTITY wandb_project=$WANDB_PROJECT"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: local contracts passed; no SSH, upload, W&B, or Slurm mutation"
     exit 0
 fi
 
-if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_SOURCE/REVISION'"; then
+remote() {
+    ssh -o BatchMode=yes "$REMOTE_HOST" "$@"
+}
+
+REMOTE_ID="$(remote 'id -un')"
+test "$REMOTE_ID" = "$TERRA_EULER_USER" || {
+    echo "remote account mismatch: expected $TERRA_EULER_USER, got $REMOTE_ID" >&2
+    exit 3
+}
+remote \
+    "test \"\$HOME\" = '$TERRA_EULER_HOME_ROOT' && test -w '$TERRA_EULER_SCRATCH_ROOT' && test -x '$REMOTE_VENV/bin/python'"
+HOME_USED_GB="$(remote lquota | "$REPO/cluster/lquota_home_used_gb.sh" "$TERRA_EULER_HOME_ROOT")"
+awk -v used="$HOME_USED_GB" 'BEGIN { exit !(used < 45.0) }' || {
+    echo "home quota launch gate failed: ${HOME_USED_GB} GB used" >&2
+    exit 3
+}
+
+if ! remote "test -e '$REMOTE_SOURCE'"; then
     PARTIAL="$REMOTE_WORK/.${BASELINES_REVISION}.partial.$$"
-    ssh "$REMOTE_HOST" "mkdir -p '$PARTIAL/terra-baselines'"
-    git -C "$REPO" archive --format=tar "$BASELINES_REVISION" | ssh "$REMOTE_HOST" "tar -xf - -C '$PARTIAL/terra-baselines'"
-    ssh "$REMOTE_HOST" "printf '%s\n' '$BASELINES_REVISION' > '$PARTIAL/terra-baselines/REVISION' && mv '$PARTIAL' '$REMOTE_WORK/$BASELINES_REVISION'"
+    remote "mkdir -p '$PARTIAL/terra-baselines'"
+    git -C "$REPO" archive --format=tar "$BASELINES_REVISION" | remote "tar -xf - -C '$PARTIAL/terra-baselines'"
+    remote "printf '%s\n' '$BASELINES_REVISION' > '$PARTIAL/terra-baselines/REVISION' && mv -T '$PARTIAL' '$REMOTE_WORK/$BASELINES_REVISION'"
 fi
-if ! ssh "$REMOTE_HOST" "test -f '$REMOTE_TERRA/REVISION'"; then
+if ! remote "test -e '$REMOTE_TERRA'"; then
     PARTIAL="$REMOTE_WORK/runtime-terra/.${RUNTIME_TERRA_REVISION}.partial.$$"
-    ssh "$REMOTE_HOST" "mkdir -p '$PARTIAL/terra'"
-    git -C "$TERRA_REPO" archive --format=tar "$RUNTIME_TERRA_REVISION" | ssh "$REMOTE_HOST" "tar -xf - -C '$PARTIAL/terra'"
-    ssh "$REMOTE_HOST" "printf '%s\n' '$RUNTIME_TERRA_REVISION' > '$PARTIAL/terra/REVISION' && mv '$PARTIAL' '$REMOTE_WORK/runtime-terra/$RUNTIME_TERRA_REVISION'"
+    remote "mkdir -p '$PARTIAL/terra'"
+    git -C "$TERRA_REPO" archive --format=tar "$RUNTIME_TERRA_REVISION" | remote "tar -xf - -C '$PARTIAL/terra'"
+    remote "printf '%s\n' '$RUNTIME_TERRA_REVISION' > '$PARTIAL/terra/REVISION' && mv -T '$PARTIAL' '$REMOTE_WORK/runtime-terra/$RUNTIME_TERRA_REVISION'"
 fi
-ssh "$REMOTE_HOST" "test \"\$(cat '$REMOTE_SOURCE/REVISION')\" = '$BASELINES_REVISION' && test \"\$(cat '$REMOTE_TERRA/REVISION')\" = '$RUNTIME_TERRA_REVISION'"
-ssh "$REMOTE_HOST" "mkdir -p '$REMOTE_INPUTS' '$REMOTE_RUNS'"
+remote "test \"\$(cat '$REMOTE_SOURCE/REVISION')\" = '$BASELINES_REVISION' && \
+    test -s '$REMOTE_SOURCE/train_mixed.py' && \
+    test -s '$REMOTE_SOURCE/scripts/euler_v8_v6_yolo_rv2/run.sbatch' && \
+    test -s '$REMOTE_SOURCE/scripts/run_v8_v6_yolo_rv2.sh' && \
+    test \"\$(cat '$REMOTE_TERRA/REVISION')\" = '$RUNTIME_TERRA_REVISION' && \
+    test -s '$REMOTE_TERRA/terra/state.py' && test -s '$REMOTE_TERRA/terra/config.py'"
+remote "mkdir -p '$REMOTE_INPUTS' '$REMOTE_RUNS'"
 
 upload() {
     local source="$1" destination="$2" expected_sha="$3"
-    if ! ssh "$REMOTE_HOST" "test -f '$destination'"; then
+    if ! remote "test -f '$destination'"; then
         local partial="$destination.partial.$$"
-        scp -q "$source" "$REMOTE_HOST:$partial"
-        ssh "$REMOTE_HOST" "test \"\$(sha256sum '$partial' | awk '{print \$1}')\" = '$expected_sha' && mv '$partial' '$destination'"
+        scp -q -o BatchMode=yes "$source" "$REMOTE_HOST:$partial"
+        remote "test \"\$(sha256sum '$partial' | awk '{print \$1}')\" = '$expected_sha' && mv -T '$partial' '$destination'"
     fi
-    ssh "$REMOTE_HOST" "test \"\$(sha256sum '$destination' | awk '{print \$1}')\" = '$expected_sha'"
+    remote "test \"\$(sha256sum '$destination' | awk '{print \$1}')\" = '$expected_sha'"
 }
 
 REMOTE_BANK="$REMOTE_INPUTS/treatment-bank-$BANK_SHA.tar.zst"
@@ -238,44 +302,60 @@ case "$PHASE" in
     smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; GPU_TYPE=rtx_3090 ;;
     phase1) PARTITION=gpuhe.24h; WALLTIME=23:45:00; GPU_TYPE=rtx_4090 ;;
 esac
+if [ "$SUBMIT" = stage ]; then
+    ASSOCIATIONS="$(remote "sacctmgr -n -P show assoc where user='$TERRA_EULER_USER' format=Account")"
+    printf '%s\n' "$ASSOCIATIONS" | grep -Eq '^%?gpuhe/'
+    remote "scontrol show partition '$PARTITION' -o | grep -q 'State=UP'"
+    remote "sinfo -h -p '$PARTITION' -o '%G' | grep -Eq 'gpu:nvidia_geforce_${GPU_TYPE}:([4-9]|[1-9][0-9]+)'"
+    echo "SUBMIT=stage: code and pinned inputs staged; Slurm association/partition/GPU inventory passed; no job or W&B mutation"
+    exit 0
+fi
+
 SMOKE_JOB_ID=none
 SMOKE_RUN=none
 if [ "$PHASE" = phase1 ]; then
     SMOKE_RUN="$REMOTE_RUNS/$BASELINES_REVISION/smoke/s$SEED/$ARM_NAME"
-    ssh "$REMOTE_HOST" "test -f '$SMOKE_RUN/smoke_validation.json' -a -f '$SMOKE_RUN/run_contract.env'"
-    ssh "$REMOTE_HOST" "python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))[\"passed\"] is True' '$SMOKE_RUN/smoke_validation.json'"
-    SMOKE_JOB_ID="$(ssh "$REMOTE_HOST" "awk -F= '\$1==\"slurm_job_id\" {print \$2}' '$SMOKE_RUN/run_contract.env'")"
+    remote "test -f '$SMOKE_RUN/smoke_validation.json' -a -f '$SMOKE_RUN/run_contract.env' && \
+        test \"\$(stat -c %U '$SMOKE_RUN/smoke_validation.json')\" = '$TERRA_EULER_USER' && \
+        test \"\$(stat -c %U '$SMOKE_RUN/run_contract.env')\" = '$TERRA_EULER_USER'"
+    remote "python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))[\"passed\"] is True' '$SMOKE_RUN/smoke_validation.json'"
+    SMOKE_JOB_ID="$(remote "awk -F= '\$1==\"slurm_job_id\" {print \$2}' '$SMOKE_RUN/run_contract.env'")"
     [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
-    SMOKE_STATE="$(ssh "$REMOTE_HOST" "sacct -n -X -P -j '$SMOKE_JOB_ID' --format=JobIDRaw,State | awk -F'|' -v id='$SMOKE_JOB_ID' '\$1==id {sub(/\\+.*/, \"\", \$2); print \$2}'")"
+    SMOKE_STATE="$(remote "sacct -n -X -P -j '$SMOKE_JOB_ID' --format=JobIDRaw,State | awk -F'|' -v id='$SMOKE_JOB_ID' '\$1==id {sub(/\\+.*/, \"\", \$2); print \$2}'")"
     test "$SMOKE_STATE" = COMPLETED
     for EXPECTED in \
         "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
         "terra_baselines_revision=$BASELINES_REVISION" \
-        "distance_artifact_sha256=$DISTANCE_SIDECAR_SHA"; do
+        "distance_artifact_sha256=$DISTANCE_SIDECAR_SHA" \
+        "euler_user=$TERRA_EULER_USER"; do
         KEY="${EXPECTED%%=*}" VALUE="${EXPECTED#*=}"
-        ssh "$REMOTE_HOST" "test \"\$(awk -F= -v key='$KEY' '\$1==key {print \$2}' '$SMOKE_RUN/run_contract.env')\" = '$VALUE'"
+        remote "test \"\$(awk -F= -v key='$KEY' '\$1==key {print \$2}' '$SMOKE_RUN/run_contract.env')\" = '$VALUE'"
     done
+    remote "python3 -c 'import netrc; assert netrc.netrc().authenticators(\"api.wandb.ai\")'" || {
+        echo "phase1 requires a W&B api.wandb.ai credential in the selected account's ~/.netrc" >&2
+        exit 3
+    }
 fi
 
 RUN_DIR="$REMOTE_RUNS/$BASELINES_REVISION/$PHASE/s$SEED/$ARM_NAME"
-ssh "$REMOTE_HOST" "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
 JOB_ID=""
 cleanup_new_job() {
     local status="$1"
     trap - ERR INT TERM
     set +e
     if [[ "$JOB_ID" =~ ^[0-9]+$ ]]; then
-        ssh "$REMOTE_HOST" "scancel -- '$JOB_ID'"
+        remote "scancel -- '$JOB_ID'"
     fi
     # rmdir is intentionally the only cleanup: non-empty evidence survives.
-    ssh "$REMOTE_HOST" "rmdir -- '$RUN_DIR'" || true
+    remote "rmdir -- '$RUN_DIR'" || true
     exit "$status"
 }
 trap 'cleanup_new_job $?' ERR
 trap 'cleanup_new_job 130' INT TERM
+remote "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
 
-EXPORTS="ALL,PHASE=$PHASE,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN,ARM_NAME=$ARM_NAME,ACTION_LOGIT_MASKING=$ACTION_LOGIT_MASKING"
-JOB_ID_RAW="$(ssh "$REMOTE_HOST" "cat '$REMOTE_SOURCE/scripts/euler_v8_v6_yolo_rv2/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --exclude='eu-g6-064' --job-name='terra-v6-yolo-rv2' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
+EXPORTS="ALL,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,VENV=$REMOTE_VENV,RUN_BASE=$REMOTE_RUNS,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,PHASE=$PHASE,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN,ARM_NAME=$ARM_NAME,ACTION_LOGIT_MASKING=$ACTION_LOGIT_MASKING"
+JOB_ID_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_v8_v6_yolo_rv2/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --exclude='eu-g6-064' --job-name='terra-v6-yolo-rv2' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
 JOB_ID="${JOB_ID_RAW%%;*}"
 [[ "$JOB_ID" =~ ^[0-9]+$ ]]
 trap - ERR INT TERM
