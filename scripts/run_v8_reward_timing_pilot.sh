@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# rv2p1_scratch: the reward_v2_scratch baseline with two contract changes and
+# nothing else. Architecture, batch shape, optimizer, entropy schedule, carry
+# channel, distance protocol and reward stage are byte-identical to
+# scripts/run_v8_r2_reward_v2.sh.
+#
+#   1. --reward_v2_timing_variant 1: reward-v2.1 timing. Undiscounted shaping
+#      (gamma_shape = 1.0) plus an explicit step cost of 3.6 (0.0080/step),
+#      replacing the implicit w*(1-gamma)*Phi dwell rent. Requires the terra
+#      runtime that carries env_cfg.reward_v2_timing_variant (branch
+#      experiment/v8-reward-timing-pilot-20260812).
+#   2. --config G-V8-CONTINUOUS-V3 / continuous_banded_v3: per-condition
+#      graduation with a cap on any single condition's sampling mass.
+set -euo pipefail
+
+if [ "$#" -ne 6 ]; then
+    echo "usage: run_v8_reward_timing_pilot.sh BANK_ROOT RUN_NAME UPDATES RUN_ROOT SIDECAR_SHA256 RESUME_CHECKPOINT_OR_NONE" >&2
+    exit 2
+fi
+
+BANK_ROOT="$1"
+RUN_NAME="$2"
+UPDATES="$3"
+RUN_ROOT="$4"
+SIDECAR_SHA256="$5"
+RESUME_CHECKPOINT="$6"
+[[ "$UPDATES" =~ ^[1-9][0-9]*$ ]] || {
+    echo "UPDATES must be positive" >&2
+    exit 2
+}
+[[ "$SIDECAR_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "SIDECAR_SHA256 must be lowercase SHA-256" >&2
+    exit 2
+}
+
+: "${TERRA_ROOT:?set TERRA_ROOT to the committed reward-timing Terra source}"
+: "${PROTOCOL_TERRA_REVISION:?set the immutable V8 bank protocol revision}"
+: "${SEED:?set the R2 system seed}"
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-python}"
+NUM_DEVICES="${NUM_DEVICES:-4}"
+NUM_ENVS_PER_DEVICE="${NUM_ENVS_PER_DEVICE:-512}"
+NUM_STEPS="${NUM_STEPS:-32}"
+NUM_MINIBATCHES="${NUM_MINIBATCHES:-32}"
+CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-500}"
+FINITE_CHECK_INTERVAL="${FINITE_CHECK_INTERVAL:-10}"
+LOG_TRAIN_INTERVAL="${LOG_TRAIN_INTERVAL:-10}"
+CACHE_CLEAR_INTERVAL="${CACHE_CLEAR_INTERVAL:-1000}"
+ENTROPY_SCHEDULE_STEPS="${ENTROPY_SCHEDULE_STEPS:-20000}"
+# 0 reproduces the frozen reward_v2 bit for bit; the arm runs 1.
+REWARD_V2_TIMING_VARIANT="${REWARD_V2_TIMING_VARIANT:-1}"
+TOTAL_TIMESTEPS=$((NUM_DEVICES * NUM_ENVS_PER_DEVICE * NUM_STEPS * UPDATES))
+
+RESUME_ARGS=()
+if [ "$RESUME_CHECKPOINT" != none ]; then
+    test -f "$RESUME_CHECKPOINT" || {
+        echo "resume checkpoint does not exist: $RESUME_CHECKPOINT" >&2
+        exit 2
+    }
+    RESUME_ARGS=(--resume_from "$RESUME_CHECKPOINT" --load_env_from_checkpoint)
+fi
+
+mkdir -p "$RUN_ROOT/checkpoints" "$RUN_ROOT/wandb"
+export PYTHONPATH="$TERRA_ROOT:$REPO${PYTHONPATH:+:$PYTHONPATH}"
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export WANDB_DIR="${WANDB_DIR:-$RUN_ROOT/wandb}"
+
+exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
+    --config G-V8-CONTINUOUS-V3 \
+    --machine "${MACHINE:-euler}" \
+    --accepted-bank-root "$BANK_ROOT" \
+    --accepted-bank-scope full \
+    --accepted-bank-sampler-profile continuous_banded_v3 \
+    --terra-revision "$PROTOCOL_TERRA_REVISION" \
+    --name "$RUN_NAME" \
+    --exact_run_name \
+    --seed "$SEED" \
+    --num_devices "$NUM_DEVICES" \
+    --num_envs_per_device "$NUM_ENVS_PER_DEVICE" \
+    --num_steps "$NUM_STEPS" \
+    --total_timesteps "$TOTAL_TIMESTEPS" \
+    --update_epochs 2 \
+    --num_minibatches "$NUM_MINIBATCHES" \
+    --lr 3e-4 \
+    --model_size medium \
+    --model_core mlp \
+    --map_encoder resnet_spatial_8x8_se_xattn \
+    --encoder_compute_dtype bfloat16 \
+    --attention_compute_dtype float32 \
+    --critic_hidden_dims 512,256 \
+    --resnet_stage_channels 24,48,64,96 \
+    --resnet_blocks_per_stage 2,2,3,3 \
+    --ent_schedule_start 0.15 \
+    --ent_schedule_end 0.02 \
+    --ent_schedule_steps "$ENTROPY_SCHEDULE_STEPS" \
+    --no_value_clip \
+    --flat_minibatch_shuffle \
+    --carry_work_observation \
+    --distance_protocol_id obstacle_geodesic_8_physical_global_v1 \
+    --distance_sidecar_sha256 "$SIDECAR_SHA256" \
+    --reward_stage reward_v2 \
+    --reward_v2_timing_variant "$REWARD_V2_TIMING_VARIANT" \
+    --fail_on_nonfinite \
+    --finite_check_interval "$FINITE_CHECK_INTERVAL" \
+    --log_train_interval "$LOG_TRAIN_INTERVAL" \
+    --log_eval_interval 0 \
+    --checkpoint_interval "$CHECKPOINT_INTERVAL" \
+    --cache_clear_interval "$CACHE_CLEAR_INTERVAL" \
+    --keep_checkpoint_history \
+    --checkpoint_dir "$RUN_ROOT/checkpoints" \
+    "${RESUME_ARGS[@]}"

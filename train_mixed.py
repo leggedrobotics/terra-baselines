@@ -447,6 +447,9 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         # D3: no parameter shapes change, but the sampling distribution
         # contract does — a resume must not silently flip masking.
         "action_logit_masking": False,
+        # Reward-v2.1 timing: same shapes, different reward. A resume must not
+        # silently change which reward the returns were fitted against.
+        "reward_v2_timing_variant": 0,
     }
     tuple_fields = (
         "critic_hidden_dims",
@@ -470,6 +473,9 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             # Only the head's presence is architectural; its weight may change.
             saved = float(saved) > 0.0
             current = float(current) > 0.0
+        elif field_name == "reward_v2_timing_variant":
+            saved = int(saved)
+            current = int(current)
         if saved != current:
             mismatches.append(
                 f"{field_name}: checkpoint={saved!r}, current={current!r}"
@@ -482,7 +488,8 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             "--critic_hidden_dims, --resnet_stage_channels, "
             "--resnet_blocks_per_stage, --flatten_reduce_channels, "
             "--attn_latent_queries, and --aux_coef values, and the "
-            "carry-work observation and action-logit-masking contracts."
+            "carry-work observation, action-logit-masking and reward-v2 "
+            "timing contracts."
         )
 
 
@@ -890,6 +897,10 @@ def _r2_protocol_receipt(config) -> dict | None:
         REWARD_V2_SHAPING_WEIGHT,
         REWARD_V2_STEP_COST_TOTAL,
         REWARD_V2_SUCCESS_BONUS,
+        REWARD_V2_TIMING_V21,
+        REWARD_V2_TIMING_V21_ID,
+        REWARD_V2_V21_SHAPING_GAMMA,
+        REWARD_V2_V21_STEP_COST_TOTAL,
     )
     from terra.env_generation.distance import REWARD_V2_DISTANCE_PROTOCOL_ID
     from terra.maps_buffer import LEGACY_DISTANCE_PROTOCOL_ID
@@ -903,6 +914,14 @@ def _r2_protocol_receipt(config) -> dict | None:
     if float(config.gamma) != float(REWARD_V2_POTENTIAL_GAMMA):
         raise ValueError("R2 PPO gamma must match the potential gamma")
     reward_protocol_id, distance_protocol_id = expected[config.reward_stage]
+    timing_variant = int(getattr(config, "reward_v2_timing_variant", 0))
+    v21 = timing_variant == int(REWARD_V2_TIMING_V21)
+    shaping_gamma = (
+        float(REWARD_V2_V21_SHAPING_GAMMA) if v21 else float(REWARD_V2_POTENTIAL_GAMMA)
+    )
+    step_cost_total = (
+        float(REWARD_V2_V21_STEP_COST_TOTAL) if v21 else float(REWARD_V2_STEP_COST_TOTAL)
+    )
     if config.distance_protocol_id != distance_protocol_id:
         raise ValueError(
             "R2 distance protocol mismatch: "
@@ -926,17 +945,22 @@ def _r2_protocol_receipt(config) -> dict | None:
         ),
         "carry_channel": "agent_states_8_normalized_carry_work",
         "carry_ledger_semantics": reward_protocol_id,
+        # The timing treatment travels with the receipt, so a resume that
+        # changed it would be caught by _validate_r2_resume_checkpoint.
+        "reward_v2_timing": REWARD_V2_TIMING_V21_ID if v21 else "baseline",
+        "reward_v2_timing_variant": timing_variant,
         "constants": {
             "distance_ref_m": float(REWARD_V2_DISTANCE_REF_M),
             "distance_bound": float(REWARD_V2_DISTANCE_BOUND),
             "potential_gamma": float(REWARD_V2_POTENTIAL_GAMMA),
+            "shaping_gamma": shaping_gamma,
             "success_bonus": float(REWARD_V2_SUCCESS_BONUS),
             "horizon_failure_penalty": float(
                 REWARD_V2_HORIZON_FAILURE_PENALTY
             ),
             "alpha": float(REWARD_V2_ALPHA),
             "beta": float(REWARD_V2_BETA),
-            "step_cost_total": float(REWARD_V2_STEP_COST_TOTAL),
+            "step_cost_total": step_cost_total,
             "shaping_weight": float(REWARD_V2_SHAPING_WEIGHT),
         },
     }
@@ -1334,6 +1358,9 @@ class MixedAgentTrainConfig:
     relocation_progress_mult: float | None = None
     # One global reward objective. Map-level rewards_type remains frozen.
     reward_stage: str = "dense_skill"
+    # Reward-v2.1 timing (terra REWARD_V2_TIMING_*): 0 is the frozen reward_v2,
+    # 1 shapes undiscounted and pays the pace through step_cost_total 3.6.
+    reward_v2_timing_variant: int = 0
     carry_work_observation: bool = False
     # D3: mask provably-ineffective actions out of the sampling distribution
     # (env supplies obs["action_mask"]; DO_NOTHING always stays valid).
@@ -1434,6 +1461,13 @@ class MixedAgentTrainConfig:
             )
         if self.reward_stage == "reward_v2" and not self.carry_work_observation:
             raise ValueError("reward_v2 requires --carry_work_observation")
+        if self.reward_v2_timing_variant not in (0, 1):
+            raise ValueError(
+                "reward_v2_timing_variant must be 0 (frozen reward_v2) or 1 "
+                f"(v2.1 timing), got {self.reward_v2_timing_variant!r}"
+            )
+        if self.reward_v2_timing_variant != 0 and self.reward_stage != "reward_v2":
+            raise ValueError("reward_v2_timing_variant applies only to reward_v2")
         if self.prepared_fork_from is not None and not self.carry_work_observation:
             raise ValueError("the R2 prepared fork requires --carry_work_observation")
         if self.reward_stage == "annealed_objective":
@@ -1584,12 +1618,21 @@ def _reward_stage_value(reward_stage: str) -> RewardStage:
         raise ValueError(f"unsupported reward_stage {reward_stage!r}") from exc
 
 
-def _overlay_env_reward_stage(env_params: EnvConfig, reward_stage: str) -> EnvConfig:
+def _overlay_env_reward_stage(
+    env_params: EnvConfig, reward_stage: str, timing_variant: int = 0
+) -> EnvConfig:
     """Apply the selected arm's reward stage to a restored environment config."""
     expected = _reward_stage_value(reward_stage)
-    updated = env_params._replace(reward_stage=expected)
+    updated = env_params._replace(
+        reward_stage=expected,
+        reward_v2_timing_variant=int(timing_variant),
+    )
     if int(np.asarray(updated.reward_stage).reshape(())) != int(expected):
         raise RuntimeError("failed to apply the selected reward stage")
+    if int(np.asarray(updated.reward_v2_timing_variant).reshape(())) != int(
+        timing_variant
+    ):
+        raise RuntimeError("failed to apply the selected reward timing variant")
     return updated
 
 
@@ -1941,7 +1984,9 @@ def make_mixed_agent_states(
 
     # The command-line treatment wins over a checkpoint's reward selector. The
     # mix itself is assigned from explicit host-side anneal state every update.
-    env_params = _overlay_env_reward_stage(env_params, config.reward_stage)
+    env_params = _overlay_env_reward_stage(
+        env_params, config.reward_stage, config.reward_v2_timing_variant
+    )
     env_params = env_params._replace(terminal_reward_mix=0.0)
 
     # Report the effective value after preset, CLI, and checkpoint precedence.
@@ -1950,6 +1995,10 @@ def make_mixed_agent_states(
         f"{float(env_params.relocation_progress_mult)}"
     )
     print(f"🎯 Reward stage (effective): {config.reward_stage}")
+    print(
+        "🎯 Reward-v2 timing variant (effective): "
+        f"{int(config.reward_v2_timing_variant)}"
+    )
 
     num_devices = config.num_devices
     num_envs_per_device = config.num_envs_per_device
@@ -4164,6 +4213,18 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--reward_v2_timing_variant",
+        type=int,
+        choices=(0, 1),
+        default=0,
+        help=(
+            "Reward-v2 timing treatment. 0 keeps the frozen reward_v2 "
+            "(discounted shaping, step cost 1.0); 1 adopts v2.1 timing: "
+            "undiscounted shaping plus an explicit step cost of 3.6, which "
+            "replaces the implicit w*(1-gamma)*Phi dwell rent."
+        ),
+    )
+    parser.add_argument(
         "--carry_work_observation",
         action="store_true",
         help="Consume normalized carry work from agent_states[..., 8].",
@@ -4569,6 +4630,7 @@ if __name__ == "__main__":
         config_name=args.config,
         relocation_progress_mult=relocation_progress_mult,
         reward_stage=args.reward_stage,
+        reward_v2_timing_variant=args.reward_v2_timing_variant,
         carry_work_observation=args.carry_work_observation,
         action_logit_masking=args.action_logit_masking,
         distance_protocol_id=args.distance_protocol_id,

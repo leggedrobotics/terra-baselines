@@ -157,12 +157,15 @@ def test_restored_environment_uses_selected_arm_reward_stage_only():
         num_envs_per_device=512,
     )
     control = train_mixed._overlay_env_reward_stage(restored, "dense_skill")
-    treatment = train_mixed._overlay_env_reward_stage(restored, "reward_v2")
+    treatment = train_mixed._overlay_env_reward_stage(restored, "reward_v2", 1)
 
     assert control.reward_stage == RewardStage.DENSE_SKILL
     assert treatment.reward_stage == RewardStage.REWARD_V2
+    # Both reward selectors are command-line treatments, so both are overlaid.
+    assert int(control.reward_v2_timing_variant) == 0
+    assert int(treatment.reward_v2_timing_variant) == 1
     for field in restored._fields:
-        if field != "reward_stage":
+        if field not in ("reward_stage", "reward_v2_timing_variant"):
             assert getattr(control, field) is getattr(restored, field)
             assert getattr(treatment, field) is getattr(restored, field)
 
