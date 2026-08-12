@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 import flax.linen as nn
-from typing import Sequence, Union
+from typing import Any, Sequence, Union
 from terra.actions import TrackedAction, WheeledAction
 from terra.env import TerraEnvBatch
 from functools import partial
@@ -14,6 +14,22 @@ MAP_ENCODER_ALIASES = {
     "resnet_delayed": "resnet_global_pool",
     "resnet_spatial_8x8": "resnet_spatial_8x8",
     "resnet_spatial_v2": "resnet_spatial_8x8",
+    # Behavior-based canonical name (AGENTS.md): the spatial 8x8 readout plus
+    # squeeze-excitation gating and derived/coordinate channels.
+    "resnet_spatial_8x8_se": "resnet_spatial_8x8_se",
+    # Version-style alias kept for compatibility; resolves to the canonical name.
+    "resnet_spatial_v3": "resnet_spatial_8x8_se",
+    # Behavior-based canonical name: the _se trunk plus an agent-conditioned
+    # cross-attention readout branch (F13).
+    "resnet_spatial_8x8_se_xattn": "resnet_spatial_8x8_se_xattn",
+    # Version-style alias kept for compatibility; resolves to the canonical name.
+    "resnet_spatial_v4": "resnet_spatial_8x8_se_xattn",
+    # Behavior-based canonical name: the _se_xattn encoder plus a token
+    # self-attention mixing stage over the 8x8 grid (F14). Identity-initialized
+    # so it is function-preserving when grown from a v3/v4 checkpoint.
+    "resnet_spatial_8x8_se_sa_xattn": "resnet_spatial_8x8_se_sa_xattn",
+    # Version-style alias kept for compatibility; resolves to the canonical name.
+    "resnet_spatial_v5": "resnet_spatial_8x8_se_sa_xattn",
 }
 
 
@@ -26,6 +42,40 @@ def canonical_map_encoder(name: str) -> str:
         raise ValueError(
             f"Unsupported map_encoder={name!r}. Expected one of: {choices}."
         ) from error
+
+
+def _config_option(config, name: str, default):
+    """Read an optional config field from dict-like or dataclass configs.
+
+    Attribute-style access is tried first (dataclasses, and the dict subclasses
+    with ``__getattr__ = __getitem__`` used in tests). A plain ``dict`` has no
+    such attribute and raises ``AttributeError``, so fall back to subscript
+    access. Missing fields and stored ``None`` both resolve to ``default``.
+    """
+    try:
+        value = getattr(config, name)
+    except (AttributeError, KeyError):
+        try:
+            value = config[name]
+        except (TypeError, KeyError, IndexError):
+            return default
+    return value if value is not None else default
+
+
+def _scaled_lecun_normal(scale: float):
+    """Return a lecun_normal initializer scaled by ``scale``.
+
+    A scale of exactly 0 keeps the historical zero initializer, which preserves
+    the v5 identity-at-init contract and existing checkpoint trees.
+    """
+    if scale == 0.0:
+        return nn.initializers.zeros
+    base_init = nn.initializers.lecun_normal()
+
+    def init(key, shape, dtype=jnp.float32):
+        return scale * base_init(key, shape, dtype)
+
+    return init
 
 
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
@@ -68,6 +118,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             "resnet_stage_channels": (24, 48, 64, 96),
             "resnet_blocks_per_stage": (1, 2, 2, 2),
             "resnet_dense_layers": (192, 160),
+            "resnet_attn_qkv": 96,
+            "resnet_attn_out": 160,
             "hidden_dim_pi": (160, 48),
             "hidden_dim_v": (160, 48, 1),
             "intermediate_mlp_dim": 160,
@@ -84,6 +136,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             "resnet_stage_channels": (32, 64, 96, 128),
             "resnet_blocks_per_stage": (2, 2, 3, 3),
             "resnet_dense_layers": (256, 192),
+            "resnet_attn_qkv": 128,
+            "resnet_attn_out": 192,
             "hidden_dim_pi": (192, 64),
             "hidden_dim_v": (192, 64, 1),
             "intermediate_mlp_dim": 192,
@@ -93,6 +147,139 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             "transformer_num_heads": 8,
             "transformer_ffn_dim": 512,
         }
+
+    # Optional critic-head width override (F4). When unset the model_size preset
+    # (or the module default for "base") is left untouched.
+    critic_hidden_dims = _config_option(config, "critic_hidden_dims", None)
+    if critic_hidden_dims is not None:
+        model_kwargs["hidden_dim_v"] = tuple(int(f) for f in critic_hidden_dims) + (1,)
+        print(f"critic_hidden_dims override -> hidden_dim_v = {model_kwargs['hidden_dim_v']}")
+
+    # Optional spatial-ResNet stage overrides (F15). When set they replace the
+    # model_size preset's stage layout (or the module default for "base"), e.g.
+    # a 5-stage (16,32,48,64,64)/(1,1,2,2,2) config keeps 128x128 inputs at an
+    # 8x8 readout. None keeps the preset -> default runs stay bit-identical.
+    resnet_stage_channels = _config_option(config, "resnet_stage_channels", None)
+    if resnet_stage_channels is not None:
+        model_kwargs["resnet_stage_channels"] = tuple(int(f) for f in resnet_stage_channels)
+        print(
+            f"resnet_stage_channels override -> {model_kwargs['resnet_stage_channels']}"
+        )
+    resnet_blocks_per_stage = _config_option(config, "resnet_blocks_per_stage", None)
+    if resnet_blocks_per_stage is not None:
+        model_kwargs["resnet_blocks_per_stage"] = tuple(
+            int(f) for f in resnet_blocks_per_stage
+        )
+        print(
+            f"resnet_blocks_per_stage override -> {model_kwargs['resnet_blocks_per_stage']}"
+        )
+
+    # Encoder mixed-precision compute dtype (F3). Default float32 keeps the
+    # existing param tree and numerics identical.
+    encoder_compute_dtype_name = _config_option(config, "encoder_compute_dtype", "float32")
+    if encoder_compute_dtype_name not in ("float32", "bfloat16"):
+        raise ValueError(
+            f"Unsupported encoder_compute_dtype={encoder_compute_dtype_name!r}. "
+            "Expected 'float32' or 'bfloat16'."
+        )
+    if encoder_compute_dtype_name == "bfloat16" and map_encoder in (
+        "atari",
+        "resnet_global_pool",
+    ):
+        raise ValueError(
+            "encoder_compute_dtype='bfloat16' is only supported for the spatial "
+            f"ResNet encoders, not map_encoder={map_encoder!r}."
+        )
+    encoder_compute_dtype = (
+        jnp.bfloat16 if encoder_compute_dtype_name == "bfloat16" else jnp.float32
+    )
+
+    # Attention mixed-precision escape hatch (F16). Default "encoder" preserves
+    # the current v4/v5 behavior; "float32" lets cross-attention and token mixer
+    # logits/softmax/projections run in f32 while the conv trunk stays bf16.
+    attention_compute_dtype_name = _config_option(
+        config, "attention_compute_dtype", "encoder"
+    )
+    if attention_compute_dtype_name not in ("encoder", "float32", "bfloat16"):
+        raise ValueError(
+            f"Unsupported attention_compute_dtype={attention_compute_dtype_name!r}. "
+            "Expected 'encoder', 'float32', or 'bfloat16'."
+        )
+    attention_encoders = (
+        "resnet_spatial_8x8_se_xattn",
+        "resnet_spatial_8x8_se_sa_xattn",
+    )
+    if attention_compute_dtype_name != "encoder" and map_encoder not in attention_encoders:
+        raise ValueError(
+            "attention_compute_dtype only applies to the v4/v5 attention "
+            f"encoders, not map_encoder={map_encoder!r}."
+        )
+    if attention_compute_dtype_name == "encoder":
+        attention_compute_dtype = encoder_compute_dtype
+    else:
+        attention_compute_dtype = (
+            jnp.bfloat16
+            if attention_compute_dtype_name == "bfloat16"
+            else jnp.float32
+        )
+
+    token_mixer_residual_init_scale = float(
+        _config_option(config, "token_mixer_residual_init_scale", 0.0)
+    )
+    if token_mixer_residual_init_scale < 0.0:
+        raise ValueError(
+            "token_mixer_residual_init_scale must be >= 0, "
+            f"got {token_mixer_residual_init_scale}."
+        )
+    if (
+        token_mixer_residual_init_scale != 0.0
+        and map_encoder != "resnet_spatial_8x8_se_sa_xattn"
+    ):
+        raise ValueError(
+            "token_mixer_residual_init_scale only applies to "
+            "map_encoder='resnet_spatial_8x8_se_sa_xattn' "
+            f"(resnet_spatial_v5), not map_encoder={map_encoder!r}."
+        )
+
+    # V6 readout block (spatial ResNet encoders only). Defaults reproduce the
+    # v3/v4/v5 param trees exactly, so existing checkpoints keep restoring.
+    spatial_encoders = (
+        "resnet_spatial_8x8",
+        "resnet_spatial_8x8_se",
+        "resnet_spatial_8x8_se_xattn",
+        "resnet_spatial_8x8_se_sa_xattn",
+    )
+    flatten_reduce_channels = _config_option(config, "flatten_reduce_channels", None)
+    if flatten_reduce_channels is not None:
+        flatten_reduce_channels = int(flatten_reduce_channels)
+        if flatten_reduce_channels < 1:
+            raise ValueError(
+                "flatten_reduce_channels must be >= 1, "
+                f"got {flatten_reduce_channels}."
+            )
+        if map_encoder not in spatial_encoders:
+            raise ValueError(
+                "flatten_reduce_channels only applies to the spatial ResNet "
+                f"encoders, not map_encoder={map_encoder!r}."
+            )
+        print(f"flatten_reduce_channels -> {flatten_reduce_channels}")
+    attn_latent_queries = int(_config_option(config, "attn_latent_queries", 4))
+    if attn_latent_queries < 1:
+        raise ValueError(
+            f"attn_latent_queries must be >= 1, got {attn_latent_queries}."
+        )
+    if attn_latent_queries != 4 and map_encoder not in attention_encoders:
+        raise ValueError(
+            "attn_latent_queries only applies to the v4/v5 attention encoders, "
+            f"not map_encoder={map_encoder!r}."
+        )
+    # The dense per-cell aux head exists exactly when its loss is trained.
+    use_aux_decoder = float(_config_option(config, "aux_coef", 0.0)) > 0.0
+    if use_aux_decoder and map_encoder not in spatial_encoders:
+        raise ValueError(
+            "aux_coef > 0 requires a spatial ResNet encoder (the aux decoder "
+            f"reads the 8x8 feature grid), not map_encoder={map_encoder!r}."
+        )
 
     model = SimplifiedCoupledCategoricalNet(
         num_prev_actions=config["num_prev_actions"],
@@ -104,6 +291,15 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         action_type=env.batch_cfg.action_type,
         model_core=model_core,
         map_encoder=map_encoder,
+        encoder_compute_dtype=encoder_compute_dtype,
+        attention_compute_dtype=attention_compute_dtype,
+        token_mixer_residual_init_scale=token_mixer_residual_init_scale,
+        carry_work_observation=bool(
+            _config_option(config, "carry_work_observation", False)
+        ),
+        attn_latent_queries=attn_latent_queries,
+        flatten_reduce_channels=flatten_reduce_channels,
+        use_aux_decoder=use_aux_decoder,
         **model_kwargs,
     )
 
@@ -148,7 +344,20 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     ]
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
-    params = model.init(rng, obs)
+    # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
+    # Euler 3090s (CUDNN_STATUS_EXECUTION_FAILED, jobs 10307312/10307751) and
+    # placement is irrelevant here — values are PRNG-identical and training
+    # replicates params to devices before the first update. Needs
+    # JAX_PLATFORMS to include cpu (e.g. "cuda,cpu"); if the cpu backend is
+    # unavailable, fall back to the default device rather than crash.
+    try:
+        host = jax.devices("cpu")[0]
+    except RuntimeError:
+        print("model.init: no cpu backend available, initializing on default device")
+        params = model.init(rng, obs)
+    else:
+        with jax.default_device(host):
+            params = model.init(rng, obs)
 
     print(f"Model: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
     return model, params
@@ -228,6 +437,7 @@ class AgentStateNet(nn.Module):
     loaded_max: int
     agent_types_max: int  # Maximum agent type value (0..agent_types_max), e.g., 2 includes skidsteer
     mlp_use_layernorm: bool
+    carry_work_observation: bool = False
     num_embedding_features: int = 8
     hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
     hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
@@ -267,12 +477,20 @@ class AgentStateNet(nn.Module):
         )
 
     def __call__(self, agent_state_obs: Array):
-        # Per-agent feature contains: [pos_x, pos_y, angle_base, angle_cabin, wheel_angle, loaded, agent_type, shovel_lifted]
+        # R2 appends normalized reward-bearing carry work at index 8. The
+        # legacy path ignores it so the compact-u20 parent remains loadable.
         x_one_hot = agent_state_obs[..., 0:2].astype(dtype=jnp.int32)  # pos_base (x, y)
         x_two_hot = agent_state_obs[..., 2:5].astype(dtype=jnp.int32)  # angle_base, angle_cabin, wheel_angle
         x_loaded = agent_state_obs[..., [5]].astype(dtype=jnp.int32)   # loaded
         x_agent_type = agent_state_obs[..., [6]].astype(dtype=jnp.int32)  # agent_type
         x_shovel_lifted = agent_state_obs[..., [7]].astype(dtype=jnp.int32)  # shovel_lifted
+
+        # Flax Embed returns NaNs for high out-of-range indices. Env boundary
+        # states can expose exact-edge positions, and inactive agents may carry
+        # sentinel values, so clip discrete observations at the model boundary.
+        x_one_hot = jnp.clip(x_one_hot, 0, self.num_embeddings - 1)
+        x_two_hot = jnp.clip(x_two_hot, 0, self.num_embeddings - 1)
+        x_agent_type = jnp.clip(x_agent_type, 0, self.agent_types_max)
 
         # Process embeddings
         x_one_hot = self.embedding_1(x_one_hot)
@@ -288,7 +506,16 @@ class AgentStateNet(nn.Module):
         x_shovel_lifted = normalize(x_shovel_lifted, 0, 1)  # Binary feature (0 or 1)
         
         # Combine continuous features
-        x_continuous = jnp.concatenate([x_loaded, x_shovel_lifted], axis=-1)
+        continuous = [x_loaded, x_shovel_lifted]
+        if self.carry_work_observation:
+            if agent_state_obs.shape[-1] < 9:
+                raise ValueError(
+                    "carry_work_observation requires agent state width >= 9"
+                )
+            continuous.append(
+                agent_state_obs[..., [8]].astype(dtype=jnp.float32)
+            )
+        x_continuous = jnp.concatenate(continuous, axis=-1)
         x_continuous = self.mlp_continuous(x_continuous)
         
         # Process agent type embedding
@@ -385,6 +612,9 @@ class ResidualMapBlock(nn.Module):
 
     features: int
     strides: tuple[int, int] = (1, 1)
+    use_se: bool = False
+    se_reduction: int = 4
+    compute_dtype: Any = jnp.float32
 
     @nn.compact
     def __call__(self, x):
@@ -395,16 +625,38 @@ class ResidualMapBlock(nn.Module):
             strides=self.strides,
             padding="SAME",
             use_bias=False,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
         )(x)
-        x = nn.LayerNorm()(x)
+        x = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
         x = nn.relu(x)
         x = nn.Conv(
             features=self.features,
             kernel_size=(3, 3),
             padding="SAME",
             use_bias=False,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
         )(x)
-        x = nn.LayerNorm()(x)
+        x = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
+
+        if self.use_se:
+            # Squeeze-and-excitation gate: recalibrate channels using a global
+            # descriptor before the residual add (residual is post-relu >= 0).
+            se = jnp.mean(x, axis=(1, 2))
+            se = nn.Dense(
+                features=self.features // self.se_reduction,
+                dtype=self.compute_dtype,
+                param_dtype=jnp.float32,
+            )(se)
+            se = nn.relu(se)
+            se = nn.Dense(
+                features=self.features,
+                dtype=self.compute_dtype,
+                param_dtype=jnp.float32,
+            )(se)
+            se = nn.sigmoid(se)
+            x = x * se[:, None, None, :]
 
         if residual.shape[-1] != self.features or self.strides != (1, 1):
             residual = nn.Conv(
@@ -413,8 +665,12 @@ class ResidualMapBlock(nn.Module):
                 strides=self.strides,
                 padding="SAME",
                 use_bias=False,
+                dtype=self.compute_dtype,
+                param_dtype=jnp.float32,
             )(residual)
-            residual = nn.LayerNorm()(residual)
+            residual = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(
+                residual
+            )
 
         return nn.relu(x + residual)
 
@@ -446,22 +702,185 @@ class GlobalPoolMapResNet(nn.Module):
         return nn.Dense(features=128)(x)
 
 
+class _TokenSelfAttentionBlock(nn.Module):
+    """Pre-norm residual self-attention block over the 8x8 map tokens (F14).
+
+    ``x = x + Attn(LN(x))`` then ``x = x + MLP(LN(x))``. By default both
+    residual contributions are exactly zero at init, so the block is the
+    identity function at init and the mixing stage is function-preserving when
+    grown from a v3/v4 checkpoint. ``residual_init_scale`` can optionally make
+    those residual projections small but nonzero so gradients reach the inner
+    attention/MLP params immediately.
+
+    Default zero-init detail: flax 0.8.2's
+    ``MultiHeadDotProductAttention`` shares one ``kernel_init`` across its
+    q/k/v/out ``DenseGeneral`` layers (there is no ``out_kernel_init``), and
+    ``DenseGeneral`` flattens every kernel to 2D before calling the initializer,
+    so the output projection cannot be zeroed in isolation inside the MHA. We
+    therefore keep the attention fully live and use an explicit output
+    ``Dense``: with the default zero initializer it forces the whole attention
+    residual to exactly zero (identity), while the live q/k/v/value path means
+    that once this output kernel is trained or perturbed, token mixing
+    propagates. The MLP's second ``Dense`` uses the same residual initializer
+    (biases are zero-init by default). All submodules run in the attention
+    compute dtype with float32 params (bf16 path per F3).
+    """
+
+    num_heads: int
+    qkv_features: int
+    compute_dtype: Any = jnp.float32
+    residual_init_scale: float = 0.0
+
+    @nn.compact
+    def __call__(self, x):
+        channels = x.shape[-1]
+        residual_kernel_init = _scaled_lecun_normal(float(self.residual_init_scale))
+
+        h = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
+        attn = nn.MultiHeadDotProductAttention(
+            num_heads=self.num_heads,
+            qkv_features=self.qkv_features,
+            out_features=channels,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(h)
+        # Default zero output projection -> attention residual is 0 at init.
+        attn = nn.Dense(
+            features=channels,
+            kernel_init=residual_kernel_init,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(attn)
+        x = x + attn
+
+        h = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
+        h = nn.Dense(
+            features=2 * channels,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(h)
+        h = nn.gelu(h)
+        h = nn.Dense(
+            features=channels,
+            kernel_init=residual_kernel_init,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(h)
+        x = x + h
+        return x
+
+
+def _upsample_nearest_2x(x):
+    """Nearest-neighbour 2x upsample of a [B, H, W, C] grid."""
+    return jnp.repeat(jnp.repeat(x, 2, axis=1), 2, axis=2)
+
+
+class _PerCellAuxDecoder(nn.Module):
+    """Per-cell auxiliary decode head over the final 8x8 feature grid (V6).
+
+    Decodes the 8x8xC grid back up to 32x32 and emits four per-cell logits in
+    the order ``(remaining_dig, dump_deficit, dumpability, obstacle)``. It gives
+    the encoder a dense supervised signal (the measured failure is rank-6
+    signal starvation at the 160-d exit, see V8_ARCH_SCALING_DIAGNOSIS), and it
+    doubles as the bandwidth test for the 8x8 exit: sub-cell layout must be
+    recoverable from each cell's channels.
+
+    The head is computed on every forward and published with ``sow``. Callers
+    that do not pass ``mutable=["intermediates"]`` never read it, so XLA drops
+    it from the rollout graph while the parameter tree stays the same either
+    way. Params are float32; compute follows the encoder dtype and the logits
+    are cast back to float32 for the loss.
+    """
+
+    compute_dtype: Any = jnp.float32
+
+    @nn.compact
+    def __call__(self, feature_grid):
+        x = nn.Conv(
+            features=64,
+            kernel_size=(1, 1),
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(feature_grid)
+        x = nn.relu(x)
+        x = _upsample_nearest_2x(x)
+        x = nn.Conv(
+            features=32,
+            kernel_size=(3, 3),
+            padding="SAME",
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(x)
+        x = nn.relu(x)
+        x = _upsample_nearest_2x(x)
+        x = nn.Conv(
+            features=4,
+            kernel_size=(1, 1),
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(x)
+        return x.astype(jnp.float32)
+
+
 class Spatial8x8MapResNet(nn.Module):
-    """Residual map encoder with a flattened 8x8 spatial readout."""
+    """Residual map encoder with a flattened 8x8 spatial readout.
+
+    When ``use_xattn`` is set (F13) the flatten readout is augmented with an
+    agent-conditioned cross-attention branch that reads the final 8x8 feature
+    grid as 64 tokens. The flatten path is left byte-identical to the non-xattn
+    encoder; the attention branch is concatenated in only before the final dense
+    projection so the encoder output dim (``dense_layers[-1]``) is unchanged.
+
+    When ``use_token_mixer`` is set (F14, requires ``use_xattn``) the 8x8xC grid
+    is viewed as 64 tokens, the learned positional table is added ONCE here (the
+    cross-attention readout then reuses the mixed tokens WITHOUT re-adding
+    position), and ``mixer_blocks`` identity-initialized pre-norm self-attention
+    blocks let the tokens interact before BOTH readouts consume them. The mixer
+    is the identity at init, so v4 param trees/numerics are unchanged when it is
+    off and warm-starting from v3/v4 checkpoints is function-preserving.
+
+    The V6 readout block adds three independent knobs, all defaulting to the
+    historical behavior so existing checkpoints keep restoring unchanged:
+    ``flatten_reduce_channels`` shrinks the grid with a 1x1 conv before the
+    flatten readout (the flatten Dense is 41% of the compact params but gets
+    2-3% of the encoder gradient), ``attn_latent_queries`` widens the
+    cross-attention readout, and ``use_aux_decoder`` attaches the dense
+    per-cell decode head.
+    """
 
     stage_channels: Sequence[int] = (16, 32, 48, 64)
     blocks_per_stage: Sequence[int] = (1, 1, 2, 2)
     dense_layers: Sequence[int] = (128, 128)
+    use_se: bool = False
+    compute_dtype: Any = jnp.float32
+    attention_compute_dtype: Any = None
+    use_xattn: bool = False
+    attn_qkv: int = 64
+    attn_out: int = 128
+    attn_num_heads: int = 4
+    attn_latent_queries: int = 4
+    use_token_mixer: bool = False
+    mixer_blocks: int = 2
+    token_mixer_residual_init_scale: float = 0.0
+    flatten_reduce_channels: int | None = None
+    use_aux_decoder: bool = False
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x, agent_embedding=None):
+        attention_dtype = (
+            self.compute_dtype
+            if self.attention_compute_dtype is None
+            else self.attention_compute_dtype
+        )
         x = nn.Conv(
             features=self.stage_channels[0],
             kernel_size=(3, 3),
             padding="SAME",
             use_bias=False,
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
         )(x)
-        x = nn.LayerNorm()(x)
+        x = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
         x = nn.relu(x)
 
         # Keep the first residual stage at full resolution so narrow map
@@ -471,12 +890,177 @@ class Spatial8x8MapResNet(nn.Module):
         ):
             for block in range(num_blocks):
                 strides = (2, 2) if stage > 0 and block == 0 else (1, 1)
-                x = ResidualMapBlock(features=features, strides=strides)(x)
+                x = ResidualMapBlock(
+                    features=features,
+                    strides=strides,
+                    use_se=self.use_se,
+                    compute_dtype=self.compute_dtype,
+                )(x)
 
-        x = x.reshape((x.shape[0], -1))
+        # Keep the final 8x8xC grid around for the optional readouts/mixer.
+        feature_grid = x
+        xattn_feature_grid = feature_grid
+
+        # F14 token self-attention mixer. View the grid as 64 tokens, add the
+        # learned positional table ONCE here, run pre-norm self-attention blocks
+        # so the tokens interact, then reshape back so BOTH readouts consume the
+        # mixed grid. The cross-attention readout must not re-add position in
+        # this mode (it is already applied here). With the default residual
+        # init scale, the blocks contribute exactly zero at init, so the mixed
+        # grid equals ``feature_grid`` (positional table is zero-init) and the
+        # encoder matches the non-mixer (v4) path bit-for-bit.
+        if self.use_token_mixer:
+            batch = feature_grid.shape[0]
+            channels = feature_grid.shape[-1]
+            tokens = feature_grid.reshape((batch, -1, channels)).astype(
+                attention_dtype
+            )
+            pos_embed = self.param(
+                "attn_pos_embed",
+                nn.initializers.zeros,
+                (tokens.shape[1], channels),
+                jnp.float32,
+            )
+            tokens = tokens + pos_embed.astype(attention_dtype)
+            for i in range(self.mixer_blocks):
+                tokens = _TokenSelfAttentionBlock(
+                    num_heads=self.attn_num_heads,
+                    qkv_features=self.attn_qkv,
+                    compute_dtype=attention_dtype,
+                    residual_init_scale=self.token_mixer_residual_init_scale,
+                    name=f"token_mixer_{i}",
+                )(tokens)
+            mixed_grid = tokens.reshape(feature_grid.shape)
+            xattn_feature_grid = mixed_grid
+            feature_grid = mixed_grid.astype(self.compute_dtype)
+
+        # V6 dense per-cell supervision, off the same (mixed) grid both readouts
+        # consume. ``sow`` is a no-op unless the caller asks for the
+        # "intermediates" collection, so only the PPO loss pays for it.
+        if self.use_aux_decoder:
+            # The aux head runs in float32 regardless of the encoder dtype: its
+            # convs are tiny (no measurable cost), the BCE targets prefer f32,
+            # and eager bf16 init of these convs tripped
+            # CUDNN_STATUS_EXECUTION_FAILED on Euler 3090s (job 10307312).
+            self.sow(
+                "intermediates",
+                "aux_logits",
+                _PerCellAuxDecoder(compute_dtype=jnp.float32, name="aux_decoder")(
+                    feature_grid.astype(jnp.float32)
+                ),
+            )
+
+        # Flatten readout (unchanged from the non-xattn encoder). V6 optionally
+        # shrinks the channel axis with a 1x1 conv first, so the flatten Dense
+        # reads 8*8*flatten_reduce_channels rows instead of 8*8*C; the xattn
+        # branch and the aux head still see the full-width grid.
+        h = feature_grid
+        if self.flatten_reduce_channels is not None:
+            h = nn.Conv(
+                features=self.flatten_reduce_channels,
+                kernel_size=(1, 1),
+                use_bias=False,
+                dtype=self.compute_dtype,
+                param_dtype=jnp.float32,
+            )(h)
+            h = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(h)
+            h = nn.relu(h)
+        h = h.reshape((h.shape[0], -1))
         for features in self.dense_layers[:-1]:
-            x = nn.relu(nn.Dense(features=features)(x))
-        return nn.Dense(features=self.dense_layers[-1])(x)
+            h = nn.relu(
+                nn.Dense(
+                    features=features,
+                    dtype=self.compute_dtype,
+                    param_dtype=jnp.float32,
+                )(h)
+            )
+
+        if self.use_xattn:
+            attn_branch = self._cross_attention_readout(
+                xattn_feature_grid,
+                agent_embedding,
+                add_pos_embed=not self.use_token_mixer,
+            )
+            h = jnp.concatenate((h, attn_branch), axis=-1)
+
+        return nn.Dense(
+            features=self.dense_layers[-1],
+            dtype=self.compute_dtype,
+            param_dtype=jnp.float32,
+        )(h)
+
+    def _cross_attention_readout(self, feature_grid, agent_embedding, add_pos_embed=True):
+        """Agent-conditioned cross-attention over the 8x8 feature grid (F13).
+
+        Tokens are the 64 grid cells (dim C) plus a learned positional table.
+        ``1 + attn_latent_queries`` queries attend over them: one projected from
+        the active agent's embedding and ``attn_latent_queries`` learned latent
+        queries (4 historically). Attention submodules run in
+        ``attention_compute_dtype`` with float32 params (bf16 path per F3).
+
+        ``add_pos_embed`` adds the learned positional table here (v4). With the
+        F14 token mixer the table is applied once before the mixer instead, so
+        the readout is called with ``add_pos_embed=False`` and simply reuses the
+        already-positioned, mixed tokens (the ``attn_pos_embed`` param keeps the
+        same name/shape either way, so v4 checkpoints stay valid).
+        """
+        compute_dtype = (
+            self.compute_dtype
+            if self.attention_compute_dtype is None
+            else self.attention_compute_dtype
+        )
+        batch = feature_grid.shape[0]
+        channels = feature_grid.shape[-1]
+
+        # Tokens: [B, 64, C] from the 8x8 grid (+ learned positional embedding
+        # unless it was already applied before the token mixer).
+        tokens = feature_grid.reshape((batch, -1, channels)).astype(compute_dtype)
+        num_tokens = tokens.shape[1]
+        if add_pos_embed:
+            pos_embed = self.param(
+                "attn_pos_embed",
+                nn.initializers.zeros,
+                (num_tokens, channels),
+                jnp.float32,
+            )
+            tokens = tokens + pos_embed.astype(compute_dtype)
+        tokens = nn.LayerNorm(dtype=compute_dtype, param_dtype=jnp.float32)(tokens)
+
+        # Queries: active-agent projection + N learned latent vectors -> [B, 1+N, Q].
+        num_latent_queries = self.attn_latent_queries
+        agent_query = nn.Dense(
+            features=self.attn_qkv,
+            dtype=compute_dtype,
+            param_dtype=jnp.float32,
+        )(agent_embedding.astype(compute_dtype))[:, None, :]
+        latent_queries = self.param(
+            "attn_latent_queries",
+            nn.initializers.lecun_normal(),
+            (num_latent_queries, self.attn_qkv),
+            jnp.float32,
+        )
+        latent_queries = jnp.broadcast_to(
+            latent_queries.astype(compute_dtype)[None],
+            (batch, num_latent_queries, self.attn_qkv),
+        )
+        queries = jnp.concatenate((agent_query, latent_queries), axis=1)
+        queries = nn.LayerNorm(dtype=compute_dtype, param_dtype=jnp.float32)(queries)
+
+        attended = nn.MultiHeadDotProductAttention(
+            num_heads=self.attn_num_heads,
+            qkv_features=self.attn_qkv,
+            out_features=self.attn_qkv,
+            dtype=compute_dtype,
+            param_dtype=jnp.float32,
+        )(queries, tokens)
+        attended = attended.reshape((batch, -1))
+        return nn.relu(
+            nn.Dense(
+                features=self.attn_out,
+                dtype=compute_dtype,
+                param_dtype=jnp.float32,
+            )(attended)
+        )
 
 
 @jax.jit
@@ -523,6 +1107,14 @@ class MapsNet(nn.Module):
     resnet_stage_channels: Sequence[int] = (16, 32, 48, 64)
     resnet_blocks_per_stage: Sequence[int] = (1, 1, 2, 2)
     resnet_dense_layers: Sequence[int] = (128, 128)
+    resnet_attn_qkv: int = 64
+    resnet_attn_out: int = 128
+    encoder_compute_dtype: Any = jnp.float32
+    attention_compute_dtype: Any = None
+    token_mixer_residual_init_scale: float = 0.0
+    attn_latent_queries: int = 4
+    flatten_reduce_channels: int | None = None
+    use_aux_decoder: bool = False
 
     def setup(self) -> None:
         encoder_type = canonical_map_encoder(self.encoder_type)
@@ -535,20 +1127,58 @@ class MapsNet(nn.Module):
         if encoder_type == "resnet_global_pool":
             self.cnn = GlobalPoolMapResNet()
             return
-        if encoder_type == "resnet_spatial_8x8":
+        if encoder_type in (
+            "resnet_spatial_8x8",
+            "resnet_spatial_8x8_se",
+            "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
+        ):
+            use_se = encoder_type in (
+                "resnet_spatial_8x8_se",
+                "resnet_spatial_8x8_se_xattn",
+                "resnet_spatial_8x8_se_sa_xattn",
+            )
+            # Both the cross-attention (v4) and self-attention+cross-attention
+            # (v5) encoders use the cross-attention readout; only v5 adds the
+            # token self-attention mixer before it.
+            attention_compute_dtype = (
+                self.encoder_compute_dtype
+                if self.attention_compute_dtype is None
+                else self.attention_compute_dtype
+            )
+            use_xattn = encoder_type in (
+                "resnet_spatial_8x8_se_xattn",
+                "resnet_spatial_8x8_se_sa_xattn",
+            )
+            use_token_mixer = encoder_type == "resnet_spatial_8x8_se_sa_xattn"
             self.cnn = Spatial8x8MapResNet(
                 stage_channels=self.resnet_stage_channels,
                 blocks_per_stage=self.resnet_blocks_per_stage,
                 dense_layers=self.resnet_dense_layers,
+                use_se=use_se,
+                compute_dtype=self.encoder_compute_dtype,
+                attention_compute_dtype=attention_compute_dtype,
+                use_xattn=use_xattn,
+                attn_qkv=self.resnet_attn_qkv,
+                attn_out=self.resnet_attn_out,
+                attn_latent_queries=self.attn_latent_queries,
+                use_token_mixer=use_token_mixer,
+                token_mixer_residual_init_scale=self.token_mixer_residual_init_scale,
+                flatten_reduce_channels=self.flatten_reduce_channels,
+                use_aux_decoder=self.use_aux_decoder,
             )
             return
         raise AssertionError(f"Unhandled map encoder: {encoder_type}")
 
-    def __call__(self, obs: dict[str, Array]):
+    def __call__(self, obs: dict[str, Array], agent_embedding: Array = None):
         """
         Expects 7 global maps in order:
         traversability_mask, reachability_mask, action_map, target_map,
         padding_mask, dumpability_mask, interaction_mask.
+
+        ``agent_embedding`` is the active agent's AgentStateNet output and is
+        consumed only by the cross-attention (xattn) encoder (F13); every other
+        encoder path ignores it, keeping their param trees byte-identical.
         """
         def as_map_batch(x: Array) -> Array:
             if x.ndim == 2:
@@ -557,13 +1187,55 @@ class MapsNet(nn.Module):
                 return x
             return x.reshape((-1,) + x.shape[-2:])
 
+        encoder_type = canonical_map_encoder(self.encoder_type)
+        # The cross-attention readout (v4 and v5) conditions on the active-agent
+        # embedding, so both require it to be passed through.
+        is_spatial_xattn = encoder_type in (
+            "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
+        )
+        # The _se, _se_xattn and _se_sa_xattn encoders share the 11-channel
+        # derived-input assembly; only the readout/mixer differs.
+        is_spatial_se = encoder_type in (
+            "resnet_spatial_8x8_se",
+            "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
+        )
+
         traversability_map = as_map_batch(obs[0])
         reachability_map = as_map_batch(obs[1])
         action_map = as_map_batch(obs[2])
         target_map = as_map_batch(obs[3])
+
+        # Derived channels are computed from the action/target maps BEFORE the
+        # normalize() that follows (F1). Note these are not raw heights: with
+        # clip_action_maps=True (obs_to_model_input) the action map has already
+        # been clipped to [-1, 1] upstream, so remaining_dig/dump_deficit are
+        # exact only for depth-1 dig targets (target values in {-1, 0, 1}); for
+        # deeper targets the clipped action height still yields a usable, if
+        # slightly conservative, membership mask.
+        if is_spatial_se:
+            # Kept boolean here; cast straight to the compute dtype at assembly
+            # so no float32 intermediate is materialized (F12).
+            remaining_dig = (target_map < 0) & (action_map > target_map)
+            dump_deficit = (target_map > 0) & (action_map <= 0)
+            grid_h = action_map.shape[-2]
+            grid_w = action_map.shape[-1]
+            coord_rows = jnp.linspace(-1.0, 1.0, grid_h, dtype=jnp.float32)
+            coord_cols = jnp.linspace(-1.0, 1.0, grid_w, dtype=jnp.float32)
+            coord_y, coord_x = jnp.meshgrid(coord_rows, coord_cols, indexing="ij")
+            coord_x = jnp.broadcast_to(coord_x, action_map.shape)
+            coord_y = jnp.broadcast_to(coord_y, action_map.shape)
+
         # Version preprocessing together with the topology. Atari and the
-        # global-pool ResNet consumed raw unclipped height maps historically.
-        if canonical_map_encoder(self.encoder_type) == "resnet_spatial_8x8":
+        # global-pool ResNet consumed raw unclipped height maps historically;
+        # both spatial ResNet encoders normalize action/target heights.
+        if encoder_type in (
+            "resnet_spatial_8x8",
+            "resnet_spatial_8x8_se",
+            "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
+        ):
             action_map = normalize(
                 action_map, self.map_min_max[0], self.map_min_max[1]
             )
@@ -574,19 +1246,42 @@ class MapsNet(nn.Module):
         dumpability_mask = as_map_batch(obs[5])
         interaction_mask = as_map_batch(obs[6])
 
-        x = jnp.concatenate(
-            (
-                traversability_map[..., None],
-                reachability_map[..., None],
-                action_map[..., None],
-                target_map[..., None],
-                padding_mask[..., None],
-                dumpability_mask[..., None],
-                interaction_mask[..., None],
-            ),
-            axis=-1,
-        )
-        x = self.cnn(x)
+        # Encoder mixed precision (F3/F12): cast each channel to the compute
+        # dtype BEFORE concatenating (bool masks / derived channels convert
+        # straight to bf16), so the full multi-channel f32 tensor is never
+        # materialized. The encoder returns f32 again below.
+        compute_dtype = self.encoder_compute_dtype
+        channels = [
+            traversability_map[..., None].astype(compute_dtype),
+            reachability_map[..., None].astype(compute_dtype),
+            action_map[..., None].astype(compute_dtype),
+            target_map[..., None].astype(compute_dtype),
+            padding_mask[..., None].astype(compute_dtype),
+            dumpability_mask[..., None].astype(compute_dtype),
+            interaction_mask[..., None].astype(compute_dtype),
+        ]
+        if is_spatial_se:
+            channels.extend(
+                [
+                    remaining_dig[..., None].astype(compute_dtype),
+                    dump_deficit[..., None].astype(compute_dtype),
+                    coord_x[..., None].astype(compute_dtype),
+                    coord_y[..., None].astype(compute_dtype),
+                ]
+            )
+
+        x = jnp.concatenate(channels, axis=-1)
+        if is_spatial_xattn:
+            if agent_embedding is None:
+                raise ValueError(
+                    f"map_encoder={encoder_type!r} requires the active-agent "
+                    "embedding, but MapsNet.__call__ was given "
+                    "agent_embedding=None."
+                )
+            x = self.cnn(x, agent_embedding)
+        else:
+            x = self.cnn(x)
+        x = x.astype(jnp.float32)
         return x
 
 
@@ -675,9 +1370,18 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     resnet_stage_channels: Sequence[int] = (16, 32, 48, 64)
     resnet_blocks_per_stage: Sequence[int] = (1, 1, 2, 2)
     resnet_dense_layers: Sequence[int] = (128, 128)
+    resnet_attn_qkv: int = 64
+    resnet_attn_out: int = 128
     local_map_hidden_dim_layers_mlp: Sequence[int] = (256, 32)
     model_core: str = "mlp"  # "mlp" or "transformer"
     map_encoder: str = "atari"
+    encoder_compute_dtype: Any = jnp.float32
+    attention_compute_dtype: Any = None
+    token_mixer_residual_init_scale: float = 0.0
+    carry_work_observation: bool = False
+    attn_latent_queries: int = 4
+    flatten_reduce_channels: int | None = None
+    use_aux_decoder: bool = False
     transformer_model_dim: int = 128
     transformer_num_layers: int = 2
     transformer_num_heads: int = 4
@@ -708,6 +1412,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             loaded_max=self.loaded_max,
             agent_types_max=self.agent_types_max,
             mlp_use_layernorm=self.mlp_use_layernorm,
+            carry_work_observation=self.carry_work_observation,
         )
 
         self.maps_net = MapsNet(
@@ -718,6 +1423,14 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             resnet_stage_channels=self.resnet_stage_channels,
             resnet_blocks_per_stage=self.resnet_blocks_per_stage,
             resnet_dense_layers=self.resnet_dense_layers,
+            resnet_attn_qkv=self.resnet_attn_qkv,
+            resnet_attn_out=self.resnet_attn_out,
+            encoder_compute_dtype=self.encoder_compute_dtype,
+            attention_compute_dtype=self.attention_compute_dtype,
+            token_mixer_residual_init_scale=self.token_mixer_residual_init_scale,
+            attn_latent_queries=self.attn_latent_queries,
+            flatten_reduce_channels=self.flatten_reduce_channels,
+            use_aux_decoder=self.use_aux_decoder,
         )
 
         self.actions_net = PreviousActionsNet(
@@ -801,7 +1514,17 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 obs[18],  # dumpability_mask
                 obs[19],  # interaction_mask
             ]
-        x_maps = self.maps_net(map_obs)
+        # The cross-attention readout (F13/F14) conditions on the active agent's
+        # embedding (index 0, obs are acting-agent-first). Pass it only for the
+        # encoders that consume it so every other encoder path stays
+        # byte-identical (None arg).
+        maps_agent_embedding = None
+        if canonical_map_encoder(self.map_encoder) in (
+            "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
+        ):
+            maps_agent_embedding = x_agents[:, 0, :]
+        x_maps = self.maps_net(map_obs, agent_embedding=maps_agent_embedding)
         x_actions = self.actions_net(obs)
         
         # Force feature branches to [B, F] before concatenation.

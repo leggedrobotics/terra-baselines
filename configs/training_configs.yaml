@@ -4,7 +4,7 @@
 # 
 # Usage:
 #   python train_mixed.py --config excavator_truck
-#   python train_mixed.py --config solo_excavator --transport_relocate_mult 2.0
+#   python train_mixed.py --config solo_excavator --relocation_progress_mult 2.0
 #
 # Agent types: 0=excavator, 1=truck, 2=skidsteer
 # Action types: 0=tracked, 1=wheeled
@@ -19,23 +19,16 @@ solo_excavator:
   description: Single excavator agent with tracked movement
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations
       max_steps: 450
-
 
 solo_excavator_direct_dig_reward:
   description: Single excavator with direct reward for newly dug target dirt
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   reward_options:
     direct_dig_reward_enabled: true
     direct_dig_reward_per_tile: 1.5
@@ -45,29 +38,165 @@ solo_excavator_direct_dig_reward:
     - path: foundations
       max_steps: 450
 
-
-
 solo_excavator_96x96:
   description: Single excavator agent with tracked movement
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_96x96
       max_steps: 600
+
+f0_foundation_identity_v1:
+  description: Corrected-contract F0 foundation identity feasibility probe
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: foundation
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+f0_trench_identity_v1:
+  description: Corrected-contract F0 straight-trench identity feasibility probe
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: trench
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: true
+
+f0_trench_identity_shaping_off_v1:
+  description: F0R trench repair with absolute distance/alignment shaping disabled
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: trench
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+b0_foundation_geometry_v1:
+  description: B0 foundation OSM versus procedural all-around panel
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: panels/train/foundation_geometry
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+b0_foundation_distance_v1:
+  description: B0 paired foundation dump-distance panel
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: panels/train/foundation_distance
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+b0_trench_distance_v1:
+  description: B0 paired straight-trench dump-distance panel
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: panels/train/trench_distance
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+b0_trench_side_v1:
+  description: B0 paired close both-side versus one-side trench panel
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: panels/train/trench_side
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+b0_trench_one_d02_isolate_v1:
+  description: B0 conditional straight one-side close-dump trench isolate
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: cells/train/t_straight_one_d02
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+b0_trench_topology_v1:
+  description: B0 straight, segmented, junction, and disconnected trench panel
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: panels/train/trench_topology
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+solo_excavator_128:
+  description: Single excavator on 128x128 foundations (F15 resolution scaling, E8 pilot)
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  maps:
+    - path: foundations_128
+      max_steps: 450
 
 solo_excavator_rectangles:
   description: Single excavator agent with tracked movement on rectangle maps
   agent_types: [0]
   action_types: [0]
   enforce_foundation_border_alignment: true
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_rectangles_real_ring
       max_steps: 500
@@ -77,10 +206,7 @@ solo_excavator_rectangles_dumpzone:
   agent_types: [0]
   action_types: [0]
   enforce_foundation_border_alignment: false
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_rectangles_real_dumpzone
       max_steps: 600
@@ -89,10 +215,7 @@ dual_excavator_rectangles_dumpzone:
   description: Single excavator agent with tracked movement on rectangle maps
   agent_types: [0,0]
   action_types: [0,0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_rectangles_real_dumpzone
       max_steps: 750
@@ -103,10 +226,7 @@ solo_excavator_rectangles_2stage:
   description: Solo excavator 2-level curriculum - ring then dumpzone on task success
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 10
     decrease_level_threshold: 100
@@ -119,13 +239,10 @@ solo_excavator_rectangles_2stage:
 
 
 solo_excavator_more_dumpbonus:
-  description: Single excavator agent with tracked movement more dumpbonus
+  description: Historical foundation preset name using the current relocation reward
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 1
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations
       max_steps: 500
@@ -135,10 +252,7 @@ solo_excavator_dumpzone:
   description: Single excavator agent with tracked movement and dumpzone maps
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_dumpzones_v3
       max_steps: 600
@@ -147,10 +261,7 @@ solo_excavator_dumpzone_96x96:
   description: Single excavator agent with tracked movement and dumpzone maps
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_dumpzones_v3_96x96
       max_steps: 700
@@ -159,9 +270,7 @@ solo_skidsteer:
   description: Single skidsteer agent
   agent_types: [2]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: relocations_harder
       max_steps: 600
@@ -174,11 +283,7 @@ excavator_skidsteer:
   description: Excavator + Skidsteer combination (tracked movement)
   agent_types: [0, 2]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations_dumpzones_v3
       max_steps: 800
@@ -187,11 +292,7 @@ excavator_truck:
   description: Excavator + Truck combination for transport tasks
   agent_types: [0, 1]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 2.0
+  relocation_progress_mult: 1.5
   truck_capacity: 52
   truck_road_restricted: false
   maps:
@@ -202,11 +303,7 @@ excavator_truck_roads:
   description: Excavator + Truck with road restrictions
   agent_types: [0, 1]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 2.0
+  relocation_progress_mult: 1.5
   truck_capacity: 52
   truck_road_restricted: true
   maps:
@@ -217,11 +314,7 @@ dual_excavator:
   description: Two excavators working together
   agent_types: [0, 0]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations #_dumpzones_v3
       max_steps: 650
@@ -236,11 +329,7 @@ excavators_truck:
   description: "Mixed team: 2 excavators + truck"
   agent_types: [0, 0, 1]
   action_types: [0, 0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.8
+  relocation_progress_mult: 1.5
   truck_capacity: 52
   truck_road_restricted: true
   maps:
@@ -256,10 +345,7 @@ trench_excavator:
   description: Excavator specialized for trench digging
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: trenches/single
       max_steps: 500
@@ -269,10 +355,7 @@ trench_excavator_double:
   description: Excavator specialized for double trench digging
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: trenches/double
       max_steps: 500
@@ -282,10 +365,7 @@ trench_masked_excavator:
   description: Excavator specialized for trench digging
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: trenches/single_masked_ring
       max_steps: 500
@@ -295,25 +375,17 @@ trench_dumpzone:
   description: Excavator + Skidsteer for trench tasks
   agent_types: [0, 2]
   action_types: [0, 0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: trenches/single_dumpzone_v2
       max_steps: 800
       apply_trench_rewards: true
 
-
 trench_complete_excavator:
   description: Excavator trench generalized
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   curriculum:
     increase_level_threshold: 10
     decrease_level_threshold: 100
@@ -332,14 +404,12 @@ trench_complete_excavator:
       max_steps: 500
       apply_trench_rewards: true
 
+
 full_excavator:
   description: Excavator generalized
   agent_types: [0]
   action_types: [0]
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 1.5
-    excavator_relocate_dug_dirt_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations
       max_steps: 500
@@ -358,11 +428,534 @@ wheeled_solo_excavator:
   description: Single excavator with wheeled movement
   agent_types: [0]
   action_types: [1]  # Wheeled
-  reward_multipliers:
-    dump_bonus_mult: 0.5
-    excavator_relocate_dumped_mult: 0.2
-    excavator_relocate_dug_dirt_mult: 1.5
-    transport_relocate_mult: 1.5
+  relocation_progress_mult: 1.5
   maps:
     - path: foundations
       max_steps: 500
+
+
+solo_excavator_short300:
+  description: Single excavator, foundations maps, short 300-step horizon (step-efficiency E6)
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  maps:
+    - path: foundations
+      max_steps: 300
+
+
+solo_excavator_multitask_trench:
+  description: Foundations + trench families jointly (multi-task E8; curriculum then mixed)
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  maps:
+    - path: foundations
+      max_steps: 450
+    - path: trenches/double
+      max_steps: 450
+    - path: trenches/double_diagonal
+      max_steps: 450
+
+
+# Frozen local-map comparison from terra/TRAINING_DESIGN.md. DATASET_PATH must
+# point at the generated training-design-v1 bank root. Both arms use the same
+# terminal universe; only staged exposure adds the M0 and M1 frontier levels.
+map_curriculum_flat_v1:
+  description: NEW-MAPS-FLAT - common local M0-M2 terminal universe from update zero
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/local_M2_terminal
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+
+map_curriculum_staged_v1:
+  description: NEW-MAPS-STAGED - per-environment M0 to M1 to common terminal universe
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/local_M0
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/local_M1
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/local_M2_terminal
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+# -----------------------------------------------------------------------------
+# M1 v5-main curriculum screen (2026-07-30). Bank: map-curriculum-v5-main;
+# materialize with scripts/build_v5m_dataset.py and point DATASET_PATH at the
+# resulting curriculum_v5m/ root, DATASET_SIZE at the level size (864).
+# max_steps is set on EVERY level because terra/curriculum.py rewrites
+# EnvConfig.max_steps_in_episode from this table on both reset and update.
+#
+# These names preserve the historical M1 map/scheduler treatments. Their
+# executable reward is now the agent-neutral relocation-progress reward and
+# therefore does not reproduce the historical M1 reward contract.
+# -----------------------------------------------------------------------------
+
+curriculum_v5m_a_t0:
+  description: A_t0-baseline - the 8 v5-main T0 anchors only, 50/50 family balance
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L0
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+curriculum_v5m_b_uniform:
+  description: B_uniform-full - all 29 v5-main conditions, uniform, 50/50 family balance
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L3
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+curriculum_v5m_c_waves:
+  description: C_curriculum - cumulative admission waves L0->L1->L2->L3 (per-env, 3/3/none)
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L0
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L1
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L2
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L3
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+# -----------------------------------------------------------------------------
+# M2 dose-curriculum campaign (CURRICULUM_SPEC_V6.md section 4). Three arms,
+# 8,000 updates each, scratch init, E8 template arch, 4 x 1024 x 32.
+#
+# The map and promotion treatments remain unchanged. All arms now use the same
+# agent-neutral relocation-progress reward; historical reward-v1/reward-v2
+# return comparisons are not valid for new runs from these presets.
+#
+# Bank per arm. DATASET_PATH must match the arm; DATASET_SIZE is 864 for both
+# banks (terra/maps_buffer.py requires one slot count for every level):
+#   m2_wave_long -> terra_data/curriculum_v5m  (M1-C's own materialization)
+#   m2_dose      -> terra_data/curriculum_v6m  (dose levels, spec section 3)
+#   m2_dose_fast -> terra_data/curriculum_v6m
+#
+# m2_dose_fast is 2-consecutive-exact ONLY. Spec section 4 also asked for a
+# "rolling graded >= 0.8 over the last 3 episodes" disjunct; terra's
+# CurriculumConfig carries no graded history (level, consecutive_failures,
+# consecutive_successes) so that half is not expressible without new per-env
+# state. Descoped on 2026-07-30 (REVIEW_V6 M2-1); prediction 2 is restated to
+# the >= 1.5x form because the manipulation is now 2-vs-3 consecutive.
+# -----------------------------------------------------------------------------
+
+m2_wave_long:
+  description: M2-wave-long - M1-C's wave recipe at 8k updates on curriculum_v5m
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L0
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L1
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L2
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L3
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+m2_dose:
+  description: M2-dose - dose levels L0p->L3p on curriculum_v6m, 3-consecutive-exact promotion
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 3
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L0p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L1p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L2p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L3p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+m2_dose_fast:
+  description: M2-dose-fast - dose levels L0p->L3p on curriculum_v6m, 2-consecutive-exact promotion
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 2
+    decrease_level_threshold: 3
+    last_level_type: none
+  maps:
+    - path: train/L0p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L1p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L2p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+    - path: train/L3p
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+# -----------------------------------------------------------------------------
+# P5 accepted-bank screen.
+#
+# These presets contain no map paths. `--accepted-bank-root` must point at a
+# frozen terra_curriculum_loader_bank_v1 index, from which train_mixed.py
+# selects one exact MapsBuffer directory per condition. This makes the root a
+# required run parameter and prevents an old 12-map bank from being selected by
+# an inherited DATASET_PATH.
+#
+# All six arms share reward, horizon, observations, actions, dynamics and PPO.
+# The only G-UNIFORM/G-ADAPTIVE difference is whether the explicit condition
+# probability vector moves.
+# -----------------------------------------------------------------------------
+
+F-ANCHOR:
+  description: Accepted foundation anchors, uniform condition mass, scratch
+  accepted_bank_arm: F-ANCHOR
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
+F-SPECIALIST:
+  description: Every accepted foundation condition, uniform condition mass, scratch
+  accepted_bank_arm: F-SPECIALIST
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
+T-ANCHOR:
+  description: Accepted trench anchors, uniform condition mass, scratch
+  accepted_bank_arm: T-ANCHOR
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
+T-SPECIALIST:
+  description: Every accepted trench condition, uniform condition mass, scratch
+  accepted_bank_arm: T-SPECIALIST
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
+G-UNIFORM:
+  description: All accepted conditions, uniform condition mass, scratch
+  accepted_bank_arm: G-UNIFORM
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
+G-V8-FIXED:
+  description: V8 checkpoint-bounded curriculum with frozen stage and family mass
+  accepted_bank_arm: G-UNIFORM
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: fixed
+
+G-V8-CONTINUOUS:
+  description: V8 continuous full-support family-depth curriculum from scratch
+  accepted_bank_arm: G-UNIFORM
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: continuous_banded_v1
+    update_interval: 150
+    mastery_threshold: 0.80
+    min_episodes: 32
+    competence_ema: 0.30
+
+G-V8-CONTINUOUS-V2:
+  description: V8 continuous full-support per-condition curriculum for reward-v2 runs
+  accepted_bank_arm: G-UNIFORM
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: continuous_banded_v2
+    update_interval: 150
+    mastery_threshold: 0.80
+    min_episodes: 32
+    competence_ema: 0.30
+
+G-V8-CONTINUOUS-V3:
+  description: V8 continuous full-support per-condition curriculum, capped condition mass
+  accepted_bank_arm: G-UNIFORM
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: continuous_banded_v3
+    update_interval: 150
+    mastery_threshold: 0.80
+    min_episodes: 32
+    competence_ema: 0.30
+
+G-ADAPTIVE:
+  description: All accepted conditions, adaptive-progressive condition mass, scratch
+  accepted_bank_arm: G-ADAPTIVE
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: adaptive
+    update_interval: 150
+    uniform_floor: 0.20
+    mastery_threshold: 0.75
+    temperature: 0.25
+    min_episodes: 20
+    competence_ema: 0.30
+    max_mass: 0.15
+
+# P5b/P5c parameters-only warm-start treatments. P5b used the first three;
+# P5c adds deep/uniform plus explicit foundation and trench family ceilings.
+# Architecture and checkpoint initialization remain explicit launcher inputs.
+G-MEDIUM-ADAPTIVE-WARM:
+  description: P5b medium generalist, adaptive sampler, parameters-only warm start
+  accepted_bank_arm: G-ADAPTIVE
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: adaptive
+    update_interval: 150
+    uniform_floor: 0.20
+    mastery_threshold: 0.75
+    temperature: 0.25
+    min_episodes: 20
+    competence_ema: 0.30
+    max_mass: 0.15
+
+G-DEEP-ADAPTIVE-WARM:
+  description: P5b depth-grown generalist, adaptive sampler, parameters-only warm start
+  accepted_bank_arm: G-ADAPTIVE
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: adaptive
+    update_interval: 150
+    uniform_floor: 0.20
+    mastery_threshold: 0.75
+    temperature: 0.25
+    min_episodes: 20
+    competence_ema: 0.30
+    max_mass: 0.15
+
+G-MEDIUM-UNIFORM-WARM:
+  description: P5b medium generalist, uniform sampler, parameters-only warm start
+  accepted_bank_arm: G-UNIFORM
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+    update_interval: 150
+    uniform_floor: 0.20
+    mastery_threshold: 0.75
+    temperature: 0.25
+    min_episodes: 20
+    competence_ema: 0.30
+    max_mass: 0.15
+
+G-DEEP-UNIFORM-WARM:
+  description: P5c depth-grown generalist, uniform sampler, parameters-only warm start
+  accepted_bank_arm: G-UNIFORM
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+    update_interval: 150
+    uniform_floor: 0.20
+    mastery_threshold: 0.75
+    temperature: 0.25
+    min_episodes: 20
+    competence_ema: 0.30
+    max_mass: 0.15
+
+F-MEDIUM-UNIFORM-WARM:
+  description: P5c foundation specialist, uniform sampler, parameters-only warm start
+  accepted_bank_arm: F-SPECIALIST
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform
+
+T-MEDIUM-UNIFORM-WARM:
+  description: P5c trench specialist, uniform sampler, parameters-only warm start
+  accepted_bank_arm: T-SPECIALIST
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: uniform

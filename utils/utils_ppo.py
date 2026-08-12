@@ -3,16 +3,62 @@ import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
 
 
+_LOCAL_MAP_KEYS = (
+    "local_map_action_neg",
+    "local_map_action_pos",
+    "local_map_target_neg",
+    "local_map_target_pos",
+    "local_map_dumpability",
+    "local_map_obstacles",
+    "local_map_border_workspace",
+    "local_map_edge_alignment_error",
+    "local_map_border_diggable",
+)
+
+
+def _config_option(config, name: str, default):
+    try:
+        value = getattr(config, name)
+    except (AttributeError, KeyError):
+        try:
+            value = config[name]
+        except (TypeError, KeyError, IndexError):
+            return default
+    return value if value is not None else default
+
+
 def clip_action_map_in_obs(obs):
     """Clip action maps to [-1, 1] on the intuition that a binary map is enough for the agent to take decisions."""
     obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
     return obs
 
 
+def scale_local_maps_in_obs(obs, scale):
+    """Scale local workspace-sum observations before model preprocessing."""
+    scale = float(scale)
+    if scale == 1.0:
+        return obs
+    obs = dict(obs)
+    scale_arr = jnp.asarray(scale, dtype=jnp.float32)
+    for key in _LOCAL_MAP_KEYS:
+        obs[key] = obs[key].astype(jnp.float32) / scale_arr
+    return obs
+
+
 def obs_to_model_input(obs, prev_actions, train_cfg):
+    # Capture the env's action mask before ``obs`` is rebound to the list.
+    action_mask = (
+        obs["action_mask"]
+        if _config_option(train_cfg, "action_logit_masking", False)
+        else None
+    )
     # Feature engineering
-    if train_cfg.clip_action_maps:
+    if _config_option(train_cfg, "clip_action_maps", True):
         obs = clip_action_map_in_obs(obs)
+    obs = scale_local_maps_in_obs(
+        obs,
+        _config_option(train_cfg, "local_map_area_scale", 1.0),
+    )
 
     # Create input list with indexed comments for easy reference
     # Updated to match the new observation structure from env.py
@@ -41,17 +87,50 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs["interaction_mask"],         # [20] - Interaction map
         prev_actions,                    # [21] - Previous actions history
     ]
+    if _config_option(train_cfg, "action_logit_masking", False):
+        # [22] - Effect-based action mask from the env (D3). Appended last so
+        # every existing index and the len>=22 layout checks stay valid; the
+        # model consumes nothing at [22], only policy() masking reads it.
+        obs = obs + [action_mask]
     return obs
+
+
+def _masked_logits(logits_pi, action_mask):
+    """Invalid-action masking (D3): finite large negative keeps gradients safe.
+
+    The env guarantees at least one valid action per row (DO_NOTHING is always
+    selectable), so the masked softmax can never see an all-invalid row.
+    """
+    if action_mask is None:
+        return logits_pi
+    return jnp.where(action_mask, logits_pi, jnp.float32(-1e9))
 
 
 def policy(
     apply_fn,
     params,
     obs,
+    action_mask=None,
 ):
     value, logits_pi = apply_fn(params, obs)
-    pi = tfp.distributions.Categorical(logits=logits_pi)
+    pi = tfp.distributions.Categorical(logits=_masked_logits(logits_pi, action_mask))
     return value, pi
+
+
+def policy_with_intermediates(
+    apply_fn,
+    params,
+    obs,
+    action_mask=None,
+):
+    """``policy`` that also returns the encoder's sown ``intermediates``.
+
+    One forward serves both the PPO heads and the V6 aux decoder logits, which
+    the encoder publishes with ``sow`` (a no-op without this mutable request).
+    """
+    (value, logits_pi), model_state = apply_fn(params, obs, mutable=["intermediates"])
+    pi = tfp.distributions.Categorical(logits=_masked_logits(logits_pi, action_mask))
+    return value, pi, model_state["intermediates"]
 
 
 def select_action_ppo(
@@ -64,7 +143,14 @@ def select_action_ppo(
     # Prepare policy input from Terra State
     obs = obs_to_model_input(obs, prev_actions, config)
 
-    value, pi = policy(train_state.apply_fn, train_state.params, obs)
+    action_mask = (
+        obs[22]
+        if _config_option(config, "action_logit_masking", False)
+        else None
+    )
+    value, pi = policy(
+        train_state.apply_fn, train_state.params, obs, action_mask=action_mask
+    )
     action = pi.sample(seed=rng)
     log_prob = pi.log_prob(action)
     return action, log_prob, value[:, 0], pi

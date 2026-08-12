@@ -236,3 +236,58 @@ numbers still match.
   or successful serialization as generalization or deployment evidence.
 - Keep environment semantics in `terra`, training/evaluation evidence here, and
   real/sim execution evidence in `moleworks_ros`.
+
+## Current V8 curriculum
+
+The authoritative design, evidence, decisions, and operational contract are in
+[V8 improvement set](docs/research/V8_IMPROVEMENT_SET_20260810.md) and the
+[reward and termination audit](docs/research/V8_REWARD_TERMINATION_AUDIT.md).
+The accepted follow-up map treatment is one uninterrupted
+`continuous_banded_v2` process per arm, not separate Stage A/B/C jobs:
+
+- all 47 V8 conditions have positive probability from update 0;
+- foundation and trench each receive 50% of target assignment probability;
+- within each family, 10% is uniform over every condition and 90% is spread
+  over every unmastered condition with shallow-to-deep weights `4:2:1`;
+- any eligible condition can graduate independently from exact completed
+  training episodes, so one straggler cannot pin its family; and
+- source-disjoint fixed panels audit and select checkpoints but never control
+  the online sampler.
+
+The completed compact/Atari experiment used `continuous_banded_v1`; that fact
+is historical evidence, not the sampler contract for the next reward screen.
+An explicit one-way migration validates and preserves its sampler state before
+both matched R2 arms recompute probabilities under v2.
+
+Here, depth is immutable map-difficulty metadata and band is a changing sampler
+role. Online success is weighted by the live sampler distribution; it is not a
+whole-V8 benchmark result. Map allocation and reward design remain separate
+causal variables.
+
+The completed primary experiment held reward dense and trained two random-start
+all-47 controls: the 2.856M compact deep+xattn policy and the original 480k
+Atari-base policy. They shared the map sampler, transition budget, PPO shape,
+seed, horizon, and fixed evaluations. The Atari policy is a deliberately small
+system control, not a pure encoder ablation, because its actor, critic, and
+local-map heads are also smaller.
+
+The next mainline reward question is R2: compare the current dense recipe with
+one normalized material-potential reward-v2 bundle after both arms take the
+same v1-to-v2 sampler migration, output-preserving carry-input expansion,
+fresh optimizer, and LR warmup. Only if reward-v2 wins does R3 fork the selected
+v2 checkpoint into fixed-shaping and episode-latched dense-to-sparse children.
+The former whole-objective anneal is retired from the mainline because it
+changes several reward semantics at once. Fixed source-disjoint panels, not
+reward return or online success, decide both comparisons.
+
+The active reward and termination audit preserves exact success, separates
+strict completion from continuous material progress, and records the
+diagnostics and analytic admission gates required before R2. Its
+fixed-checkpoint experiment proposal supersedes the older sampler-depth reward
+trigger and whole-objective fade.
+
+The mechanism is informed by, but does not copy constants from Prioritized
+Level Replay, Self-Paced Deep Reinforcement Learning, Replay-Guided Adversarial
+Environment Design, ACCEL, and C-Procgen. These sources motivate the mechanisms
+only; fixed source-disjoint Terra evaluations decide whether the chosen masses
+and thresholds work.

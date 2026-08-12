@@ -11,7 +11,6 @@ from eval_mcts import make_mcts_recurrent_fn, make_mcts_step_fn, rollout_episode
 from terra.actions import TrackedAction
 from terra.env import TimeStep
 
-
 BATCH_SIZE = 2
 
 
@@ -49,7 +48,12 @@ def _timestep():
         observation=_observation(),
         reward=jnp.zeros((BATCH_SIZE,)),
         done=jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_),
-        info={},
+        info={
+            "task_done": jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_),
+            "action_had_effect": jnp.zeros((BATCH_SIZE,), dtype=jnp.bool_),
+            "productive_workspace_cycle": jnp.zeros((BATCH_SIZE,), dtype=jnp.int32),
+            "productive_workspace_cycles": jnp.zeros((BATCH_SIZE,), dtype=jnp.int32),
+        },
         env_cfg=jnp.zeros((BATCH_SIZE,)),
     )
 
@@ -83,8 +87,12 @@ def _config():
 
 
 class FakeRolloutEnv(FakeEnv):
+    def __init__(self):
+        self.reset_calls = 0
+
     def reset(self, env_cfgs, rng_keys):
         del env_cfgs, rng_keys
+        self.reset_calls += 1
         return _timestep()
 
     def step(self, timestep, action, rng_keys):
@@ -93,22 +101,80 @@ class FakeRolloutEnv(FakeEnv):
         done = jnp.array([next_state[0] >= 1, next_state[1] >= 2])
         task_done = jnp.array([next_state[0] >= 1, False])
         completion = jnp.array([1.0, 0.4])
+        reward_components = {
+            **timestep.info.get("reward_components", {}),
+            "total_dig_dump_completion": completion,
+            "dig_completion_total": completion,
+            "dump_completion_action_map": completion,
+            "absolute_completion": completion,
+            "unloaded_completion": jnp.ones_like(completion),
+            "accepted_dump_volume": completion * 2,
+            "illegal_dump_volume": jnp.zeros_like(completion),
+        }
         return timestep._replace(
             state=next_state,
             reward=jnp.array([1.0, 2.0]),
             done=done,
             info={
                 "task_done": task_done,
-                "reward_components": {
-                    "total_dig_dump_completion": completion,
-                    "dig_completion_total": completion,
-                    "dump_completion_action_map": completion,
-                },
+                "action_had_effect": jnp.array([True, False]),
+                "productive_workspace_cycle": jnp.array([True, False], dtype=jnp.bool_),
+                "productive_workspace_cycles": (
+                    next_state * jnp.array([3, 4], dtype=jnp.int32)
+                ),
+                "reward_components": reward_components,
             },
         )
 
+    step_no_reset = step
+
 
 class RolloutEpisodeAccountingTest(unittest.TestCase):
+    def test_explicit_timestep_skips_reset_without_changing_default_rollout(self):
+        config = _config()
+        config.num_prev_actions = 3
+        env_cfgs = SimpleNamespace(
+            tile_size=jnp.ones((BATCH_SIZE,)),
+            agent=SimpleNamespace(move_tiles=jnp.ones((BATCH_SIZE,))),
+        )
+        default_env = FakeRolloutEnv()
+        explicit_env = FakeRolloutEnv()
+        default_rewards, default_stats, _ = rollout_episode(
+            default_env,
+            FakeModel(),
+            None,
+            env_cfgs,
+            config,
+            max_frames=5,
+            deterministic=True,
+            seed=0,
+            use_mcts=False,
+            preserve_terminal_states=True,
+        )
+        explicit_rewards, explicit_stats, _ = rollout_episode(
+            explicit_env,
+            FakeModel(),
+            None,
+            env_cfgs,
+            config,
+            max_frames=5,
+            deterministic=True,
+            seed=0,
+            use_mcts=False,
+            preserve_terminal_states=True,
+            initial_timestep=_timestep(),
+        )
+
+        self.assertEqual(default_env.reset_calls, 1)
+        self.assertEqual(explicit_env.reset_calls, 0)
+        np.testing.assert_allclose(default_rewards, explicit_rewards)
+        for field in (
+            "episode_terminated_once",
+            "episode_done_once",
+            "episode_length",
+        ):
+            np.testing.assert_array_equal(default_stats[field], explicit_stats[field])
+
     def test_each_environment_contributes_only_its_first_episode(self):
         config = _config()
         config.num_prev_actions = 3
@@ -126,12 +192,49 @@ class RolloutEpisodeAccountingTest(unittest.TestCase):
             deterministic=True,
             seed=0,
             use_mcts=False,
+            preserve_terminal_states=True,
+            expected_slot_indices=jnp.array([4, 9]),
         )
 
         np.testing.assert_array_equal(stats["episode_terminated_once"], [True, True])
         np.testing.assert_array_equal(stats["episode_done_once"], [True, False])
         np.testing.assert_array_equal(stats["episode_length"], [1, 2])
+        np.testing.assert_array_equal(stats["productive_workspace_cycles"], [3, 8])
+        np.testing.assert_array_equal(
+            stats["productive_workspace_cycles_available"], [True, True]
+        )
         np.testing.assert_allclose(cumulative_rewards[-1], [1.0, 4.0])
+        np.testing.assert_array_equal(
+            stats["integrity"]["slot_index_zero_based"], [4, 9]
+        )
+        self.assertFalse(stats["integrity"]["supported"])
+
+    def test_opt_in_action_and_completion_traces_are_first_episode_aligned(self):
+        config = _config()
+        config.num_prev_actions = 3
+        env_cfgs = SimpleNamespace(
+            tile_size=jnp.ones((BATCH_SIZE,)),
+            agent=SimpleNamespace(move_tiles=jnp.ones((BATCH_SIZE,))),
+        )
+        _, stats, _ = rollout_episode(
+            FakeRolloutEnv(),
+            FakeModel(),
+            None,
+            env_cfgs,
+            config,
+            max_frames=5,
+            deterministic=True,
+            seed=0,
+            use_mcts=False,
+            record_actions=True,
+            record_completion=True,
+            preserve_terminal_states=True,
+        )
+
+        np.testing.assert_allclose(
+            stats["completion_sequence"]["absolute"],
+            [[1.0, 0.4], [0.0, 0.4]],
+        )
 
     def test_eval_mixed_reuses_the_authoritative_rollout(self):
         self.assertIs(eval_mixed.rollout_episode, rollout_episode)
@@ -141,9 +244,7 @@ class RolloutEpisodeAccountingTest(unittest.TestCase):
 class MctsAbsorptionTest(unittest.TestCase):
     def test_recurrent_terminal_states_are_absorbing(self):
         recurrent_fn = make_mcts_recurrent_fn(FakeModel(), FakeEnv(), _config())
-        previous_actions = jnp.array(
-            [[1, 2, 3], [4, 5, 6]], dtype=jnp.int32
-        )
+        previous_actions = jnp.array([[1, 2, 3], [4, 5, 6]], dtype=jnp.int32)
         actions = jnp.array([7, 6], dtype=jnp.int32)
 
         output, embedding = recurrent_fn(

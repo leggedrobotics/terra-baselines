@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from utils.models import get_model_ready
+from utils.models import get_model_ready, _config_option
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
 from flax.training.train_state import TrainState
@@ -16,7 +16,13 @@ from functools import partial
 from flax.jax_utils import replicate, unreplicate
 from flax import struct
 import utils.helpers as helpers
-from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, policy
+from utils.utils_ppo import (
+    select_action_ppo,
+    wrap_action,
+    obs_to_model_input,
+    policy,
+    policy_with_intermediates,
+)
 import os
 
 jax.config.update("jax_threefry_partitionable", True)
@@ -57,6 +63,7 @@ class TrainConfig:
     local_map_normalization_bounds: tuple[int, int] = (-16, 16)
     maps_net_normalization_bounds: tuple[int, int] = (-10, 10)
     loaded_max: int = 100
+    local_map_area_scale: float = 1.0
     num_rollouts_eval: int = 500
     cache_clear_interval: int = 1000
 
@@ -171,6 +178,141 @@ def calculate_gae(
     return advantages, advantages + transitions.value
 
 
+# F15: model-input list indices of the global (H, W) maps that must be spatially
+# subsampled to map a 128-world obs onto a 64-world teacher (obs_to_model_input
+# layout: traversability, reachability, action, target, padding, dumpability,
+# interaction). Local maps (indices 3-11) are pre-scaled by
+# obs_to_model_input(local_map_area_scale) and are left untouched here.
+_TEACHER_DOWNSAMPLE_MAP_INDICES = (12, 13, 14, 15, 18, 19, 20)
+
+
+def _tree_all_finite(tree):
+    leaves = jtu.tree_leaves(tree)
+    if not leaves:
+        return jnp.array(True)
+    checks = [jnp.all(jnp.isfinite(leaf)) for leaf in leaves]
+    return jnp.all(jnp.stack(checks))
+
+
+def _tree_finite_fraction(tree):
+    leaves = jtu.tree_leaves(tree)
+    if not leaves:
+        return jnp.array(1.0, dtype=jnp.float32)
+    finite = jnp.array(0, dtype=jnp.int32)
+    total = jnp.array(0, dtype=jnp.int32)
+    for leaf in leaves:
+        if jnp.issubdtype(leaf.dtype, jnp.inexact):
+            finite = finite + jnp.sum(jnp.isfinite(leaf))
+            total = total + leaf.size
+    return jnp.where(
+        total > 0,
+        finite.astype(jnp.float32) / total.astype(jnp.float32),
+        jnp.array(1.0, dtype=jnp.float32),
+    )
+
+
+def _finite_fraction(x):
+    if not jnp.issubdtype(x.dtype, jnp.inexact):
+        return jnp.array(1.0, dtype=jnp.float32)
+    return jnp.mean(jnp.isfinite(x).astype(jnp.float32))
+
+
+def _nan_safe_abs_max(x):
+    if not jnp.issubdtype(x.dtype, jnp.inexact):
+        return jnp.array(0.0, dtype=jnp.float32)
+    finite_abs = jnp.where(jnp.isfinite(x), jnp.abs(x), 0.0)
+    return jnp.max(finite_abs).astype(jnp.float32)
+
+
+def downsample_teacher_obs(obs, downsample):
+    """Subsample a model-input obs list to a coarser-resolution teacher view (F15).
+
+    Applied ONLY in the teacher forward path of the kickstart branch so a
+    lower-resolution teacher (trained in a 64x64 world) sees in-distribution
+    inputs while the student trains on a finer (128x128) env. The transform:
+
+    * global map channels (``_TEACHER_DOWNSAMPLE_MAP_INDICES``) are
+      stride-``downsample`` nearest subsampled (``x[..., ::s, ::s]``); their
+      values are discrete/in-distribution so no fractional mask values appear;
+    * ``agent_states`` pos_x/pos_y (feature indices 0, 1) are integer-divided by
+      ``downsample`` (they index the teacher's smaller position embedding table);
+    * ``agent_states`` loaded dirt (feature index 5) is divided by
+      ``downsample**2`` because it is a tile-count/area quantity;
+    * the agent width/height scalars (indices 16, 17) are integer-divided by
+      ``downsample``.
+
+    Everything else (local maps, prev_actions, agent angles/loaded/type) is
+    unchanged. ``downsample == 1`` returns ``obs`` unchanged, keeping the default
+    same-resolution kickstart path bit-identical.
+    """
+    if downsample == 1:
+        return obs
+    s = downsample
+    obs = list(obs)
+    for idx in _TEACHER_DOWNSAMPLE_MAP_INDICES:
+        obs[idx] = obs[idx][..., ::s, ::s]
+    agent_states = obs[0]
+    scaled_pos = (agent_states[..., 0:2] // s).astype(agent_states.dtype)
+    area_scale = s * s
+    scaled_loaded = jnp.floor(agent_states[..., 5:6] / area_scale).astype(
+        agent_states.dtype
+    )
+    obs[0] = agent_states.at[..., 0:2].set(scaled_pos)
+    obs[0] = obs[0].at[..., 5:6].set(scaled_loaded)
+    obs[16] = obs[16] // s
+    obs[17] = obs[17] // s
+    return obs
+
+
+def _pool_to_grid(x, size):
+    """Average-pool a [B, H, W, C] map down to [B, size, size, C]."""
+    batch, height, width, channels = x.shape
+    return x.reshape(batch, size, height // size, size, width // size, channels).mean(
+        axis=(2, 4)
+    )
+
+
+def aux_decoder_loss(aux_logits, obs):
+    """Masked BCE of the V6 per-cell aux head against downsampled obs targets.
+
+    Targets are the map semantics the encoder itself derives, on the SAME
+    (already clipped, pre-normalization) maps the model consumes: remaining
+    dig, dump deficit, dumpability, obstacle. Each binary 64x64 map is average
+    pooled to the head's 32x32 resolution, so a target is the fraction of the
+    2x2 block carrying the property (soft label in [0, 1]).
+
+    Padded cells carry no learning signal: terra's padding mask is 1 on
+    padding/obstacle tiles and 0 on real map (terra/state.py builds the static
+    traversability base as ``padding_mask == 1``), so blocks that are more than
+    half padding are dropped from the mean.
+    """
+    traversability_map = obs[12]
+    action_map = obs[14]
+    target_map = obs[15]
+    padding_mask = obs[18]
+    dumpability_mask = obs[19]
+    size = aux_logits.shape[1]
+
+    # Same derivation as MapsNet's derived input channels (F1).
+    remaining_dig = (target_map < 0) & (action_map > target_map)
+    dump_deficit = (target_map > 0) & (action_map <= 0)
+    targets = jnp.stack(
+        (
+            remaining_dig,
+            dump_deficit,
+            dumpability_mask != 0,
+            traversability_map != 0,
+        ),
+        axis=-1,
+    ).astype(jnp.float32)
+    targets = _pool_to_grid(targets, size)
+    padded = _pool_to_grid((padding_mask != 0).astype(jnp.float32)[..., None], size)
+    valid = (padded <= 0.5).astype(jnp.float32)
+
+    losses = optax.sigmoid_binary_cross_entropy(aux_logits.astype(jnp.float32), targets)
+    return jnp.sum(losses * valid) / (jnp.sum(valid) * targets.shape[-1] + 1e-8)
+
+
 def ppo_update_networks(
     train_state: TrainState,
     transitions: Transition,
@@ -178,11 +320,36 @@ def ppo_update_networks(
     targets: jax.Array,
     config,
     ent_coef_override: float | None = None,
+    teacher_apply_fn=None,
+    teacher_params=None,
+    kickstart_kl_coef: float = 0.0,
+    kickstart_value_coef: float = 0.0,
 ):
     clip_eps = config.clip_eps
     vf_coef = config.vf_coef
     # Allow runtime override of entropy coefficient for schedulers
     ent_coef = ent_coef_override if ent_coef_override is not None else config.ent_coef
+    # F5: value-clipping toggle. train.py's own TrainConfig has no such field, so
+    # a defensive getattr keeps this function bit-identical there (default True =
+    # historical clipped-value objective).
+    use_value_clip = getattr(config, "use_value_clip", True)
+    # F6: flat env x time minibatches have already collapsed the [seq, env] axes
+    # into a single sample axis, so the obs/prev-action reshape that merges the
+    # leading two axes must be skipped for those layouts.
+    flat_minibatch_shuffle = getattr(config, "flat_minibatch_shuffle", False)
+    # F15: teacher obs-downsampling factor for cross-resolution kickstart. 1 =
+    # off (teacher sees the student obs unchanged, historical behavior). This is
+    # a Python-static int, so the transform is traced/specialized at compile.
+    teacher_obs_downsample = int(getattr(config, "teacher_obs_downsample", 1))
+    # V6 dense per-cell auxiliary supervision. 0.0 = off, and the branch is
+    # Python-static so the traced loss graph of existing runs is unchanged.
+    aux_coef = float(_config_option(config, "aux_coef", 0.0))
+    action_logit_masking = bool(_config_option(config, "action_logit_masking", False))
+
+    raw_advantages_finite = _finite_fraction(advantages)
+    raw_targets_finite = _finite_fraction(targets)
+    raw_advantages_abs_max = _nan_safe_abs_max(advantages)
+    raw_targets_abs_max = _nan_safe_abs_max(targets)
 
     # NORMALIZE ADVANTAGES
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
@@ -190,59 +357,366 @@ def ppo_update_networks(
     def _loss_fn(params):
         # Terra: Reshape
         # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
-        transitions_obs_reshaped = jax.tree_map(
-            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
-            transitions.obs,
-        )
-        transitions_actions_reshaped = jax.tree_map(
-            lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
-            transitions.prev_actions,
-        )
-        # NOTE: can't use select_action_ppo here because it doesn't decouple params from train_state
-        obs = obs_to_model_input(transitions_obs_reshaped, transitions_actions_reshaped, config)
-        value, dist = policy(train_state.apply_fn, params, obs)
-        value = value[:, 0]
-        # action = dist.sample(seed=rng_model)
-        transitions_actions_reshaped = jnp.reshape(
-            transitions.action, (-1, *transitions.action.shape[2:])
-        )
-        log_prob = dist.log_prob(transitions_actions_reshaped)
+        if flat_minibatch_shuffle:
+            transitions_obs_reshaped = transitions.obs
+            transitions_prev_actions_flat = transitions.prev_actions
+        else:
+            transitions_obs_reshaped = jax.tree_map(
+                lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
+                transitions.obs,
+            )
+            transitions_prev_actions_flat = jax.tree_map(
+                lambda x: jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:])),
+                transitions.prev_actions,
+            )
 
-        # Terra: Reshape
+        rollout_finite = _tree_finite_fraction(
+            (
+                transitions.obs,
+                transitions.prev_actions,
+                transitions.value,
+                transitions.reward,
+                transitions.log_prob,
+                advantages,
+                targets,
+            )
+        )
+        rollout_obs_finite = _tree_finite_fraction(transitions.obs)
+        rollout_value_finite = _finite_fraction(transitions.value)
+        rollout_reward_finite = _finite_fraction(transitions.reward)
+        rollout_log_prob_finite = _finite_fraction(transitions.log_prob)
+        advantages_finite = _finite_fraction(advantages)
+        targets_finite = _finite_fraction(targets)
+        obs = obs_to_model_input(
+            transitions_obs_reshaped,
+            transitions_prev_actions_flat,
+            config,
+        )
+        model_obs_finite = _tree_finite_fraction(obs)
+        # D3: the loss must build the same masked distribution the rollout
+        # sampled from, or log_prob/entropy would disagree across the ratio.
+        loss_action_mask = obs[22] if action_logit_masking else None
+        if aux_coef > 0.0:
+            # One forward feeds the PPO heads and the aux decoder logits.
+            value, dist, intermediates = policy_with_intermediates(
+                train_state.apply_fn, params, obs, action_mask=loss_action_mask
+            )
+            aux_loss = aux_decoder_loss(
+                intermediates["maps_net"]["cnn"]["aux_logits"][0], obs
+            )
+        else:
+            value, dist = policy(
+                train_state.apply_fn, params, obs, action_mask=loss_action_mask
+            )
+            aux_loss = jnp.zeros((), dtype=jnp.float32)
+        value = value[:, 0]
+        student_logits = dist.logits_parameter()
+        value_finite = _finite_fraction(value)
+        logits_finite = _finite_fraction(student_logits)
+        value_abs_max = _nan_safe_abs_max(value)
+        logits_abs_max = _nan_safe_abs_max(student_logits)
+        actions_flat = jnp.reshape(transitions.action, (-1, *transitions.action.shape[2:]))
+        log_prob = dist.log_prob(actions_flat)
+        log_prob_finite = _finite_fraction(log_prob)
+
+        if teacher_apply_fn is not None:
+            def _compute_kickstart(_):
+                teacher_obs = downsample_teacher_obs(obs, teacher_obs_downsample)
+                teacher_value, teacher_dist = policy(
+                    teacher_apply_fn, teacher_params, teacher_obs
+                )
+                teacher_value = jax.lax.stop_gradient(teacher_value[:, 0])
+                teacher_logits = jax.lax.stop_gradient(
+                    teacher_dist.logits_parameter()
+                )
+                teacher_logp = jax.nn.log_softmax(teacher_logits, axis=-1)
+                student_logp = jax.nn.log_softmax(student_logits, axis=-1)
+                teacher_p = jnp.exp(teacher_logp)
+                kl = jnp.sum(
+                    teacher_p * (teacher_logp - student_logp), axis=-1
+                ).mean()
+                vmse = jnp.mean((value - teacher_value) ** 2)
+                return (
+                    kl,
+                    vmse,
+                    _finite_fraction(teacher_value),
+                    _finite_fraction(teacher_logits),
+                    _nan_safe_abs_max(teacher_value),
+                    _nan_safe_abs_max(teacher_logits),
+                )
+
+            def _zero_kickstart(_):
+                return (
+                    jnp.zeros((), dtype=jnp.float32),
+                    jnp.zeros((), dtype=jnp.float32),
+                    jnp.ones((), dtype=jnp.float32),
+                    jnp.ones((), dtype=jnp.float32),
+                    jnp.zeros((), dtype=jnp.float32),
+                    jnp.zeros((), dtype=jnp.float32),
+                )
+
+            (
+                kickstart_kl,
+                kickstart_value_mse,
+                teacher_value_finite,
+                teacher_logits_finite,
+                teacher_value_abs_max,
+                teacher_logits_abs_max,
+            ) = jax.lax.cond(
+                (kickstart_kl_coef + kickstart_value_coef) > 0,
+                _compute_kickstart,
+                _zero_kickstart,
+                None,
+            )
+        else:
+            kickstart_kl = jnp.zeros((), dtype=jnp.float32)
+            kickstart_value_mse = jnp.zeros((), dtype=jnp.float32)
+            teacher_value_finite = jnp.ones((), dtype=jnp.float32)
+            teacher_logits_finite = jnp.ones((), dtype=jnp.float32)
+            teacher_value_abs_max = jnp.zeros((), dtype=jnp.float32)
+            teacher_logits_abs_max = jnp.zeros((), dtype=jnp.float32)
+
         value = jnp.reshape(value, transitions.value.shape)
         log_prob = jnp.reshape(log_prob, transitions.log_prob.shape)
 
-        # CALCULATE VALUE LOSS
-        value_pred_clipped = transitions.value + (value - transitions.value).clip(
-            -clip_eps, clip_eps
-        )
-        value_loss = jnp.square(value - targets)
-        value_loss_clipped = jnp.square(value_pred_clipped - targets)
-        value_loss = 0.5 * jnp.maximum(value_loss, value_loss_clipped).mean()
+        if use_value_clip:
+            value_pred_clipped = transitions.value + (value - transitions.value).clip(
+                -clip_eps, clip_eps
+            )
+            value_loss = jnp.square(value - targets)
+            value_loss_clipped = jnp.square(value_pred_clipped - targets)
+            value_loss = 0.5 * jnp.maximum(value_loss, value_loss_clipped).mean()
+        else:
+            value_loss = 0.5 * jnp.square(value - targets).mean()
 
-        # CALCULATE ACTOR LOSS
-        ratio = jnp.exp(log_prob - transitions.log_prob)
+        log_ratio = log_prob - transitions.log_prob
+        ratio = jnp.exp(log_ratio)
+        approx_kl = ((ratio - 1.0) - log_ratio).mean()
+        clip_fraction = (jnp.abs(ratio - 1.0) > clip_eps).mean()
         actor_loss1 = advantages * ratio
         actor_loss2 = advantages * jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
         actor_loss = -jnp.minimum(actor_loss1, actor_loss2).mean()
-        entropy = dist.entropy().mean()
+        entropy_values = dist.entropy()
+        entropy = entropy_values.mean()
+        ratio_finite = _finite_fraction(ratio)
+        entropy_finite = _finite_fraction(entropy_values)
+        log_prob_delta_abs_max = _nan_safe_abs_max(log_prob - transitions.log_prob)
+        ratio_abs_max = _nan_safe_abs_max(ratio)
 
         total_loss = actor_loss + vf_coef * value_loss - ent_coef * entropy
-        return total_loss, (value_loss, actor_loss, entropy)
+        if aux_coef > 0.0:
+            total_loss = total_loss + aux_coef * aux_loss
+        if teacher_apply_fn is not None:
+            total_loss = (
+                total_loss
+                + kickstart_kl_coef * kickstart_kl
+                + kickstart_value_coef * kickstart_value_mse
+            )
+        return total_loss, (
+            value_loss,
+            actor_loss,
+            entropy,
+            approx_kl,
+            clip_fraction,
+            kickstart_kl,
+            kickstart_value_mse,
+            aux_loss,
+            rollout_finite,
+            rollout_obs_finite,
+            rollout_value_finite,
+            rollout_reward_finite,
+            rollout_log_prob_finite,
+            model_obs_finite,
+            raw_advantages_finite,
+            raw_targets_finite,
+            advantages_finite,
+            targets_finite,
+            value_finite,
+            logits_finite,
+            log_prob_finite,
+            ratio_finite,
+            entropy_finite,
+            value_abs_max,
+            logits_abs_max,
+            raw_targets_abs_max,
+            raw_advantages_abs_max,
+            _nan_safe_abs_max(targets),
+            _nan_safe_abs_max(advantages),
+            log_prob_delta_abs_max,
+            ratio_abs_max,
+            teacher_value_finite,
+            teacher_logits_finite,
+            teacher_value_abs_max,
+            teacher_logits_abs_max,
+        )
 
-    (loss, (vloss, aloss, entropy)), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
-        train_state.params
+    (
+        loss,
+        (
+            vloss,
+            aloss,
+            entropy,
+            approx_kl,
+            clip_fraction,
+            k_kl,
+            k_vmse,
+            aux_loss,
+            rollout_finite,
+            rollout_obs_finite,
+            rollout_value_finite,
+            rollout_reward_finite,
+            rollout_log_prob_finite,
+            model_obs_finite,
+            raw_advantages_finite,
+            raw_targets_finite,
+            advantages_finite,
+            targets_finite,
+            value_finite,
+            logits_finite,
+            log_prob_finite,
+            ratio_finite,
+            entropy_finite,
+            value_abs_max,
+            logits_abs_max,
+            raw_targets_abs_max,
+            raw_advantages_abs_max,
+            targets_abs_max,
+            advantages_abs_max,
+            log_prob_delta_abs_max,
+            ratio_abs_max,
+            teacher_value_finite,
+            teacher_logits_finite,
+            teacher_value_abs_max,
+            teacher_logits_abs_max,
+        ),
+    ), grads = jax.value_and_grad(_loss_fn, has_aux=True)(train_state.params)
+    (
+        loss,
+        vloss,
+        aloss,
+        entropy,
+        approx_kl,
+        clip_fraction,
+        k_kl,
+        k_vmse,
+        aux_loss,
+        rollout_finite,
+        rollout_obs_finite,
+        rollout_value_finite,
+        rollout_reward_finite,
+        rollout_log_prob_finite,
+        model_obs_finite,
+        raw_advantages_finite,
+        raw_targets_finite,
+        advantages_finite,
+        targets_finite,
+        value_finite,
+        logits_finite,
+        log_prob_finite,
+        ratio_finite,
+        entropy_finite,
+        value_abs_max,
+        logits_abs_max,
+        raw_targets_abs_max,
+        raw_advantages_abs_max,
+        targets_abs_max,
+        advantages_abs_max,
+        log_prob_delta_abs_max,
+        ratio_abs_max,
+        teacher_value_finite,
+        teacher_logits_finite,
+        teacher_value_abs_max,
+        teacher_logits_abs_max,
+        grads,
+    ) = jax.lax.pmean(
+        (
+            loss,
+            vloss,
+            aloss,
+            entropy,
+            approx_kl,
+            clip_fraction,
+            k_kl,
+            k_vmse,
+            aux_loss,
+            rollout_finite,
+            rollout_obs_finite,
+            rollout_value_finite,
+            rollout_reward_finite,
+            rollout_log_prob_finite,
+            model_obs_finite,
+            raw_advantages_finite,
+            raw_targets_finite,
+            advantages_finite,
+            targets_finite,
+            value_finite,
+            logits_finite,
+            log_prob_finite,
+            ratio_finite,
+            entropy_finite,
+            value_abs_max,
+            logits_abs_max,
+            raw_targets_abs_max,
+            raw_advantages_abs_max,
+            targets_abs_max,
+            advantages_abs_max,
+            log_prob_delta_abs_max,
+            ratio_abs_max,
+            teacher_value_finite,
+            teacher_logits_finite,
+            teacher_value_abs_max,
+            teacher_logits_abs_max,
+            grads,
+        ),
+        axis_name="devices",
     )
-    (loss, vloss, aloss, entropy, grads) = jax.lax.pmean(
-        (loss, vloss, aloss, entropy, grads), axis_name="devices"
-    )
+    grad_global_norm = optax.global_norm(grads)
+    grads_all_finite = _tree_all_finite(grads).astype(jnp.float32)
     train_state = train_state.apply_gradients(grads=grads)
+    params_all_finite = _tree_all_finite(train_state.params).astype(jnp.float32)
     update_info = {
         "total_loss": loss,
         "value_loss": vloss,
         "actor_loss": aloss,
         "entropy": entropy,
+        "approx_kl": approx_kl,
+        "clip_fraction": clip_fraction,
+        "diagnostics/grad_global_norm": grad_global_norm,
+        "diagnostics/grads_all_finite": grads_all_finite,
+        "diagnostics/params_all_finite": params_all_finite,
+        "diagnostics/rollout_finite_fraction": rollout_finite,
+        "diagnostics/rollout_obs_finite_fraction": rollout_obs_finite,
+        "diagnostics/rollout_value_finite_fraction": rollout_value_finite,
+        "diagnostics/rollout_reward_finite_fraction": rollout_reward_finite,
+        "diagnostics/rollout_log_prob_finite_fraction": rollout_log_prob_finite,
+        "diagnostics/model_obs_finite_fraction": model_obs_finite,
+        "diagnostics/raw_advantages_finite_fraction": raw_advantages_finite,
+        "diagnostics/raw_targets_finite_fraction": raw_targets_finite,
+        "diagnostics/advantages_finite_fraction": advantages_finite,
+        "diagnostics/targets_finite_fraction": targets_finite,
+        "diagnostics/student_value_finite_fraction": value_finite,
+        "diagnostics/student_logits_finite_fraction": logits_finite,
+        "diagnostics/log_prob_finite_fraction": log_prob_finite,
+        "diagnostics/ratio_finite_fraction": ratio_finite,
+        "diagnostics/entropy_finite_fraction": entropy_finite,
+        "diagnostics/student_value_abs_max": value_abs_max,
+        "diagnostics/student_logits_abs_max": logits_abs_max,
+        "diagnostics/raw_targets_abs_max": raw_targets_abs_max,
+        "diagnostics/raw_advantages_abs_max": raw_advantages_abs_max,
+        "diagnostics/targets_abs_max": targets_abs_max,
+        "diagnostics/advantages_abs_max": advantages_abs_max,
+        "diagnostics/log_prob_delta_abs_max": log_prob_delta_abs_max,
+        "diagnostics/ratio_abs_max": ratio_abs_max,
+        "diagnostics/teacher_value_finite_fraction": teacher_value_finite,
+        "diagnostics/teacher_logits_finite_fraction": teacher_logits_finite,
+        "diagnostics/teacher_value_abs_max": teacher_value_abs_max,
+        "diagnostics/teacher_logits_abs_max": teacher_logits_abs_max,
     }
+    if teacher_apply_fn is not None:
+        update_info["kickstart/kl"] = k_kl
+        update_info["kickstart/value_mse"] = k_vmse
+    if aux_coef > 0.0:
+        update_info["aux_loss"] = aux_loss
     return train_state, update_info
 
 
@@ -256,7 +730,7 @@ def get_curriculum_levels(env_cfg, global_curriculum_levels, timestep=None):
         timestep: Optional timestep containing observations with agent state info
     """
     curriculum_stat = {}
-    curriculum_levels = env_cfg.curriculum.level
+    curriculum_levels = jnp.ravel(env_cfg.curriculum.level)
     
     # Original curriculum level tracking
     for i, global_curriculum_level in enumerate(global_curriculum_levels):
@@ -272,14 +746,20 @@ def get_curriculum_levels(env_cfg, global_curriculum_levels, timestep=None):
     if timestep is not None and hasattr(timestep, 'observation'):
         obs = timestep.observation
         if 'agent_states' in obs and 'num_agents' in obs:
+            agent_states = obs['agent_states'].reshape(
+                (-1,) + obs['agent_states'].shape[-2:]
+            )
+            num_agents = jnp.ravel(obs['num_agents'])
             # Agent type is at index 6 in per-agent feature vector
-            agent_types_1 = obs['agent_states'][:, 0, 6].astype(jnp.int32)
-            last_idx = jnp.maximum(0, obs['num_agents'] - 1)
-            agent_types_2 = obs['agent_states'][jnp.arange(obs['agent_states'].shape[0]), last_idx, 6].astype(jnp.int32)
+            agent_types_1 = agent_states[:, 0, 6].astype(jnp.int32)
+            last_idx = jnp.maximum(0, num_agents - 1)
+            agent_types_2 = agent_states[
+                jnp.arange(agent_states.shape[0]), last_idx, 6
+            ].astype(jnp.int32)
     
     # Fallback to default mixed agent setup if no observation data
     if agent_types_1 is None or agent_types_2 is None:
-        num_envs = curriculum_levels.shape[0]
+        num_envs = curriculum_levels.size
         # Default: agent 1 = tracked (0), agent 2 = skid steer (2)
         agent_types_1 = jnp.zeros(num_envs, dtype=jnp.int32)  # All tracked
         agent_types_2 = jnp.full(num_envs, 2, dtype=jnp.int32)  # All skid steer

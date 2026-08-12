@@ -1570,7 +1570,6 @@ def extract_plan(
 
         try:
             state = _state_for_agent(timestep_before, agent_index)
-            cur = state._get_current_agent_state()
             raw_mask = state._build_dig_dump_cone()
             after_dig = state._exclude_dig_tiles_from_dump_mask(raw_mask)
             after_dumpability = state._exclude_dumpability_mask_tiles_from_dump_mask(
@@ -1611,46 +1610,7 @@ def extract_plan(
                 "after_traversability": _count(after_traversability),
                 "after_same_workspace": final_before_free_count,
                 "final": final_count,
-                "potential_blocked": None,
             }
-
-            if final_count > 0:
-                dump_volume = jnp.sum(final_mask)
-                remaining_volume = cur.loaded % dump_volume
-                even_volume_per_tile = (cur.loaded - remaining_volume) / dump_volume
-                map_shape = state.world.action_map.map.shape[-2:]
-                target_map_2d = jnp.reshape(
-                    state.world.target_map.map, (-1,) + map_shape
-                )[0]
-                action_map_2d = jnp.reshape(
-                    state.world.action_map.map, (-1,) + map_shape
-                )[0]
-                predicted_flat = state._apply_dump_mask(
-                    action_map_2d.reshape(-1),
-                    final_mask,
-                    even_volume_per_tile,
-                    remaining_volume,
-                    target_map_2d,
-                    use_condensed_dump=True,
-                )
-                predicted_map = predicted_flat.reshape(target_map_2d.shape)
-                current_potential = state._compute_relocation_potential(
-                    state.world.action_map.map
-                )
-                predicted_potential = state._compute_relocation_potential(predicted_map)
-                baseline_eff = cur.carry_baseline_potential + (
-                    current_potential - cur.carry_potential_after_lift
-                )
-                diagnostics.update(
-                    {
-                        "potential_blocked": bool(
-                            np.asarray(predicted_potential > baseline_eff)
-                        ),
-                        "current_potential": _first_scalar(current_potential),
-                        "predicted_potential": _first_scalar(predicted_potential),
-                        "baseline_potential": _first_scalar(baseline_eff),
-                    }
-                )
 
             return diagnostics
         except Exception as exc:
@@ -1828,15 +1788,6 @@ def extract_plan(
             if "error" in diagnostics:
                 print(f"  no-op dump diagnostics failed: {diagnostics['error']}")
             else:
-                potential_text = ""
-                if diagnostics.get("potential_blocked") is not None:
-                    potential_text = (
-                        ", potential_blocked="
-                        f"{diagnostics['potential_blocked']}"
-                        f" (current={diagnostics['current_potential']:.1f}, "
-                        f"predicted={diagnostics['predicted_potential']:.1f}, "
-                        f"baseline={diagnostics['baseline_potential']:.1f})"
-                    )
                 print(
                     "  no-op dump diagnostics: "
                     f"obstacle_blocked={diagnostics['obstacle_blocked']}, "
@@ -1849,7 +1800,6 @@ def extract_plan(
                     f"after_traversability={diagnostics['after_traversability']} "
                     f"after_same_workspace={diagnostics['after_same_workspace']} "
                     f"final={diagnostics['final']}"
-                    f"{potential_text}"
                 )
         elif (
             loaded_before
