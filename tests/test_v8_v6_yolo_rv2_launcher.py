@@ -257,7 +257,7 @@ class PairedLauncherTest(unittest.TestCase):
 
         submit = SUBMIT.read_text()
         self.assertLess(
-            submit.index('if [ "$SUBMIT" = 0 ]'), submit.index('ssh "$REMOTE_HOST"')
+            submit.index('if [ "$SUBMIT" = 0 ]'), submit.index('REMOTE_ID="$(remote')
         )
         self.assertIn("--gpus='$GPU_TYPE:4'", submit)
         self.assertIn("scripts/euler_v8_v6_yolo_rv2/run.sbatch", submit)
