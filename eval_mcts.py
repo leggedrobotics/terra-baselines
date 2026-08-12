@@ -50,6 +50,40 @@ except ImportError as e:
 
 _DEFAULT_MAPS_DIR = Path(__file__).parent / "inference" / "maps"
 
+# Largest per-forward episode batch the policy is evaluated with. The full
+# promotion panel is 720 episodes and the rollout used to run all of them
+# through the model in one call, which made every v6-family eval die with
+#   UNKNOWN: CUDNN_STATUS_EXECUTION_FAILED  (external/.../cuda_dnn.cc:7927)
+# on the flatten-reduce 1x1 conv (utils/models.py, ``flatten_reduce_channels``).
+# The op only breaks when it consumes the token mixer's output -- dropping
+# either the mixer or flatten_reduce makes batch 720 pass -- and only above a
+# batch threshold that sits between 180 and 360. It is cuDNN algorithm
+# selection, not the model: it reproduces on 3090 and 4090, jitted and eager,
+# in bf16 and f32, with 1.4 GiB of 17.6 GiB in use, and training never saw it
+# because it never runs the encoder above 512/device through that path.
+#
+# Chunking the forward is exact rather than approximate: the model has no
+# batch-mixing ops (no BatchNorm, no batch reductions), so every episode's
+# output depends on its own row only. A standalone check of the affected conv
+# at batch 720 gave a bit-identical output sum chunked at 90/128/180 and
+# unchunked. 720 % 120 == 0, so every chunk has the same shape.
+EVAL_FORWARD_CHUNK = 120
+
+
+def _apply_in_batch_chunks(model, model_params, obs_model):
+    """Run the policy forward over episodes in chunks of EVAL_FORWARD_CHUNK."""
+    batch = obs_model[0].shape[0]
+    if batch <= EVAL_FORWARD_CHUNK:
+        return model.apply(model_params, obs_model)
+    values, logits = [], []
+    for start in range(0, batch, EVAL_FORWARD_CHUNK):
+        stop = start + EVAL_FORWARD_CHUNK
+        chunk = jax.tree_util.tree_map(lambda leaf: leaf[start:stop], obs_model)
+        v_chunk, logits_chunk = model.apply(model_params, chunk)
+        values.append(v_chunk)
+        logits.append(logits_chunk)
+    return jnp.concatenate(values, axis=0), jnp.concatenate(logits, axis=0)
+
 
 # ----------------------------------------------------------------------------
 # MCTS helpers (adapted from TerraSingleAgentOfficial/terra-baselines/eval.py)
@@ -467,7 +501,9 @@ def rollout_episode(
             obs_model = obs_to_model_input(
                 timestep.observation, prev_actions, rl_config
             )
-            v, logits_pi = model.apply(model_params, obs_model)
+            v, logits_pi = _apply_in_batch_chunks(
+                model, model_params, obs_model
+            )
             # D3: evaluation must respect the same masked distribution the
             # policy trained under (obs_model[22] when the flag is on).
             if _config_option(rl_config, "action_logit_masking", False):
