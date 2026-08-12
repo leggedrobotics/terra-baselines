@@ -120,8 +120,16 @@ from utils.episode_aggregates import (
     update_episode_aggregate,
 )
 from utils.accepted_bank import ARMS as ACCEPTED_BANK_ARMS
-from utils.accepted_bank import AcceptedBank, load_accepted_bank
-from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
+from utils.accepted_bank import (
+    V8_CONTINUOUS_PROFILES,
+    AcceptedBank,
+    load_accepted_bank,
+)
+from utils.pooled_sampler import (
+    CONTINUOUS_RULES,
+    PooledConditionSampler,
+    SamplerSettings,
+)
 from utils.wandb_human import (
     CONDITION_COLUMNS,
     LOGGING_SCHEMA,
@@ -1430,10 +1438,7 @@ class MixedAgentTrainConfig:
             raise ValueError("the R2 prepared fork requires --carry_work_observation")
         if self.reward_stage == "annealed_objective":
             sampler = self.pooled_sampler or {}
-            if sampler.get("rule") not in (
-                "continuous_banded_v1",
-                "continuous_banded_v2",
-            ):
+            if sampler.get("rule") not in CONTINUOUS_RULES:
                 raise ValueError(
                     "annealed_objective requires a continuous_banded sampler"
                 )
@@ -2202,7 +2207,7 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         )
         sampler_profile = getattr(config.accepted_bank, "sampler_profile", None)
         curriculum_stage = getattr(config.accepted_bank, "curriculum_stage", None)
-        if sampler_profile in ("continuous_banded_v1", "continuous_banded_v2"):
+        if sampler_profile in V8_CONTINUOUS_PROFILES:
             tags.append("support:all47-continuous")
         elif curriculum_stage is not None:
             tags.append("curriculum-stage:" f"{_tag_value(curriculum_stage)}")
@@ -2587,7 +2592,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             )
         if config.reward_stage == "annealed_objective" and pooled_sampler is None:
             raise ValueError(
-                "annealed_objective requires an enabled continuous_banded_v1 sampler"
+                "annealed_objective requires an enabled continuous_banded sampler"
             )
         _restore_pooled_sampler_checkpoint(
             pooled_sampler,
@@ -3367,9 +3372,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             ),
                             "sampler_profile": (config.accepted_bank.sampler_profile),
                         }
-                        if config.accepted_bank.sampler_profile in (
-                            "continuous_banded_v1",
-                            "continuous_banded_v2",
+                        if (
+                            config.accepted_bank.sampler_profile
+                            in V8_CONTINUOUS_PROFILES
                         ):
                             receipt_contract.update(
                                 {
@@ -4051,13 +4056,16 @@ if __name__ == "__main__":
             "banded_preview15_v1",
             "continuous_banded_v1",
             "continuous_banded_v2",
+            "continuous_banded_v3",
         ),
         default=None,
         help=(
             "Named V8 population contract. continuous_banded_v1 retains "
             "positive support on all 47 conditions while shifting mass by "
             "family depth; continuous_banded_v2 additionally graduates "
-            "conditions individually so stragglers cannot pin their family."
+            "conditions individually so stragglers cannot pin their family; "
+            "continuous_banded_v3 pools the frontier across families and caps "
+            "any single condition at 0.15 of the population."
         ),
     )
     parser.add_argument(
@@ -4429,10 +4437,7 @@ if __name__ == "__main__":
             raise ValueError(
                 f"accepted-bank config {args.config} must enable the pooled sampler"
             )
-        if accepted_bank.sampler_profile in (
-            "continuous_banded_v1",
-            "continuous_banded_v2",
-        ):
+        if accepted_bank.sampler_profile in V8_CONTINUOUS_PROFILES:
             expected_rule = accepted_bank.sampler_profile
         elif accepted_bank.sampling_probabilities:
             expected_rule = "fixed"

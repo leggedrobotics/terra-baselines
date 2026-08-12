@@ -38,8 +38,13 @@ V8_SAMPLER_PROFILES = (
     "banded_preview15_v1",
     "continuous_banded_v1",
     "continuous_banded_v2",
+    "continuous_banded_v3",
 )
-V8_CONTINUOUS_PROFILES = ("continuous_banded_v1", "continuous_banded_v2")
+V8_CONTINUOUS_PROFILES = (
+    "continuous_banded_v1",
+    "continuous_banded_v2",
+    "continuous_banded_v3",
+)
 V8_CONTINUOUS_GRAPH_PATH = (
     Path(__file__).resolve().parents[1]
     / "configs"

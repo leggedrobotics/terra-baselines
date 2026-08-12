@@ -14,8 +14,13 @@ RULES = (
     "adaptive",
     "continuous_banded_v1",
     "continuous_banded_v2",
+    "continuous_banded_v3",
 )
-CONTINUOUS_RULES = ("continuous_banded_v1", "continuous_banded_v2")
+CONTINUOUS_RULES = (
+    "continuous_banded_v1",
+    "continuous_banded_v2",
+    "continuous_banded_v3",
+)
 STATE_SCHEMA = "terra_pooled_condition_sampler_state_v2"
 CONTINUOUS_STATE_SCHEMA = "terra_continuous_banded_sampler_state_v1"
 CONTINUOUS_RECEIPT_SCHEMA = "terra_continuous_banded_sampler_v1"
@@ -25,6 +30,7 @@ ACTIVE_DEPTH_MASS = 0.75
 NEXT_DEPTH_MASS = 0.15
 FRONTIER_MASS = 0.90
 DEPTH_PRIORITY_BASE = 2.0
+MAX_CONDITION_MASS = 0.15
 DEMOTION_THRESHOLD = 0.65
 
 
@@ -138,6 +144,17 @@ class PooledConditionSampler:
     window may graduate regardless of depth. A v2 sampler may resume a v1
     checkpoint: mastery state carries over and the probability vector is
     recomputed under the v2 rule.
+
+    ``continuous_banded_v3`` drops the remaining family boundary: v2 still
+    pinned each family at exactly half the population, so a nearly-mastered
+    family funnelled its whole half onto its last unmastered condition. v3
+    pools the frontier across families - 10% uniform over every condition plus
+    90% over all unmastered conditions weighted ``DEPTH_PRIORITY_BASE ** (2 -
+    depth)`` - and caps any single condition at ``MAX_CONDITION_MASS``, which
+    also bounds end-game waste when the last unmastered cells are unlearnable.
+    Family survives as receipt metadata only. Graduation, demotion, windows,
+    and refresh boundaries are identical to v2, and a v3 sampler may resume a
+    v1 or v2 checkpoint under the same one-way migration.
     """
 
     def __init__(
@@ -362,12 +379,15 @@ class PooledConditionSampler:
             else None
         )
         migrating = (
-            self.settings.rule == "continuous_banded_v2"
-            and stored_rule == "continuous_banded_v1"
+            self.settings.rule in CONTINUOUS_RULES
+            and stored_rule in CONTINUOUS_RULES
+            and CONTINUOUS_RULES.index(stored_rule)
+            < CONTINUOUS_RULES.index(self.settings.rule)
         )
         if migrating:
-            # One-way rule migration: a v2 sampler may resume a v1 checkpoint.
-            # Every other setting must still match exactly.
+            # One-way rule migration: a newer continuous sampler may resume an
+            # older continuous checkpoint (v1->v2, v2->v3, v1->v3), never the
+            # reverse. Every other setting must still match exactly.
             expected_settings = {**expected_settings, "rule": stored_rule}
         contracts = (
             ("conditions", state["conditions"], list(self.names)),
@@ -767,7 +787,7 @@ class PooledConditionSampler:
                 and self._depths[index] != active_depths[family]
             ):
                 # v1 preview is observable but remains locked until its
-                # family reaches this depth. v2 graduates any eligible cell.
+                # family reaches this depth. v2/v3 graduate any eligible cell.
                 continue
             if self._competence[index] >= self.settings.mastery_threshold:
                 self._mastered[index] = True
@@ -813,6 +833,8 @@ class PooledConditionSampler:
             return self._continuous_distribution(mastered)
         if rule == "continuous_banded_v2":
             return self._continuous_distribution_v2(mastered)
+        if rule == "continuous_banded_v3":
+            return self._continuous_distribution_v3(mastered)
         raise ValueError(f"no banded distribution for rule {rule!r}")
 
     def _continuous_distribution_v2(
@@ -847,6 +869,68 @@ class PooledConditionSampler:
             raise ValueError(
                 "continuous_banded must retain positive support and unit mass"
             )
+        return probabilities
+
+    def _continuous_distribution_v3(
+        self, mastered: np.ndarray | None = None
+    ) -> np.ndarray:
+        """One pooled frontier across families, capped per condition.
+
+        ``p = ALL_FAMILY_FLOOR_MASS * Uniform(all conditions)
+        + FRONTIER_MASS * w / sum(w)`` over *every* unmastered condition,
+        pooled across families, with ``w = DEPTH_PRIORITY_BASE ** (2 - depth)``.
+        Family is receipt metadata and never allocates mass, so a family that
+        is one condition away from mastered can no longer funnel its half of
+        the population onto that condition.
+
+        No condition may hold more than ``MAX_CONDITION_MASS``: excess is
+        water-filled back over the uncapped unmastered conditions in the same
+        depth-weighted proportion, and once every unmastered condition is
+        capped the remainder spills uniformly over what is left, which is the
+        mastered replay set. If nothing is left to spill onto, the cap is
+        infeasible for this graph and the distribution is uniform.
+        """
+        state = self._mastered if mastered is None else mastered
+        uniform = np.full(self._count, 1.0 / self._count, dtype=np.float64)
+        frontier = ~state
+        if not frontier.any():
+            return uniform
+        floor = ALL_FAMILY_FLOOR_MASS * uniform
+        weights = np.zeros(self._count, dtype=np.float64)
+        weights[frontier] = DEPTH_PRIORITY_BASE ** (
+            2 - self._depths[frontier].astype(np.float64)
+        )
+        probabilities = floor + FRONTIER_MASS * weights / weights.sum()
+        capped = np.zeros(self._count, dtype=bool)
+        # One condition is capped per pass, so the graph size bounds the loop.
+        for _ in range(self._count + 1):
+            over = (~capped) & (probabilities > MAX_CONDITION_MASS + 1e-15)
+            if not over.any():
+                break
+            capped |= over
+            probabilities = floor.copy()
+            probabilities[capped] = MAX_CONDITION_MASS
+            remainder = 1.0 - float(probabilities.sum())
+            free = frontier & ~capped
+            if free.any():
+                probabilities[free] += (
+                    remainder * weights[free] / float(weights[free].sum())
+                )
+            elif (~capped).any():
+                probabilities[~capped] += remainder / int((~capped).sum())
+            else:
+                # MAX_CONDITION_MASS * count < 1: the cap cannot hold at all.
+                return uniform
+        else:
+            raise ValueError("continuous_banded_v3 mass cap did not converge")
+        if np.any(probabilities <= 0.0) or not np.isclose(
+            probabilities.sum(), 1.0, rtol=0.0, atol=1e-12
+        ):
+            raise ValueError(
+                "continuous_banded must retain positive support and unit mass"
+            )
+        if np.any(probabilities > MAX_CONDITION_MASS + 1e-12):
+            raise ValueError("continuous_banded_v3 exceeded its per-condition cap")
         return probabilities
 
     def _adaptive_distribution(self) -> np.ndarray:
@@ -946,7 +1030,9 @@ class PooledConditionSampler:
             role_by_condition = []
             family_active = {family: self._active_depth(family) for family in FAMILIES}
             for index in range(self._count):
-                if self.settings.rule == "continuous_banded_v2":
+                if self.settings.rule != "continuous_banded_v1":
+                    # v2/v3 have no depth band: a condition is either on the
+                    # pooled frontier or in mastered replay.
                     role_by_condition.append(
                         "replay" if self._mastered[index] else "frontier"
                     )

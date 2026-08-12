@@ -12,7 +12,11 @@ from pathlib import Path
 import numpy as np
 
 from utils import helpers
-from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
+from utils.pooled_sampler import (
+    CONTINUOUS_RULES,
+    PooledConditionSampler,
+    SamplerSettings,
+)
 
 
 def verify_sampler_state(state: object) -> dict:
@@ -21,7 +25,7 @@ def verify_sampler_state(state: object) -> dict:
     if state.get("schema") != "terra_continuous_banded_sampler_state_v1":
         raise ValueError("checkpoint has the wrong sampler schema")
     settings = SamplerSettings(**state.get("settings", {}))
-    if settings.rule not in ("continuous_banded_v1", "continuous_banded_v2"):
+    if settings.rule not in CONTINUOUS_RULES:
         raise ValueError("checkpoint has the wrong sampler rule")
     conditions = state.get("conditions")
     labels = state.get("labels")
