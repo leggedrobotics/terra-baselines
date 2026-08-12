@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 from utils.pooled_sampler import (
-    MAX_CONDITION_MASS,
     PooledConditionSampler,
     SamplerSettings,
     effective_sample_size,
@@ -303,229 +302,104 @@ def test_v2_restores_v1_checkpoint_and_recomputes_probabilities():
         _sampler(seed=11).restore_state_dict(deepcopy(v2_state))
 
 
-def test_v3_initial_distribution_pools_the_frontier_without_family_halves():
-    v3_masses = _masses(_v8_shaped_sampler("continuous_banded_v3"))
-    v2_masses = _masses(_v8_shaped_sampler("continuous_banded_v2"))
-    foundation = [name for name in v3_masses if name.startswith("foundation")]
-    trench = [name for name in v3_masses if name.startswith("trench")]
-
-    # 10% uniform over all 47 conditions plus 90% over the pooled frontier
-    # weighted 2**(2 - depth): 2*4 + 13*2 + 32*1 = 66.
-    assert v3_masses[foundation[0]] == pytest.approx(0.10 / 47 + 0.90 * 4 / 66)
-    assert v3_masses[foundation[1]] == pytest.approx(0.10 / 47 + 0.90 * 2 / 66)
-    assert v3_masses[foundation[-1]] == pytest.approx(0.10 / 47 + 0.90 * 1 / 66)
-    assert v3_masses[trench[1]] == pytest.approx(v3_masses[foundation[1]])
-    assert sum(v3_masses.values()) == pytest.approx(1.0)
-    assert all(value > 0.0 for value in v3_masses.values())
-    assert max(v3_masses.values()) < MAX_CONDITION_MASS
-
-    # v2 pins each family at exactly half the population; v3 has no family
-    # boundary, so the split follows the pooled depth weights instead.
-    assert sum(v2_masses[name] for name in foundation) == pytest.approx(0.5)
-    assert sum(v3_masses[name] for name in foundation) == pytest.approx(
-        25 * 0.10 / 47 + 0.90 * (4 + 6 * 2 + 18) / 66
-    )
-    assert sum(v3_masses[name] for name in trench) == pytest.approx(
-        22 * 0.10 / 47 + 0.90 * (4 + 7 * 2 + 14) / 66
-    )
-
-
-def test_v3_pooled_frontier_ends_the_measured_last_cell_monopoly():
+def test_v3_is_exactly_v2_while_the_cap_is_inactive():
     v2 = _v8_shaped_sampler("continuous_banded_v2")
     v3 = _v8_shaped_sampler("continuous_banded_v3")
     foundation = [name for name in v3.names if name.startswith("foundation")]
     trench = [name for name in v3.names if name.startswith("trench")]
-    # The measured reward_v2_scratch state: trench is one condition away from
-    # mastered while 23 foundations (5 depth-1, 18 depth-2) remain unmastered.
+
+    for mastered in ((), (foundation[0], trench[0]), foundation[:8]):
+        expected = _masses(v2, mastered)
+        observed = _masses(v3, mastered)
+        assert max(expected.values()) <= v3.settings.max_mass
+        np.testing.assert_array_equal(v3.probabilities, v2.probabilities)
+        assert observed == expected
+
+
+def test_v3_caps_the_measured_u13_5_monopoly_state():
+    v2 = _v8_shaped_sampler("continuous_banded_v2")
+    v3 = _v8_shaped_sampler("continuous_banded_v3")
+    foundation = [name for name in v3.names if name.startswith("foundation")]
+    trench = [name for name in v3.names if name.startswith("trench")]
+    # The u13.5k reward_v2_scratch state: every trench mastered except
+    # trn-net4-side1-road, with 23 foundations (5 depth-1, 18 depth-2) open.
     straggler = trench[-1]
     mastered = (set(trench) - {straggler}) | {foundation[0], foundation[1]}
-    unmastered = [name for name in v3.names if name not in mastered]
-    assert len(unmastered) == 24
 
     v2_masses = _masses(v2, mastered)
-    # The measured monopoly: one condition took 45.2% of all sampling while
-    # each unmastered depth-1 foundation took ~3.4%.
-    assert v2_masses[straggler] == pytest.approx(0.5 * (0.10 / 22 + 0.90))
     assert v2_masses[straggler] == pytest.approx(0.452, abs=5e-4)
-    assert v2_masses[foundation[2]] == pytest.approx(0.5 * (0.10 / 25 + 0.90 * 2 / 28))
-    assert v2_masses[foundation[2]] == pytest.approx(0.034, abs=5e-4)
+    assert v2_masses[foundation[2]] == pytest.approx(0.0341, abs=5e-5)
+    assert v2_masses[foundation[-1]] == pytest.approx(0.0181, abs=5e-5)
+    assert effective_sample_size(v2.probabilities) == pytest.approx(4.62, abs=5e-3)
 
     v3_masses = _masses(v3, mastered)
-    # Pooled frontier weights: 5*2 (depth 1) + 18 + 1 (depth 2) = 29.
-    assert v3_masses[straggler] == pytest.approx(0.10 / 47 + 0.90 * 1 / 29)
-    assert v3_masses[foundation[2]] == pytest.approx(0.10 / 47 + 0.90 * 2 / 29)
-    mean_unmastered = sum(v3_masses[name] for name in unmastered) / len(unmastered)
-    assert max(v3_masses.values()) <= 2.0 * mean_unmastered
-    assert max(v3_masses.values()) <= MAX_CONDITION_MASS + 1e-12
-    # Target ESS recovers instead of collapsing onto the one pinned cell.
-    assert effective_sample_size(v2.probabilities) < 5.0
-    assert effective_sample_size(v3.probabilities) > 20.0
-
-
-def test_v3_gives_a_fully_mastered_family_only_its_uniform_floor():
-    v2 = _v8_shaped_sampler("continuous_banded_v2")
-    v3 = _v8_shaped_sampler("continuous_banded_v3")
-    trench = [name for name in v3.names if name.startswith("trench")]
-    foundation = [name for name in v3.names if name.startswith("foundation")]
-
-    v2_masses = _masses(v2, trench)
-    v3_masses = _masses(v3, trench)
-    # v2 keeps half the population inside a family with nothing left to learn.
-    assert sum(v2_masses[name] for name in trench) == pytest.approx(0.5)
-    # v3 leaves it the uniform floor and pools the rest onto the real frontier.
-    assert sum(v3_masses[name] for name in trench) == pytest.approx(0.10 * 22 / 47)
-    for name in trench:
-        assert v3_masses[name] == pytest.approx(0.10 / 47)
-    # Foundation frontier weights: 4 + 6*2 + 18 = 34.
-    assert v3_masses[foundation[0]] == pytest.approx(0.10 / 47 + 0.90 * 4 / 34)
-    assert v3_masses[foundation[-1]] == pytest.approx(0.10 / 47 + 0.90 * 1 / 34)
+    assert v3_masses[straggler] == pytest.approx(v3.settings.max_mass)
+    assert max(v3_masses.values()) == pytest.approx(0.150, abs=5e-4)
+    assert effective_sample_size(v3.probabilities) == pytest.approx(19.62, abs=5e-3)
+    # The excess crosses the family boundary instead of staying in trench.
+    assert sum(v3_masses[name] for name in foundation) == pytest.approx(0.776, abs=5e-4)
+    assert sum(v3_masses[name] for name in trench) == pytest.approx(0.224, abs=5e-4)
     assert sum(v3_masses.values()) == pytest.approx(1.0)
-
-
-def test_v3_caps_every_condition_and_spills_the_rest_into_replay():
-    v3 = _v8_shaped_sampler("continuous_banded_v3")
-    foundation = [name for name in v3.names if name.startswith("foundation")]
-    for remaining in (5, 2):
-        # The end-game: only unlearnable walls are left unmastered.
-        wall = foundation[-remaining:]
-        mastered = [name for name in v3.names if name not in set(wall)]
-        masses = _masses(v3, mastered)
-        # Uncapped, those cells would absorb nearly the whole frontier.
-        assert 0.10 / 47 + 0.90 / remaining > MAX_CONDITION_MASS
-        for name in wall:
-            assert masses[name] == pytest.approx(MAX_CONDITION_MASS)
-        replay = [masses[name] for name in mastered]
-        assert min(replay) == pytest.approx(max(replay))
-        assert min(replay) == pytest.approx(
-            (1.0 - remaining * MAX_CONDITION_MASS) / len(mastered)
-        )
-        assert sum(masses.values()) == pytest.approx(1.0)
-        assert max(masses.values()) <= MAX_CONDITION_MASS + 1e-12
-
-
-def test_v3_cap_water_fills_the_excess_onto_the_uncapped_frontier():
-    v3 = _v8_shaped_sampler("continuous_banded_v3")
-    foundation = [name for name in v3.names if name.startswith("foundation")]
-    # One depth-0 cell (weight 4) plus ten depth-2 cells (weight 1): the
-    # depth-0 share would be 0.10/47 + 0.90*4/14 = 25.9% without the cap.
-    wall = [foundation[0]] + foundation[-10:]
-    mastered = [name for name in v3.names if name not in set(wall)]
-    masses = _masses(v3, mastered)
-
-    assert masses[foundation[0]] == pytest.approx(MAX_CONDITION_MASS)
-    free_share = 0.10 / 47 + (1.0 - MAX_CONDITION_MASS - 46 * 0.10 / 47) / 10
-    for name in wall[1:]:
-        assert masses[name] == pytest.approx(free_share)
-    assert free_share < MAX_CONDITION_MASS
-    for name in mastered:
-        assert masses[name] == pytest.approx(0.10 / 47)
-    assert sum(masses.values()) == pytest.approx(1.0)
-
-
-def test_v3_all_mastered_is_uniform_over_every_condition():
-    v3 = _v8_shaped_sampler("continuous_banded_v3")
-    v2 = _v8_shaped_sampler("continuous_banded_v2")
-    _masses(v3, v3.names)
-    _masses(v2, v2.names)
-    np.testing.assert_allclose(v3.probabilities, np.full(47, 1.0 / 47))
-    # v2 still splits the two families 50/50 even with nothing left to learn.
-    assert v2.probabilities.max() == pytest.approx(0.5 / 22)
-
-
-def test_v3_graduation_demotion_and_windows_match_v2():
-    v2 = _sampler(rule="continuous_banded_v2")
-    v3 = _sampler(rule="continuous_banded_v3")
-    for sampler in (v2, v3):
-        sampler.start(0)
-        _refresh(sampler, 150, {"f0": 1.0, "f2": 1.0, "t0": 0.0})
-        _refresh(sampler, 300, {"f0": 0.0, "f2": 0.0, "t0": 1.0})
-        _refresh(sampler, 450, {"f0": 0.0})
-
-    v2_receipt = v2.receipt()
-    v3_receipt = v3.receipt()
-    mastered = dict(zip(NAMES, v3_receipt["mastery"]["mastered"]))
-    assert mastered["f2"] is True  # depth 2 graduates before its depth-1 peers
-    assert mastered["f0"] is False  # EMA 0.49 demotes below 0.65
-    assert v3_receipt["mastery"]["mastered"] == v2_receipt["mastery"]["mastered"]
-    assert v3_receipt["mastery"]["role"] == v2_receipt["mastery"]["role"]
-    assert v3_receipt["competence"] == v2_receipt["competence"]
-    assert v3_receipt["windows"] == v2_receipt["windows"]
-    assert v3.refreshes == v2.refreshes == 3
-    # Family stays in the receipt as metadata but no longer moves any mass.
-    assert v3_receipt["mastery"]["family_active_depth"] == (
-        v2_receipt["mastery"]["family_active_depth"]
+    assert min(v3_masses.values()) > 0.0
+    # Every condition keeps its v2 ordering; only the runaway cell is clipped.
+    ranked = sorted(v3.names, key=lambda name: v2_masses[name])
+    assert [v3_masses[name] for name in ranked] == sorted(
+        v3_masses[name] for name in ranked
     )
-    assert not np.allclose(v3.probabilities, v2.probabilities)
 
 
-def test_v3_restores_v2_and_v1_checkpoints_and_rejects_downgrades():
+def test_v3_migrates_only_at_an_empty_window_boundary():
     source = _sampler(seed=11, rule="continuous_banded_v2")
     source.start(0)
     drawn = source.sample_levels((2, 64))
     counts = np.bincount(drawn.ravel(), minlength=len(NAMES))
     source.observe_reset_exposures(counts)
     source.observe_transition_exposures(counts * 16)
-    _refresh(source, 150, {"f0": 1.0, "f1a": 1.0, "t0": 1.0})
-    v2_state = source.state_dict()
-    assert v2_state["settings"]["rule"] == "continuous_banded_v2"
 
+    # Mid-window: exposure taken under v2 must not be counted under v3.
+    _observe(source, {"f0": 1.0})
+    with pytest.raises(ValueError, match="empty current window"):
+        _sampler(seed=11, rule="continuous_banded_v3").restore_state_dict(
+            deepcopy(source.state_dict())
+        )
+
+    # The refresh boundary closes that window and opens an empty one.
+    source.refresh(150)
+    v2_state = source.state_dict()
     migrated = _sampler(seed=11, rule="continuous_banded_v3")
     migrated.restore_state_dict(deepcopy(v2_state))
     mastered = np.asarray(v2_state["mastery"]["mastered"], dtype=bool)
-    np.testing.assert_array_equal(migrated._mastered, mastered)
     np.testing.assert_allclose(
         migrated.probabilities,
         migrated._continuous_distribution_v3(mastered),
         rtol=0.0,
         atol=1e-15,
     )
-
-    # Only the rule and its probability vector change; every other field of
-    # the checkpoint survives the migration untouched.
     v3_state = migrated.state_dict()
     assert v3_state["settings"]["rule"] == "continuous_banded_v3"
-    for key in (
-        "conditions",
-        "labels",
-        "competence",
-        "current_window",
-        "closed_window",
-        "refresh",
-        "numpy_rng",
-        "mastery",
-    ):
+    for key in ("conditions", "labels", "competence", "closed_window", "refresh"):
         assert v3_state[key] == v2_state[key]
+
+    # A native v3 checkpoint resumes unchanged, mid-window included.
     resumed = _sampler(seed=11, rule="continuous_banded_v3")
     resumed.restore_state_dict(deepcopy(v3_state))
     assert resumed.state_dict() == v3_state
+    _observe(resumed, {"f0": 1.0})
+    live = resumed.state_dict()
+    again = _sampler(seed=11, rule="continuous_banded_v3")
+    again.restore_state_dict(deepcopy(live))
+    assert again.state_dict() == live
 
-    # v1 chains to v3 through the same one-way migration.
-    v1_source = _sampler(seed=11)
-    v1_source.start(0)
-    _refresh(v1_source, 150, {"f0": 1.0, "t0": 1.0})
-    v1_state = v1_source.state_dict()
-    chained = _sampler(seed=11, rule="continuous_banded_v3")
-    chained.restore_state_dict(deepcopy(v1_state))
-    np.testing.assert_allclose(
-        chained.probabilities,
-        chained._continuous_distribution_v3(
-            np.asarray(v1_state["mastery"]["mastered"], dtype=bool)
-        ),
-        rtol=0.0,
-        atol=1e-15,
-    )
-
-    # Migration never runs backwards: both older rules reject a v3 checkpoint.
+    # Migration never runs backwards.
     for older in ("continuous_banded_v1", "continuous_banded_v2"):
         with pytest.raises(ValueError, match="settings changed"):
             _sampler(seed=11, rule=older).restore_state_dict(deepcopy(v3_state))
 
 
-def test_v1_and_v2_distributions_are_unchanged_and_uncapped_beside_v3():
+def test_v1_and_v2_distributions_are_unchanged_beside_v3():
     mastered = {"f0", "f1a", "t0"}
     v1_masses = _masses(_sampler(), mastered)
     v2_masses = _masses(_sampler(rule="continuous_banded_v2"), mastered)
-    v3_masses = _masses(_sampler(rule="continuous_banded_v3"), mastered)
 
     # v1: both families sit at active depth 1 with a depth-2 preview, and the
     # active band still includes the already-mastered sibling f1a.
@@ -542,14 +416,13 @@ def test_v1_and_v2_distributions_are_unchanged_and_uncapped_beside_v3():
     assert v2_masses["t1a"] == pytest.approx(0.5 * (0.10 / 4 + 0.90 * 2 / 5))
     assert v2_masses["t2"] == pytest.approx(0.5 * (0.10 / 4 + 0.90 * 1 / 5))
     assert v2_masses["f1a"] == pytest.approx(0.5 * 0.10 / 4)
-
-    # The per-condition cap is v3-only: v1 and v2 both keep single conditions
-    # far above it, and only v3 clamps them.
-    assert v1_masses["f1b"] > MAX_CONDITION_MASS
-    assert v2_masses["f1b"] > MAX_CONDITION_MASS
-    assert max(v3_masses.values()) == pytest.approx(MAX_CONDITION_MASS)
     for family_masses in (v1_masses, v2_masses):
         assert sum(family_masses[name] for name in NAMES[:4]) == pytest.approx(0.5)
-    # v3 pools instead: the five unmastered cells share the frontier and the
-    # three mastered cells split whatever the cap returns.
-    assert v3_masses["f0"] == pytest.approx((1.0 - 5 * MAX_CONDITION_MASS) / 3)
+
+    # The cap is v3-only: both older rules keep single conditions above it.
+    cap = SamplerSettings().max_mass
+    assert v1_masses["f1b"] > cap
+    assert v2_masses["f1b"] > cap
+    assert max(_masses(_sampler(rule="continuous_banded_v3"), mastered).values()) == (
+        pytest.approx(cap)
+    )

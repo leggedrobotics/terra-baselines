@@ -4064,8 +4064,8 @@ if __name__ == "__main__":
             "positive support on all 47 conditions while shifting mass by "
             "family depth; continuous_banded_v2 additionally graduates "
             "conditions individually so stragglers cannot pin their family; "
-            "continuous_banded_v3 pools the frontier across families and caps "
-            "any single condition at 0.15 of the population."
+            "continuous_banded_v3 adds the sampler max_mass cap on top of v2 "
+            "so no single condition can monopolize the population."
         ),
     )
     parser.add_argument(
