@@ -18,4 +18,3 @@ def test_submit_exports_exact_installed_launcher_directory() -> None:
     submit = (LAUNCHER / "submit.sh").read_text()
 
     assert "LEGACY_EASY_LAUNCHER_DIR=$SCRIPT_DIR" in submit
-
