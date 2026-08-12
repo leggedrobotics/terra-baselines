@@ -40,7 +40,9 @@ p_c   = 0.10 / N                                       # uniform floor, all N co
 then: cap every p_c at MAX_CONDITION_MASS = 0.15;
       redistribute excess proportionally over the remaining uncapped
       unmastered conditions; iterate (bounded); if all unmastered are
-      capped, spill the remainder uniformly over ALL conditions.
+      capped, spill the remainder uniformly over the conditions that are
+      not capped (the mastered replay set), so the cap always holds; if
+      nothing is left to spill onto (0.15 * N < 1), fall back to uniform.
 all conditions mastered -> uniform over all (maintenance regime).
 ```
 
