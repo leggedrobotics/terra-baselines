@@ -126,6 +126,10 @@ def test_zero_stall_embeddings_preserve_outputs_and_optimizer_tree():
         grads=jax.tree.map(jnp.zeros_like, grown_params)
     )
     assert jax.tree.structure(updated.params) == jax.tree.structure(updated.opt_state[1][0].mu)
+    assert all(
+        np.all(np.isfinite(np.asarray(leaf)))
+        for leaf in jax.tree.leaves((updated.params, updated.opt_state))
+    )
     for name in PARAMETER_NAMES:
         np.testing.assert_array_equal(
             np.asarray(updated.params["params"][name]),
