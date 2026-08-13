@@ -1,4 +1,66 @@
-# Experiments — current state (updated 2026-08-10 CEST)
+# Experiments — current state (updated 2026-08-13 CEST)
+
+## Active: v6.1 material-stall observation continuation
+
+The next run continues the selected v6.1 reward-v2 checkpoint at update 14,000
+and adds one observation only:
+
+```text
+stall_age = min(consecutive transitions without material-state change, 32) / 32
+```
+
+Material state is the raw soil/action map plus every active excavator's load
+and carry-relocation credit.  Soil, load, or carry changes reset the counter;
+pose and cabin motion do not.  Two zero-initialized 704-wide embeddings inject
+the scalar before the existing actor and critic heads, leaving the existing
+head matrix shapes and the update-14,000 outputs unchanged when the scalar is
+zero.  The prepared checkpoint preserves model parameters, Adam moments and
+clock, absolute update and entropy schedules, and the complete
+`continuous_banded_v2` sampler state.
+
+The production segment requests 8 RTX 4090 GPUs in `gpuhe.24h` for 23:45 and
+uses 256 environments per device.  This reshapes the old 4x512 execution into
+8x256 while retaining 2,048 total environments, 65,536 transitions per PPO
+update, 32 minibatches, and two epochs.  The allocation itself runs the CUDA
+convolution-backward and NCCL preflight before its first finite production
+update; there is no separate 8-GPU smoke allocation.  Checkpoints are written
+every 500 absolute updates toward update 40,000, so a wall-time stop is a
+continuable segment.
+
+This treatment does **not** change reward-v2, its timing coefficients, the
+v6.1 spatial architecture, action masking, sampler rule, training bank, seed,
+learning rate, PPO shape, or horizon.  It also deliberately excludes
+time-to-go: remaining time is a separate finite-horizon/pacing observation and
+is not the proposed mechanism for breaking the measured repeated-input loops.
+
+Readout order:
+
+1. verify the first completed update and finite rolling checkpoint;
+2. compare fixed promotion checkpoints against the existing v6.1 curve;
+3. inspect `train/stall_age_mean` and
+   `train/stall_age_saturated_fraction`, plus the prior failure strata;
+4. if recurrence persists, run a separate actor-only GRU-64 pilot with the
+   v6.1 encoder, reward, and curriculum fixed.  That pilot must use contiguous
+   32-step PPO sequences, carried/reset hidden state, and a matched
+   sequence-batched feed-forward control; a GRU is not bundled into this run.
+
+The superseded 8-GPU resume smoke `10572344` was cancelled while still pending
+and never allocated, so it produced no checkpoint or training evidence.
+
+Pinned implementation at launch preparation:
+
+- Terra: `c2d2a94a124759e9f21c2b37930f717e299f0c46`
+- terra-baselines core: `ae4252c` plus finite-step check `aaa1fdd`
+- direct launcher: `2387f27`
+- source u14k checkpoint SHA-256:
+  `79312602176e88b696c8c006b3b9af71a4cf121907c7aa8c4865722bd4830609`
+- prepared checkpoint SHA-256:
+  `96600430af3fb0135e0fc94e8f9dd754476067fbfb8635a3db70d6c3519b6971`
+
+Because this is not paired with a no-scalar continuation from u14k, its result
+is a practical continuation screen, not by itself a causal stall-age ablation.
+Any improvement must be interpreted together with the scalar telemetry and the
+frozen recurrence/failure panel.
 
 Current design and decision authority:
 
