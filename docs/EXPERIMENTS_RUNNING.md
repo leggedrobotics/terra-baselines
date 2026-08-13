@@ -2,6 +2,15 @@
 
 ## Active: v6.1 material-stall observation continuation
 
+Submitted job `10616190` at 2026-08-13 17:25 CEST from terra-baselines
+`6ad2eb157ef2724f88db74fd44d940d05260689d`.  Its authoritative scheduler
+state at submission was `PENDING (Priority)` with no assigned node or start
+estimate.  Slurm records partition `gpuhe.24h`, effective account
+`gpuhe/es_hutter`, a 23:45 wall limit, one node, 8 CPUs, 64 GiB, and exactly
+8 RTX 4090 GPUs.  This is queued compute, not runtime evidence; the first
+completed PPO update and finite update-14,500 checkpoint remain the go/no-go
+gate.
+
 The next run continues the selected v6.1 reward-v2 checkpoint at update 14,000
 and adds one observation only:
 
@@ -52,6 +61,7 @@ Pinned implementation at launch preparation:
 - Terra: `c2d2a94a124759e9f21c2b37930f717e299f0c46`
 - terra-baselines core: `ae4252c` plus finite-step check `aaa1fdd`
 - direct launcher: `2387f27`
+- submitted source revision: `6ad2eb157ef2724f88db74fd44d940d05260689d`
 - source u14k checkpoint SHA-256:
   `79312602176e88b696c8c006b3b9af71a4cf121907c7aa8c4865722bd4830609`
 - prepared checkpoint SHA-256:

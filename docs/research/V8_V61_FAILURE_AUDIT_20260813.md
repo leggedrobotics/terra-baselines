@@ -549,6 +549,15 @@ training rather than merely inserting a cell into a feed-forward learner
 
 ## Stall-age continuation contract
 
+The direct continuation was submitted as Slurm job `10616190` at 2026-08-13
+17:25 CEST from terra-baselines
+`6ad2eb157ef2724f88db74fd44d940d05260689d` and Terra `c2d2a94a`.  At the
+submission receipt it was `PENDING (Priority)`, with no node or estimated
+start, on `gpuhe.24h` under effective account `gpuhe/es_hutter`.  The request
+is one node, 8 CPUs, 64 GiB, 8 RTX 4090 GPUs, and 23:45 wall time.  No training
+claim follows until the in-allocation preflight and first PPO update pass; the
+first durable checkpoint gate is absolute update 14,500.
+
 The old 8-GPU continuation path is retired.  Job `10569391` allocated eight
 RTX 3090 GPUs but failed before update 14,001 in the v6.1 flatten-reduce
 convolution with `CUDNN_STATUS_EXECUTION_FAILED`; it produced no checkpoint or
