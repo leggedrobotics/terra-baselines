@@ -83,6 +83,8 @@ Reward Multipliers:
   relocation_progress_mult - Agent-neutral multiplier for signed relocation progress
 """
 
+import copy
+
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
@@ -440,6 +442,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "resnet_stage_channels": None,
         "resnet_blocks_per_stage": None,
         "carry_work_observation": False,
+        "stall_age_observation": False,
         # V6 readout block: all three change parameter shapes.
         "flatten_reduce_channels": None,
         "attn_latent_queries": 4,
@@ -488,7 +491,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             "--critic_hidden_dims, --resnet_stage_channels, "
             "--resnet_blocks_per_stage, --flatten_reduce_channels, "
             "--attn_latent_queries, and --aux_coef values, and the "
-            "carry-work observation, action-logit-masking and reward-v2 "
+            "carry-work/stall-age observations, action-logit-masking and reward-v2 "
             "timing contracts."
         )
 
@@ -1021,6 +1024,19 @@ def _validate_r2_resume_checkpoint(
             "R2 resume optimizer clock mismatch: "
             f"step={optimizer_step}, expected={expected_step}"
         )
+    if bool(getattr(config, "stall_age_observation", False)):
+        receipt = checkpoint.get("stall_age_prepared_continuation")
+        if not isinstance(receipt, dict) or receipt.get("schema") != (
+            "terra_v8_v61_stall_age_prepared_v1"
+        ):
+            raise ValueError(
+                "stall-age resume requires a prepared checkpoint receipt"
+            )
+
+
+def _attach_stall_age_receipt(checkpoint: dict, receipt: dict | None) -> None:
+    if receipt is not None:
+        checkpoint["stall_age_prepared_continuation"] = copy.deepcopy(receipt)
 
 
 def pooled_sampler_settings(config) -> SamplerSettings | None:
@@ -1400,6 +1416,7 @@ class MixedAgentTrainConfig:
     # 1 shapes undiscounted and pays the pace through step_cost_total 3.6.
     reward_v2_timing_variant: int = 0
     carry_work_observation: bool = False
+    stall_age_observation: bool = False
     # D3: mask provably-ineffective actions out of the sampling distribution
     # (env supplies obs["action_mask"]; DO_NOTHING always stays valid).
     action_logit_masking: bool = False
@@ -1508,6 +1525,11 @@ class MixedAgentTrainConfig:
             raise ValueError("reward_v2_timing_variant applies only to reward_v2")
         if self.prepared_fork_from is not None and not self.carry_work_observation:
             raise ValueError("the R2 prepared fork requires --carry_work_observation")
+        if self.stall_age_observation and self.action_logit_masking:
+            raise ValueError(
+                "the stall-age continuation is unmasked; do not combine "
+                "--stall_age_observation with --action_logit_masking"
+            )
         if self.reward_stage == "annealed_objective":
             sampler = self.pooled_sampler or {}
             if sampler.get("rule") not in CONTINUOUS_RULES:
@@ -2365,6 +2387,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     # Optionally load checkpoint before creating states
     checkpoint = None
     r2_prepared_receipt = None
+    stall_age_prepared_receipt = None
     env_params_override = None
     resume_update = 0
     checkpoint_mode = _checkpoint_load_mode(config)
@@ -2389,6 +2412,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 r2_prepared_receipt = dict(checkpoint["r2_prepared_fork"])
             if checkpoint_mode == "resume":
                 _validate_r2_resume_checkpoint(checkpoint, r2_protocol_receipt, config)
+                if config.stall_age_observation:
+                    stall_age_prepared_receipt = copy.deepcopy(
+                        checkpoint["stall_age_prepared_continuation"]
+                    )
             _validate_checkpoint_architecture(checkpoint, config)
             if (
                 checkpoint_mode in ("resume", "prepared_fork")
@@ -2973,6 +3000,23 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     ),
                     "devices",
                 )
+                if config.stall_age_observation:
+                    rollout_stall_age = transitions.obs["stall_age"].astype(
+                        jnp.float32
+                    )
+                    stall_age_stats = {
+                        "mean": jax.lax.pmean(
+                            jnp.mean(rollout_stall_age), "devices"
+                        ),
+                        "saturated_fraction": jax.lax.pmean(
+                            jnp.mean(rollout_stall_age >= 1.0), "devices"
+                        ),
+                    }
+                else:
+                    stall_age_stats = {
+                        "mean": jnp.zeros((), dtype=jnp.float32),
+                        "saturated_fraction": jnp.zeros((), dtype=jnp.float32),
+                    }
 
                 # Share terminal credit with preceding same-episode agent turns.
                 done_seq = transitions.done  # [seq, batch]
@@ -3138,6 +3182,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     transition_integrity,
                     reset_exposure_count,
                     transition_exposure_count,
+                    stall_age_stats,
                 )
 
             # Setup runner state for multiple devices
@@ -3275,6 +3320,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     transition_integrity,
                     reset_exposure_count,
                     transition_exposure_count,
+                    stall_age_stats,
                 ) = jax.block_until_ready(
                     _update_step(
                         runner_state,
@@ -3285,6 +3331,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     )
                 )
                 transition_integrity_single = unreplicate(transition_integrity)
+                stall_age_stats_single = unreplicate(stall_age_stats)
                 _assert_transition_integrity(transition_integrity_single)
                 reset_exposure_single = None
                 transition_exposure_single = None
@@ -3369,6 +3416,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                 "reward/terminal_objective_mix": current_reward_mix,
                             }
                         )
+                        if config.stall_age_observation:
+                            log_dict.update(
+                                {
+                                    "train/stall_age_mean": float(
+                                        stall_age_stats_single["mean"]
+                                    ),
+                                    "train/stall_age_saturated_fraction": float(
+                                        stall_age_stats_single["saturated_fraction"]
+                                    ),
+                                }
+                            )
                         if pooled_sampler is not None:
                             log_dict.update(
                                 curriculum_metrics(
@@ -3436,6 +3494,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         checkpoint["r2_protocol_receipt"] = r2_protocol_receipt
                     if r2_prepared_receipt is not None:
                         checkpoint["r2_prepared_fork"] = r2_prepared_receipt
+                    _attach_stall_age_receipt(checkpoint, stall_age_prepared_receipt)
                     if pooled_sampler is not None:
                         checkpoint["pooled_sampler_state"] = pooled_sampler.state_dict()
                     if reward_anneal_state is not None:
@@ -3678,6 +3737,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             final_checkpoint["r2_protocol_receipt"] = r2_protocol_receipt
         if r2_prepared_receipt is not None:
             final_checkpoint["r2_prepared_fork"] = r2_prepared_receipt
+        _attach_stall_age_receipt(final_checkpoint, stall_age_prepared_receipt)
         if train_info["pooled_sampler_state"] is not None:
             final_checkpoint["pooled_sampler_state"] = train_info[
                 "pooled_sampler_state"
@@ -4272,6 +4332,11 @@ if __name__ == "__main__":
         help="Consume normalized carry work from agent_states[..., 8].",
     )
     parser.add_argument(
+        "--stall_age_observation",
+        action="store_true",
+        help="Append Terra's normalized material-stall age after v6.1 fusion.",
+    )
+    parser.add_argument(
         "--action_logit_masking",
         action="store_true",
         help="Mask provably-ineffective actions out of the sampling "
@@ -4685,6 +4750,7 @@ if __name__ == "__main__":
         reward_stage=args.reward_stage,
         reward_v2_timing_variant=args.reward_v2_timing_variant,
         carry_work_observation=args.carry_work_observation,
+        stall_age_observation=args.stall_age_observation,
         action_logit_masking=args.action_logit_masking,
         distance_protocol_id=args.distance_protocol_id,
         distance_sidecar_sha256=args.distance_sidecar_sha256,

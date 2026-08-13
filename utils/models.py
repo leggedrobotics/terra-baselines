@@ -297,6 +297,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         carry_work_observation=bool(
             _config_option(config, "carry_work_observation", False)
         ),
+        stall_age_observation=bool(
+            _config_option(config, "stall_age_observation", False)
+        ),
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
         use_aux_decoder=use_aux_decoder,
@@ -342,6 +345,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         # [21] prev_actions
         jnp.zeros((init_batch_size, config["num_prev_actions"]), dtype=jnp.int32),
     ]
+    if bool(_config_option(config, "stall_age_observation", False)):
+        obs.append(jnp.zeros((init_batch_size, 1), dtype=jnp.float32))
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
     # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
@@ -1379,6 +1384,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     attention_compute_dtype: Any = None
     token_mixer_residual_init_scale: float = 0.0
     carry_work_observation: bool = False
+    stall_age_observation: bool = False
     attn_latent_queries: int = 4
     flatten_reduce_channels: int | None = None
     use_aux_decoder: bool = False
@@ -1400,6 +1406,19 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=0.01,
         )
+        if self.stall_age_observation:
+            self.stall_age_actor_embedding = self.param(
+                "stall_age_actor_embedding",
+                nn.initializers.zeros_init(),
+                (704,),
+                jnp.float32,
+            )
+            self.stall_age_critic_embedding = self.param(
+                "stall_age_critic_embedding",
+                nn.initializers.zeros_init(),
+                (704,),
+                jnp.float32,
+            )
 
         self.local_map_net = LocalMapNet(
             map_min_max=self.local_map_min_max,
@@ -1579,8 +1598,24 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             # Apply final activation
             x = self.activation(x)
 
-        v = self.mlp_v(x)
-        xpi = self.mlp_pi(x)
+        actor_x = x
+        critic_x = x
+        if self.stall_age_observation:
+            if len(obs) < 23:
+                raise ValueError(
+                    "stall_age_observation requires normalized stall age at obs[22]"
+                )
+            stall_age = jnp.asarray(obs[22], dtype=jnp.float32).reshape((B, 1))
+            if x.shape[-1] != self.stall_age_actor_embedding.shape[0]:
+                raise ValueError(
+                    "stall age is supported only for the v6.1 fused width 704, "
+                    f"got {x.shape[-1]}"
+                )
+            actor_x = x + stall_age * self.stall_age_actor_embedding
+            critic_x = x + stall_age * self.stall_age_critic_embedding
+
+        v = self.mlp_v(critic_x)
+        xpi = self.mlp_pi(actor_x)
 
         return v, xpi
 

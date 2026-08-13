@@ -52,6 +52,13 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         if _config_option(train_cfg, "action_logit_masking", False)
         else None
     )
+    stall_age = None
+    if _config_option(train_cfg, "stall_age_observation", False):
+        if "stall_age" not in obs:
+            raise ValueError(
+                "stall_age_observation requires Terra obs['stall_age']"
+            )
+        stall_age = jnp.asarray(obs["stall_age"], dtype=jnp.float32)
     # Feature engineering
     if _config_option(train_cfg, "clip_action_maps", True):
         obs = clip_action_map_in_obs(obs)
@@ -87,6 +94,8 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs["interaction_mask"],         # [20] - Interaction map
         prev_actions,                    # [21] - Previous actions history
     ]
+    if stall_age is not None:
+        obs.append(stall_age[..., None])  # [22] - normalized material-stall age
     if _config_option(train_cfg, "action_logit_masking", False):
         # [22] - Effect-based action mask from the env (D3). Appended last so
         # every existing index and the len>=22 layout checks stay valid; the

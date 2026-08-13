@@ -50,6 +50,8 @@ TRAINING_SCALAR_KEYS = frozenset(
         "train/episode_success_rate",
         "train/episode_timeout_rate",
         "train/ended_episodes",
+        "train/stall_age_mean",
+        "train/stall_age_saturated_fraction",
         "train/update",
         "behavior/absolute_completion",
         "behavior/dig_completion",
