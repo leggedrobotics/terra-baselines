@@ -354,6 +354,15 @@ class ContinuationPhaseTest(unittest.TestCase):
         self.assertIn("GATING_PHASE=resume_smoke", submit)
         self.assertIn("GATING_RECEIPT=resume_validation.json", submit)
         self.assertIn("GATING_PHASE=resume_smoke", sbatch)
+        # The resume smoke clears phase2's actual GPU, not the scratch smoke's.
+        self.assertIn(
+            "resume_smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; "
+            "GPU_TYPE=rtx_4090; GPU_COUNT=8; CPUS=8 ;;",
+            submit,
+        )
+        self.assertIn(
+            'smoke) test "$GPU_NAME" = "NVIDIA GeForce RTX 3090" ;;', sbatch
+        )
         # The job re-verifies the pinned source before it trains anything.
         self.assertIn(
             'test "$(sha256sum "$RESUME_CHECKPOINT" | awk \'{print $1}\')" = '

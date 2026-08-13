@@ -17,7 +17,7 @@ umask 027
 #
 #   smoke         4 x rtx_3090, gpuhe.4h    scratch, 1 update
 #   phase1        4 x rtx_4090, gpuhe.24h   scratch, updates 0..14000
-#   resume_smoke  8 x rtx_3090, gpuhe.4h    resume, 1 update at absolute 14000
+#   resume_smoke  8 x rtx_4090, gpuhe.4h    resume, 1 update at absolute 14000
 #   phase2        8 x rtx_4090, gpuhe.120h  resume, updates 14000..40000
 #
 # Variant-dependent: the mask arm runs the D3 terra, the no-mask arms run the
@@ -287,11 +287,20 @@ export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-con
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # One device per allocated GPU: the scratch phases take 4, the continuation 8.
+# resume_smoke runs rtx_4090, not the scratch smoke's rtx_3090: an 8 x 512
+# resume smoke on 8 x rtx_3090 (job 10569391) died in TRAINING at
+# cuda_dnn.cc:7927, the same broken cuDNN conv algorithm the eval fix dodges,
+# on all eight replicas at once. 4 x rtx_3090 at 512 envs/device (the scratch
+# smoke) and 4 x rtx_4090 at 512 (phase1, 14,000 updates) both pass, so the
+# trigger is either the 3090 or the device count. A smoke exists to clear the
+# hardware the real job will use, so it now runs phase2's GPU exactly. If
+# 8 x rtx_4090 fails the same way, the device count is the mechanism, and the
+# answer is 256 envs/device (encoder batch 256) or a chunked rollout forward.
 mapfile -t GPU_NAMES < <(nvidia-smi --query-gpu=name --format=csv,noheader)
 test "${#GPU_NAMES[@]}" -eq "$NUM_DEVICES"
 for GPU_NAME in "${GPU_NAMES[@]}"; do
     case "$PHASE" in
-        smoke|resume_smoke) test "$GPU_NAME" = "NVIDIA GeForce RTX 3090" ;;
+        smoke) test "$GPU_NAME" = "NVIDIA GeForce RTX 3090" ;;
         *) test "$GPU_NAME" = "NVIDIA GeForce RTX 4090" ;;
     esac
 done

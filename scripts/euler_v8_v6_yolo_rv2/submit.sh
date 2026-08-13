@@ -364,7 +364,7 @@ fi
 case "$PHASE" in
     smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; GPU_TYPE=rtx_3090; GPU_COUNT=4; CPUS=4 ;;
     phase1) PARTITION=gpuhe.24h; WALLTIME=23:45:00; GPU_TYPE=rtx_4090; GPU_COUNT=4; CPUS=4 ;;
-    resume_smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; GPU_TYPE=rtx_3090; GPU_COUNT=8; CPUS=8 ;;
+    resume_smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; GPU_TYPE=rtx_4090; GPU_COUNT=8; CPUS=8 ;;
     phase2) PARTITION=gpuhe.120h; WALLTIME=71:45:00; GPU_TYPE=rtx_4090; GPU_COUNT=8; CPUS=8 ;;
 esac
 if [ "$SUBMIT" = stage ]; then
