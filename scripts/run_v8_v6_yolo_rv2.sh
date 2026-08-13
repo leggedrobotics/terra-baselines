@@ -18,12 +18,9 @@
 # are the original v6_3m_yolo_rv2 values, so an unset environment reproduces
 # that arm byte-for-byte.
 #
-# phase2 (the v6.1 continuation past 14,000 updates) is deliberately NOT
-# matched: it drops comparability to run the better configuration. It sets
-# NUM_DEVICES=8 with the same 512 envs/device (global batch 131,072/update),
-# SAMPLER_PROFILE=continuous_banded_v3, and passes a resume checkpoint.
-# Architecture, LR, entropy schedule (on absolute updates), reward contract,
-# bank and seed are unchanged.
+# phase2 adds one material-stall-age scalar to v6.1 at u14000. It reshapes
+# 4x512 to 8x256, preserving the 2,048 environments and 65,536 transitions per
+# update, and restores continuous_banded_v2 without a curriculum migration.
 set -euo pipefail
 
 if [ "$#" -ne 6 ]; then
@@ -41,9 +38,8 @@ RESUME_CHECKPOINT="$6"
 # environments reset fresh. The env axis is not restored either way (the
 # checkpoint stores env_config, not env state), and phase2 changes the env
 # count, so the checkpoint's env_config is deliberately NOT reapplied — the
-# same launcher flags rebuild it. --sampler_migration_clear_window matters only
-# when SAMPLER_PROFILE advances the continuous rule (v2 -> v3) from a
-# checkpoint saved mid-window; it is inert for a same-rule resume.
+# same launcher flags rebuild it. The stall-age continuation stays on v2 and
+# therefore preserves its partial sampler window without migration.
 RESUME_ARGS=()
 if [ "$RESUME_CHECKPOINT" != none ]; then
     test -f "$RESUME_CHECKPOINT" || {
@@ -53,7 +49,6 @@ if [ "$RESUME_CHECKPOINT" != none ]; then
     RESUME_ARGS=(
         --resume_from "$RESUME_CHECKPOINT"
         --no-load-env-from-checkpoint
-        --sampler_migration_clear_window
     )
 fi
 [[ "$UPDATES" =~ ^[1-9][0-9]*$ ]] || {
@@ -79,6 +74,13 @@ if [ "$ACTION_LOGIT_MASKING" = 1 ]; then
     MASK_ARGS=(--action_logit_masking)
 fi
 
+STALL_AGE_OBSERVATION="${STALL_AGE_OBSERVATION:-0}"
+case "$STALL_AGE_OBSERVATION" in 0|1) ;; *) echo "STALL_AGE_OBSERVATION must be 0 or 1" >&2; exit 2 ;; esac
+STALL_AGE_ARGS=()
+if [ "$STALL_AGE_OBSERVATION" = 1 ]; then
+    STALL_AGE_ARGS=(--stall_age_observation)
+fi
+
 # The three v6.1-reverted knobs. VF_COEF="" drops --vf_coef so the trainer
 # default (2.0, the baseline's) applies; any other value is passed through.
 BLOCKS_PER_STAGE="${BLOCKS_PER_STAGE:-3,3,2,2}"
@@ -89,10 +91,8 @@ if [ -n "$VF_COEF" ]; then
     VF_COEF_ARGS=(--vf_coef "$VF_COEF")
 fi
 
-# Sampler rule. The default is phase1's v2. phase2 advances to the capped v3:
-# the continuation enters the high-mastery regime where v2's family pin funnels
-# a whole family half onto its last unmastered cell (measured 45.2% at u13.5k of
-# reward_v2_scratch). v3 is the same distribution while no cell exceeds 15%.
+# Sampler rule. The default and this phase2 continuation are both v2. Other
+# profiles remain available only for their existing scratch launch modes.
 SAMPLER_PROFILE="${SAMPLER_PROFILE:-continuous_banded_v2}"
 case "$SAMPLER_PROFILE" in
     continuous_banded_v2) TRAIN_PRESET=G-V8-CONTINUOUS-V2 ;;
@@ -156,6 +156,7 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --no_value_clip \
     --flat_minibatch_shuffle \
     --carry_work_observation \
+    "${STALL_AGE_ARGS[@]}" \
     --distance_protocol_id obstacle_geodesic_8_physical_global_v1 \
     --distance_sidecar_sha256 "$SIDECAR_SHA256" \
     --reward_stage reward_v2 \

@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
-"""Fail closed on the v6.1 phase2 continuation: source checkpoint, then resume.
+"""Fail closed on the immutable v6.1 u14000 source checkpoint.
 
-Two jobs, one script.
-
-``--source`` alone is the phase2 launch gate. It pins the u14000 checkpoint by
-SHA-256 and asserts everything a continuation inherits and must not change: the
-optimizer clock (14000 x 2 x 32 = 896,000 steps), the 2,303,421-parameter
-v6.1 readout tree, the reward-v2 protocol receipt at baseline timing, and the
-47-condition continuous_banded_v2 sampler with its refresh grid intact.
-
-Adding ``--run`` verifies what a resume actually produced: the update advanced
-by exactly one from 14000, the optimizer clock advanced by exactly 64 steps, the
-parameter tree is unchanged in shape and finite, the batch shape is phase2's
-8 x 512 x 32 / 32, and the sampler migrated to continuous_banded_v3 keeping its
-mastery and closed window while the partial window it was saved mid-way through
-was discarded (that is the migration contract, not a loss of state).
+The stall-age continuation has two distinct artifacts. This verifier checks the
+original v6.1 source by SHA-256 and asserts everything the treatment inherits:
+optimizer clock, parameter tree, reward-v2 baseline timing, and the complete
+continuous_banded_v2 sampler state. The separate deterministic materializer
+verifies the prepared checkpoint and its zero-initialized stall-age parameters.
 """
 
 from __future__ import annotations
@@ -46,9 +37,9 @@ CONDITION_COUNT = 47
 # 14000 % 150 == 50: the source stopped 50 updates into a window.
 SOURCE_WINDOW_UPDATES = 50
 SOURCE_LAST_REFRESH_UPDATE = 13_950
-# phase2's shape. Not the phase1 shape: comparability is deliberately dropped.
+# The direct continuation redistributes the same global env count over 8 GPUs.
 PHASE2_NUM_DEVICES = 8
-PHASE2_NUM_ENVS_PER_DEVICE = 512
+PHASE2_NUM_ENVS_PER_DEVICE = 256
 PHASE2_TARGET_UPDATE = 40_000
 
 ARCHITECTURE = {
@@ -177,7 +168,8 @@ def verify_source(path: Path, expected_sha: str, sidecar_sha: str) -> dict:
 
     config = checkpoint["train_config"]
     check_config(path, config, {**CONTRACT, "distance_sidecar_sha256": sidecar_sha})
-    # phase1's shape, which phase2 deliberately leaves behind.
+    # Phase1's per-device shape; phase2 redistributes the same 2,048 envs over
+    # eight devices while preserving the global transitions per update.
     check_config(path, config, {"num_devices": 4, "num_envs_per_device": 512})
     if config_value(config, "config_name") != "G-V8-CONTINUOUS-V2":
         raise ValueError(f"{path}: source must be the v2 preset")
@@ -217,97 +209,11 @@ def verify_source(path: Path, expected_sha: str, sidecar_sha: str) -> dict:
     }
 
 
-def verify_resumed(
-    path: Path, source: dict, source_path: Path, sidecar_sha: str
-) -> dict:
-    checkpoint = helpers.load_pkl_object(str(path))
-    if checkpoint.get("update") != SOURCE_UPDATE or (
-        checkpoint.get("next_update") != SOURCE_UPDATE + 1
-    ):
-        raise ValueError(
-            f"{path}: resume smoke must advance update {SOURCE_UPDATE} exactly once"
-        )
-    optimizer_step = int(np.asarray(checkpoint["train_state_step"]).reshape(()))
-    expected_step = source["optimizer_step"] + OPTIMIZER_STEPS_PER_UPDATE
-    if optimizer_step != expected_step:
-        raise ValueError(
-            f"{path}: optimizer clock is {optimizer_step}, expected {expected_step}"
-        )
-    count = parameter_count(checkpoint["model"])
-    if count != PARAMETER_COUNT:
-        raise ValueError(f"{path}: {count} parameters, expected {PARAMETER_COUNT}")
-    finite(checkpoint["model"], f"{path}.model")
-    finite(checkpoint["optimizer_state"], f"{path}.optimizer_state")
-    integrity = checkpoint.get("transition_integrity")
-    if not isinstance(integrity, dict) or any(
-        int(value) != 0 for value in integrity.values()
-    ):
-        raise ValueError(f"{path}: transition-integrity counters are nonzero")
-
-    config = checkpoint["train_config"]
-    check_config(
-        path,
-        config,
-        {
-            **CONTRACT,
-            "distance_sidecar_sha256": sidecar_sha,
-            "num_devices": PHASE2_NUM_DEVICES,
-            "num_envs_per_device": PHASE2_NUM_ENVS_PER_DEVICE,
-            "config_name": "G-V8-CONTINUOUS-V3",
-            "resume_from": str(source_path),
-            "load_env_from_checkpoint": False,
-            "sampler_migration_clear_window": True,
-        },
-    )
-    check_reward_protocol(path, checkpoint, sidecar_sha)
-
-    sampler = verify_sampler_state(checkpoint.get("pooled_sampler_state"))
-    if sampler["sampler_rule"] != "continuous_banded_v3":
-        raise ValueError(f"{path}: resumed sampler must be continuous_banded_v3")
-    state = checkpoint["pooled_sampler_state"]
-    refresh = state["refresh"]
-    # Migration keeps the refresh grid and the closed window, and discards the
-    # partial window: after one resumed update the new window holds exactly 1.
-    if refresh["last_refresh_update"] != SOURCE_LAST_REFRESH_UPDATE:
-        raise ValueError(f"{path}: sampler refresh grid moved across the migration")
-    if refresh["refreshes"] != source["sampler_refreshes"]:
-        raise ValueError(f"{path}: sampler refresh count changed across the migration")
-    if state["current_window"]["updates"] != 1:
-        raise ValueError(
-            f"{path}: migrated window holds {state['current_window']['updates']} "
-            "updates, expected 1 (the discarded partial window plus one)"
-        )
-    if int(sum(state["mastery"]["mastered"])) != source["sampler_mastered"]:
-        raise ValueError(f"{path}: sampler mastery changed across the migration")
-    probabilities = np.asarray(state["probabilities"], dtype=np.float64)
-    if probabilities.max() > 0.15 + 1e-12:
-        raise ValueError(f"{path}: v3 cap is not holding: {probabilities.max()}")
-    return {
-        "checkpoint": str(path),
-        "checkpoint_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-        "update": SOURCE_UPDATE,
-        "next_update": SOURCE_UPDATE + 1,
-        "optimizer_step": optimizer_step,
-        "optimizer_steps_taken": optimizer_step - source["optimizer_step"],
-        "parameter_count": count,
-        "sampler": sampler,
-        "sampler_window_updates": int(state["current_window"]["updates"]),
-        "sampler_mastered": int(sum(state["mastery"]["mastered"])),
-        "sampler_max_condition_mass": float(probabilities.max()),
-    }
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--source-sha256", required=True)
     parser.add_argument("--distance-artifact-sha256", required=True)
-    parser.add_argument(
-        "--run",
-        type=Path,
-        default=None,
-        help="Resume-smoke run directory; when given, verify what it produced.",
-    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     for sha in (args.source_sha256, args.distance_artifact_sha256):
@@ -316,41 +222,20 @@ def main() -> None:
 
     helpers.register_checkpoint_config_classes()
     receipt = {
-        "schema": "terra_v8_v6_yolo_rv2_resume_validation_v1",
+        "schema": "terra_v8_v61_stall_age_source_validation_v1",
         "passed": True,
-        "arm": "v6_1_rv2",
+        "arm": "v6_1_rv2_stall_age",
         "absolute_start_update": SOURCE_UPDATE,
         "absolute_target_update": PHASE2_TARGET_UPDATE,
         "num_devices": PHASE2_NUM_DEVICES,
         "num_envs_per_device": PHASE2_NUM_ENVS_PER_DEVICE,
-        "sampler_migration": "continuous_banded_v2->continuous_banded_v3",
+        "sampler_rule": "continuous_banded_v2",
+        "sampler_migration": "none",
+        "sampler_partial_window": "preserved_by_prepared_checkpoint",
         "source": verify_source(
             args.source, args.source_sha256, args.distance_artifact_sha256
         ),
     }
-    if args.run is not None:
-        checkpoints = args.run / "checkpoints"
-        token = f"_update_{SOURCE_UPDATE + 1:06d}.pkl"
-        periodic = [p for p in checkpoints.glob(f"*{token}")]
-        final = list(checkpoints.glob("*_FINAL.pkl"))
-        if len(periodic) != 1 or len(final) != 1:
-            raise ValueError(
-                f"resume smoke must emit one {token} and one FINAL checkpoint"
-            )
-        receipt["resumed"] = {
-            "periodic": verify_resumed(
-                periodic[0],
-                receipt["source"],
-                args.source,
-                args.distance_artifact_sha256,
-            ),
-            "final": verify_resumed(
-                final[0],
-                receipt["source"],
-                args.source,
-                args.distance_artifact_sha256,
-            ),
-        }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"passed": True, "output": str(args.output)}))

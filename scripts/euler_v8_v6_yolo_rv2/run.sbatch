@@ -11,14 +11,13 @@
 set -euo pipefail
 umask 027
 
-# Four phases. The #SBATCH directives above are phase1's; submit.sh overrides
+# Three phases. The #SBATCH directives above are phase1's; submit.sh overrides
 # partition, walltime, GPU count and CPU count per phase on the command line,
 # and every phase re-asserts the shape it was given.
 #
 #   smoke         4 x rtx_3090, gpuhe.4h    scratch, 1 update
 #   phase1        4 x rtx_4090, gpuhe.24h   scratch, updates 0..14000
-#   resume_smoke  8 x rtx_4090, gpuhe.4h    resume, 1 update at absolute 14000
-#   phase2        8 x rtx_4090, gpuhe.120h  resume, updates 14000..40000
+#   phase2        8 x rtx_4090, gpuhe.24h   stall-age, u14000 toward u40000
 #
 # Variant-dependent: the mask arm runs the D3 terra, the no-mask arms run the
 # baseline's exact terra (see submit.sh MASK_VARIANT).
@@ -94,8 +93,28 @@ case "${ARM_NAME:?}" in
         SCREEN_SEMANTICS=single_curriculum_change_on_v6_1_reward_v2
         INHERITED_CONTRACT=reward_v2+global_distance_ledger+carry_input+v6_1_architecture
         ;;
+    v6_1_rv2_stall_age)
+        EXPECTED_RUNTIME_TERRA_REVISION=c2d2a94a124759e9f21c2b37930f717e299f0c46
+        EXPECTED_MASKING=0
+        RUN_PREFIX=v8_v61_stall_age
+        BLOCKS_PER_STAGE=2,2,3,3
+        AUX_COEF=0
+        EXPECTED_AUX_LEAVES=0
+        VF_COEF=
+        CONTRACT_VF_COEF=2.0
+        EXPECTED_PARAMETERS=2304829
+        EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK=2304813
+        STALL_AGE_OBSERVATION=1
+        BUNDLED_CHANGES=material_stall_age_scalar_only
+        EXPERIMENT_NAME=v8_v61_stall_age_continuation
+        PAIRED_BASELINE_ARM=v6_1_rv2
+        PAIRED_BASELINE_LAUNCHER=scripts/run_v8_v6_yolo_rv2.sh
+        SCREEN_SEMANTICS=single_observation_change_from_v6_1_u14000
+        INHERITED_CONTRACT=reward_v2+global_distance_ledger+carry_input+continuous_banded_v2+v6_1_architecture
+        ;;
     *) echo "unsupported ARM_NAME '$ARM_NAME'" >&2; exit 2 ;;
 esac
+STALL_AGE_OBSERVATION="${STALL_AGE_OBSERVATION:-0}"
 test "$ACTION_LOGIT_MASKING" = "$EXPECTED_MASKING"
 EXPECTED_HORIZON=450
 EXPECTED_RELEASE=terra_v8_v6_constraints_v7_adjacent_train96_v5
@@ -109,7 +128,8 @@ for REQUIRED in TERRA_EULER_USER TERRA_EULER_HOME_ROOT VENV RUN_BASE \
     MATERIALIZATION_RECEIPT MATERIALIZATION_RECEIPT_SHA \
     STATIC_RECEIPT_MANIFEST STATIC_RECEIPT_MANIFEST_SHA D4A_RECEIPT \
     D4A_RECEIPT_SHA D4A_MANIFEST D4A_MANIFEST_SHA SMOKE_JOB_ID SMOKE_RUN \
-    ARM_NAME ACTION_LOGIT_MASKING RESUME_CHECKPOINT RESUME_CHECKPOINT_SHA \
+    ARM_NAME ACTION_LOGIT_MASKING RESUME_SOURCE_CHECKPOINT RESUME_SOURCE_SHA \
+    RESUME_CHECKPOINT RESUME_CHECKPOINT_SHA \
     SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
@@ -120,18 +140,8 @@ RUN_BASE="${RUN_BASE:?}"
 WANDB_ENTITY="${WANDB_ENTITY:?}"
 WANDB_PROJECT="${WANDB_PROJECT:?}"
 test "$SEED" = 20260807
-# The continuation advances the runtime by exactly one terra commit: 46b5a1dd
-# adds the reward-v2.1 timing selector. It is inert at variant 0 (the shaping
-# gamma and step cost are a jnp.where on a config int whose default is the
-# frozen reward_v2 value), and train_mixed at this revision needs its constants
-# to build the R2 protocol receipt at all. That receipt is compared field by
-# field against the source checkpoint's, so a continuation that silently ran
-# v2.1 timing would be refused rather than accepted.
-case "$PHASE" in
-    resume_smoke|phase2)
-        EXPECTED_RUNTIME_TERRA_REVISION=46b5a1ddcd3b0e3a0d9e637af2e4ea94af51b4c8
-        ;;
-esac
+# The stall-age runtime is based on 46b5a1dd and keeps timing variant 0. The R2
+# receipt below catches any accidental reward-timing change.
 test "$RUNTIME_TERRA_REVISION" = "$EXPECTED_RUNTIME_TERRA_REVISION"
 test "$R2_HORIZON" -eq "$EXPECTED_HORIZON"
 test "$(id -un)" = "$TERRA_EULER_USER"
@@ -144,12 +154,9 @@ for WANDB_NAME in "$WANDB_ENTITY" "$WANDB_PROJECT"; do
     case "$WANDB_NAME" in ''|*[!a-zA-Z0-9_.-]*) exit 2 ;; esac
 done
 
-# The scratch phases (smoke, phase1) run the matched 4 x 512 shape. The
-# continuation phases (resume_smoke, phase2) deliberately drop comparability:
-# 8 devices at the same 512 envs/device doubles the global batch to 131,072,
-# and the sampler advances to the capped v3 rule. UPDATES is always the
-# ABSOLUTE num_updates, so the entropy schedule (cosine over 20,000 absolute
-# updates, flat 0.02 after) continues exactly where phase1 left it.
+# Scratch uses 4x512. Phase2 reshapes to 8x256, preserving 2,048 total envs,
+# 65,536 transitions/update, 2,048 transitions/minibatch, sampler v2, and every
+# absolute optimizer/schedule clock.
 SOURCE_UPDATE=14000
 TARGET_UPDATE=40000
 START_UPDATE=0
@@ -182,27 +189,14 @@ case "$PHASE" in
         FINITE_CHECK_INTERVAL=10
         CACHE_CLEAR_INTERVAL=1000
         ;;
-    resume_smoke)
-        test "${SLURM_JOB_PARTITION:-}" = gpuhe.4h
-        test "$SMOKE_JOB_ID" = none -a "$SMOKE_RUN" = none
-        START_UPDATE="$SOURCE_UPDATE"
-        UPDATES=$((SOURCE_UPDATE + 1))
-        NUM_DEVICES=8
-        SAMPLER_PROFILE=continuous_banded_v3
-        EXPECTED_CPUS=8
-        CHECKPOINT_INTERVAL=1
-        LOG_TRAIN_INTERVAL=1
-        FINITE_CHECK_INTERVAL=1
-        CACHE_CLEAR_INTERVAL=0
-        ;;
     phase2)
-        test "${SLURM_JOB_PARTITION:-}" = gpuhe.120h
-        [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
-        [[ "$SMOKE_RUN" = /* ]]
+        test "${SLURM_JOB_PARTITION:-}" = gpuhe.24h
+        test "$SMOKE_JOB_ID" = none -a "$SMOKE_RUN" = none
         START_UPDATE="$SOURCE_UPDATE"
         UPDATES="$TARGET_UPDATE"
         NUM_DEVICES=8
-        SAMPLER_PROFILE=continuous_banded_v3
+        NUM_ENVS_PER_DEVICE=256
+        SAMPLER_PROFILE=continuous_banded_v2
         EXPECTED_CPUS=8
         CHECKPOINT_INTERVAL=500
         EVAL_INTERVAL=1000
@@ -218,8 +212,11 @@ if [ "$START_UPDATE" != 0 ]; then
     RESUMING=1
     [[ "$RESUME_CHECKPOINT" = /* ]]
     [[ "$RESUME_CHECKPOINT_SHA" =~ ^[0-9a-f]{64}$ ]]
+    [[ "$RESUME_SOURCE_CHECKPOINT" = /* ]]
+    [[ "$RESUME_SOURCE_SHA" =~ ^[0-9a-f]{64}$ ]]
     test "$(sha256sum "$RESUME_CHECKPOINT" | awk '{print $1}')" = "$RESUME_CHECKPOINT_SHA"
-    test "$ARM_NAME" = v6_1_rv2
+    test "$(sha256sum "$RESUME_SOURCE_CHECKPOINT" | awk '{print $1}')" = "$RESUME_SOURCE_SHA"
+    test "$ARM_NAME" = v6_1_rv2_stall_age
 fi
 
 RUN_DIR="$RUN_BASE/$BASELINES_REVISION/$PHASE/s$SEED/$ARM_NAME"
@@ -238,16 +235,10 @@ done
 test "${SLURM_CPUS_PER_TASK:-}" = "$EXPECTED_CPUS"
 test -d "$RUN_DIR" -a ! -e "$RUN_DIR/run_contract.env"
 
-if [ "$PHASE" = phase1 ] || [ "$PHASE" = phase2 ]; then
-    # phase1 is gated by the scratch update-1 smoke; phase2 by the update-1
-    # RESUME smoke, which proved restore + migration + one step on this shape.
-    GATING_PHASE=smoke
+if [ "$PHASE" = phase1 ]; then
+    # Historical scratch training remains gated by its completed update-1 job.
     GATING_RECEIPT=smoke_validation.json
-    if [ "$PHASE" = phase2 ]; then
-        GATING_PHASE=resume_smoke
-        GATING_RECEIPT=resume_validation.json
-    fi
-    EXPECTED_SMOKE_RUN="$RUN_BASE/$BASELINES_REVISION/$GATING_PHASE/s$SEED/$ARM_NAME"
+    EXPECTED_SMOKE_RUN="$RUN_BASE/$BASELINES_REVISION/smoke/s$SEED/$ARM_NAME"
     test "$SMOKE_RUN" = "$EXPECTED_SMOKE_RUN"
     SMOKE_STATE="$(sacct -n -X -P -j "$SMOKE_JOB_ID" --format=JobIDRaw,State | awk -F'|' -v id="$SMOKE_JOB_ID" '$1==id {sub(/\+.*/, "", $2); print $2}')"
     test "$SMOKE_STATE" = COMPLETED
@@ -261,28 +252,6 @@ if [ "$PHASE" = phase1 ] || [ "$PHASE" = phase2 ]; then
     test "$(awk -F= '$1=="model_parameter_count" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$EXPECTED_PARAMETERS"
     test "$(awk -F= '$1=="arm" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$ARM_NAME"
     test "$(awk -F= '$1=="euler_user" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TERRA_EULER_USER"
-    if [ "$PHASE" = phase2 ]; then
-        # The gating smoke must have resumed THIS checkpoint, on THIS shape.
-        test "$(awk -F= '$1=="resume_source_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$RESUME_CHECKPOINT_SHA"
-        test "$(awk -F= '$1=="num_devices" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$NUM_DEVICES"
-        test "$(awk -F= '$1=="num_envs_per_device" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$NUM_ENVS_PER_DEVICE"
-        test "$(awk -F= '$1=="sampler_profile" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$SAMPLER_PROFILE"
-        python3 - "$SMOKE_RUN/$GATING_RECEIPT" "$RESUME_CHECKPOINT_SHA" <<'PY'
-import json, sys
-
-receipt = json.load(open(sys.argv[1]))
-assert receipt["schema"] == "terra_v8_v6_yolo_rv2_resume_validation_v1"
-assert receipt["source"]["checkpoint_sha256"] == sys.argv[2]
-assert receipt["source"]["optimizer_step"] == 14000 * 2 * 32
-assert receipt["num_devices"] == 8 and receipt["num_envs_per_device"] == 512
-for role in ("periodic", "final"):
-    produced = receipt["resumed"][role]
-    assert produced["optimizer_steps_taken"] == 64
-    assert produced["next_update"] == 14001
-    assert produced["parameter_count"] == 2303421
-    assert produced["sampler"]["sampler_rule"] == "continuous_banded_v3"
-PY
-    fi
 fi
 
 HOME_USED_GB="$(lquota | "$BASELINES_ROOT/cluster/lquota_home_used_gb.sh" "$TERRA_EULER_HOME_ROOT")"
@@ -309,17 +278,19 @@ export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+for LIB_GLOB in \
+    "$SITE_PACKAGES"/nvidia/cudnn/lib/libcudnn.so* \
+    "$SITE_PACKAGES"/nvidia/cuda_cupti/lib/libcupti.so* \
+    "$SITE_PACKAGES"/nvidia/cublas/lib/libcublas.so* \
+    "$SITE_PACKAGES"/nvidia/cuda_nvrtc/lib/libnvrtc.so* \
+    "$SITE_PACKAGES"/nvidia/nccl/lib/libnccl.so*; do
+    compgen -G "$LIB_GLOB" >/dev/null
+done
 
-# One device per allocated GPU: the scratch phases take 4, the continuation 8.
-# resume_smoke runs rtx_4090, not the scratch smoke's rtx_3090: an 8 x 512
-# resume smoke on 8 x rtx_3090 (job 10569391) died in TRAINING at
-# cuda_dnn.cc:7927, the same broken cuDNN conv algorithm the eval fix dodges,
-# on all eight replicas at once. 4 x rtx_3090 at 512 envs/device (the scratch
-# smoke) and 4 x rtx_4090 at 512 (phase1, 14,000 updates) both pass, so the
-# trigger is either the 3090 or the device count. A smoke exists to clear the
-# hardware the real job will use, so it now runs phase2's GPU exactly. If
-# 8 x rtx_4090 fails the same way, the device count is the mechanism, and the
-# answer is 256 envs/device (encoder batch 256) or a chunked rollout forward.
+# One device per GPU. The failed 8x3090/512 smoke motivated the treatment's
+# batch-preserving 8x4090/256 shape. The full first PPO update below remains the
+# decisive cuDNN execution smoke; this cheap preflight catches missing CUDA or
+# NCCL before W&B/training initialization.
 mapfile -t GPU_NAMES < <(nvidia-smi --query-gpu=name --format=csv,noheader)
 test "${#GPU_NAMES[@]}" -eq "$NUM_DEVICES"
 for GPU_NAME in "${GPU_NAMES[@]}"; do
@@ -392,6 +363,7 @@ PY
 # counts are asserted here so a silent agent-state width change cannot pass, and
 # the aux-leaf count pins whether the head exists at all.
 BLOCKS_PER_STAGE="$BLOCKS_PER_STAGE" AUX_COEF="$AUX_COEF" \
+    STALL_AGE_OBSERVATION="$STALL_AGE_OBSERVATION" \
     EXPECTED_AUX_LEAVES="$EXPECTED_AUX_LEAVES" \
     EXPECTED_PARAMETERS="$EXPECTED_PARAMETERS" \
     EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK="$EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK" \
@@ -410,6 +382,7 @@ AUX_COEF = float(os.environ["AUX_COEF"])
 EXPECTED_AUX_LEAVES = int(os.environ["EXPECTED_AUX_LEAVES"])
 EXPECTED = int(os.environ["EXPECTED_PARAMETERS"])
 EXPECTED_WITHOUT_CARRY_WORK = int(os.environ["EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK"])
+STALL_AGE_OBSERVATION = bool(int(os.environ["STALL_AGE_OBSERVATION"]))
 
 
 class Config(dict):
@@ -446,7 +419,12 @@ assert environment.batch_cfg.agent.num_state_obs == 9
 counts = {}
 for carry in (False, True):
     _, params = get_model_ready(
-        jax.random.PRNGKey(0), config(carry_work_observation=carry), environment
+        jax.random.PRNGKey(0),
+        config(
+            carry_work_observation=carry,
+            stall_age_observation=STALL_AGE_OBSERVATION,
+        ),
+        environment,
     )
     counts[carry] = sum(
         int(np.asarray(x).size) for x in jax.tree_util.tree_leaves(params)
@@ -457,6 +435,17 @@ for carry in (False, True):
         if "aux_decoder" in jax.tree_util.keystr(path)
     ]
     assert len(aux) == EXPECTED_AUX_LEAVES, aux
+    stall = [
+        (jax.tree_util.keystr(path), np.asarray(value))
+        for path, value in jax.tree_util.tree_flatten_with_path(params)[0]
+        if "stall_age_" in jax.tree_util.keystr(path)
+    ]
+    if STALL_AGE_OBSERVATION:
+        assert len(stall) == 2, stall
+        assert {value.shape for _, value in stall} == {(704,)}, stall
+        assert all(np.count_nonzero(value) == 0 for _, value in stall), stall
+    else:
+        assert not stall, stall
 assert counts[False] == EXPECTED_WITHOUT_CARRY_WORK, counts
 assert counts[True] == EXPECTED, counts
 print("v6 readout parameters", BLOCKS, counts)
@@ -473,10 +462,15 @@ GRAPH_SHA="$("$PYTHON" -c 'import collections,sys; from utils.accepted_bank impo
 if [ "$RESUMING" = 1 ]; then
     JAX_PLATFORMS=cpu "$PYTHON" \
         "$BASELINES_ROOT/scripts/euler_v8_v6_yolo_rv2/verify_resume.py" \
-        --source "$RESUME_CHECKPOINT" \
-        --source-sha256 "$RESUME_CHECKPOINT_SHA" \
+        --source "$RESUME_SOURCE_CHECKPOINT" \
+        --source-sha256 "$RESUME_SOURCE_SHA" \
         --distance-artifact-sha256 "$DISTANCE_ARTIFACT_SHA" \
         --output "$RUN_DIR/resume_source_validation.json"
+    JAX_PLATFORMS=cpu "$PYTHON" \
+        "$BASELINES_ROOT/scripts/prepare_v61_stall_age_continuation.py" \
+        --source "$RESUME_SOURCE_CHECKPOINT" \
+        --verify "$RESUME_CHECKPOINT" \
+        > "$RUN_DIR/stall_age_prepared_validation.txt"
 fi
 
 mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/eval" "$RUN_DIR/wandb"
@@ -484,7 +478,7 @@ export WANDB_ENTITY WANDB_PROJECT
 export WANDB_RUN_ID="${RUN_PREFIX}_${BASELINES_REVISION:0:10}_${PHASE}_${SLURM_JOB_ID}"
 export WANDB_RESUME=never
 case "$PHASE" in
-    smoke|resume_smoke) export WANDB_MODE=disabled WANDB_DIR="$TMPDIR/wandb" ;;
+    smoke) export WANDB_MODE=disabled WANDB_DIR="$TMPDIR/wandb" ;;
     *) export WANDB_MODE=online WANDB_DIR="$RUN_DIR/wandb" ;;
 esac
 scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/slurm_job.txt"
@@ -492,35 +486,37 @@ nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
 RUN_NAME="${RUN_PREFIX}_${BASELINES_REVISION:0:12}_s${SEED}"
 case "$PHASE" in
     smoke) RUN_NAME="${RUN_NAME}_smoke" ;;
-    resume_smoke) RUN_NAME="${RUN_NAME}_resume_smoke" ;;
 esac
 # Transitions this job runs, not the lineage total: phase2 starts at 14,000.
 TRANSITIONS=$((NUM_DEVICES * NUM_ENVS_PER_DEVICE * 32 * (UPDATES - START_UPDATE)))
 # Sampler provenance. From scratch these are the initial masses the rule
 # produces; on a continuation the distribution is restored, so the contract
-# records the migration instead of masses it did not choose.
+# records the restored state instead of masses it did not choose.
 if [ "$RESUMING" = 1 ]; then
     SAMPLER_CONTRACT=(
         "restored_sampler_source_rule=continuous_banded_v2"
         "restored_sampler_rule=$SAMPLER_PROFILE"
-        "restored_sampler_migration=one_way_v2_to_v3_capped_at_0.15"
-        "restored_sampler_partial_window_discarded_updates=50"
+        "restored_sampler_migration=none"
+        "restored_sampler_partial_window_preserved_updates=50"
         "restored_sampler_last_refresh_update=13950"
-        "sampler_monopoly_risk=accepted_and_monitored_via_wandb_curriculum_population"
+        "sampler_change_in_this_arm=none"
     )
-    RUNTIME_TERRA_BASE=3051054b_reward_v2_baseline_plus_inert_v21_selector_46b5a1dd
+    RUNTIME_TERRA_BASE=46b5a1dd_reward_v2_baseline_timing_plus_stall_age_c2d2a94a
     RESUME_CONTRACT=(
         "resume_from=$RESUME_CHECKPOINT"
-        "resume_source_sha256=$RESUME_CHECKPOINT_SHA"
-        "resume_restores=model_params+optimizer_state+optimizer_clock+sampler_history"
-        "resume_env_state=fresh_resets_env_count_2048_to_$((NUM_DEVICES * NUM_ENVS_PER_DEVICE))"
-        "resume_batch_change=65536_to_$((NUM_DEVICES * NUM_ENVS_PER_DEVICE * 32))_per_update"
+        "resume_prepared_sha256=$RESUME_CHECKPOINT_SHA"
+        "resume_source_checkpoint=$RESUME_SOURCE_CHECKPOINT"
+        "resume_source_sha256=$RESUME_SOURCE_SHA"
+        "resume_preparation=zero_initialized_stall_age_actor_and_critic_embeddings"
+        "resume_restores=model_params+optimizer_state+optimizer_clock+sampler_history+partial_sampler_window"
+        "resume_env_state=fresh_resets_4x512_to_8x256_same_global_env_count_2048"
+        "resume_global_batch=65536_to_65536_transitions_per_update"
     )
-    COMPARISON_ROLE=unmatched_capability_continuation_of_v6_1_rv2
+    COMPARISON_ROLE=single_observation_continuation_of_v6_1_rv2
     SELECTION_SPAN="$((START_UPDATE + 1000))_to_${UPDATES}_promotion_only"
     INITIALIZATION="resume_v6_1_rv2_u${START_UPDATE}"
     OPTIMIZER_INITIAL_STEP=$((START_UPDATE * 2 * 32))
-    RESTART_POLICY=resume_exact_from_the_pinned_source_checkpoint
+    RESTART_POLICY=resume_from_the_verified_prepared_stall_age_checkpoint
 else
     case "$SAMPLER_PROFILE" in
         continuous_banded_v2)
@@ -569,6 +565,9 @@ printf '%s\n' \
     "inherited_from_baseline=$INHERITED_CONTRACT" \
     "runtime_terra_base=$RUNTIME_TERRA_BASE" \
     "action_logit_masking=$([ "$ACTION_LOGIT_MASKING" = 1 ] && echo true || echo false)" \
+    "stall_age_observation=$([ "$STALL_AGE_OBSERVATION" = 1 ] && echo true || echo false)" \
+    "stall_age_cap_steps=$([ "$STALL_AGE_OBSERVATION" = 1 ] && echo 32 || echo none)" \
+    "time_remaining_observation=false" \
     "phase=$PHASE" \
     "seed=$SEED" \
     "absolute_start_update=$START_UPDATE" \
@@ -645,6 +644,7 @@ printf '%s\n' \
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PROTOCOL_TERRA_REVISION PYTHON_BIN="$PYTHON" MACHINE=euler
 export ACTION_LOGIT_MASKING BLOCKS_PER_STAGE AUX_COEF VF_COEF
+export STALL_AGE_OBSERVATION
 export NUM_DEVICES NUM_ENVS_PER_DEVICE SAMPLER_PROFILE
 export NUM_STEPS=32 NUM_MINIBATCHES=32
 export CHECKPOINT_INTERVAL LOG_TRAIN_INTERVAL FINITE_CHECK_INTERVAL CACHE_CLEAR_INTERVAL
@@ -674,24 +674,15 @@ if [ "$PHASE" = smoke ]; then
     exit 0
 fi
 
-if [ "$PHASE" = resume_smoke ]; then
-    # The one update this job runs is absolute 14000, so it lands as 014001.
-    find_one "${RUN_NAME}_update_$(printf '%06d' "$UPDATES").pkl" >/dev/null
-    find_one "${RUN_NAME}_FINAL.pkl" >/dev/null
-    JAX_PLATFORMS=cpu \
-        "$PYTHON" "$BASELINES_ROOT/scripts/euler_v8_v6_yolo_rv2/verify_resume.py" \
-        --source "$RESUME_CHECKPOINT" --source-sha256 "$RESUME_CHECKPOINT_SHA" \
-        --distance-artifact-sha256 "$DISTANCE_ARTIFACT_SHA" --run "$RUN_DIR" \
-        --output "$RUN_DIR/resume_validation.json"
-    printf '%s\n' status=PASSED >> "$RUN_DIR/run_contract.env"
-    echo "V8_V6_YOLO_RV2_RESUME_SMOKE_PASSED"
-    exit 0
-fi
-
 find_one "${RUN_NAME}_update_$(printf '%06d' "$UPDATES").pkl" >/dev/null
 printf '%s\n' status=TRAINING_TARGET_REACHED >> "$RUN_DIR/run_contract.env"
+if [ "$PHASE" = phase2 ]; then
+    # Keep the scarce 24-hour allocation for training. Frozen-panel evaluation
+    # belongs in a separate batched observer job after the checkpoint lands.
+    echo "V8_V61_STALL_AGE_TARGET_REACHED"
+    exit 0
+fi
 CHECKPOINT_ARGS=()
-# phase2 evaluates only the checkpoints it produced: u15000..u40000 at 1k.
 for UPDATE in $(seq "$EVAL_FIRST" "$EVAL_INTERVAL" "$UPDATES"); do
     TOKEN="$(printf '%06d' "$UPDATE")"
     CHECKPOINT_ARGS+=(--checkpoint "$(find_one "${RUN_NAME}_update_${TOKEN}.pkl")")

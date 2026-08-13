@@ -3,32 +3,32 @@ set -euo pipefail
 
 R2_HORIZON=450
 if [ "$#" -ne 1 ]; then
-    echo "usage: submit.sh smoke|phase1|resume_smoke|phase2  (MASK_VARIANT=mask|nomask|v61|v61_v4, default mask)" >&2
+    echo "usage: submit.sh smoke|phase1|phase2  (MASK_VARIANT=mask|nomask|v61|v61_v4|stall_age, default mask)" >&2
     exit 2
 fi
 PHASE="$1"
 case "$PHASE" in
-    smoke|phase1|resume_smoke|phase2) ;;
+    smoke|phase1|phase2) ;;
     *) echo "invalid phase '$PHASE'" >&2; exit 2 ;;
 esac
-# The v6.1 continuation. phase1 ended at 14,000 of a 40,000-update plan and the
-# arm was still climbing (promotion exact 334 -> 407 over its last 1,000
-# updates), so phase2 resumes the pinned u14000 checkpoint and runs to the
-# absolute target. Comparability with the compact baseline is deliberately
-# dropped: 8 devices at 512 envs each doubles the global batch to 131,072/update
-# and the sampler advances to the capped continuous_banded_v3 rule.
+# The v6.1 stall-age continuation. Phase1 ended at u14000 while still climbing.
+# Phase2 changes only the policy observation by adding normalized material stall
+# age. It preserves phase1's 2,048 total envs and 65,536 transitions/update by
+# reshaping 4x512 to 8x256, and restores the continuous_banded_v2 sampler without
+# migration. The production allocation itself performs the first-update smoke.
 RESUME_SOURCE_UPDATE=14000
 RESUME_TARGET_UPDATE=40000
 RESUME_SOURCE_SHA=79312602176e88b696c8c006b3b9af71a4cf121907c7aa8c4865722bd4830609
+RESUME_PREPARED_SHA=96600430af3fb0135e0fc94e8f9dd754476067fbfb8635a3db70d6c3519b6971
 # Copied lterenzi -> local -> the launching account: scratch is not shared.
 RESUME_SOURCE_LOCAL="${TERRA_RESUME_SOURCE_LOCAL:-/home/lorenzo/moleworks/.artifacts/terra_v8_v6_yolo_rv2_continuation_20260813/v8_v6_yolo_rv2_v61_9abf88eb60df_s20260807_update_014000.pkl}"
 RESUME_SOURCE_RUN=/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_v8_v6_yolo_rv2/runs/9abf88eb60dfc0eb2395a5cc799b933928b6952c/phase1/s20260807/v6_1_rv2
 case "$PHASE" in
-    resume_smoke|phase2) RESUMING=1 ;;
+    phase2) RESUMING=1 ;;
     *) RESUMING=0 ;;
 esac
-if [ "$RESUMING" = 1 ] && [ "${MASK_VARIANT:-mask}" != v61 ]; then
-    echo "the continuation exists only for the v6_1_rv2 arm: set MASK_VARIANT=v61" >&2
+if [ "$RESUMING" = 1 ] && [ "${MASK_VARIANT:-mask}" != stall_age ]; then
+    echo "phase2 is the v6.1 stall-age continuation: set MASK_VARIANT=stall_age" >&2
     exit 2
 fi
 SUBMIT="${SUBMIT:-0}"
@@ -64,15 +64,6 @@ case "$MASK_VARIANT" in
         TERRA_REPO_DEFAULT=/home/lorenzo/moleworks/.worktrees/terra_v8_r2_reward_v2_20260810
         ARM_NAME=v6_1_rv2
         ACTION_LOGIT_MASKING=0
-        if [ "$RESUMING" = 1 ]; then
-            # One commit later: 46b5a1dd adds the reward-v2.1 timing selector,
-            # which is inert at variant 0 but whose constants train_mixed at
-            # this baselines revision imports to build the R2 protocol receipt.
-            # The receipt is then compared field-by-field with the source
-            # checkpoint's, so baseline timing is enforced, not assumed.
-            EXPECTED_RUNTIME_TERRA_REVISION=46b5a1ddcd3b0e3a0d9e637af2e4ea94af51b4c8
-            TERRA_REPO_DEFAULT=/home/lorenzo/moleworks/.worktrees/terra_v8_reward_timing_20260812
-        fi
         ;;
     v61_v4)
         EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a
@@ -80,6 +71,13 @@ case "$MASK_VARIANT" in
         ARM_NAME=v6_1_rv2_v4
         ACTION_LOGIT_MASKING=0
         SCRATCH_SAMPLER_PROFILE=continuous_banded_v4
+        PAIRED_BASELINE_ARM=v6_1_rv2
+        ;;
+    stall_age)
+        EXPECTED_RUNTIME_TERRA_REVISION=c2d2a94a124759e9f21c2b37930f717e299f0c46
+        TERRA_REPO_DEFAULT=/home/lorenzo/moleworks/.worktrees/terra_v8_v61_stall_age_20260813
+        ARM_NAME=v6_1_rv2_stall_age
+        ACTION_LOGIT_MASKING=0
         PAIRED_BASELINE_ARM=v6_1_rv2
         ;;
     *) echo "invalid MASK_VARIANT '$MASK_VARIANT'" >&2; exit 2 ;;
@@ -92,6 +90,8 @@ terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
 TERRA_REPO="${TERRA_REPO:-$TERRA_REPO_DEFAULT}"
 ARTIFACT_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_training_inputs_20260810
 ADMISSION_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_admission_20260810
+STALL_AGE_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v61_stall_age_continuation_20260813
+RESUME_PREPARED_LOCAL="${TERRA_STALL_AGE_PREPARED_LOCAL:-$STALL_AGE_ROOT/v8_v61_stall_age_u14000_prepared.pkl}"
 BANK_ARCHIVE="$ARTIFACT_ROOT/treatment_bank.tar.zst"
 MATERIALIZATION_RECEIPT="$ARTIFACT_ROOT/treatment_bank_receipt.json"
 STATIC_RECEIPT_MANIFEST="$ADMISSION_ROOT/static_v2/receipt_manifest.json"
@@ -276,7 +276,6 @@ REMOTE_TERRA="$REMOTE_WORK/runtime-terra/$RUNTIME_TERRA_REVISION/terra"
 case "$PHASE" in
     smoke) SPAN="0->1" ;;
     phase1) SPAN="0->14000" ;;
-    resume_smoke) SPAN="$RESUME_SOURCE_UPDATE->$((RESUME_SOURCE_UPDATE + 1))" ;;
     phase2) SPAN="$RESUME_SOURCE_UPDATE->$RESUME_TARGET_UPDATE" ;;
 esac
 echo "phase=$PHASE arm=$ARM_NAME baseline=$PAIRED_BASELINE_ARM seed=$SEED absolute_updates=$SPAN sampler=$SCRATCH_SAMPLER_PROFILE"
@@ -287,8 +286,22 @@ if [ "$RESUMING" = 1 ]; then
         exit 3
     }
     test "$(sha256sum "$RESUME_SOURCE_LOCAL" | awk '{print $1}')" = "$RESUME_SOURCE_SHA"
+    mkdir -p "$(dirname "$RESUME_PREPARED_LOCAL")"
+    if [ ! -f "$RESUME_PREPARED_LOCAL" ]; then
+        PREPARED_PARTIAL="$RESUME_PREPARED_LOCAL.partial.$$"
+        PYTHONPATH="$TERRA_REPO:$REPO" JAX_PLATFORMS=cpu \
+            "$LOCAL_TERRA_PYTHON" "$REPO/scripts/prepare_v61_stall_age_continuation.py" \
+            --source "$RESUME_SOURCE_LOCAL" --output "$PREPARED_PARTIAL"
+        test "$(sha256sum "$PREPARED_PARTIAL" | awk '{print $1}')" = "$RESUME_PREPARED_SHA"
+        mv -T "$PREPARED_PARTIAL" "$RESUME_PREPARED_LOCAL"
+    fi
+    test "$(sha256sum "$RESUME_PREPARED_LOCAL" | awk '{print $1}')" = "$RESUME_PREPARED_SHA"
+    PYTHONPATH="$TERRA_REPO:$REPO" JAX_PLATFORMS=cpu \
+        "$LOCAL_TERRA_PYTHON" "$REPO/scripts/prepare_v61_stall_age_continuation.py" \
+        --source "$RESUME_SOURCE_LOCAL" --verify "$RESUME_PREPARED_LOCAL"
     echo "resume_source=$RESUME_SOURCE_LOCAL sha256=$RESUME_SOURCE_SHA"
-    echo "resume_shape=8x512x32/32 sampler=continuous_banded_v3 target=$RESUME_TARGET_UPDATE"
+    echo "prepared_resume=$RESUME_PREPARED_LOCAL sha256=$RESUME_PREPARED_SHA"
+    echo "resume_shape=8x256x32/32 sampler=continuous_banded_v2 target=$RESUME_TARGET_UPDATE"
 fi
 echo "terra_baselines_revision=$BASELINES_REVISION runtime_terra_revision=$RUNTIME_TERRA_REVISION"
 echo "d4a_receipt_sha256=$D4A_RECEIPT_SHA"
@@ -358,30 +371,28 @@ upload "$STATIC_RECEIPT_MANIFEST" "$REMOTE_STATIC_MANIFEST" "$STATIC_RECEIPT_MAN
 upload "$D4A_RECEIPT" "$REMOTE_D4A_RECEIPT" "$D4A_RECEIPT_SHA"
 upload "$D4A_MANIFEST" "$REMOTE_D4A_MANIFEST" "$D4A_MANIFEST_SHA"
 
-# The source checkpoint is an input like any other: content-addressed, uploaded
-# once, SHA-verified on both ends. The launching account cannot read lterenzi's
-# scratch, so this file has already been copied down to the local artifact tree.
+# Source and zero-initialized treatment checkpoint are content-addressed inputs.
+# Scratch is not shared between accounts, so both are staged from local copies.
+REMOTE_RESUME_SOURCE=none
 REMOTE_RESUME_CHECKPOINT=none
 if [ "$RESUMING" = 1 ]; then
-    REMOTE_RESUME_CHECKPOINT="$REMOTE_INPUTS/v6-1-rv2-u$RESUME_SOURCE_UPDATE-$RESUME_SOURCE_SHA.pkl"
-    upload "$RESUME_SOURCE_LOCAL" "$REMOTE_RESUME_CHECKPOINT" "$RESUME_SOURCE_SHA"
+    REMOTE_RESUME_SOURCE="$REMOTE_INPUTS/v6-1-rv2-u$RESUME_SOURCE_UPDATE-$RESUME_SOURCE_SHA.pkl"
+    REMOTE_RESUME_CHECKPOINT="$REMOTE_INPUTS/v6-1-rv2-stall-age-u$RESUME_SOURCE_UPDATE-$RESUME_PREPARED_SHA.pkl"
+    upload "$RESUME_SOURCE_LOCAL" "$REMOTE_RESUME_SOURCE" "$RESUME_SOURCE_SHA"
+    upload "$RESUME_PREPARED_LOCAL" "$REMOTE_RESUME_CHECKPOINT" "$RESUME_PREPARED_SHA"
 fi
 
-# phase1 measured 4.54 s/update at 4 x 512 (14,000 updates in 17:38:23). phase2
-# keeps 512 envs/device, so per-device work is unchanged and only the 8-way
-# all-reduce is new: 26,000 updates lands at 33-40 h, plus a 26-checkpoint
-# two-panel eval sweep. gpuhe.120h holds the same 80-node rtx_4090 pool as
-# gpuhe.24h at the same PriorityTier, so the continuation asks for headroom
-# there rather than risk the wall mid-eval. The job exits when it is done.
+# Phase2 is one resumable 24-hour production segment. Its absolute u40000 target
+# intentionally exceeds the likely segment capacity; a wall-time exit with a
+# finite rolling checkpoint is continuable.
 case "$PHASE" in
     smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; GPU_TYPE=rtx_3090; GPU_COUNT=4; CPUS=4 ;;
     phase1) PARTITION=gpuhe.24h; WALLTIME=23:45:00; GPU_TYPE=rtx_4090; GPU_COUNT=4; CPUS=4 ;;
-    resume_smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; GPU_TYPE=rtx_4090; GPU_COUNT=8; CPUS=8 ;;
-    phase2) PARTITION=gpuhe.120h; WALLTIME=71:45:00; GPU_TYPE=rtx_4090; GPU_COUNT=8; CPUS=8 ;;
+    phase2) PARTITION=gpuhe.24h; WALLTIME=23:45:00; GPU_TYPE=rtx_4090; GPU_COUNT=8; CPUS=8 ;;
 esac
 if [ "$SUBMIT" = stage ]; then
     ASSOCIATIONS="$(remote "sacctmgr -n -P show assoc where user='$TERRA_EULER_USER' format=Account")"
-    printf '%s\n' "$ASSOCIATIONS" | grep -Eq '^%?gpuhe/'
+    printf '%s\n' "$ASSOCIATIONS" | grep -Eq '^%?gpuhe/es_hutter$'
     remote "scontrol show partition '$PARTITION' -o | grep -q 'State=UP'"
     remote "sinfo -h -p '$PARTITION' -o '%G' | grep -Eq 'gpu:nvidia_geforce_${GPU_TYPE}:([$GPU_COUNT-9]|[1-9][0-9]+)'"
     PARTITION_MAX_TIME="$(remote "scontrol show partition '$PARTITION' -o" | tr ' ' '\n' | awk -F= '$1=="MaxTime" {print $2}')"
@@ -411,18 +422,12 @@ fi
 
 SMOKE_JOB_ID=none
 SMOKE_RUN=none
-if [ "$PHASE" = phase1 ] || [ "$PHASE" = phase2 ]; then
-    # phase1 is gated by the scratch update-1 smoke, phase2 by the update-1
-    # RESUME smoke that proved restore + v2->v3 migration + one step on 8 GPUs.
-    GATING_PHASE=smoke
+if [ "$PHASE" = phase1 ]; then
+    # Preserve the historical scratch arm's update-1 gate. The new phase2 has
+    # no separate allocation: its own first full update is the runtime smoke.
     GATING_RECEIPT=smoke_validation.json
     GATING_SAMPLER_PROFILE="$SCRATCH_SAMPLER_PROFILE"
-    if [ "$PHASE" = phase2 ]; then
-        GATING_PHASE=resume_smoke
-        GATING_RECEIPT=resume_validation.json
-        GATING_SAMPLER_PROFILE=continuous_banded_v3
-    fi
-    SMOKE_RUN="$REMOTE_RUNS/$BASELINES_REVISION/$GATING_PHASE/s$SEED/$ARM_NAME"
+    SMOKE_RUN="$REMOTE_RUNS/$BASELINES_REVISION/smoke/s$SEED/$ARM_NAME"
     remote "test -f '$SMOKE_RUN/$GATING_RECEIPT' -a -f '$SMOKE_RUN/run_contract.env' && \
         test \"\$(stat -c %U '$SMOKE_RUN/$GATING_RECEIPT')\" = '$TERRA_EULER_USER' && \
         test \"\$(stat -c %U '$SMOKE_RUN/run_contract.env')\" = '$TERRA_EULER_USER'"
@@ -440,17 +445,8 @@ if [ "$PHASE" = phase1 ] || [ "$PHASE" = phase2 ]; then
         KEY="${EXPECTED%%=*}" VALUE="${EXPECTED#*=}"
         remote "test \"\$(awk -F= -v key='$KEY' '\$1==key {print \$2}' '$SMOKE_RUN/run_contract.env')\" = '$VALUE'"
     done
-    if [ "$PHASE" = phase2 ]; then
-        for EXPECTED in \
-            "resume_source_sha256=$RESUME_SOURCE_SHA" \
-            "num_devices=$GPU_COUNT" \
-            "num_envs_per_device=512" \
-            "sampler_profile=continuous_banded_v3" \
-            "absolute_start_update=$RESUME_SOURCE_UPDATE"; do
-            KEY="${EXPECTED%%=*}" VALUE="${EXPECTED#*=}"
-            remote "test \"\$(awk -F= -v key='$KEY' '\$1==key {print \$2}' '$SMOKE_RUN/run_contract.env')\" = '$VALUE'"
-        done
-    fi
+fi
+if [ "$PHASE" = phase1 ] || [ "$PHASE" = phase2 ]; then
     remote "python3 -c 'import netrc; assert netrc.netrc().authenticators(\"api.wandb.ai\")'" || {
         echo "$PHASE requires a W&B api.wandb.ai credential in the selected account's ~/.netrc" >&2
         exit 3
@@ -474,8 +470,8 @@ trap 'cleanup_new_job $?' ERR
 trap 'cleanup_new_job 130' INT TERM
 remote "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
 
-EXPORTS="ALL,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,VENV=$REMOTE_VENV,RUN_BASE=$REMOTE_RUNS,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,PHASE=$PHASE,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN,ARM_NAME=$ARM_NAME,ACTION_LOGIT_MASKING=$ACTION_LOGIT_MASKING,RESUME_CHECKPOINT=$REMOTE_RESUME_CHECKPOINT,RESUME_CHECKPOINT_SHA=$([ "$RESUMING" = 1 ] && echo "$RESUME_SOURCE_SHA" || echo none)"
-JOB_ID_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_v8_v6_yolo_rv2/run.sbatch' | sbatch --parsable --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:$GPU_COUNT' --cpus-per-task='$CPUS' --exclude='eu-g6-064' --job-name='terra-v6-yolo-rv2' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
+EXPORTS="ALL,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,VENV=$REMOTE_VENV,RUN_BASE=$REMOTE_RUNS,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,PHASE=$PHASE,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN,ARM_NAME=$ARM_NAME,ACTION_LOGIT_MASKING=$ACTION_LOGIT_MASKING,RESUME_SOURCE_CHECKPOINT=$REMOTE_RESUME_SOURCE,RESUME_SOURCE_SHA=$([ "$RESUMING" = 1 ] && echo "$RESUME_SOURCE_SHA" || echo none),RESUME_CHECKPOINT=$REMOTE_RESUME_CHECKPOINT,RESUME_CHECKPOINT_SHA=$([ "$RESUMING" = 1 ] && echo "$RESUME_PREPARED_SHA" || echo none)"
+JOB_ID_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_v8_v6_yolo_rv2/run.sbatch' | sbatch --parsable --account='gpuhe/es_hutter' --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:$GPU_COUNT' --cpus-per-task='$CPUS' --exclude='eu-g6-064' --job-name='terra-v61-stall-age' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
 JOB_ID="${JOB_ID_RAW%%;*}"
 [[ "$JOB_ID" =~ ^[0-9]+$ ]]
 trap - ERR INT TERM

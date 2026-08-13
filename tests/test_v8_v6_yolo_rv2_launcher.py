@@ -1,4 +1,4 @@
-"""v6 readout launch contracts, including the isolated v6.1+v4 scratch arm."""
+"""V6 readout launch contracts, including the direct stall-age continuation."""
 
 import re
 import unittest
@@ -71,7 +71,9 @@ LAUNCHER_DEFAULTS = (
 PHASE2_SOURCE_UPDATE = 14_000
 PHASE2_TARGET_UPDATE = 40_000
 PHASE2_SOURCE_SHA = "79312602176e88b696c8c006b3b9af71a4cf121907c7aa8c4865722bd4830609"
-CONTINUATION_TERRA_REVISION = "46b5a1ddcd3b0e3a0d9e637af2e4ea94af51b4c8"
+PHASE2_PREPARED_SHA = "96600430af3fb0135e0fc94e8f9dd754476067fbfb8635a3db70d6c3519b6971"
+STALL_AGE_PARAMETERS = 2_304_829
+CONTINUATION_TERRA_REVISION = "c2d2a94a124759e9f21c2b37930f717e299f0c46"
 
 
 def train_flags(path: Path) -> dict[str, str | None]:
@@ -122,6 +124,8 @@ class PairedLauncherTest(unittest.TestCase):
         self.assertIn('ACTION_LOGIT_MASKING="${ACTION_LOGIT_MASKING:-1}"', text)
         self.assertIn("MASK_ARGS=(--action_logit_masking)", text)
         self.assertIn('"${MASK_ARGS[@]}"', text)
+        self.assertIn("STALL_AGE_ARGS=(--stall_age_observation)", text)
+        self.assertIn('"${STALL_AGE_ARGS[@]}"', text)
         # vf_coef likewise: passed when VF_COEF is set, dropped when it is empty
         # so train_mixed's default (2.0, the baseline's) applies.
         self.assertIn('VF_COEF_ARGS=(--vf_coef "$VF_COEF")', text)
@@ -217,7 +221,7 @@ class PairedLauncherTest(unittest.TestCase):
                           "--resume_from", "--prepared_fork_from"):
             self.assertNotIn(forbidden, treatment)
 
-    def test_v61_v4_is_one_distinct_scratch_arm_and_resume_stays_v3(self):
+    def test_v61_v4_remains_one_distinct_scratch_arm(self):
         v61 = sbatch_arm_case("v6_1_rv2")
         v4 = sbatch_arm_case("v6_1_rv2_v4")
         for key in (
@@ -249,17 +253,8 @@ class PairedLauncherTest(unittest.TestCase):
         self.assertIn("SCRATCH_SAMPLER_PROFILE=continuous_banded_v4", variant)
         self.assertIn("PAIRED_BASELINE_ARM=v6_1_rv2", variant)
         self.assertIn("terra_v8_r2_reward_v2_20260810", variant)
-        # Resume phases remain exclusive to the already-staged v61/v3 lineage.
-        self.assertIn('[ "${MASK_VARIANT:-mask}" != v61 ]', submit)
-        self.assertIn('GATING_SAMPLER_PROFILE="$SCRATCH_SAMPLER_PROFILE"', submit)
-        self.assertIn("GATING_SAMPLER_PROFILE=continuous_banded_v3", submit)
-
         sbatch = SBATCH.read_text()
         self.assertIn('SAMPLER_PROFILE="$SCRATCH_SAMPLER_PROFILE"', sbatch)
-        resume = sbatch.split("    resume_smoke)", 1)[1].split(";;", 1)[0]
-        phase2 = sbatch.split("    phase2)", 1)[1].split(";;", 1)[0]
-        self.assertIn("SAMPLER_PROFILE=continuous_banded_v3", resume)
-        self.assertIn("SAMPLER_PROFILE=continuous_banded_v3", phase2)
         self.assertEqual(ARMS["v6_1_rv2_v4"]["sampler_profile"], "continuous_banded_v4")
         self.assertEqual(
             ARMS["v6_1_rv2_v4"]["experiment"],
@@ -361,7 +356,7 @@ class PairedLauncherTest(unittest.TestCase):
 
 
 class ContinuationPhaseTest(unittest.TestCase):
-    """phase2: resume v6.1 at u14000 and run to u40000 on 8 GPUs, unmatched."""
+    """Direct phase2: add stall age at u14000 and target absolute u40000."""
 
     def test_the_resume_shape_and_horizon_are_absolute(self):
         sbatch = SBATCH.read_text()
@@ -371,14 +366,12 @@ class ContinuationPhaseTest(unittest.TestCase):
         self.assertIn('START_UPDATE="$SOURCE_UPDATE"', phase2)
         self.assertIn('UPDATES="$TARGET_UPDATE"', phase2)
         self.assertIn("NUM_DEVICES=8", phase2)
-        self.assertIn("SAMPLER_PROFILE=continuous_banded_v3", phase2)
+        self.assertIn("NUM_ENVS_PER_DEVICE=256", phase2)
+        self.assertIn("SAMPLER_PROFILE=continuous_banded_v2", phase2)
         self.assertIn("EXPECTED_CPUS=8", phase2)
-        # 512 envs/device is inherited, so the global batch doubles.
-        self.assertNotIn("NUM_ENVS_PER_DEVICE=", phase2)
-        # The eval sweep covers only what phase2 produced.
+        # The global batch remains 2,048 x 32 = 65,536 transitions.
+        self.assertIn("resume_global_batch=65536_to_65536", sbatch)
         self.assertIn("EVAL_FIRST=$((SOURCE_UPDATE + 1000))", phase2)
-        self.assertIn('for UPDATE in $(seq "$EVAL_FIRST" "$EVAL_INTERVAL" "$UPDATES")',
-                      sbatch)
         # UPDATES reaches the runner as the absolute num_updates, with the
         # resume checkpoint, so training runs [START_UPDATE, UPDATES).
         self.assertIn(
@@ -395,64 +388,67 @@ class ContinuationPhaseTest(unittest.TestCase):
         # the checkpoint stores env_config, never env state.
         self.assertIn("--no-load-env-from-checkpoint", runner)
         self.assertNotIn("--load_env_from_checkpoint", runner)
-        # The v2 -> v3 migration is taken mid-window, so the partial window is
-        # discarded rather than mixed across two rules.
-        self.assertIn("--sampler_migration_clear_window", runner)
+        self.assertNotIn("--sampler_migration_clear_window", runner)
+        self.assertIn('STALL_AGE_ARGS=(--stall_age_observation)', runner)
+        sbatch = SBATCH.read_text()
+        self.assertIn("restored_sampler_migration=none", sbatch)
+        self.assertIn("restored_sampler_partial_window_preserved_updates=50", sbatch)
 
-    def test_phase2_is_gated_by_the_pinned_source_and_the_resume_smoke(self):
+    def test_phase2_verifies_source_and_prepared_artifacts_without_a_smoke_job(self):
         submit = SUBMIT.read_text()
         sbatch = SBATCH.read_text()
-        self.assertIn("smoke|phase1|resume_smoke|phase2", submit)
+        self.assertIn("smoke|phase1|phase2", submit)
+        self.assertNotIn("resume_smoke", submit)
+        self.assertNotIn("resume_smoke", sbatch)
         self.assertIn(f"RESUME_SOURCE_SHA={PHASE2_SOURCE_SHA}", submit)
+        self.assertIn(f"RESUME_PREPARED_SHA={PHASE2_PREPARED_SHA}", submit)
         self.assertIn(f"RESUME_SOURCE_UPDATE={PHASE2_SOURCE_UPDATE}", submit)
         self.assertIn(f"RESUME_TARGET_UPDATE={PHASE2_TARGET_UPDATE}", submit)
-        # The continuation exists for one arm only.
-        self.assertIn('[ "${MASK_VARIANT:-mask}" != v61 ]', submit)
-        # The source checkpoint is content-addressed and SHA-verified on upload.
+        self.assertIn('[ "${MASK_VARIANT:-mask}" != stall_age ]', submit)
         self.assertIn(
-            'upload "$RESUME_SOURCE_LOCAL" "$REMOTE_RESUME_CHECKPOINT" '
+            'upload "$RESUME_SOURCE_LOCAL" "$REMOTE_RESUME_SOURCE" '
             '"$RESUME_SOURCE_SHA"',
             submit,
         )
-        self.assertIn("GATING_PHASE=resume_smoke", submit)
-        self.assertIn("GATING_RECEIPT=resume_validation.json", submit)
-        self.assertIn("GATING_PHASE=resume_smoke", sbatch)
-        # The resume smoke clears phase2's actual GPU, not the scratch smoke's.
         self.assertIn(
-            "resume_smoke) PARTITION=gpuhe.4h; WALLTIME=04:00:00; "
-            "GPU_TYPE=rtx_4090; GPU_COUNT=8; CPUS=8 ;;",
+            'upload "$RESUME_PREPARED_LOCAL" "$REMOTE_RESUME_CHECKPOINT" '
+            '"$RESUME_PREPARED_SHA"',
             submit,
         )
-        self.assertIn(
-            'smoke) test "$GPU_NAME" = "NVIDIA GeForce RTX 3090" ;;', sbatch
-        )
-        # The job re-verifies the pinned source before it trains anything.
-        self.assertIn(
-            'test "$(sha256sum "$RESUME_CHECKPOINT" | awk \'{print $1}\')" = '
-            '"$RESUME_CHECKPOINT_SHA"',
-            sbatch,
-        )
         self.assertIn("verify_resume.py", sbatch)
+        self.assertIn("prepare_v61_stall_age_continuation.py", sbatch)
+        self.assertIn('--verify "$RESUME_CHECKPOINT"', sbatch)
         self.assertIn("resume_source_validation.json", sbatch)
-        # 8 GPUs for ~72 h on the long partition, checked against its MaxTime.
         self.assertIn(
-            "phase2) PARTITION=gpuhe.120h; WALLTIME=71:45:00; GPU_TYPE=rtx_4090; "
+            "phase2) PARTITION=gpuhe.24h; WALLTIME=23:45:00; GPU_TYPE=rtx_4090; "
             "GPU_COUNT=8; CPUS=8 ;;",
             submit,
         )
-        self.assertIn('test "${SLURM_JOB_PARTITION:-}" = gpuhe.120h', sbatch)
+        self.assertIn("--account='gpuhe/es_hutter'", submit)
+        self.assertIn('test "${SLURM_JOB_PARTITION:-}" = gpuhe.24h', sbatch)
         self.assertIn("exceeds partition MaxTime", submit)
 
-    def test_the_continuation_runtime_terra_is_the_inert_v21_selector(self):
+    def test_the_continuation_is_one_observation_change(self):
         submit = SUBMIT.read_text()
         sbatch = SBATCH.read_text()
-        variant = submit.split("    v61)", 1)[1].split(";;", 1)[0]
+        variant = submit.split("    stall_age)", 1)[1].split(";;", 1)[0]
         self.assertIn(
             f"EXPECTED_RUNTIME_TERRA_REVISION={CONTINUATION_TERRA_REVISION}", variant
         )
-        self.assertIn("terra_v8_reward_timing_20260812", variant)
+        self.assertIn("terra_v8_v61_stall_age_20260813", variant)
         self.assertIn(
             f"EXPECTED_RUNTIME_TERRA_REVISION={CONTINUATION_TERRA_REVISION}", sbatch
+        )
+        arm = sbatch_arm_case("v6_1_rv2_stall_age")
+        self.assertEqual(arm["EXPECTED_PARAMETERS"], str(STALL_AGE_PARAMETERS))
+        self.assertEqual(arm["STALL_AGE_OBSERVATION"], "1")
+        self.assertEqual(arm["BUNDLED_CHANGES"], "material_stall_age_scalar_only")
+        self.assertIn("time_remaining_observation=false", sbatch)
+        self.assertEqual(arm["EXPECTED_MASKING"], "0")
+        self.assertIn(
+            'action_logit_masking=$([ "$ACTION_LOGIT_MASKING" = 1 ] '
+            '&& echo true || echo false)',
+            sbatch,
         )
         # Baseline timing is enforced by the protocol receipt, not assumed.
         self.assertIn("reward_v2_timing_variant", (ROOT / "train_mixed.py").read_text())
