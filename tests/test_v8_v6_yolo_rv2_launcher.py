@@ -1,559 +1,113 @@
-"""V6 readout launch contracts, including the direct stall-age continuation."""
+"""Contract for the one supported v6.1 stall-age/v3 continuation."""
 
 import re
-import unittest
 from pathlib import Path
-from types import SimpleNamespace
-
-import jax
-import jax.numpy as jnp
-import numpy as np
-from terra.config import BatchConfig, MapsDimsConfig
-
-from scripts.euler_v8_v6_yolo_rv2.verify_smoke import ARMS
-from utils.models import get_model_ready
-from utils.utils_ppo import obs_to_model_input
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE_RUNNER = ROOT / "scripts" / "run_v8_r2_reward_v2.sh"
-TREATMENT_RUNNER = ROOT / "scripts" / "run_v8_v6_yolo_rv2.sh"
+RUNNER = ROOT / "scripts" / "run_v8_v6_yolo_rv2.sh"
 SBATCH = ROOT / "scripts" / "euler_v8_v6_yolo_rv2" / "run.sbatch"
 SUBMIT = ROOT / "scripts" / "euler_v8_v6_yolo_rv2" / "submit.sh"
-VERIFY_SMOKE = ROOT / "scripts" / "euler_v8_v6_yolo_rv2" / "verify_smoke.py"
+VERIFY = ROOT / "scripts" / "euler_v8_v6_yolo_rv2" / "verify_resume.py"
 
-# Frozen: the v6 readout block consuming terra's 9-wide (carry-work) agent state,
-# at the yolo arms' (3,3,2,2) with the aux head, and at v6.1's reverted (2,2,3,3)
-# without it (the head is 24,804 parameters).
-V6_3M_RV2_PARAMETERS = 2_134_771
-V6_3M_PARAMETERS_WITHOUT_CARRY_WORK = 2_134_755
-V6_1_RV2_PARAMETERS = 2_303_421
-V6_1_PARAMETERS_WITHOUT_CARRY_WORK = 2_303_405
+SOURCE_SHA = "79312602176e88b696c8c006b3b9af71a4cf121907c7aa8c4865722bd4830609"
+PREPARED_SHA = "68aea1a0f5dc3c05d11319fdf640ade05495125225533bc99ad92592475fcb75"
+TERRA_REVISION = "c2d2a94a124759e9f21c2b37930f717e299f0c46"
 
 
-class AttrDict(dict):
-    """``get_model_ready`` reads its config by attribute as well as by key."""
+def test_submit_exposes_only_the_direct_phase2_recipe():
+    submit = SUBMIT.read_text()
+    assert "usage: submit.sh phase2" in submit
+    assert "PHASE=phase2" in submit
+    assert "smoke|phase1" not in submit
+    assert "ARM_NAME=v6_1_rv2_stall_age_v3" in submit
+    assert "SAMPLER_PROFILE=continuous_banded_v3" in submit
+    assert f"EXPECTED_RUNTIME_TERRA_REVISION={TERRA_REVISION}" in submit
+    assert f"RESUME_SOURCE_SHA={SOURCE_SHA}" in submit
 
-    __getattr__ = dict.__getitem__
-
-# Two flags the baseline also passes, with a different value. The blocks are
-# env-parameterized because v6.1 reverts them to the baseline's; the concrete
-# per-arm value is asserted through the launcher default and the sbatch case.
-RETUNED_FLAGS = {
-    "--map_encoder": ("resnet_spatial_8x8_se_xattn", "resnet_spatial_8x8_se_sa_xattn"),
-    "--resnet_blocks_per_stage": ("2,2,3,3", "$BLOCKS_PER_STAGE"),
-    # Env-parameterized for phase2's sampler advance. The launcher default is
-    # the baseline's literal value, asserted through LAUNCHER_DEFAULTS.
-    "--config": ("G-V8-CONTINUOUS-V2", "$TRAIN_PRESET"),
-    "--accepted-bank-sampler-profile": ("continuous_banded_v2", "$SAMPLER_PROFILE"),
-}
-# Four flags the baseline does not pass at all. D3 masking and vf_coef ride in
-# the MASK_ARGS / VF_COEF_ARGS conditionals (both default to the yolo arm's
-# setting), so they are asserted textually below, not through the flag parser.
-ADDED_FLAGS = {
-    "--token_mixer_residual_init_scale": "0.1",
-    "--flatten_reduce_channels": "32",
-    "--attn_latent_queries": "8",
-    "--aux_coef": "$AUX_COEF",
-}
-# The launcher's own defaults reproduce the original v6_3m_yolo_rv2 arm, and
-# the phase1 sampler/preset pair.
-LAUNCHER_DEFAULTS = (
-    'BLOCKS_PER_STAGE="${BLOCKS_PER_STAGE:-3,3,2,2}"',
-    'AUX_COEF="${AUX_COEF:-0.25}"',
-    'VF_COEF="${VF_COEF-0.5}"',
-    'SAMPLER_PROFILE="${SAMPLER_PROFILE:-continuous_banded_v2}"',
-    "continuous_banded_v2) TRAIN_PRESET=G-V8-CONTINUOUS-V2 ;;",
-    "continuous_banded_v3) TRAIN_PRESET=G-V8-CONTINUOUS-V3 ;;",
-    "continuous_banded_v4) TRAIN_PRESET=G-V8-CONTINUOUS-V4 ;;",
-)
-# The v6.1 continuation. UPDATES stays absolute, so the entropy schedule and the
-# optimizer clock continue rather than restart.
-PHASE2_SOURCE_UPDATE = 14_000
-PHASE2_TARGET_UPDATE = 40_000
-PHASE2_SOURCE_SHA = "79312602176e88b696c8c006b3b9af71a4cf121907c7aa8c4865722bd4830609"
-PHASE2_PREPARED_SHA = "96600430af3fb0135e0fc94e8f9dd754476067fbfb8635a3db70d6c3519b6971"
-STALL_AGE_PARAMETERS = 2_304_829
-CONTINUATION_TERRA_REVISION = "c2d2a94a124759e9f21c2b37930f717e299f0c46"
+    assert "PARTITION=gpuhe.24h" in submit
+    assert "WALLTIME=23:45:00" in submit
+    assert "GPU_TYPE=rtx_4090" in submit
+    assert "GPU_COUNT=8" in submit
+    assert "CPUS=8" in submit
+    assert "--account='es_hutter'" in submit
+    assert "--job-name='terra-v61-stall-v3'" in submit
 
 
-def train_flags(path: Path) -> dict[str, str | None]:
-    """Every ``train_mixed.py`` flag a launcher passes, value or None."""
-    body = path.read_text().split("train_mixed.py", 1)[1]
-    flags: dict[str, str | None] = {}
-    for line in body.splitlines():
-        line = line.strip().rstrip("\\").strip()
-        match = re.match(r"^(--[a-z0-9_-]+)(?:\s+(.*))?$", line)
-        if match is None:
-            continue
-        value = match.group(2)
-        flags[match.group(1)] = value.strip('"') if value else None
-    return flags
+def test_prepared_checkpoint_is_a_native_v3_resume():
+    submit = SUBMIT.read_text()
+    sbatch = SBATCH.read_text()
+    runner = RUNNER.read_text()
+    verify = VERIFY.read_text()
+
+    prepared_sha = re.search(r"^RESUME_PREPARED_SHA=([0-9a-f]{64})$", submit, re.M)
+    assert prepared_sha is not None and prepared_sha.group(1) == PREPARED_SHA
+    assert "v8_v61_stall_age_v3_u14000_prepared.pkl" in submit
+    assert 'test "${PHASE:?}" = phase2' in sbatch
+    assert 'test "${ARM_NAME:?}" = v6_1_rv2_stall_age_v3' in sbatch
+    assert 'test "${SAMPLER_PROFILE:?}" = continuous_banded_v3' in sbatch
+    assert "SOURCE_UPDATE=14000" in sbatch
+    assert "TARGET_UPDATE=40000" in sbatch
+    assert "NUM_DEVICES=8" in sbatch
+    assert "NUM_ENVS_PER_DEVICE=256" in sbatch
+    assert "resume_global_batch=65536_to_65536" in sbatch
+
+    assert '--prepared "$RESUME_CHECKPOINT"' in sbatch
+    assert '--prepared-sha256 "$RESUME_CHECKPOINT_SHA"' in sbatch
+    assert "restored_sampler_source_rule=continuous_banded_v2" in sbatch
+    assert "restored_sampler_rule=continuous_banded_v3" in sbatch
+    assert "restored_sampler_migration=materialized_before_resume" in sbatch
+    assert "restored_sampler_partial_window_discarded_updates=50" in sbatch
+    assert "restored_sampler_partial_window_updates=0" in sbatch
+    assert "restored_sampler_open_mass=0.8" in sbatch
+    assert "restored_sampler_mastered_replay_mass=0.2" in sbatch
+
+    assert '--resume_from "$RESUME_CHECKPOINT"' in runner
+    assert 'test "$RESUME_CHECKPOINT" != none' in runner
+    assert "TRAIN_PRESET=G-V8-CONTINUOUS-V3" in runner
+    assert "SAMPLER_PROFILE=continuous_banded_v3" in runner
+    assert "NUM_DEVICES=8" in runner
+    assert "NUM_ENVS_PER_DEVICE=256" in runner
+    assert "NUM_STEPS=32" in runner
+    assert "NUM_MINIBATCHES=32" in runner
+    assert "BLOCKS_PER_STAGE=2,2,3,3" in runner
+    assert "AUX_COEF=0" in runner
+    assert "VF_COEF=2.0" in runner
+    assert "--stall_age_observation" in runner
+    assert "--action_logit_masking" not in runner
+    assert "${NUM_DEVICES:-" not in runner
+    assert "${NUM_ENVS_PER_DEVICE:-" not in runner
+    assert "${BLOCKS_PER_STAGE:-" not in runner
+    assert "${AUX_COEF:-" not in runner
+    assert "${VF_COEF-" not in runner
+    assert "${SAMPLER_PROFILE:-" not in runner
+    assert '"source_sampler_rule": "continuous_banded_v2"' in verify
+    assert '"sampler_rule": "continuous_banded_v3"' in verify
+    assert '"sampler_migration": "materialized_before_resume"' in verify
 
 
-def sbatch_arm_case(arm: str) -> dict[str, str]:
-    """The variables run.sbatch's ARM_NAME case block assigns for one arm."""
-    body = SBATCH.read_text().split(f"    {arm})", 1)[1].split(";;", 1)[0]
-    assignments = {}
-    for line in body.splitlines():
-        line = line.strip()
-        if line.startswith("#") or "=" not in line:
-            continue
-        name, value = line.split("=", 1)
-        assignments[name] = value
-    return assignments
+def test_training_contract_changes_only_the_declared_practical_bundle():
+    sbatch = SBATCH.read_text()
+    assert "STALL_AGE_OBSERVATION=1" in sbatch
+    assert "time_remaining_observation=false" in sbatch
+    assert 'test "${ACTION_LOGIT_MASKING:?}" = 0' in sbatch
+    assert 'action_logit_masking=$([ "$ACTION_LOGIT_MASKING" = 1 ]' in sbatch
+    assert (
+        "material_stall_age_scalar+continuous_banded_v3_open80_mastered20_cap015"
+        in sbatch
+    )
+    assert "practical_combined_observation_and_curriculum_continuation" in sbatch
 
-
-class PairedLauncherTest(unittest.TestCase):
-    def test_treatment_differs_from_the_baseline_only_in_the_declared_flags(self):
-        baseline = train_flags(BASELINE_RUNNER)
-        treatment = train_flags(TREATMENT_RUNNER)
-        self.assertGreater(len(baseline), 30)
-        # Nothing the baseline passes is dropped.
-        self.assertEqual(set(baseline) - set(treatment), set())
-        self.assertEqual(set(treatment) - set(baseline), set(ADDED_FLAGS))
-        for name, value in ADDED_FLAGS.items():
-            self.assertEqual(treatment[name], value, name)
-        differing = {name for name in baseline if baseline[name] != treatment[name]}
-        self.assertEqual(differing, set(RETUNED_FLAGS))
-        for name, (before, after) in RETUNED_FLAGS.items():
-            self.assertEqual(baseline[name], before, name)
-            self.assertEqual(treatment[name], after, name)
-        # D3 masking rides in the MASK_ARGS conditional: default on, and the
-        # no-mask arms are selected by ACTION_LOGIT_MASKING=0.
-        text = TREATMENT_RUNNER.read_text()
-        self.assertIn('ACTION_LOGIT_MASKING="${ACTION_LOGIT_MASKING:-1}"', text)
-        self.assertIn("MASK_ARGS=(--action_logit_masking)", text)
-        self.assertIn('"${MASK_ARGS[@]}"', text)
-        self.assertIn("STALL_AGE_ARGS=(--stall_age_observation)", text)
-        self.assertIn('"${STALL_AGE_ARGS[@]}"', text)
-        # vf_coef likewise: passed when VF_COEF is set, dropped when it is empty
-        # so train_mixed's default (2.0, the baseline's) applies.
-        self.assertIn('VF_COEF_ARGS=(--vf_coef "$VF_COEF")', text)
-        self.assertIn('"${VF_COEF_ARGS[@]}"', text)
-        for default in LAUNCHER_DEFAULTS:
-            self.assertIn(default, text)
-
-    def test_v61_reverts_four_of_the_bundled_changes(self):
-        """v6.1: baseline blocks, no aux head, baseline vf_coef, no masking."""
-        yolo = sbatch_arm_case("v6_3m_yolo_rv2")
-        nomask = sbatch_arm_case("v6_3m_yolo_rv2_nomask")
-        v61 = sbatch_arm_case("v6_1_rv2")
-        for arm in (yolo, nomask):
-            self.assertEqual(arm["BLOCKS_PER_STAGE"], "3,3,2,2")
-            self.assertEqual(arm["AUX_COEF"], "0.25")
-            self.assertEqual(arm["EXPECTED_AUX_LEAVES"], "6")
-            self.assertEqual(arm["VF_COEF"], "0.5")
-            self.assertEqual(arm["EXPECTED_PARAMETERS"], str(V6_3M_RV2_PARAMETERS))
-            self.assertEqual(
-                arm["EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK"],
-                str(V6_3M_PARAMETERS_WITHOUT_CARRY_WORK),
-            )
-        self.assertEqual(yolo["EXPECTED_MASKING"], "1")
-        self.assertEqual(nomask["EXPECTED_MASKING"], "0")
-        self.assertEqual(yolo["RUN_PREFIX"], "v8_v6_yolo_rv2")
-        self.assertEqual(nomask["RUN_PREFIX"], "v8_v6_yolo_rv2_nomask")
-
-        self.assertEqual(v61["BLOCKS_PER_STAGE"], "2,2,3,3")
-        self.assertEqual(v61["AUX_COEF"], "0")  # head is built iff aux_coef > 0
-        self.assertEqual(v61["EXPECTED_AUX_LEAVES"], "0")
-        self.assertEqual(v61["VF_COEF"], "")  # flag dropped -> trainer default
-        self.assertEqual(v61["CONTRACT_VF_COEF"], "2.0")
-        self.assertEqual(v61["EXPECTED_MASKING"], "0")
-        self.assertEqual(v61["RUN_PREFIX"], "v8_v6_yolo_rv2_v61")
-        self.assertEqual(v61["EXPECTED_PARAMETERS"], str(V6_1_RV2_PARAMETERS))
-        self.assertEqual(
-            v61["EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK"],
-            str(V6_1_PARAMETERS_WITHOUT_CARRY_WORK),
-        )
-        self.assertNotIn("blocks_3322", v61["BUNDLED_CHANGES"])
-        self.assertNotIn("aux_bce", v61["BUNDLED_CHANGES"])
-        self.assertNotIn("vf_coef", v61["BUNDLED_CHANGES"])
-        self.assertNotIn("masking", v61["BUNDLED_CHANGES"])
-        self.assertIn("aux_coef_0", v61["BUNDLED_CHANGES"])
-        # The three surviving deltas, and nothing else.
-        self.assertEqual(
-            v61["BUNDLED_CHANGES"].split("+")[2:],
-            ["token_mixer_0.1", "flatten32", "latent_queries8", "aux_coef_0"],
-        )
-        self.assertEqual(ARMS["v6_1_rv2"]["aux_decoder_leaves"], 0)
-        self.assertEqual(ARMS["v6_1_rv2"]["aux_coef"], 0)
-        # The baseline never passes --vf_coef either: 2.0 is the trainer default.
-        self.assertNotIn("--vf_coef", train_flags(BASELINE_RUNNER))
-        # submit.sh reaches v6.1 through MASK_VARIANT=v61 on the baseline terra.
-        submit = SUBMIT.read_text()
-        self.assertIn("ARM_NAME=v6_1_rv2", submit)
-        self.assertIn("MASK_VARIANT=mask|nomask|v61", submit)
-        variant = submit.split("    v61)", 1)[1].split(";;", 1)[0]
-        self.assertIn(
-            "EXPECTED_RUNTIME_TERRA_REVISION="
-            "3051054bc4c713d95905d3f954e6eabf55d6a85a",
-            variant,
-        )
-        self.assertIn("ACTION_LOGIT_MASKING=0", variant)
-        self.assertIn("terra_v8_r2_reward_v2_20260810", variant)
-
-    def test_reward_v2_contract_flags_survive_the_port(self):
-        treatment = train_flags(TREATMENT_RUNNER)
-        # The preset and the bank profile move together, and their default pair
-        # is phase1's v2 (asserted through LAUNCHER_DEFAULTS above).
-        self.assertEqual(treatment["--config"], "$TRAIN_PRESET")
-        self.assertEqual(
-            treatment["--accepted-bank-sampler-profile"], "$SAMPLER_PROFILE"
-        )
-        self.assertEqual(treatment["--reward_stage"], "reward_v2")
-        self.assertEqual(
-            treatment["--distance_protocol_id"],
-            "obstacle_geodesic_8_physical_global_v1",
-        )
-        self.assertEqual(treatment["--distance_sidecar_sha256"], "$SIDECAR_SHA256")
-        self.assertIn("--carry_work_observation", treatment)
-        self.assertIn("--no_value_clip", treatment)
-        self.assertIn("--flat_minibatch_shuffle", treatment)
-        self.assertIn("--fail_on_nonfinite", treatment)
-        self.assertEqual(treatment["--lr"], "3e-4")
-        self.assertEqual(treatment["--critic_hidden_dims"], "512,256")
-        self.assertEqual(treatment["--resnet_stage_channels"], "24,48,64,96")
-        self.assertEqual(treatment["--encoder_compute_dtype"], "bfloat16")
-        self.assertEqual(treatment["--attention_compute_dtype"], "float32")
-        self.assertEqual(treatment["--ent_schedule_start"], "0.15")
-        self.assertEqual(treatment["--ent_schedule_end"], "0.02")
-        for forbidden in ("--warm_start_from", "--teacher_checkpoint",
-                          "--resume_from", "--prepared_fork_from"):
-            self.assertNotIn(forbidden, treatment)
-
-    def test_v61_v4_remains_one_distinct_scratch_arm(self):
-        v61 = sbatch_arm_case("v6_1_rv2")
-        v4 = sbatch_arm_case("v6_1_rv2_v4")
-        for key in (
-            "BLOCKS_PER_STAGE",
-            "AUX_COEF",
-            "EXPECTED_AUX_LEAVES",
-            "VF_COEF",
-            "CONTRACT_VF_COEF",
-            "EXPECTED_PARAMETERS",
-            "EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK",
-        ):
-            self.assertEqual(v4[key], v61[key], key)
-        self.assertEqual(v4["RUN_PREFIX"], "v8_v6_yolo_rv2_v61_v4")
-        self.assertEqual(v4["SCRATCH_SAMPLER_PROFILE"], "continuous_banded_v4")
-        self.assertEqual(
-            v4["BUNDLED_CHANGES"],
-            "continuous_banded_v4_open80_mastered20_cap015",
-        )
-        self.assertEqual(v4["EXPERIMENT_NAME"], "v8_v61_rv2_curriculum_v4_screen")
-        self.assertEqual(v4["PAIRED_BASELINE_ARM"], "v6_1_rv2")
-        self.assertEqual(
-            v4["PAIRED_BASELINE_LAUNCHER"], "scripts/run_v8_v6_yolo_rv2.sh"
-        )
-
-        submit = SUBMIT.read_text()
-        variant = submit.split("    v61_v4)", 1)[1].split(";;", 1)[0]
-        self.assertIn("ARM_NAME=v6_1_rv2_v4", variant)
-        self.assertIn("ACTION_LOGIT_MASKING=0", variant)
-        self.assertIn("SCRATCH_SAMPLER_PROFILE=continuous_banded_v4", variant)
-        self.assertIn("PAIRED_BASELINE_ARM=v6_1_rv2", variant)
-        self.assertIn("terra_v8_r2_reward_v2_20260810", variant)
-        sbatch = SBATCH.read_text()
-        self.assertIn('SAMPLER_PROFILE="$SCRATCH_SAMPLER_PROFILE"', sbatch)
-        self.assertEqual(ARMS["v6_1_rv2_v4"]["sampler_profile"], "continuous_banded_v4")
-        self.assertEqual(
-            ARMS["v6_1_rv2_v4"]["experiment"],
-            "v8_v61_rv2_curriculum_v4_screen",
-        )
-        self.assertEqual(ARMS["v6_1_rv2_v4"]["paired_baseline_arm"], "v6_1_rv2")
-        for key in (
-            "resnet_blocks_per_stage",
-            "aux_coef",
-            "aux_decoder_leaves",
-            "vf_coef",
-            "action_logit_masking",
-            "parameter_count",
-            "parameter_count_without_carry_work",
-        ):
-            self.assertEqual(ARMS["v6_1_rv2_v4"][key], ARMS["v6_1_rv2"][key])
-
-    def test_cluster_shape_matches_the_baseline_run(self):
-        sbatch = SBATCH.read_text()
-        baseline_sbatch = (
-            ROOT / "scripts" / "euler_v8_r2_reward_v2" / "run.sbatch"
-        ).read_text()
-        for shared in (
-            "UPDATES=14000",
-            "export ENTROPY_SCHEDULE_STEPS=20000",
-            "PROTOCOL_TERRA_REVISION=a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4",
-            "#SBATCH --gpus=rtx_4090:4",
-            "#SBATCH --partition=gpuhe.24h",
-            "used < 45.0",
-            "EXPECTED_RELEASE=terra_v8_v6_constraints_v7_adjacent_train96_v5",
-        ):
-            self.assertIn(shared, sbatch, shared)
-            self.assertIn(shared, baseline_sbatch, shared)
-        # The treatment's shape is per phase now (phase2 runs 8 devices), so the
-        # matched values live in the phase defaults the phase1 branch keeps.
-        self.assertIn(
-            "export NUM_DEVICES=4 NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 "
-            "NUM_MINIBATCHES=32",
-            baseline_sbatch,
-        )
-        self.assertIn('test "${#GPU_NAMES[@]}" -eq 4', baseline_sbatch)
-        self.assertIn('test "${#GPU_NAMES[@]}" -eq "$NUM_DEVICES"', sbatch)
-        self.assertIn("export NUM_STEPS=32 NUM_MINIBATCHES=32", sbatch)
-        self.assertIn("UPDATES=14000", sbatch.split("    phase1)", 1)[1])
-        for default in (
-            "NUM_DEVICES=4",
-            "NUM_ENVS_PER_DEVICE=512",
-            "SCRATCH_SAMPLER_PROFILE=continuous_banded_v2",
-            'SAMPLER_PROFILE="$SCRATCH_SAMPLER_PROFILE"',
-            "START_UPDATE=0",
-        ):
-            self.assertIn(default, sbatch, default)
-        # Runtime terra diverges BY DESIGN: the treatment runs the D3-mask
-        # terra (reward-v2 base + obs['action_mask']); the baseline stays on
-        # the reward-v2 revision it launched with.
-        self.assertIn(
-            "EXPECTED_RUNTIME_TERRA_REVISION="
-            "04c67bbafce2cb3d1a1de35384dfde477d244349",
-            sbatch,
-        )
-        self.assertIn(
-            "EXPECTED_RUNTIME_TERRA_REVISION="
-            "3051054bc4c713d95905d3f954e6eabf55d6a85a",
-            baseline_sbatch,
-        )
-        self.assertIn("scripts/run_v8_v6_yolo_rv2.sh", sbatch)
-        # The contract, the in-job assert and verify_smoke all read the one
-        # per-arm parameter count the ARM_NAME case block selects.
-        self.assertIn("model_parameter_count=$EXPECTED_PARAMETERS", sbatch)
-        self.assertIn(
-            "model_parameter_count_without_carry_work="
-            "$EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK",
-            sbatch,
-        )
-        self.assertIn("assert counts[True] == EXPECTED, counts", sbatch)
-        self.assertIn(
-            'EXPECTED_PARAMETERS="$EXPECTED_PARAMETERS"', sbatch
-        )
-        self.assertIn('ARM_NAME="$ARM_NAME" \\', sbatch)
-        self.assertIn('os.environ.get("ARM_NAME", "")', VERIFY_SMOKE.read_text())
-        self.assertEqual(
-            {arm: value["parameter_count"] for arm, value in ARMS.items()},
-            {
-                "v6_3m_yolo_rv2": V6_3M_RV2_PARAMETERS,
-                "v6_3m_yolo_rv2_nomask": V6_3M_RV2_PARAMETERS,
-                "v6_1_rv2": V6_1_RV2_PARAMETERS,
-                "v6_1_rv2_v4": V6_1_RV2_PARAMETERS,
-            },
-        )
-
-        submit = SUBMIT.read_text()
-        self.assertLess(
-            submit.index('if [ "$SUBMIT" = 0 ]'), submit.index('REMOTE_ID="$(remote')
-        )
-        self.assertIn("--gpus='$GPU_TYPE:$GPU_COUNT'", submit)
-        self.assertIn("--cpus-per-task='$CPUS'", submit)
-        self.assertIn("scripts/euler_v8_v6_yolo_rv2/run.sbatch", submit)
-        self.assertIn("CAMPAIGN=terra_v8_v6_yolo_rv2", submit)
-
-
-class ContinuationPhaseTest(unittest.TestCase):
-    """Direct phase2: add stall age at u14000 and target absolute u40000."""
-
-    def test_the_resume_shape_and_horizon_are_absolute(self):
-        sbatch = SBATCH.read_text()
-        self.assertIn(f"SOURCE_UPDATE={PHASE2_SOURCE_UPDATE}", sbatch)
-        self.assertIn(f"TARGET_UPDATE={PHASE2_TARGET_UPDATE}", sbatch)
-        phase2 = sbatch.split("    phase2)", 1)[1].split(";;", 1)[0]
-        self.assertIn('START_UPDATE="$SOURCE_UPDATE"', phase2)
-        self.assertIn('UPDATES="$TARGET_UPDATE"', phase2)
-        self.assertIn("NUM_DEVICES=8", phase2)
-        self.assertIn("NUM_ENVS_PER_DEVICE=256", phase2)
-        self.assertIn("SAMPLER_PROFILE=continuous_banded_v2", phase2)
-        self.assertIn("EXPECTED_CPUS=8", phase2)
-        # The global batch remains 2,048 x 32 = 65,536 transitions.
-        self.assertIn("resume_global_batch=65536_to_65536", sbatch)
-        self.assertIn("EVAL_FIRST=$((SOURCE_UPDATE + 1000))", phase2)
-        # UPDATES reaches the runner as the absolute num_updates, with the
-        # resume checkpoint, so training runs [START_UPDATE, UPDATES).
-        self.assertIn(
-            '"$BANK" "$RUN_NAME" "$UPDATES" "$RUN_DIR" "$DISTANCE_ARTIFACT_SHA" \\\n'
-            '    "$RESUME_CHECKPOINT"',
-            sbatch,
-        )
-        self.assertIn("export ENTROPY_SCHEDULE_STEPS=20000", sbatch)
-
-    def test_the_resume_restores_the_clock_and_the_sampler_but_not_the_envs(self):
-        runner = TREATMENT_RUNNER.read_text()
-        self.assertIn("--resume_from \"$RESUME_CHECKPOINT\"", runner)
-        # Env config is deliberately rebuilt: phase2 changes the env count and
-        # the checkpoint stores env_config, never env state.
-        self.assertIn("--no-load-env-from-checkpoint", runner)
-        self.assertNotIn("--load_env_from_checkpoint", runner)
-        self.assertNotIn("--sampler_migration_clear_window", runner)
-        self.assertIn('STALL_AGE_ARGS=(--stall_age_observation)', runner)
-        sbatch = SBATCH.read_text()
-        self.assertIn("restored_sampler_migration=none", sbatch)
-        self.assertIn("restored_sampler_partial_window_preserved_updates=50", sbatch)
-
-    def test_phase2_verifies_source_and_prepared_artifacts_without_a_smoke_job(self):
-        submit = SUBMIT.read_text()
-        sbatch = SBATCH.read_text()
-        self.assertIn("smoke|phase1|phase2", submit)
-        self.assertNotIn("resume_smoke", submit)
-        self.assertNotIn("resume_smoke", sbatch)
-        self.assertIn(f"RESUME_SOURCE_SHA={PHASE2_SOURCE_SHA}", submit)
-        self.assertIn(f"RESUME_PREPARED_SHA={PHASE2_PREPARED_SHA}", submit)
-        self.assertIn(f"RESUME_SOURCE_UPDATE={PHASE2_SOURCE_UPDATE}", submit)
-        self.assertIn(f"RESUME_TARGET_UPDATE={PHASE2_TARGET_UPDATE}", submit)
-        self.assertIn('[ "${MASK_VARIANT:-mask}" != stall_age ]', submit)
-        self.assertIn(
-            'upload "$RESUME_SOURCE_LOCAL" "$REMOTE_RESUME_SOURCE" '
-            '"$RESUME_SOURCE_SHA"',
-            submit,
-        )
-        self.assertIn(
-            'upload "$RESUME_PREPARED_LOCAL" "$REMOTE_RESUME_CHECKPOINT" '
-            '"$RESUME_PREPARED_SHA"',
-            submit,
-        )
-        self.assertIn("verify_resume.py", sbatch)
-        self.assertIn("prepare_v61_stall_age_continuation.py", sbatch)
-        self.assertIn('--verify "$RESUME_CHECKPOINT"', sbatch)
-        self.assertIn("resume_source_validation.json", sbatch)
-        self.assertIn(
-            "phase2) PARTITION=gpuhe.24h; WALLTIME=23:45:00; GPU_TYPE=rtx_4090; "
-            "GPU_COUNT=8; CPUS=8 ;;",
-            submit,
-        )
-        self.assertIn("--account='es_hutter'", submit)
-        self.assertIn('test "${SLURM_JOB_PARTITION:-}" = gpuhe.24h', sbatch)
-        self.assertIn("exceeds partition MaxTime", submit)
-
-    def test_the_continuation_is_one_observation_change(self):
-        submit = SUBMIT.read_text()
-        sbatch = SBATCH.read_text()
-        variant = submit.split("    stall_age)", 1)[1].split(";;", 1)[0]
-        self.assertIn(
-            f"EXPECTED_RUNTIME_TERRA_REVISION={CONTINUATION_TERRA_REVISION}", variant
-        )
-        self.assertIn("terra_v8_v61_stall_age_20260813", variant)
-        self.assertIn(
-            f"EXPECTED_RUNTIME_TERRA_REVISION={CONTINUATION_TERRA_REVISION}", sbatch
-        )
-        arm = sbatch_arm_case("v6_1_rv2_stall_age")
-        self.assertEqual(arm["EXPECTED_PARAMETERS"], str(STALL_AGE_PARAMETERS))
-        self.assertEqual(arm["STALL_AGE_OBSERVATION"], "1")
-        self.assertEqual(arm["BUNDLED_CHANGES"], "material_stall_age_scalar_only")
-        self.assertIn("time_remaining_observation=false", sbatch)
-        self.assertEqual(arm["EXPECTED_MASKING"], "0")
-        self.assertIn(
-            'action_logit_masking=$([ "$ACTION_LOGIT_MASKING" = 1 ] '
-            '&& echo true || echo false)',
-            sbatch,
-        )
-        # Baseline timing is enforced by the protocol receipt, not assumed.
-        self.assertIn("reward_v2_timing_variant", (ROOT / "train_mixed.py").read_text())
-        verify = (
-            ROOT / "scripts" / "euler_v8_v6_yolo_rv2" / "verify_resume.py"
-        ).read_text()
-        self.assertIn('"reward_v2_timing_variant": 0', verify)
-        self.assertIn("continuation must stay on baseline v2 timing", verify)
-
-
-class CarryWorkObservationContractTest(unittest.TestCase):
-    """The port hazard: carry-work must not move the aux decoder's obs indices."""
-
-    def test_carry_work_widens_agent_states_not_the_obs_list(self):
-        batch_cfg = BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
-        # reward-v2 terra appends normalized carry work at agent-state index 8.
-        self.assertEqual(batch_cfg.agent.num_state_obs, 9)
-
-        maps = {
-            key: jnp.zeros((2, 64, 64))
-            for key in (
-                "traversability_mask", "reachability_mask", "action_map",
-                "target_map", "padding_mask", "dumpability_mask",
-                "interaction_mask",
-            )
-        }
-        obs = {
-            "agent_states": jnp.zeros((2, 4, batch_cfg.agent.num_state_obs)),
-            "agent_active": jnp.zeros((2, 4)),
-            "num_agents": jnp.zeros((2,)),
-            **{
-                key: jnp.zeros((2, 12))
-                for key in (
-                    "local_map_action_neg", "local_map_action_pos",
-                    "local_map_target_neg", "local_map_target_pos",
-                    "local_map_dumpability", "local_map_obstacles",
-                    "local_map_border_workspace",
-                    "local_map_edge_alignment_error",
-                    "local_map_border_diggable",
-                )
-            },
-            "agent_width": jnp.zeros((2,)),
-            "agent_height": jnp.zeros((2,)),
-            **maps,
-        }
-        entries = obs_to_model_input(
-            dict(obs), jnp.zeros((2, 5), dtype=jnp.int32),
-            {"clip_action_maps": False, "local_map_area_scale": 1.0},
-        )
-        self.assertEqual(len(entries), 22)
-        self.assertEqual(entries[0].shape[-1], 9)
-        # train.aux_decoder_loss reads exactly these five positions.
-        for index, name in (
-            (12, "traversability_mask"), (14, "action_map"), (15, "target_map"),
-            (18, "padding_mask"), (19, "dumpability_mask"),
-        ):
-            self.assertIs(entries[index], obs[name], f"[{index}] != {name}")
-
-    def test_carry_work_costs_sixteen_weights_and_keeps_the_aux_head(self):
-        """Every arm's frozen parameter count, measured from the built model."""
-        environment = SimpleNamespace(
-            batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
-        )
-        for arm, expected in ARMS.items():
-            counts = {}
-            for carry in (False, True):
-                _, params = get_model_ready(
-                    jax.random.PRNGKey(0),
-                    AttrDict(
-                        clip_action_maps=True,
-                        loaded_max=100,
-                        local_map_normalization_bounds=(-16, 16),
-                        maps_net_normalization_bounds=(-10, 10),
-                        model_core="mlp",
-                        model_size="medium",
-                        num_prev_actions=5,
-                        critic_hidden_dims=(512, 256),
-                        encoder_compute_dtype="bfloat16",
-                        attention_compute_dtype="float32",
-                        map_encoder="resnet_spatial_8x8_se_sa_xattn",
-                        resnet_stage_channels=(24, 48, 64, 96),
-                        resnet_blocks_per_stage=expected["resnet_blocks_per_stage"],
-                        token_mixer_residual_init_scale=0.1,
-                        flatten_reduce_channels=32,
-                        attn_latent_queries=8,
-                        aux_coef=expected["aux_coef"],
-                        carry_work_observation=carry,
-                    ),
-                    environment,
-                )
-                counts[carry] = sum(
-                    int(np.asarray(x).size) for x in jax.tree_util.tree_leaves(params)
-                )
-                aux = [
-                    jax.tree_util.keystr(path)
-                    for path, _ in jax.tree_util.tree_flatten_with_path(params)[0]
-                    if "aux_decoder" in jax.tree_util.keystr(path)
-                ]
-                self.assertEqual(len(aux), expected["aux_decoder_leaves"], arm)
-            self.assertEqual(
-                counts[False], expected["parameter_count_without_carry_work"], arm
-            )
-            self.assertEqual(counts[True], expected["parameter_count"], arm)
-            self.assertEqual(counts[True] - counts[False], 16, arm)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    for frozen in (
+        "reward_stage=reward_v2",
+        "reward_protocol_id=material_potential_v2",
+        "reward_v2_step_cost_total=1.0",
+        "learning_rate=0.0003",
+        "map_encoder=resnet_spatial_8x8_se_sa_xattn",
+        "resnet_blocks_per_stage=$BLOCKS_PER_STAGE",
+        "num_steps=32",
+        "num_minibatches=32",
+        "update_epochs=2",
+        "model_parameter_count=$EXPECTED_PARAMETERS",
+    ):
+        assert frozen in sbatch
+    assert "verify_smoke.py" not in sbatch

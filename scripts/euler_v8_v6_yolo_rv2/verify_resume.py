@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed on the immutable v6.1 u14000 source checkpoint.
-
-The stall-age continuation has two distinct artifacts. This verifier checks the
-original v6.1 source by SHA-256 and asserts everything the treatment inherits:
-optimizer clock, parameter tree, reward-v2 baseline timing, and the complete
-continuous_banded_v2 sampler state. The separate deterministic materializer
-verifies the prepared checkpoint and its zero-initialized stall-age parameters.
-"""
+"""Verify the source and prepared v6.1 stall-age/v3 continuation checkpoints."""
 
 from __future__ import annotations
 
@@ -26,6 +19,7 @@ from terra.config import (
 )
 from terra.env_generation.distance import REWARD_V2_DISTANCE_PROTOCOL_ID
 from utils import helpers
+from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
 
 # The frozen source: v6.1 phase1's terminal periodic checkpoint.
 SOURCE_UPDATE = 14_000
@@ -33,6 +27,7 @@ UPDATE_EPOCHS = 2
 NUM_MINIBATCHES = 32
 OPTIMIZER_STEPS_PER_UPDATE = UPDATE_EPOCHS * NUM_MINIBATCHES
 PARAMETER_COUNT = 2_303_421
+PREPARED_PARAMETER_COUNT = 2_304_829
 CONDITION_COUNT = 47
 # 14000 % 150 == 50: the source stopped 50 updates into a window.
 SOURCE_WINDOW_UPDATES = 50
@@ -74,7 +69,6 @@ CONTRACT = {
     "ent_schedule_steps": 20_000,
     "use_value_clip": False,
     "flat_minibatch_shuffle": True,
-    "prepared_fork_from": None,
     "warm_start_from": None,
     "teacher_checkpoint": None,
     **ARCHITECTURE,
@@ -105,6 +99,60 @@ def finite(tree: object, label: str) -> None:
 
 def parameter_count(model: object) -> int:
     return sum(int(np.asarray(x).size) for x in jax.tree_util.tree_leaves(model))
+
+
+def verify_legacy_source_sampler(state: object) -> dict:
+    """Validate the one frozen v2 source without exposing v2 to training."""
+    if not isinstance(state, dict):
+        raise ValueError("source checkpoint lacks pooled_sampler_state")
+    legacy_settings = state.get("settings")
+    if not isinstance(legacy_settings, dict) or legacy_settings.get("rule") != (
+        "continuous_banded_v2"
+    ):
+        raise ValueError("source checkpoint has the wrong legacy sampler rule")
+    conditions = state.get("conditions")
+    labels = state.get("labels")
+    maps_per_condition = state.get("maps_per_condition")
+    if not isinstance(conditions, list) or len(conditions) != CONDITION_COUNT:
+        raise ValueError("source checkpoint must contain 47 sampler conditions")
+    if not isinstance(labels, dict) or set(labels) != set(conditions):
+        raise ValueError("source sampler labels do not match its conditions")
+
+    current = PooledConditionSampler(
+        conditions,
+        SamplerSettings(**{**legacy_settings, "rule": "continuous_banded_v3"}),
+        maps_per_condition=maps_per_condition,
+        labels=labels,
+    )
+    probabilities = np.asarray(state.get("probabilities"), dtype=np.float64)
+    mastered = np.asarray(state.get("mastery", {}).get("mastered"), dtype=bool)
+    if probabilities.shape != (CONDITION_COUNT,) or mastered.shape != (
+        CONDITION_COUNT,
+    ):
+        raise ValueError("source sampler arrays have the wrong shape")
+    np.testing.assert_allclose(
+        probabilities,
+        current._continuous_distribution_v2(mastered),
+        rtol=0.0,
+        atol=1e-12,
+    )
+    if not np.all(probabilities > 0.0):
+        raise ValueError("source sampler lost positive support")
+    depths = [labels[name].get("curriculum_depth") for name in conditions]
+    families = [labels[name].get("family") for name in conditions]
+    return {
+        "schema": "terra_continuous_banded_source_validation_v1",
+        "passed": True,
+        "condition_count": CONDITION_COUNT,
+        "family_counts": {
+            family: families.count(family) for family in ("foundation", "trench")
+        },
+        "depth_counts": {str(depth): depths.count(depth) for depth in (0, 1, 2)},
+        "minimum_probability": float(probabilities.min()),
+        "probability_sum": float(probabilities.sum()),
+        "sampler_state_schema": state.get("schema"),
+        "sampler_rule": legacy_settings["rule"],
+    }
 
 
 def check_reward_protocol(path: Path, checkpoint: dict, sidecar_sha: str) -> dict:
@@ -167,7 +215,17 @@ def verify_source(path: Path, expected_sha: str, sidecar_sha: str) -> dict:
     finite(checkpoint["optimizer_state"], f"{path}.optimizer_state")
 
     config = checkpoint["train_config"]
-    check_config(path, config, {**CONTRACT, "distance_sidecar_sha256": sidecar_sha})
+    check_config(
+        path,
+        config,
+        {
+            **CONTRACT,
+            "distance_sidecar_sha256": sidecar_sha,
+            "prepared_fork_from": None,
+        },
+    )
+    if config_value(config, "stall_age_observation", False):
+        raise ValueError(f"{path}: source already consumes stall age")
     # Phase1's per-device shape; phase2 redistributes the same 2,048 envs over
     # eight devices while preserving the global transitions per update.
     check_config(path, config, {"num_devices": 4, "num_envs_per_device": 512})
@@ -175,7 +233,7 @@ def verify_source(path: Path, expected_sha: str, sidecar_sha: str) -> dict:
         raise ValueError(f"{path}: source must be the v2 preset")
     protocol = check_reward_protocol(path, checkpoint, sidecar_sha)
 
-    sampler = verify_sampler_state(checkpoint.get("pooled_sampler_state"))
+    sampler = verify_legacy_source_sampler(checkpoint.get("pooled_sampler_state"))
     if sampler["sampler_rule"] != "continuous_banded_v2":
         raise ValueError(f"{path}: source sampler must be continuous_banded_v2")
     state = checkpoint["pooled_sampler_state"]
@@ -209,31 +267,156 @@ def verify_source(path: Path, expected_sha: str, sidecar_sha: str) -> dict:
     }
 
 
+def accepted_sampler_profile(config: object) -> object:
+    bank = config_value(config, "accepted_bank", None)
+    return config_value(bank, "sampler_profile", None)
+
+
+def verify_prepared(
+    path: Path,
+    expected_sha: str,
+    sidecar_sha: str,
+    source_path: Path,
+) -> dict:
+    observed_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    if observed_sha != expected_sha:
+        raise ValueError(
+            f"{path}: prepared checkpoint SHA-256 is {observed_sha}, "
+            f"expected {expected_sha}"
+        )
+    source = helpers.load_pkl_object(str(source_path))
+    checkpoint = helpers.load_pkl_object(str(path))
+    if checkpoint.get("next_update") != SOURCE_UPDATE:
+        raise ValueError(f"{path}: prepared checkpoint changed next_update")
+    optimizer_step = int(np.asarray(checkpoint["train_state_step"]).reshape(()))
+    if optimizer_step != SOURCE_UPDATE * OPTIMIZER_STEPS_PER_UPDATE:
+        raise ValueError(f"{path}: prepared checkpoint changed optimizer clock")
+    count = parameter_count(checkpoint["model"])
+    if count != PREPARED_PARAMETER_COUNT:
+        raise ValueError(
+            f"{path}: {count} prepared parameters, expected {PREPARED_PARAMETER_COUNT}"
+        )
+    finite(checkpoint["model"], f"{path}.model")
+    finite(checkpoint["optimizer_state"], f"{path}.optimizer_state")
+    check_reward_protocol(path, checkpoint, sidecar_sha)
+
+    config = checkpoint["train_config"]
+    check_config(
+        path,
+        config,
+        {
+            **CONTRACT,
+            "distance_sidecar_sha256": sidecar_sha,
+            "stall_age_observation": True,
+        },
+    )
+    if config_value(config, "config_name") != "G-V8-CONTINUOUS-V3":
+        raise ValueError(f"{path}: prepared checkpoint must name the v3 preset")
+    pooled = config_value(config, "pooled_sampler", None)
+    if config_value(pooled, "rule", None) != "continuous_banded_v3":
+        raise ValueError(f"{path}: prepared config must select continuous_banded_v3")
+    if accepted_sampler_profile(config) != "continuous_banded_v3":
+        raise ValueError(f"{path}: prepared bank must select continuous_banded_v3")
+
+    receipt = checkpoint.get("stall_age_prepared_continuation")
+    if not isinstance(receipt, dict) or receipt.get("schema") != (
+        "terra_v8_v61_stall_age_v3_prepared_v1"
+    ):
+        raise ValueError(f"{path}: stall-age preparation receipt is missing")
+
+    source_state = source["pooled_sampler_state"]
+    state = checkpoint["pooled_sampler_state"]
+    sampler = verify_sampler_state(state)
+    if sampler["sampler_rule"] != "continuous_banded_v3":
+        raise ValueError(f"{path}: prepared sampler must be continuous_banded_v3")
+    if source_state["settings"]["rule"] != "continuous_banded_v2":
+        raise ValueError(f"{source_path}: source sampler must be continuous_banded_v2")
+    if source_state["current_window"]["updates"] != SOURCE_WINDOW_UPDATES:
+        raise ValueError(f"{source_path}: source partial sampler window changed")
+    if state["current_window"]["updates"] != 0 or any(
+        any(values)
+        for key, values in state["current_window"].items()
+        if key != "updates"
+    ):
+        raise ValueError(f"{path}: prepared sampler partial window was not cleared")
+    for key in (
+        "conditions",
+        "maps_per_condition",
+        "labels",
+        "competence",
+        "closed_window",
+        "refresh",
+        "mastery",
+        "numpy_rng",
+    ):
+        if state[key] != source_state[key]:
+            raise ValueError(f"{path}: sampler migration changed {key}")
+
+    probabilities = np.asarray(state["probabilities"], dtype=np.float64)
+    mastered = np.asarray(state["mastery"]["mastered"], dtype=bool)
+    if int(mastered.sum()) != 29 or int((~mastered).sum()) != 18:
+        raise ValueError(f"{path}: prepared mastery population changed")
+    np.testing.assert_allclose(
+        probabilities[~mastered].sum(), 0.80, rtol=0.0, atol=1e-12
+    )
+    np.testing.assert_allclose(
+        probabilities[mastered].sum(), 0.20, rtol=0.0, atol=1e-12
+    )
+    return {
+        "checkpoint": str(path),
+        "checkpoint_sha256": observed_sha,
+        "next_update": SOURCE_UPDATE,
+        "optimizer_step": optimizer_step,
+        "parameter_count": count,
+        "sampler": sampler,
+        "discarded_partial_window_updates": SOURCE_WINDOW_UPDATES,
+        "sampler_last_refresh_update": int(state["refresh"]["last_refresh_update"]),
+        "sampler_refreshes": int(state["refresh"]["refreshes"]),
+        "sampler_mastered": int(mastered.sum()),
+        "sampler_open_mass": float(probabilities[~mastered].sum()),
+        "sampler_mastered_mass": float(probabilities[mastered].sum()),
+        "sampler_max_condition_mass": float(probabilities.max()),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--source-sha256", required=True)
+    parser.add_argument("--prepared", type=Path, required=True)
+    parser.add_argument("--prepared-sha256", required=True)
     parser.add_argument("--distance-artifact-sha256", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    for sha in (args.source_sha256, args.distance_artifact_sha256):
+    for sha in (
+        args.source_sha256,
+        args.prepared_sha256,
+        args.distance_artifact_sha256,
+    ):
         if len(sha) != 64 or any(char not in "0123456789abcdef" for char in sha):
             raise ValueError("SHA-256 arguments must be lowercase 64-hex")
 
     helpers.register_checkpoint_config_classes()
     receipt = {
-        "schema": "terra_v8_v61_stall_age_source_validation_v1",
+        "schema": "terra_v8_v61_stall_age_resume_validation_v2",
         "passed": True,
-        "arm": "v6_1_rv2_stall_age",
+        "arm": "v6_1_rv2_stall_age_v3",
         "absolute_start_update": SOURCE_UPDATE,
         "absolute_target_update": PHASE2_TARGET_UPDATE,
         "num_devices": PHASE2_NUM_DEVICES,
         "num_envs_per_device": PHASE2_NUM_ENVS_PER_DEVICE,
-        "sampler_rule": "continuous_banded_v2",
-        "sampler_migration": "none",
-        "sampler_partial_window": "preserved_by_prepared_checkpoint",
+        "source_sampler_rule": "continuous_banded_v2",
+        "sampler_rule": "continuous_banded_v3",
+        "sampler_migration": "materialized_before_resume",
+        "sampler_partial_window": "discarded_50_updates_before_resume",
         "source": verify_source(
             args.source, args.source_sha256, args.distance_artifact_sha256
+        ),
+        "prepared": verify_prepared(
+            args.prepared,
+            args.prepared_sha256,
+            args.distance_artifact_sha256,
+            args.source,
         ),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

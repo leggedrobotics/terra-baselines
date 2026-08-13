@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 
 import jax
@@ -17,9 +18,9 @@ from terra.config import BatchConfig, MapsDimsConfig
 from scripts.grow_checkpoint import _derive_action_type
 from utils import helpers
 from utils.models import get_model_ready
+from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
 
-
-SCHEMA = "terra_v8_v61_stall_age_prepared_v1"
+SCHEMA = "terra_v8_v61_stall_age_v3_prepared_v1"
 SOURCE_SHA256 = "79312602176e88b696c8c006b3b9af71a4cf121907c7aa8c4865722bd4830609"
 SOURCE_UPDATE = 14_000
 SOURCE_PARAMETER_COUNT = 2_303_421
@@ -29,6 +30,8 @@ PARAMETER_NAMES = (
     "stall_age_actor_embedding",
     "stall_age_critic_embedding",
 )
+SOURCE_SAMPLER_RULE = "continuous_banded_v2"
+TARGET_SAMPLER_RULE = "continuous_banded_v3"
 
 
 def sha256_file(path: Path) -> str:
@@ -57,7 +60,9 @@ def parameter_count(params) -> int:
 
 
 def add_zero_embeddings(model):
-    mutable = model.unfreeze() if isinstance(model, FrozenDict) else copy.deepcopy(model)
+    mutable = (
+        model.unfreeze() if isinstance(model, FrozenDict) else copy.deepcopy(model)
+    )
     params = mutable["params"]
     if any(name in params for name in PARAMETER_NAMES):
         raise ValueError("source model already contains stall-age embeddings")
@@ -80,6 +85,80 @@ def add_zero_adam_moments(optimizer_state):
             params[name] = jnp.zeros((FUSED_WIDTH,), dtype=jnp.float32)
     grown_adam = adam._replace(mu=mu, nu=nu)
     return (optimizer_state[0], (grown_adam, optimizer_state[1][1]))
+
+
+def migrate_sampler_state(source_state: dict) -> tuple[dict, dict]:
+    """Move the u14 sampler to family-free v3 and discard its partial window."""
+    source_settings = dict(source_state.get("settings", {}))
+    if source_settings.get("rule") != SOURCE_SAMPLER_RULE:
+        raise ValueError("source sampler is not continuous_banded_v2")
+    if source_state["current_window"].get("updates") != 50:
+        raise ValueError(
+            "source sampler does not contain the expected 50-update window"
+        )
+    sampler = PooledConditionSampler(
+        list(source_state["conditions"]),
+        SamplerSettings(**{**source_settings, "rule": TARGET_SAMPLER_RULE}),
+        maps_per_condition=list(source_state["maps_per_condition"]),
+        labels=copy.deepcopy(source_state["labels"]),
+    )
+    sampler.restore_state_dict(
+        copy.deepcopy(source_state), clear_window_on_migration=True
+    )
+    migrated = sampler.state_dict()
+    preserved = (
+        "conditions",
+        "maps_per_condition",
+        "labels",
+        "competence",
+        "closed_window",
+        "refresh",
+        "numpy_rng",
+        "mastery",
+    )
+    if any(migrated[key] != source_state[key] for key in preserved):
+        raise ValueError("v3 migration changed retained sampler history")
+    current = migrated["current_window"]
+    if current["updates"] != 0 or any(
+        any(current[key])
+        for key in (
+            "completed_episode_count",
+            "task_done_count",
+            "sampled_assignment_count",
+            "reset_exposure_count",
+            "transition_exposure_count",
+        )
+    ):
+        raise ValueError("v3 migration did not clear the partial sampler window")
+    probabilities = np.asarray(migrated["probabilities"], dtype=np.float64)
+    mastered = np.asarray(migrated["mastery"]["mastered"], dtype=bool)
+    receipt = {
+        "source_rule": SOURCE_SAMPLER_RULE,
+        "target_rule": TARGET_SAMPLER_RULE,
+        "discarded_partial_window_updates": 50,
+        "discarded_assignments": int(
+            sum(source_state["current_window"]["sampled_assignment_count"])
+        ),
+        "discarded_completed_episodes": int(
+            sum(source_state["current_window"]["completed_episode_count"])
+        ),
+        "discarded_reset_exposures": int(
+            sum(source_state["current_window"]["reset_exposure_count"])
+        ),
+        "discarded_transition_exposures": int(
+            sum(source_state["current_window"]["transition_exposure_count"])
+        ),
+        "discarded_task_done_count": int(
+            sum(source_state["current_window"]["task_done_count"])
+        ),
+        "mastered_conditions": int(mastered.sum()),
+        "open_mass": float(probabilities[~mastered].sum()),
+        "mastered_replay_mass": float(probabilities[mastered].sum()),
+        "max_condition_mass": float(probabilities.max()),
+        "preserved_history": list(preserved),
+        "next_refresh_update": 14_100,
+    }
+    return migrated, receipt
 
 
 def parity_observation(config, *, stall_age: bool):
@@ -129,8 +208,24 @@ def validate_source(checkpoint: dict) -> None:
     if config_value(config, "stall_age_observation", False):
         raise ValueError("source already consumes stall age")
     sampler = checkpoint.get("pooled_sampler_state")
-    if sampler.get("settings", {}).get("rule") != "continuous_banded_v2":
-        raise ValueError("source sampler must remain continuous_banded_v2")
+    if sampler.get("settings", {}).get("rule") != SOURCE_SAMPLER_RULE:
+        raise ValueError(f"source sampler must be {SOURCE_SAMPLER_RULE}")
+    window = sampler.get("current_window", {})
+    expected_window_totals = {
+        "sampled_assignment_count": 102_400,
+        "completed_episode_count": 13_725,
+        "reset_exposure_count": 13_725,
+        "transition_exposure_count": 3_276_800,
+        "task_done_count": 8_810,
+    }
+    observed_window_totals = {
+        key: int(sum(window.get(key, ()))) for key in expected_window_totals
+    }
+    if window.get("updates") != 50 or observed_window_totals != expected_window_totals:
+        raise ValueError(
+            "source sampler partial window changed: "
+            f"updates={window.get('updates')!r}, totals={observed_window_totals!r}"
+        )
 
 
 def validate_prepared(source: dict, prepared: dict) -> None:
@@ -143,14 +238,30 @@ def validate_prepared(source: dict, prepared: dict) -> None:
         raise ValueError("prepared parameter count changed")
     if not config_value(prepared["train_config"], "stall_age_observation", False):
         raise ValueError("prepared checkpoint does not enable stall age")
-    for field in ("next_update", "train_state_step", "pooled_sampler_state"):
+    for field in ("next_update", "train_state_step"):
         source_value = source[field]
         prepared_value = prepared[field]
-        if field == "pooled_sampler_state":
-            if source_value != prepared_value:
-                raise ValueError("prepared checkpoint changed sampler state")
-        elif not np.array_equal(np.asarray(source_value), np.asarray(prepared_value)):
+        if not np.array_equal(np.asarray(source_value), np.asarray(prepared_value)):
             raise ValueError(f"prepared checkpoint changed {field}")
+
+    expected_sampler, expected_migration = migrate_sampler_state(
+        source["pooled_sampler_state"]
+    )
+    if prepared["pooled_sampler_state"] != expected_sampler:
+        raise ValueError("prepared checkpoint has the wrong v3 sampler migration")
+    if receipt.get("sampler_migration") != expected_migration:
+        raise ValueError("prepared checkpoint sampler migration receipt changed")
+    prepared_config = prepared["train_config"]
+    if config_value(prepared_config, "config_name") != "G-V8-CONTINUOUS-V3":
+        raise ValueError("prepared checkpoint does not select the v3 preset")
+    if config_value(prepared_config, "pooled_sampler", {}).get("rule") != (
+        TARGET_SAMPLER_RULE
+    ):
+        raise ValueError("prepared checkpoint config does not select v3")
+    if config_value(prepared_config, "accepted_bank").sampler_profile != (
+        TARGET_SAMPLER_RULE
+    ):
+        raise ValueError("prepared checkpoint bank does not identify v3")
 
     source_model = (
         source["model"].unfreeze()
@@ -170,13 +281,16 @@ def validate_prepared(source: dict, prepared: dict) -> None:
         embedding = np.asarray(prepared_params.pop(name))
         if embedding.shape != (FUSED_WIDTH,) or np.any(embedding != 0):
             raise ValueError(f"{name} is not a zero fused embedding")
-    if jax.tree_util.tree_all(
-        jax.tree.map(
-            lambda left, right: np.array_equal(np.asarray(left), np.asarray(right)),
-            source_params,
-            prepared_params,
+    if (
+        jax.tree_util.tree_all(
+            jax.tree.map(
+                lambda left, right: np.array_equal(np.asarray(left), np.asarray(right)),
+                source_params,
+                prepared_params,
+            )
         )
-    ) is not True:
+        is not True
+    ):
         raise ValueError("prepared checkpoint changed existing model parameters")
 
     source_adam = source["optimizer_state"][1][0]
@@ -187,7 +301,9 @@ def validate_prepared(source: dict, prepared: dict) -> None:
         == jax.tree.structure(prepared_adam.nu)
     ):
         raise ValueError("prepared params and Adam moments have different trees")
-    if not np.array_equal(np.asarray(source_adam.count), np.asarray(prepared_adam.count)):
+    if not np.array_equal(
+        np.asarray(source_adam.count), np.asarray(prepared_adam.count)
+    ):
         raise ValueError("prepared checkpoint changed Adam clock")
     for field in ("mu", "nu"):
         source_moments = copy.deepcopy(getattr(source_adam, field))["params"]
@@ -196,13 +312,18 @@ def validate_prepared(source: dict, prepared: dict) -> None:
             moment = np.asarray(prepared_moments.pop(name))
             if moment.shape != (FUSED_WIDTH,) or np.any(moment != 0):
                 raise ValueError(f"{field}/{name} is not zero")
-        if jax.tree_util.tree_all(
-            jax.tree.map(
-                lambda left, right: np.array_equal(np.asarray(left), np.asarray(right)),
-                source_moments,
-                prepared_moments,
+        if (
+            jax.tree_util.tree_all(
+                jax.tree.map(
+                    lambda left, right: np.array_equal(
+                        np.asarray(left), np.asarray(right)
+                    ),
+                    source_moments,
+                    prepared_moments,
+                )
             )
-        ) is not True:
+            is not True
+        ):
             raise ValueError(f"prepared checkpoint changed existing Adam {field}")
 
     env = type("ModelEnv", (), {})()
@@ -253,6 +374,21 @@ def main() -> None:
     prepared["model"] = add_zero_embeddings(source["model"])
     prepared["optimizer_state"] = add_zero_adam_moments(source["optimizer_state"])
     set_config_value(prepared["train_config"], "stall_age_observation", True)
+    set_config_value(prepared["train_config"], "config_name", "G-V8-CONTINUOUS-V3")
+    sampler_config = copy.deepcopy(
+        config_value(prepared["train_config"], "pooled_sampler")
+    )
+    sampler_config["rule"] = TARGET_SAMPLER_RULE
+    set_config_value(prepared["train_config"], "pooled_sampler", sampler_config)
+    source_bank = config_value(prepared["train_config"], "accepted_bank")
+    set_config_value(
+        prepared["train_config"],
+        "accepted_bank",
+        replace(source_bank, sampler_profile=TARGET_SAMPLER_RULE),
+    )
+    prepared["pooled_sampler_state"], sampler_migration = migrate_sampler_state(
+        source["pooled_sampler_state"]
+    )
     prepared["stall_age_prepared_continuation"] = {
         "schema": SCHEMA,
         "source_checkpoint_sha256": SOURCE_SHA256,
@@ -266,7 +402,7 @@ def main() -> None:
         "existing_adam_moments_preserved": True,
         "parameter_and_adam_trees_match": True,
         "optimizer_clock_preserved": True,
-        "sampler_state_preserved": True,
+        "sampler_migration": sampler_migration,
         "z0_value_and_logits_exact": True,
         "source_contract": {
             "map_encoder": "resnet_spatial_8x8_se_sa_xattn",
@@ -274,7 +410,8 @@ def main() -> None:
             "reward_v2_timing_variant": 0,
             "carry_work_observation": True,
             "action_logit_masking": False,
-            "sampler_rule": "continuous_banded_v2",
+            "source_sampler_rule": SOURCE_SAMPLER_RULE,
+            "target_sampler_rule": TARGET_SAMPLER_RULE,
         },
     }
     if parameter_count(prepared["model"]) != TARGET_PARAMETER_COUNT:

@@ -13,6 +13,7 @@ from scripts.prepare_v61_stall_age_continuation import (
     PARAMETER_NAMES,
     add_zero_adam_moments,
     add_zero_embeddings,
+    migrate_sampler_state,
 )
 from utils.models import get_model_ready
 from utils.utils_ppo import obs_to_model_input
@@ -117,15 +118,21 @@ def test_zero_stall_embeddings_preserve_outputs_and_optimizer_tree():
         apply_fn=source_model.apply, params=source_params, tx=tx
     )
     grown_opt_state = add_zero_adam_moments(source_state.opt_state)
-    assert jax.tree.structure(grown_params) == jax.tree.structure(grown_opt_state[1][0].mu)
-    assert jax.tree.structure(grown_params) == jax.tree.structure(grown_opt_state[1][0].nu)
+    assert jax.tree.structure(grown_params) == jax.tree.structure(
+        grown_opt_state[1][0].mu
+    )
+    assert jax.tree.structure(grown_params) == jax.tree.structure(
+        grown_opt_state[1][0].nu
+    )
     target_state = TrainState.create(
         apply_fn=target_model.apply, params=grown_params, tx=tx
     ).replace(opt_state=grown_opt_state)
     updated = target_state.apply_gradients(
         grads=jax.tree.map(jnp.zeros_like, grown_params)
     )
-    assert jax.tree.structure(updated.params) == jax.tree.structure(updated.opt_state[1][0].mu)
+    assert jax.tree.structure(updated.params) == jax.tree.structure(
+        updated.opt_state[1][0].mu
+    )
     assert all(
         np.all(np.isfinite(np.asarray(leaf)))
         for leaf in jax.tree.leaves((updated.params, updated.opt_state))
@@ -157,7 +164,7 @@ def test_stall_age_input_is_required_and_appended_after_existing_features():
 
 def test_stall_age_receipt_is_carried_into_continuation_checkpoints():
     receipt = {
-        "schema": "terra_v8_v61_stall_age_prepared_v1",
+        "schema": "terra_v8_v61_stall_age_v3_prepared_v1",
         "source_checkpoint_sha256": "7" * 64,
     }
     rolling = {}
@@ -167,3 +174,58 @@ def test_stall_age_receipt_is_carried_into_continuation_checkpoints():
     assert rolling["stall_age_prepared_continuation"] == receipt
     assert final["stall_age_prepared_continuation"] == receipt
     assert rolling["stall_age_prepared_continuation"] is not receipt
+
+
+def test_u14_sampler_conversion_keeps_history_and_clears_only_partial_window():
+    names = [f"foundation-{index}" for index in range(5)] + [
+        f"trench-{index}" for index in range(5)
+    ]
+    depths = (0, 1, 1, 2, 2) * 2
+    labels = {
+        name: {
+            "family": name.split("-")[0],
+            "branch_depth": "Composed",
+            "curriculum_depth": depths[index],
+        }
+        for index, name in enumerate(names)
+    }
+    from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
+
+    source = PooledConditionSampler(
+        names,
+        SamplerSettings(
+            rule="continuous_banded_v3",
+            mastery_threshold=0.80,
+            min_episodes=32,
+        ),
+        maps_per_condition=[96] * len(names),
+        labels=labels,
+    )
+    source.start(13_950)
+    state = source.state_dict()
+    state["settings"]["rule"] = "continuous_banded_v2"
+    state["probabilities"] = source._continuous_distribution_v2().tolist()
+    state["current_window"]["updates"] = 50
+    state["current_window"]["sampled_assignment_count"][0] = 102_400
+    state["current_window"]["completed_episode_count"][0] = 13_725
+    state["current_window"]["reset_exposure_count"][0] = 13_725
+    state["current_window"]["transition_exposure_count"][0] = 3_276_800
+    state["current_window"]["task_done_count"][0] = 8_810
+
+    migrated, receipt = migrate_sampler_state(state)
+    assert migrated["settings"]["rule"] == "continuous_banded_v3"
+    assert migrated["current_window"]["updates"] == 0
+    assert receipt["discarded_partial_window_updates"] == 50
+    assert receipt["discarded_assignments"] == 102_400
+    assert receipt["discarded_completed_episodes"] == 13_725
+    assert receipt["discarded_transition_exposures"] == 3_276_800
+    for key in (
+        "conditions",
+        "labels",
+        "competence",
+        "closed_window",
+        "refresh",
+        "numpy_rng",
+        "mastery",
+    ):
+        assert migrated[key] == state[key]

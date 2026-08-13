@@ -62,7 +62,7 @@ def test_continuous_sampler_labels_never_receive_fixed_sampling_weights():
         sampling_probabilities=(1.0,),
     )
     continuous = SamplerSettings(
-        rule="continuous_banded_v1",
+        rule="continuous_banded_v3",
         update_interval=150,
         mastery_threshold=0.80,
         min_episodes=32,

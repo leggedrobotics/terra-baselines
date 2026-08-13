@@ -150,17 +150,17 @@ replaced reward-v2's implicit dwell rent — the
 
 ## 6. Provenance
 
-- Arms: `scripts/euler_v8_v6_yolo_rv2/{submit.sh,run.sbatch}`,
-  `scripts/run_v8_v6_yolo_rv2.sh` (treatment);
-  `scripts/euler_v8_r2_reward_v2/`, `scripts/run_v8_r2_reward_v2.sh` (control).
+- Phase-1 source revision: `9abf88eb`; the superseded phase-1 launchers were
+  removed after their immutable checkpoints and receipts were recorded.
 - v6.1 run revision `9abf88eb`, runtime terra `3051054b`, seed 20260807,
   4×`rtx_4090`, `gpuhe.24h`.
-- Eval: `eval_fixed_bank.py --accepted-panel promotion` (720 episodes) +
-  `--capability-panel promotion`, selection by
-  `scripts/euler_v8_r2_reward_v2/select_promotion.py`.
+- Eval: `eval_fixed_bank.py --accepted-panel promotion` (720 episodes) plus
+  `--capability-panel promotion`; the selected update is frozen in the result
+  receipt rather than delegated to a retained historical launcher helper.
 - Parameter counts are asserted in-job and in
   `tests/test_v8_v6_yolo_rv2_launcher.py`: 2,303,421 with the carry-work
   channel, 2,303,405 without.
-- Continuation of this arm past 14,000 updates is a separate,
-  non-matched run (larger batch): it is a capability run, not part of this
-  matched pair, and must not be folded into the table above.
+- Continuation of this arm past 14,000 updates is a separate, non-matched
+  capability run. It reshapes the same global PPO batch from 4x512 to 8x256,
+  but adds stall age and the final v3 curriculum, so it must not be folded
+  into the matched table above.

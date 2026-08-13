@@ -88,12 +88,12 @@ issue:
   condition is a foundation;
 - maximum cell mass is only 0.04113 and ESS is 38.62/47.
 
-The proposed `continuous_banded_v3` cap is inactive when no condition exceeds
-0.15, so the v2-to-v3 migration is a distribution no-op at this checkpoint.
-It prevents a single-cell monopoly but does not address a fully mastered
-family retaining half the batch.  Any later sampler change needs a separate,
-small allocation decision; it must not be inferred from this observation
-alone.
+A cap-only draft was inactive because no condition exceeded 0.15. It prevented
+a single-cell monopoly but did not release the half-batch quota held by the
+mastered trench family, so that draft was rejected. Final Continuous Banded v3
+instead removes family quotas and uses the global 80% open / 20% mastered
+replay mixture documented below. The sampler-state diagnosis motivates that
+change; it is not itself held-out evidence of a policy improvement.
 
 ## Structural hypotheses and decisive probes
 
@@ -549,14 +549,10 @@ training rather than merely inserting a cell into a feed-forward learner
 
 ## Stall-age continuation contract
 
-The direct continuation was submitted as Slurm job `10616190` at 2026-08-13
-17:25 CEST from terra-baselines
-`6ad2eb157ef2724f88db74fd44d940d05260689d` and Terra `c2d2a94a`.  At the
-submission receipt it was `PENDING (Priority)`, with no node or estimated
-start, on `gpuhe.24h` under effective account `gpuhe/es_hutter`.  The request
-is one node, 8 CPUs, 64 GiB, 8 RTX 4090 GPUs, and 23:45 wall time.  No training
-claim follows until the in-allocation preflight and first PPO update pass; the
-first durable checkpoint gate is absolute update 14,500.
+Job `10616190`, submitted from terra-baselines `6ad2eb1`, was cancelled at
+2026-08-13 18:20 CEST while pending. Slurm records zero runtime and no
+allocation, so it produced no checkpoint, W&B run, or training evidence. Its
+v2-sampler contract was superseded rather than resumed.
 
 The old 8-GPU continuation path is retired.  Job `10569391` allocated eight
 RTX 3090 GPUs but failed before update 14,001 in the v6.1 flatten-reduce
@@ -564,42 +560,52 @@ convolution with `CUDNN_STATUS_EXECUTION_FAILED`; it produced no checkpoint or
 training evidence.  Its replacement `10572344` was cancelled while still
 pending and never allocated.
 
-The new direct segment requests eight RTX 4090 GPUs for 23:45 and reshapes
-phase 1 from 4×512 to 8×256 environments.  It therefore keeps 2,048 total
-environments, 65,536 transitions per update, 32 minibatches, two epochs, and
-the absolute optimizer/entropy clocks.  It restores the exact
-`continuous_banded_v2` state, including the partial sampler window; there is no
-v2-to-v3 migration in this treatment.  The allocation itself performs the
-CUDA convolution-backward and NCCL preflight before the first production
-update.  Reward-v2, its timing, action masking, horizon, bank, learning rate,
-and the v6.1 spatial encoder stay fixed.  Time-to-go is explicitly absent.
+The replacement has one supported phase-2 recipe. It requests eight RTX 4090
+GPUs for 23:45 and reshapes phase 1 from 4×512 to 8×256 environments. It
+keeps 2,048 total environments, 65,536 transitions per update, 32 minibatches,
+two epochs, and the absolute optimizer/entropy clocks. The prepared checkpoint
+adds two zero stall-age embeddings and migrates v2 to the final family-free
+`continuous_banded_v3` rule. It preserves mastery, competence, the closed
+window, refresh grid, and sampler RNG, but clears the source's 50-update partial
+window before resume. Runtime therefore performs a native v3 restore, not a
+mid-run migration.
+
+Final v3 assigns 80% to a global depth-weighted open pool, 20% to uniform
+mastered replay, and caps any one condition at 15%; foundation/trench labels
+are diagnostics only. At u14k, 29 conditions are mastered and 18 foundations
+remain open, so the migrated distribution is exactly 80% open and 20%
+mastered replay, with maximum condition mass 6.96%. Reward-v2 and its timing,
+action masking, horizon, bank, learning rate, and v6.1 encoder remain fixed.
+Time-to-go is absent.
 
 The target remains absolute update 40,000, but the 24-hour segment may end
 earlier.  A finite rolling checkpoint every 500 updates is the continuation
 unit.  This remains a statistical continuation because environments, rollout
 RNG, and action history restart at the segment boundary; it is not bit-exact.
-The zero-output source-to-treatment transformation is pinned by source SHA
+The source-to-treatment transformation is pinned by source SHA
 `79312602176e88b696c8c006b3b9af71a4cf121907c7aa8c4865722bd4830609`
 and prepared SHA
-`96600430af3fb0135e0fc94e8f9dd754476067fbfb8635a3db70d6c3519b6971`.
-The implementation revisions are Terra `c2d2a94a`, terra-baselines core
-`ae4252c..aaa1fdd`, and launcher `2387f27` before this documentation commit.
+`68aea1a0f5dc3c05d11319fdf640ade05495125225533bc99ad92592475fcb75`
+(`v8_v61_stall_age_v3_u14000_prepared.pkl`, 27,741,529 bytes). Independent and
+canonical materializations were byte-identical. The implementation uses Terra
+`c2d2a94a`; the exact
+terra-baselines revision and replacement job id must be recorded at launch.
 
-If the scalar improves held-out exact completion and reduces repeated-input
-failures, retain it as the smallest treatment and verify its mechanism before
-making a causal paper claim.  If fixed points remain, the next bounded
-treatment is the actor-only GRU-64 design above.  That experiment is separate:
-it holds reward, sampler, and spatial encoder fixed, trains real contiguous
-32-step PPO sequences, carries and resets hidden state correctly, and compares
-against a sequence-batched feed-forward control.  A larger ConvLSTM, action
-mask, time-to-go feature, or reward change is not part of this ladder.
+If the combined recipe improves held-out exact completion and reduces
+repeated-input failures, retain it as the practical best path while evaluating
+the stall-age and curriculum telemetry separately. If fixed points remain, the
+next bounded treatment is the actor-only GRU-64 design above. That experiment
+is separate: it holds reward, sampler, and spatial encoder fixed, trains real
+contiguous 32-step PPO sequences, carries and resets hidden state correctly,
+and compares against a sequence-batched feed-forward control. A larger
+ConvLSTM, action mask, time-to-go feature, or reward change is not part of this
+ladder.
 
-There is deliberately no separately trained no-scalar continuation at u14k.
-The new curve therefore answers the practical question "does continuing v6.1
-with this compact observation help?" but continued training is a confound for
-a strict causal stall-age claim.  A paper-level attribution requires either a
-later matched continuation or direct evidence that the learned embeddings and
-the frozen recurrence strata change in the predicted way.
+There is deliberately no matched control from u14k. The new curve answers the
+practical question "does continuing v6.1 with stall age and final v3 improve
+the policy?" It cannot separately attribute gains to the observation or
+curriculum. Any paper-level component claim requires a later matched run or
+direct mechanism evidence.
 
 ## Probe status
 
