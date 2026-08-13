@@ -11,6 +11,15 @@
 set -euo pipefail
 umask 027
 
+# Four phases. The #SBATCH directives above are phase1's; submit.sh overrides
+# partition, walltime, GPU count and CPU count per phase on the command line,
+# and every phase re-asserts the shape it was given.
+#
+#   smoke         4 x rtx_3090, gpuhe.4h    scratch, 1 update
+#   phase1        4 x rtx_4090, gpuhe.24h   scratch, updates 0..14000
+#   resume_smoke  8 x rtx_3090, gpuhe.4h    resume, 1 update at absolute 14000
+#   phase2        8 x rtx_4090, gpuhe.120h  resume, updates 14000..40000
+#
 # Variant-dependent: the mask arm runs the D3 terra, the no-mask arms run the
 # baseline's exact terra (see submit.sh MASK_VARIANT).
 case "${ACTION_LOGIT_MASKING:?}" in
@@ -76,7 +85,8 @@ for REQUIRED in TERRA_EULER_USER TERRA_EULER_HOME_ROOT VENV RUN_BASE \
     MATERIALIZATION_RECEIPT MATERIALIZATION_RECEIPT_SHA \
     STATIC_RECEIPT_MANIFEST STATIC_RECEIPT_MANIFEST_SHA D4A_RECEIPT \
     D4A_RECEIPT_SHA D4A_MANIFEST D4A_MANIFEST_SHA SMOKE_JOB_ID SMOKE_RUN \
-    ARM_NAME ACTION_LOGIT_MASKING SLURM_JOB_ID TMPDIR; do
+    ARM_NAME ACTION_LOGIT_MASKING RESUME_CHECKPOINT RESUME_CHECKPOINT_SHA \
+    SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 TERRA_EULER_USER="${TERRA_EULER_USER:?}"
@@ -86,6 +96,18 @@ RUN_BASE="${RUN_BASE:?}"
 WANDB_ENTITY="${WANDB_ENTITY:?}"
 WANDB_PROJECT="${WANDB_PROJECT:?}"
 test "$SEED" = 20260807
+# The continuation advances the runtime by exactly one terra commit: 46b5a1dd
+# adds the reward-v2.1 timing selector. It is inert at variant 0 (the shaping
+# gamma and step cost are a jnp.where on a config int whose default is the
+# frozen reward_v2 value), and train_mixed at this revision needs its constants
+# to build the R2 protocol receipt at all. That receipt is compared field by
+# field against the source checkpoint's, so a continuation that silently ran
+# v2.1 timing would be refused rather than accepted.
+case "$PHASE" in
+    resume_smoke|phase2)
+        EXPECTED_RUNTIME_TERRA_REVISION=46b5a1ddcd3b0e3a0d9e637af2e4ea94af51b4c8
+        ;;
+esac
 test "$RUNTIME_TERRA_REVISION" = "$EXPECTED_RUNTIME_TERRA_REVISION"
 test "$R2_HORIZON" -eq "$EXPECTED_HORIZON"
 test "$(id -un)" = "$TERRA_EULER_USER"
@@ -98,10 +120,25 @@ for WANDB_NAME in "$WANDB_ENTITY" "$WANDB_PROJECT"; do
     case "$WANDB_NAME" in ''|*[!a-zA-Z0-9_.-]*) exit 2 ;; esac
 done
 
+# The scratch phases (smoke, phase1) run the matched 4 x 512 shape. The
+# continuation phases (resume_smoke, phase2) deliberately drop comparability:
+# 8 devices at the same 512 envs/device doubles the global batch to 131,072,
+# and the sampler advances to the capped v3 rule. UPDATES is always the
+# ABSOLUTE num_updates, so the entropy schedule (cosine over 20,000 absolute
+# updates, flat 0.02 after) continues exactly where phase1 left it.
+SOURCE_UPDATE=14000
+TARGET_UPDATE=40000
+START_UPDATE=0
+NUM_DEVICES=4
+NUM_ENVS_PER_DEVICE=512
+SAMPLER_PROFILE=continuous_banded_v2
+EXPECTED_CPUS=4
+EVAL_FIRST=
 case "$PHASE" in
     smoke)
         test "${SLURM_JOB_PARTITION:-}" = gpuhe.4h
         test "$SMOKE_JOB_ID" = none -a "$SMOKE_RUN" = none
+        test "$RESUME_CHECKPOINT" = none -a "$RESUME_CHECKPOINT_SHA" = none
         UPDATES=1
         CHECKPOINT_INTERVAL=1
         LOG_TRAIN_INTERVAL=1
@@ -112,15 +149,54 @@ case "$PHASE" in
         test "${SLURM_JOB_PARTITION:-}" = gpuhe.24h
         [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
         [[ "$SMOKE_RUN" = /* ]]
+        test "$RESUME_CHECKPOINT" = none -a "$RESUME_CHECKPOINT_SHA" = none
         UPDATES=14000
         CHECKPOINT_INTERVAL=500
         EVAL_INTERVAL=1000
+        EVAL_FIRST=1000
+        LOG_TRAIN_INTERVAL=10
+        FINITE_CHECK_INTERVAL=10
+        CACHE_CLEAR_INTERVAL=1000
+        ;;
+    resume_smoke)
+        test "${SLURM_JOB_PARTITION:-}" = gpuhe.4h
+        test "$SMOKE_JOB_ID" = none -a "$SMOKE_RUN" = none
+        START_UPDATE="$SOURCE_UPDATE"
+        UPDATES=$((SOURCE_UPDATE + 1))
+        NUM_DEVICES=8
+        SAMPLER_PROFILE=continuous_banded_v3
+        EXPECTED_CPUS=8
+        CHECKPOINT_INTERVAL=1
+        LOG_TRAIN_INTERVAL=1
+        FINITE_CHECK_INTERVAL=1
+        CACHE_CLEAR_INTERVAL=0
+        ;;
+    phase2)
+        test "${SLURM_JOB_PARTITION:-}" = gpuhe.120h
+        [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
+        [[ "$SMOKE_RUN" = /* ]]
+        START_UPDATE="$SOURCE_UPDATE"
+        UPDATES="$TARGET_UPDATE"
+        NUM_DEVICES=8
+        SAMPLER_PROFILE=continuous_banded_v3
+        EXPECTED_CPUS=8
+        CHECKPOINT_INTERVAL=500
+        EVAL_INTERVAL=1000
+        EVAL_FIRST=$((SOURCE_UPDATE + 1000))
         LOG_TRAIN_INTERVAL=10
         FINITE_CHECK_INTERVAL=10
         CACHE_CLEAR_INTERVAL=1000
         ;;
     *) echo "unsupported phase '$PHASE'" >&2; exit 2 ;;
 esac
+RESUMING=0
+if [ "$START_UPDATE" != 0 ]; then
+    RESUMING=1
+    [[ "$RESUME_CHECKPOINT" = /* ]]
+    [[ "$RESUME_CHECKPOINT_SHA" =~ ^[0-9a-f]{64}$ ]]
+    test "$(sha256sum "$RESUME_CHECKPOINT" | awk '{print $1}')" = "$RESUME_CHECKPOINT_SHA"
+    test "$ARM_NAME" = v6_1_rv2
+fi
 
 RUN_DIR="$RUN_BASE/$BASELINES_REVISION/$PHASE/s$SEED/$ARM_NAME"
 test "$BANK_RELEASE_ID" = "$EXPECTED_RELEASE"
@@ -135,24 +211,54 @@ for SPEC in \
     FILE="${SPEC%:*}" EXPECTED_SHA="${SPEC##*:}"
     test "$(sha256sum "$FILE" | awk '{print $1}')" = "$EXPECTED_SHA"
 done
-test "${SLURM_CPUS_PER_TASK:-}" = 4
+test "${SLURM_CPUS_PER_TASK:-}" = "$EXPECTED_CPUS"
 test -d "$RUN_DIR" -a ! -e "$RUN_DIR/run_contract.env"
 
-if [ "$PHASE" = phase1 ]; then
-    EXPECTED_SMOKE_RUN="$RUN_BASE/$BASELINES_REVISION/smoke/s$SEED/$ARM_NAME"
+if [ "$PHASE" = phase1 ] || [ "$PHASE" = phase2 ]; then
+    # phase1 is gated by the scratch update-1 smoke; phase2 by the update-1
+    # RESUME smoke, which proved restore + migration + one step on this shape.
+    GATING_PHASE=smoke
+    GATING_RECEIPT=smoke_validation.json
+    if [ "$PHASE" = phase2 ]; then
+        GATING_PHASE=resume_smoke
+        GATING_RECEIPT=resume_validation.json
+    fi
+    EXPECTED_SMOKE_RUN="$RUN_BASE/$BASELINES_REVISION/$GATING_PHASE/s$SEED/$ARM_NAME"
     test "$SMOKE_RUN" = "$EXPECTED_SMOKE_RUN"
     SMOKE_STATE="$(sacct -n -X -P -j "$SMOKE_JOB_ID" --format=JobIDRaw,State | awk -F'|' -v id="$SMOKE_JOB_ID" '$1==id {sub(/\+.*/, "", $2); print $2}')"
     test "$SMOKE_STATE" = COMPLETED
-    test -f "$SMOKE_RUN/smoke_validation.json" -a -f "$SMOKE_RUN/run_contract.env"
-    test "$(stat -c %U "$SMOKE_RUN/smoke_validation.json")" = "$TERRA_EULER_USER"
+    test -f "$SMOKE_RUN/$GATING_RECEIPT" -a -f "$SMOKE_RUN/run_contract.env"
+    test "$(stat -c %U "$SMOKE_RUN/$GATING_RECEIPT")" = "$TERRA_EULER_USER"
     test "$(stat -c %U "$SMOKE_RUN/run_contract.env")" = "$TERRA_EULER_USER"
-    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["passed"] is True' "$SMOKE_RUN/smoke_validation.json"
+    python3 -c 'import json,sys; assert json.load(open(sys.argv[1]))["passed"] is True' "$SMOKE_RUN/$GATING_RECEIPT"
     test "$(awk -F= '$1=="runtime_terra_revision" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$RUNTIME_TERRA_REVISION"
     test "$(awk -F= '$1=="terra_baselines_revision" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$BASELINES_REVISION"
     test "$(awk -F= '$1=="distance_artifact_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$DISTANCE_ARTIFACT_SHA"
     test "$(awk -F= '$1=="model_parameter_count" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$EXPECTED_PARAMETERS"
     test "$(awk -F= '$1=="arm" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$ARM_NAME"
     test "$(awk -F= '$1=="euler_user" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$TERRA_EULER_USER"
+    if [ "$PHASE" = phase2 ]; then
+        # The gating smoke must have resumed THIS checkpoint, on THIS shape.
+        test "$(awk -F= '$1=="resume_source_sha256" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$RESUME_CHECKPOINT_SHA"
+        test "$(awk -F= '$1=="num_devices" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$NUM_DEVICES"
+        test "$(awk -F= '$1=="num_envs_per_device" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$NUM_ENVS_PER_DEVICE"
+        test "$(awk -F= '$1=="sampler_profile" {print $2}' "$SMOKE_RUN/run_contract.env")" = "$SAMPLER_PROFILE"
+        python3 - "$SMOKE_RUN/$GATING_RECEIPT" "$RESUME_CHECKPOINT_SHA" <<'PY'
+import json, sys
+
+receipt = json.load(open(sys.argv[1]))
+assert receipt["schema"] == "terra_v8_v6_yolo_rv2_resume_validation_v1"
+assert receipt["source"]["checkpoint_sha256"] == sys.argv[2]
+assert receipt["source"]["optimizer_step"] == 14000 * 2 * 32
+assert receipt["num_devices"] == 8 and receipt["num_envs_per_device"] == 512
+for role in ("periodic", "final"):
+    produced = receipt["resumed"][role]
+    assert produced["optimizer_steps_taken"] == 64
+    assert produced["next_update"] == 14001
+    assert produced["parameter_count"] == 2303421
+    assert produced["sampler"]["sampler_rule"] == "continuous_banded_v3"
+PY
+    fi
 fi
 
 HOME_USED_GB="$(lquota | "$BASELINES_ROOT/cluster/lquota_home_used_gb.sh" "$TERRA_EULER_HOME_ROOT")"
@@ -168,7 +274,7 @@ test "$(sha256sum "$BANK/dataset.json" | awk '{print $1}')" = "$BANK_DATASET_SHA
 module load stack/2024-06 cuda/12.1.1
 PYTHON="$VENV/bin/python"
 test -x "$PYTHON"
-if [ "$PHASE" = phase1 ]; then
+if [ "$PHASE" = phase1 ] || [ "$PHASE" = phase2 ]; then
     module load eth_proxy
     "$PYTHON" -c 'import netrc; assert netrc.netrc().authenticators("api.wandb.ai")'
 fi
@@ -180,29 +286,32 @@ export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+# One device per allocated GPU: the scratch phases take 4, the continuation 8.
 mapfile -t GPU_NAMES < <(nvidia-smi --query-gpu=name --format=csv,noheader)
-test "${#GPU_NAMES[@]}" -eq 4
+test "${#GPU_NAMES[@]}" -eq "$NUM_DEVICES"
 for GPU_NAME in "${GPU_NAMES[@]}"; do
-    if [ "$PHASE" = smoke ]; then
-        test "$GPU_NAME" = "NVIDIA GeForce RTX 3090"
-    else
-        test "$GPU_NAME" = "NVIDIA GeForce RTX 4090"
-    fi
+    case "$PHASE" in
+        smoke|resume_smoke) test "$GPU_NAME" = "NVIDIA GeForce RTX 3090" ;;
+        *) test "$GPU_NAME" = "NVIDIA GeForce RTX 4090" ;;
+    esac
 done
 # cuda first keeps every default on GPU; cpu must be reachable for the
 # host-side model.init (see utils/models.py get_model_ready).
 export JAX_PLATFORMS=cuda,cpu
-"$PYTHON" - <<'PY'
+NUM_DEVICES="$NUM_DEVICES" "$PYTHON" - <<'PY'
+import os
+
 import jax
 import jax.numpy as jnp
 from jax import lax
 
-assert len(jax.devices()) == 4
+devices = int(os.environ["NUM_DEVICES"])
+assert len(jax.devices()) == devices
 def loss(x, kernel):
     y = lax.conv_general_dilated(x, kernel, (1, 1), "SAME", dimension_numbers=("NHWC", "HWIO", "NHWC"))
     return lax.psum(jnp.mean(y * y), "devices")
 step = jax.pmap(jax.grad(loss), axis_name="devices", in_axes=(0, None))
-x = jnp.ones((4, 1, 16, 16, 4), dtype=jnp.float32)
+x = jnp.ones((devices, 1, 16, 16, 4), dtype=jnp.float32)
 k = jnp.ones((3, 3, 4, 8), dtype=jnp.float32)
 gradient = step(x, k)
 assert gradient.shape == x.shape and jnp.all(jnp.isfinite(gradient))
@@ -322,52 +431,104 @@ PY
 
 OBSERVED_MAPS="$("$PYTHON" "$BASELINES_ROOT/scripts/euler_accepted_bank_v1/validate_training_bank.py" "$BANK" --expected-maps-per-condition 96 --expected-release-id "$EXPECTED_RELEASE")"
 test "$OBSERVED_MAPS" = 96
-GRAPH_SHA="$("$PYTHON" -c 'import collections,sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], "G-UNIFORM", sys.argv[2], curriculum_stage="full", sampler_profile="continuous_banded_v2"); assert len(b.levels)==47 and b.map_count_per_condition==96 and b.sampling_probabilities==(); assert collections.Counter(b.curriculum_depths)=={0:2,1:13,2:32}; print(b.curriculum_graph_sha256)' "$BANK" "$PROTOCOL_TERRA_REVISION")"
+GRAPH_SHA="$("$PYTHON" -c 'import collections,sys; from utils.accepted_bank import load_accepted_bank; b=load_accepted_bank(sys.argv[1], "G-UNIFORM", sys.argv[2], curriculum_stage="full", sampler_profile=sys.argv[3]); assert len(b.levels)==47 and b.map_count_per_condition==96 and b.sampling_probabilities==(); assert collections.Counter(b.curriculum_depths)=={0:2,1:13,2:32}; print(b.curriculum_graph_sha256)' "$BANK" "$PROTOCOL_TERRA_REVISION" "$SAMPLER_PROFILE")"
 [[ "$GRAPH_SHA" =~ ^[0-9a-f]{64}$ ]]
+
+# The continuation's launch gate: the pinned source checkpoint is exactly the
+# v6.1 u14000 artifact, with the optimizer clock, parameter tree, reward
+# protocol and 47-condition v2 sampler a resume inherits.
+if [ "$RESUMING" = 1 ]; then
+    JAX_PLATFORMS=cpu "$PYTHON" \
+        "$BASELINES_ROOT/scripts/euler_v8_v6_yolo_rv2/verify_resume.py" \
+        --source "$RESUME_CHECKPOINT" \
+        --source-sha256 "$RESUME_CHECKPOINT_SHA" \
+        --distance-artifact-sha256 "$DISTANCE_ARTIFACT_SHA" \
+        --output "$RUN_DIR/resume_source_validation.json"
+fi
 
 mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/eval" "$RUN_DIR/wandb"
 export WANDB_ENTITY WANDB_PROJECT
 export WANDB_RUN_ID="${RUN_PREFIX}_${BASELINES_REVISION:0:10}_${PHASE}_${SLURM_JOB_ID}"
 export WANDB_RESUME=never
-if [ "$PHASE" = smoke ]; then
-    export WANDB_MODE=disabled WANDB_DIR="$TMPDIR/wandb"
-else
-    export WANDB_MODE=online WANDB_DIR="$RUN_DIR/wandb"
-fi
+case "$PHASE" in
+    smoke|resume_smoke) export WANDB_MODE=disabled WANDB_DIR="$TMPDIR/wandb" ;;
+    *) export WANDB_MODE=online WANDB_DIR="$RUN_DIR/wandb" ;;
+esac
 scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/slurm_job.txt"
 nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
 RUN_NAME="${RUN_PREFIX}_${BASELINES_REVISION:0:12}_s${SEED}"
-if [ "$PHASE" = smoke ]; then RUN_NAME="${RUN_NAME}_smoke"; fi
-TRANSITIONS=$((4 * 512 * 32 * UPDATES))
+case "$PHASE" in
+    smoke) RUN_NAME="${RUN_NAME}_smoke" ;;
+    resume_smoke) RUN_NAME="${RUN_NAME}_resume_smoke" ;;
+esac
+# Transitions this job runs, not the lineage total: phase2 starts at 14,000.
+TRANSITIONS=$((NUM_DEVICES * NUM_ENVS_PER_DEVICE * 32 * (UPDATES - START_UPDATE)))
+# Sampler provenance. From scratch these are the initial masses the rule
+# produces; on a continuation the distribution is restored, so the contract
+# records the migration instead of masses it did not choose.
+if [ "$RESUMING" = 1 ]; then
+    SAMPLER_CONTRACT=(
+        "restored_sampler_source_rule=continuous_banded_v2"
+        "restored_sampler_rule=$SAMPLER_PROFILE"
+        "restored_sampler_migration=one_way_v2_to_v3_capped_at_0.15"
+        "restored_sampler_partial_window_discarded_updates=50"
+        "restored_sampler_last_refresh_update=13950"
+        "sampler_monopoly_risk=accepted_and_monitored_via_wandb_curriculum_population"
+    )
+    RUNTIME_TERRA_BASE=3051054b_reward_v2_baseline_plus_inert_v21_selector_46b5a1dd
+    RESUME_CONTRACT=(
+        "resume_from=$RESUME_CHECKPOINT"
+        "resume_source_sha256=$RESUME_CHECKPOINT_SHA"
+        "resume_restores=model_params+optimizer_state+optimizer_clock+sampler_history"
+        "resume_env_state=fresh_resets_env_count_2048_to_$((NUM_DEVICES * NUM_ENVS_PER_DEVICE))"
+        "resume_batch_change=65536_to_$((NUM_DEVICES * NUM_ENVS_PER_DEVICE * 32))_per_update"
+    )
+    COMPARISON_ROLE=unmatched_capability_continuation_of_v6_1_rv2
+    SELECTION_SPAN="$((START_UPDATE + 1000))_to_${UPDATES}_promotion_only"
+    INITIALIZATION="resume_v6_1_rv2_u${START_UPDATE}"
+    OPTIMIZER_INITIAL_STEP=$((START_UPDATE * 2 * 32))
+    RESTART_POLICY=resume_exact_from_the_pinned_source_checkpoint
+else
+    SAMPLER_CONTRACT=(
+        "initial_sampler_family_mass_foundation=0.5"
+        "initial_sampler_family_mass_trench=0.5"
+        "initial_sampler_depth_mass_d0=0.11346390374331551"
+        "initial_sampler_depth_mass_d1=0.3836076203208556"
+        "initial_sampler_depth_mass_d2=0.5029284759358292"
+    )
+    RESUME_CONTRACT=("resume_from=none")
+    RUNTIME_TERRA_BASE="$([ "$ACTION_LOGIT_MASKING" = 1 ] && echo 3051054b_reward_v2_plus_d3_mask_04c67bba || echo 3051054b_reward_v2_baseline_exact)"
+    COMPARISON_ROLE=paired_treatment_of_reward_v2_scratch
+    SELECTION_SPAN="1000_to_${UPDATES}_promotion_only"
+    INITIALIZATION=random_no_teacher
+    OPTIMIZER_INITIAL_STEP=0
+    RESTART_POLICY=phase1_restart_from_update0_later_phases_resume_exact
+fi
 printf '%s\n' \
     "status=RUNNING" \
     "experiment=v8_v6_3m_yolo_rv2_architecture_screen" \
     "arm=$ARM_NAME" \
-    "comparison_role=paired_treatment_of_reward_v2_scratch" \
+    "comparison_role=$COMPARISON_ROLE" \
     "paired_baseline_arm=reward_v2_scratch" \
     "paired_baseline_launcher=scripts/run_v8_r2_reward_v2.sh" \
     "screen_semantics=combined_architecture_and_optimization_not_decomposable" \
-    "full_system_selection_updates=1000_to_${UPDATES}_promotion_only" \
+    "full_system_selection_updates=$SELECTION_SPAN" \
     "promotion_selection_rule=combined_exact_then_47_condition_macro_then_worst_then_earliest" \
     "bundled_changes=$BUNDLED_CHANGES" \
     "inherited_from_baseline=reward_v2+global_distance_ledger+carry_input+continuous_banded_v2+phase1_14000_of_40000" \
-    "runtime_terra_base=$([ "$ACTION_LOGIT_MASKING" = 1 ] && echo 3051054b_reward_v2_plus_d3_mask_04c67bba || echo 3051054b_reward_v2_baseline_exact)" \
+    "runtime_terra_base=$RUNTIME_TERRA_BASE" \
     "action_logit_masking=$([ "$ACTION_LOGIT_MASKING" = 1 ] && echo true || echo false)" \
     "phase=$PHASE" \
     "seed=$SEED" \
-    "absolute_start_update=0" \
+    "absolute_start_update=$START_UPDATE" \
     "absolute_target_update=$UPDATES" \
-    "updates=$UPDATES" \
+    "updates=$((UPDATES - START_UPDATE))" \
     "transitions=$TRANSITIONS" \
     "support_scope=all47_continuous_from_update0" \
     "condition_count=47" \
     "maps_per_condition=96" \
-    "sampler_profile=continuous_banded_v2" \
-    "initial_sampler_family_mass_foundation=0.5" \
-    "initial_sampler_family_mass_trench=0.5" \
-    "initial_sampler_depth_mass_d0=0.11346390374331551" \
-    "initial_sampler_depth_mass_d1=0.3836076203208556" \
-    "initial_sampler_depth_mass_d2=0.5029284759358292" \
+    "sampler_profile=$SAMPLER_PROFILE" \
+    "${SAMPLER_CONTRACT[@]}" \
     "curriculum_graph_sha256=$GRAPH_SHA" \
     "reward_stage=reward_v2" \
     "reward_protocol_id=material_potential_v2" \
@@ -376,10 +537,11 @@ printf '%s\n' \
     "carry_channel=agent_states_8_normalized_carry_work" \
     "horizon=$R2_HORIZON" \
     "full_resets=true" \
-    "initialization=random_no_teacher" \
+    "initialization=$INITIALIZATION" \
     "warm_start_from=none" \
     "prepared_fork_from=none" \
-    "optimizer_initial_local_step=0" \
+    "${RESUME_CONTRACT[@]}" \
+    "optimizer_initial_local_step=$OPTIMIZER_INITIAL_STEP" \
     "entropy_schedule=0.15_to_0.02_over_20000" \
     "ppo_gamma=0.9984" \
     "reward_v2_distance_ref_m=16.0" \
@@ -391,7 +553,7 @@ printf '%s\n' \
     "reward_v2_step_cost_total=1.0" \
     "reward_v2_shaping_weight=1.0" \
     "resume_supported=phase_boundaries_only" \
-    "restart_policy=phase1_restart_from_update0_later_phases_resume_exact" \
+    "restart_policy=$RESTART_POLICY" \
     "protocol_terra_revision=$PROTOCOL_TERRA_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
     "terra_baselines_revision=$BASELINES_REVISION" \
@@ -419,8 +581,8 @@ printf '%s\n' \
     "vf_coef=$CONTRACT_VF_COEF" \
     "model_parameter_count=$EXPECTED_PARAMETERS" \
     "model_parameter_count_without_carry_work=$EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK" \
-    "num_devices=4" \
-    "num_envs_per_device=512" \
+    "num_devices=$NUM_DEVICES" \
+    "num_envs_per_device=$NUM_ENVS_PER_DEVICE" \
     "num_steps=32" \
     "num_minibatches=32" \
     "update_epochs=2" \
@@ -432,11 +594,14 @@ printf '%s\n' \
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PROTOCOL_TERRA_REVISION PYTHON_BIN="$PYTHON" MACHINE=euler
 export ACTION_LOGIT_MASKING BLOCKS_PER_STAGE AUX_COEF VF_COEF
-export NUM_DEVICES=4 NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 NUM_MINIBATCHES=32
+export NUM_DEVICES NUM_ENVS_PER_DEVICE SAMPLER_PROFILE
+export NUM_STEPS=32 NUM_MINIBATCHES=32
 export CHECKPOINT_INTERVAL LOG_TRAIN_INTERVAL FINITE_CHECK_INTERVAL CACHE_CLEAR_INTERVAL
 export ENTROPY_SCHEDULE_STEPS=20000
+# UPDATES is the ABSOLUTE num_updates, so a resume runs [START_UPDATE, UPDATES).
 "$BASELINES_ROOT/scripts/run_v8_v6_yolo_rv2.sh" \
-    "$BANK" "$RUN_NAME" "$UPDATES" "$RUN_DIR" "$DISTANCE_ARTIFACT_SHA" none
+    "$BANK" "$RUN_NAME" "$UPDATES" "$RUN_DIR" "$DISTANCE_ARTIFACT_SHA" \
+    "$RESUME_CHECKPOINT"
 
 find_one() {
     local pattern="$1"
@@ -458,10 +623,25 @@ if [ "$PHASE" = smoke ]; then
     exit 0
 fi
 
+if [ "$PHASE" = resume_smoke ]; then
+    # The one update this job runs is absolute 14000, so it lands as 014001.
+    find_one "${RUN_NAME}_update_$(printf '%06d' "$UPDATES").pkl" >/dev/null
+    find_one "${RUN_NAME}_FINAL.pkl" >/dev/null
+    JAX_PLATFORMS=cpu \
+        "$PYTHON" "$BASELINES_ROOT/scripts/euler_v8_v6_yolo_rv2/verify_resume.py" \
+        --source "$RESUME_CHECKPOINT" --source-sha256 "$RESUME_CHECKPOINT_SHA" \
+        --distance-artifact-sha256 "$DISTANCE_ARTIFACT_SHA" --run "$RUN_DIR" \
+        --output "$RUN_DIR/resume_validation.json"
+    printf '%s\n' status=PASSED >> "$RUN_DIR/run_contract.env"
+    echo "V8_V6_YOLO_RV2_RESUME_SMOKE_PASSED"
+    exit 0
+fi
+
 find_one "${RUN_NAME}_update_$(printf '%06d' "$UPDATES").pkl" >/dev/null
 printf '%s\n' status=TRAINING_TARGET_REACHED >> "$RUN_DIR/run_contract.env"
 CHECKPOINT_ARGS=()
-for UPDATE in $(seq "$EVAL_INTERVAL" "$EVAL_INTERVAL" "$UPDATES"); do
+# phase2 evaluates only the checkpoints it produced: u15000..u40000 at 1k.
+for UPDATE in $(seq "$EVAL_FIRST" "$EVAL_INTERVAL" "$UPDATES"); do
     TOKEN="$(printf '%06d' "$UPDATE")"
     CHECKPOINT_ARGS+=(--checkpoint "$(find_one "${RUN_NAME}_update_${TOKEN}.pkl")")
 done

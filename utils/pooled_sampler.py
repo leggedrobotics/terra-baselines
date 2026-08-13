@@ -156,7 +156,9 @@ class PooledConditionSampler:
     when it does so. While no condition exceeds the cap, v3 and v2 are the
     same distribution. Graduation, demotion, windows, and refresh boundaries
     are identical to v2, and a v3 sampler may resume a v1 or v2 checkpoint
-    under a one-way migration taken at an empty window boundary.
+    under a one-way migration taken at an empty window boundary, or mid-window
+    with the partial window explicitly discarded
+    (``clear_window_on_migration``).
     """
 
     def __init__(
@@ -338,8 +340,16 @@ class PooledConditionSampler:
             }
         return result
 
-    def restore_state_dict(self, state: dict) -> None:
-        """Restore a sampler checkpoint after validating its full contract."""
+    def restore_state_dict(
+        self, state: dict, *, clear_window_on_migration: bool = False
+    ) -> None:
+        """Restore a sampler checkpoint after validating its full contract.
+
+        ``clear_window_on_migration`` applies only to a one-way continuous rule
+        migration whose checkpoint sits mid-window: instead of refusing, discard
+        the partial window's exposure so no window mixes two rules. It is inert
+        for a same-rule resume, which always keeps the partial window.
+        """
 
         top_keys = {
             "schema",
@@ -541,10 +551,24 @@ class PooledConditionSampler:
             any(vector.any() for vector in current[:5]) or current[5] != 0
         ):
             # Windows drive graduation, so a window may never mix exposure
-            # taken under two different rules: migrate at a refresh boundary.
-            raise ValueError(
-                "continuous_banded rule migration requires an empty current "
-                "window; migrate at a refresh boundary, not mid-window"
+            # taken under two different rules: migrate at a refresh boundary,
+            # or discard the partial window explicitly. Discarding costs the
+            # exposure taken since the last boundary and nothing else: mastery,
+            # competence, the closed window, and the refresh grid all survive,
+            # so the next boundary still lands on the checkpoint's schedule.
+            if not clear_window_on_migration:
+                raise ValueError(
+                    "continuous_banded rule migration requires an empty current "
+                    "window; migrate at a refresh boundary, not mid-window, or "
+                    "pass clear_window_on_migration to discard the partial window"
+                )
+            current = (
+                np.zeros(self._count, dtype=np.int64),
+                np.zeros(self._count, dtype=np.float64),
+                np.zeros(self._count, dtype=np.int64),
+                np.zeros(self._count, dtype=np.int64),
+                np.zeros(self._count, dtype=np.int64),
+                0,
             )
 
         refresh = state["refresh"]

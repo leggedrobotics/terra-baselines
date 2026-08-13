@@ -8,7 +8,13 @@ import numpy as np
 import pytest
 from flax.core import freeze
 from terra.actions import TrackedAction
-from terra.config import BatchConfig, EnvConfig, MapsDimsConfig, RewardStage
+from terra.config import (
+    REWARD_V2_POTENTIAL_GAMMA,
+    BatchConfig,
+    EnvConfig,
+    MapsDimsConfig,
+    RewardStage,
+)
 from terra.env import TerraEnv, TerraEnvBatch
 from terra.state import State
 
@@ -188,6 +194,49 @@ def test_r2_resume_requires_identical_protocol_and_optimizer_clock():
     with pytest.raises(ValueError, match="optimizer clock"):
         train_mixed._validate_r2_resume_checkpoint(
             {**checkpoint, "train_state_step": np.asarray(63_999)}, receipt, config
+        )
+
+
+def test_a_pre_v21_receipt_resumes_only_into_baseline_timing():
+    """Checkpoints predating the v2.1 selector are baseline timing, and only that.
+
+    The v6.1 u14000 continuation resumes such a checkpoint: its receipt has no
+    timing fields at all, so the guard fills them at their baseline values
+    rather than reading the absence as a protocol change.
+    """
+    gamma = float(REWARD_V2_POTENTIAL_GAMMA)
+    legacy = {
+        "schema": "terra_v8_r2_reward_protocol_v1",
+        "reward_stage": "reward_v2",
+        "constants": {"potential_gamma": gamma, "step_cost_total": 1.0},
+    }
+    baseline = {
+        **legacy,
+        "reward_v2_timing": "baseline",
+        "reward_v2_timing_variant": 0,
+        "constants": {**legacy["constants"], "shaping_gamma": gamma},
+    }
+    v21 = {
+        **legacy,
+        "reward_v2_timing": "gamma1_stepcost_3.6",
+        "reward_v2_timing_variant": 1,
+        "constants": {"potential_gamma": gamma, "step_cost_total": 3.6,
+                      "shaping_gamma": 1.0},
+    }
+    config = SimpleNamespace(update_epochs=2, num_minibatches=32)
+    checkpoint = {
+        "r2_protocol_receipt": legacy,
+        "optimizer_state": {},
+        "train_state_step": np.asarray(896_000),
+        "next_update": 14_000,
+    }
+    train_mixed._validate_r2_resume_checkpoint(checkpoint, baseline, config)
+    with pytest.raises(ValueError, match="protocol receipt"):
+        train_mixed._validate_r2_resume_checkpoint(checkpoint, v21, config)
+    # A receipt that already declares its timing is compared as written.
+    with pytest.raises(ValueError, match="protocol receipt"):
+        train_mixed._validate_r2_resume_checkpoint(
+            {**checkpoint, "r2_protocol_receipt": v21}, baseline, config
         )
 
 

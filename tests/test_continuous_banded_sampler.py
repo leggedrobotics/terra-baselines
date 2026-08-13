@@ -396,6 +396,66 @@ def test_v3_migrates_only_at_an_empty_window_boundary():
             _sampler(seed=11, rule=older).restore_state_dict(deepcopy(v3_state))
 
 
+def test_v3_migration_can_discard_one_partial_window():
+    """A mid-window v2 checkpoint may migrate by dropping its partial window."""
+    source = _sampler(seed=11, rule="continuous_banded_v2")
+    source.start(0)
+    _refresh(source, 150, {"f0": 1.0, "t0": 1.0})
+    # 50 of 150 updates into the next window, as a u14000 checkpoint is.
+    drawn = source.sample_levels((2, 64))
+    counts = np.bincount(drawn.ravel(), minlength=len(NAMES))
+    source.observe_reset_exposures(counts)
+    source.observe_transition_exposures(counts * 16)
+    _observe(source, {"f1a": 1.0})
+    v2_state = source.state_dict()
+    assert v2_state["current_window"]["updates"] == 1
+    assert any(v2_state["current_window"]["sampled_assignment_count"])
+
+    # Refusing is still the default.
+    with pytest.raises(ValueError, match="empty current window"):
+        _sampler(seed=11, rule="continuous_banded_v3").restore_state_dict(
+            deepcopy(v2_state)
+        )
+
+    migrated = _sampler(seed=11, rule="continuous_banded_v3")
+    migrated.restore_state_dict(deepcopy(v2_state), clear_window_on_migration=True)
+    v3_state = migrated.state_dict()
+
+    # Only the partial window is gone.
+    assert v3_state["settings"]["rule"] == "continuous_banded_v3"
+    assert v3_state["current_window"] == {
+        "completed_episode_count": [0] * len(NAMES),
+        "task_done_count": [0] * len(NAMES),
+        "sampled_assignment_count": [0] * len(NAMES),
+        "reset_exposure_count": [0] * len(NAMES),
+        "transition_exposure_count": [0] * len(NAMES),
+        "updates": 0,
+    }
+    for key in ("conditions", "labels", "competence", "closed_window", "refresh"):
+        assert v3_state[key] == v2_state[key]
+    assert v3_state["mastery"] == v2_state["mastery"]
+    assert v3_state["numpy_rng"] == v2_state["numpy_rng"]
+    mastered = np.asarray(v2_state["mastery"]["mastered"], dtype=bool)
+    np.testing.assert_allclose(
+        migrated.probabilities,
+        migrated._continuous_distribution_v3(mastered),
+        rtol=0.0,
+        atol=1e-15,
+    )
+
+    # The refresh grid survives: the next boundary is still the checkpoint's.
+    assert not migrated.due(299)
+    assert migrated.due(300)
+    _observe(migrated, {"f1a": 1.0})
+    migrated.refresh(300)
+    assert migrated.refreshes == 2
+
+    # The flag is inert for a same-rule resume, which keeps its partial window.
+    resumed = _sampler(seed=11, rule="continuous_banded_v2")
+    resumed.restore_state_dict(deepcopy(v2_state), clear_window_on_migration=True)
+    assert resumed.state_dict() == v2_state
+
+
 def test_v1_and_v2_distributions_are_unchanged_beside_v3():
     mastered = {"f0", "f1a", "t0"}
     v1_masses = _masses(_sampler(), mastered)

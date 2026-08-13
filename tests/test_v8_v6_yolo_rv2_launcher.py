@@ -41,6 +41,10 @@ class AttrDict(dict):
 RETUNED_FLAGS = {
     "--map_encoder": ("resnet_spatial_8x8_se_xattn", "resnet_spatial_8x8_se_sa_xattn"),
     "--resnet_blocks_per_stage": ("2,2,3,3", "$BLOCKS_PER_STAGE"),
+    # Env-parameterized for phase2's sampler advance. The launcher default is
+    # the baseline's literal value, asserted through LAUNCHER_DEFAULTS.
+    "--config": ("G-V8-CONTINUOUS-V2", "$TRAIN_PRESET"),
+    "--accepted-bank-sampler-profile": ("continuous_banded_v2", "$SAMPLER_PROFILE"),
 }
 # Four flags the baseline does not pass at all. D3 masking and vf_coef ride in
 # the MASK_ARGS / VF_COEF_ARGS conditionals (both default to the yolo arm's
@@ -51,12 +55,22 @@ ADDED_FLAGS = {
     "--attn_latent_queries": "8",
     "--aux_coef": "$AUX_COEF",
 }
-# The launcher's own defaults reproduce the original v6_3m_yolo_rv2 arm.
+# The launcher's own defaults reproduce the original v6_3m_yolo_rv2 arm, and
+# the phase1 sampler/preset pair.
 LAUNCHER_DEFAULTS = (
     'BLOCKS_PER_STAGE="${BLOCKS_PER_STAGE:-3,3,2,2}"',
     'AUX_COEF="${AUX_COEF:-0.25}"',
     'VF_COEF="${VF_COEF-0.5}"',
+    'SAMPLER_PROFILE="${SAMPLER_PROFILE:-continuous_banded_v2}"',
+    "continuous_banded_v2) TRAIN_PRESET=G-V8-CONTINUOUS-V2 ;;",
+    "continuous_banded_v3) TRAIN_PRESET=G-V8-CONTINUOUS-V3 ;;",
 )
+# The v6.1 continuation. UPDATES stays absolute, so the entropy schedule and the
+# optimizer clock continue rather than restart.
+PHASE2_SOURCE_UPDATE = 14_000
+PHASE2_TARGET_UPDATE = 40_000
+PHASE2_SOURCE_SHA = "79312602176e88b696c8c006b3b9af71a4cf121907c7aa8c4865722bd4830609"
+CONTINUATION_TERRA_REVISION = "46b5a1ddcd3b0e3a0d9e637af2e4ea94af51b4c8"
 
 
 def train_flags(path: Path) -> dict[str, str | None]:
@@ -175,9 +189,11 @@ class PairedLauncherTest(unittest.TestCase):
 
     def test_reward_v2_contract_flags_survive_the_port(self):
         treatment = train_flags(TREATMENT_RUNNER)
-        self.assertEqual(treatment["--config"], "G-V8-CONTINUOUS-V2")
+        # The preset and the bank profile move together, and their default pair
+        # is phase1's v2 (asserted through LAUNCHER_DEFAULTS above).
+        self.assertEqual(treatment["--config"], "$TRAIN_PRESET")
         self.assertEqual(
-            treatment["--accepted-bank-sampler-profile"], "continuous_banded_v2"
+            treatment["--accepted-bank-sampler-profile"], "$SAMPLER_PROFILE"
         )
         self.assertEqual(treatment["--reward_stage"], "reward_v2")
         self.assertEqual(
@@ -208,9 +224,7 @@ class PairedLauncherTest(unittest.TestCase):
         for shared in (
             "UPDATES=14000",
             "export ENTROPY_SCHEDULE_STEPS=20000",
-            "export NUM_DEVICES=4 NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 NUM_MINIBATCHES=32",
             "PROTOCOL_TERRA_REVISION=a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4",
-            'test "${#GPU_NAMES[@]}" -eq 4',
             "#SBATCH --gpus=rtx_4090:4",
             "#SBATCH --partition=gpuhe.24h",
             "used < 45.0",
@@ -218,6 +232,24 @@ class PairedLauncherTest(unittest.TestCase):
         ):
             self.assertIn(shared, sbatch, shared)
             self.assertIn(shared, baseline_sbatch, shared)
+        # The treatment's shape is per phase now (phase2 runs 8 devices), so the
+        # matched values live in the phase defaults the phase1 branch keeps.
+        self.assertIn(
+            "export NUM_DEVICES=4 NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 "
+            "NUM_MINIBATCHES=32",
+            baseline_sbatch,
+        )
+        self.assertIn('test "${#GPU_NAMES[@]}" -eq 4', baseline_sbatch)
+        self.assertIn('test "${#GPU_NAMES[@]}" -eq "$NUM_DEVICES"', sbatch)
+        self.assertIn("export NUM_STEPS=32 NUM_MINIBATCHES=32", sbatch)
+        self.assertIn("UPDATES=14000", sbatch.split("    phase1)", 1)[1])
+        for default in (
+            "NUM_DEVICES=4",
+            "NUM_ENVS_PER_DEVICE=512",
+            "SAMPLER_PROFILE=continuous_banded_v2",
+            "START_UPDATE=0",
+        ):
+            self.assertIn(default, sbatch, default)
         # Runtime terra diverges BY DESIGN: the treatment runs the D3-mask
         # terra (reward-v2 base + obs['action_mask']); the baseline stays on
         # the reward-v2 revision it launched with.
@@ -259,9 +291,104 @@ class PairedLauncherTest(unittest.TestCase):
         self.assertLess(
             submit.index('if [ "$SUBMIT" = 0 ]'), submit.index('REMOTE_ID="$(remote')
         )
-        self.assertIn("--gpus='$GPU_TYPE:4'", submit)
+        self.assertIn("--gpus='$GPU_TYPE:$GPU_COUNT'", submit)
+        self.assertIn("--cpus-per-task='$CPUS'", submit)
         self.assertIn("scripts/euler_v8_v6_yolo_rv2/run.sbatch", submit)
         self.assertIn("CAMPAIGN=terra_v8_v6_yolo_rv2", submit)
+
+
+class ContinuationPhaseTest(unittest.TestCase):
+    """phase2: resume v6.1 at u14000 and run to u40000 on 8 GPUs, unmatched."""
+
+    def test_the_resume_shape_and_horizon_are_absolute(self):
+        sbatch = SBATCH.read_text()
+        self.assertIn(f"SOURCE_UPDATE={PHASE2_SOURCE_UPDATE}", sbatch)
+        self.assertIn(f"TARGET_UPDATE={PHASE2_TARGET_UPDATE}", sbatch)
+        phase2 = sbatch.split("    phase2)", 1)[1].split(";;", 1)[0]
+        self.assertIn('START_UPDATE="$SOURCE_UPDATE"', phase2)
+        self.assertIn('UPDATES="$TARGET_UPDATE"', phase2)
+        self.assertIn("NUM_DEVICES=8", phase2)
+        self.assertIn("SAMPLER_PROFILE=continuous_banded_v3", phase2)
+        self.assertIn("EXPECTED_CPUS=8", phase2)
+        # 512 envs/device is inherited, so the global batch doubles.
+        self.assertNotIn("NUM_ENVS_PER_DEVICE=", phase2)
+        # The eval sweep covers only what phase2 produced.
+        self.assertIn("EVAL_FIRST=$((SOURCE_UPDATE + 1000))", phase2)
+        self.assertIn('for UPDATE in $(seq "$EVAL_FIRST" "$EVAL_INTERVAL" "$UPDATES")',
+                      sbatch)
+        # UPDATES reaches the runner as the absolute num_updates, with the
+        # resume checkpoint, so training runs [START_UPDATE, UPDATES).
+        self.assertIn(
+            '"$BANK" "$RUN_NAME" "$UPDATES" "$RUN_DIR" "$DISTANCE_ARTIFACT_SHA" \\\n'
+            '    "$RESUME_CHECKPOINT"',
+            sbatch,
+        )
+        self.assertIn("export ENTROPY_SCHEDULE_STEPS=20000", sbatch)
+
+    def test_the_resume_restores_the_clock_and_the_sampler_but_not_the_envs(self):
+        runner = TREATMENT_RUNNER.read_text()
+        self.assertIn("--resume_from \"$RESUME_CHECKPOINT\"", runner)
+        # Env config is deliberately rebuilt: phase2 changes the env count and
+        # the checkpoint stores env_config, never env state.
+        self.assertIn("--no-load-env-from-checkpoint", runner)
+        self.assertNotIn("--load_env_from_checkpoint", runner)
+        # The v2 -> v3 migration is taken mid-window, so the partial window is
+        # discarded rather than mixed across two rules.
+        self.assertIn("--sampler_migration_clear_window", runner)
+
+    def test_phase2_is_gated_by_the_pinned_source_and_the_resume_smoke(self):
+        submit = SUBMIT.read_text()
+        sbatch = SBATCH.read_text()
+        self.assertIn("smoke|phase1|resume_smoke|phase2", submit)
+        self.assertIn(f"RESUME_SOURCE_SHA={PHASE2_SOURCE_SHA}", submit)
+        self.assertIn(f"RESUME_SOURCE_UPDATE={PHASE2_SOURCE_UPDATE}", submit)
+        self.assertIn(f"RESUME_TARGET_UPDATE={PHASE2_TARGET_UPDATE}", submit)
+        # The continuation exists for one arm only.
+        self.assertIn('[ "${MASK_VARIANT:-mask}" != v61 ]', submit)
+        # The source checkpoint is content-addressed and SHA-verified on upload.
+        self.assertIn(
+            'upload "$RESUME_SOURCE_LOCAL" "$REMOTE_RESUME_CHECKPOINT" '
+            '"$RESUME_SOURCE_SHA"',
+            submit,
+        )
+        self.assertIn("GATING_PHASE=resume_smoke", submit)
+        self.assertIn("GATING_RECEIPT=resume_validation.json", submit)
+        self.assertIn("GATING_PHASE=resume_smoke", sbatch)
+        # The job re-verifies the pinned source before it trains anything.
+        self.assertIn(
+            'test "$(sha256sum "$RESUME_CHECKPOINT" | awk \'{print $1}\')" = '
+            '"$RESUME_CHECKPOINT_SHA"',
+            sbatch,
+        )
+        self.assertIn("verify_resume.py", sbatch)
+        self.assertIn("resume_source_validation.json", sbatch)
+        # 8 GPUs for ~72 h on the long partition, checked against its MaxTime.
+        self.assertIn(
+            "phase2) PARTITION=gpuhe.120h; WALLTIME=71:45:00; GPU_TYPE=rtx_4090; "
+            "GPU_COUNT=8; CPUS=8 ;;",
+            submit,
+        )
+        self.assertIn('test "${SLURM_JOB_PARTITION:-}" = gpuhe.120h', sbatch)
+        self.assertIn("exceeds partition MaxTime", submit)
+
+    def test_the_continuation_runtime_terra_is_the_inert_v21_selector(self):
+        submit = SUBMIT.read_text()
+        sbatch = SBATCH.read_text()
+        variant = submit.split("    v61)", 1)[1].split(";;", 1)[0]
+        self.assertIn(
+            f"EXPECTED_RUNTIME_TERRA_REVISION={CONTINUATION_TERRA_REVISION}", variant
+        )
+        self.assertIn("terra_v8_reward_timing_20260812", variant)
+        self.assertIn(
+            f"EXPECTED_RUNTIME_TERRA_REVISION={CONTINUATION_TERRA_REVISION}", sbatch
+        )
+        # Baseline timing is enforced by the protocol receipt, not assumed.
+        self.assertIn("reward_v2_timing_variant", (ROOT / "train_mixed.py").read_text())
+        verify = (
+            ROOT / "scripts" / "euler_v8_v6_yolo_rv2" / "verify_resume.py"
+        ).read_text()
+        self.assertIn('"reward_v2_timing_variant": 0', verify)
+        self.assertIn("continuation must stay on baseline v2 timing", verify)
 
 
 class CarryWorkObservationContractTest(unittest.TestCase):

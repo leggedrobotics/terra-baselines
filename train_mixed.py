@@ -966,13 +966,45 @@ def _r2_protocol_receipt(config) -> dict | None:
     }
 
 
+def _r2_receipt_with_baseline_timing(saved: dict, current: dict) -> dict:
+    """Fill the reward-v2.1 timing fields a pre-v2.1 receipt could not carry.
+
+    Receipts written before the v2.1 timing selector existed are all baseline
+    timing by construction: that was the only reward_v2 there was. Filling the
+    three fields at their baseline values keeps the guard exact — a v2.1 run
+    still mismatches on every one of them (timing id, shaping gamma, step cost).
+    Only fields the current receipt actually declares are filled, so a receipt
+    schema that never had them is compared unchanged.
+    """
+    from terra.config import REWARD_V2_POTENTIAL_GAMMA
+
+    if "reward_v2_timing" in saved or "reward_v2_timing" not in current:
+        return saved
+    filled = {
+        **saved,
+        "reward_v2_timing": "baseline",
+        "reward_v2_timing_variant": 0,
+    }
+    saved_constants = saved.get("constants")
+    current_constants = current.get("constants", {})
+    if isinstance(saved_constants, dict) and "shaping_gamma" in current_constants:
+        filled["constants"] = {
+            "shaping_gamma": float(REWARD_V2_POTENTIAL_GAMMA),
+            **saved_constants,
+        }
+    return filled
+
+
 def _validate_r2_resume_checkpoint(
     checkpoint: dict, current_receipt: dict | None, config
 ) -> None:
     """Fail if an R2 continuation would change its protocol or optimizer clock."""
     if current_receipt is None:
         return
-    if checkpoint.get("r2_protocol_receipt") != current_receipt:
+    saved_receipt = checkpoint.get("r2_protocol_receipt")
+    if isinstance(saved_receipt, dict):
+        saved_receipt = _r2_receipt_with_baseline_timing(saved_receipt, current_receipt)
+    if saved_receipt != current_receipt:
         raise ValueError(
             "R2 resume checkpoint protocol receipt does not match this run"
         )
@@ -1030,6 +1062,7 @@ def _restore_pooled_sampler_checkpoint(
     sampler: PooledConditionSampler | None,
     checkpoint: dict | None,
     checkpoint_mode: str | None,
+    clear_window_on_migration: bool = False,
 ) -> None:
     """Restore sampler history for a resume or the one prepared R2 fork."""
     if checkpoint_mode not in ("resume", "prepared_fork"):
@@ -1050,7 +1083,9 @@ def _restore_pooled_sampler_checkpoint(
             f"{checkpoint_mode} with a pooled sampler requires checkpoint field "
             "'pooled_sampler_state'; use --warm_start_from for a fresh sampler"
         )
-    sampler.restore_state_dict(saved_state)
+    sampler.restore_state_dict(
+        saved_state, clear_window_on_migration=clear_window_on_migration
+    )
 
 
 def _new_reward_anneal_state() -> dict:
@@ -1350,6 +1385,9 @@ class MixedAgentTrainConfig:
     prepared_fork_from: str | None = None
     load_env_from_checkpoint: bool = True  # If true, use env_config from checkpoint
     resume_update: int | None = None  # Optional override for old param-only checkpoints
+    # One-way continuous sampler rule migration (v1->v2->v3) from a checkpoint
+    # that stopped mid-window: discard that partial window instead of refusing.
+    sampler_migration_clear_window: bool = False
 
     # Named configuration preset (loads from configs/training_configs.py)
     config_name: str | None = None  # e.g., "excavator_truck", "solo_excavator"
@@ -2647,6 +2685,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             pooled_sampler,
             checkpoint,
             checkpoint_mode,
+            config.sampler_migration_clear_window,
         )
         if pooled_sampler is not None and checkpoint_mode in (
             "resume",
@@ -4254,6 +4293,16 @@ if __name__ == "__main__":
             "model params. New checkpoints store this automatically."
         ),
     )
+    parser.add_argument(
+        "--sampler_migration_clear_window",
+        action="store_true",
+        help=(
+            "On a one-way continuous sampler rule migration (v1->v2->v3) from a "
+            "checkpoint saved mid-window, discard that partial window's exposure "
+            "instead of refusing. Mastery, competence, the closed window, and "
+            "the refresh grid are unaffected. Inert for a same-rule resume."
+        ),
+    )
     env_group = parser.add_mutually_exclusive_group()
     env_group.add_argument(
         "--load_env_from_checkpoint",
@@ -4621,6 +4670,7 @@ if __name__ == "__main__":
         warm_start_from=args.warm_start_from,
         prepared_fork_from=args.prepared_fork_from,
         resume_update=args.resume_update,
+        sampler_migration_clear_window=args.sampler_migration_clear_window,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,
         action_types_override=action_types_override,

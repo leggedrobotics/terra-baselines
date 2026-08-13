@@ -17,6 +17,13 @@
 # train_mixed's default 2.0 applies, as in the baseline). The defaults below
 # are the original v6_3m_yolo_rv2 values, so an unset environment reproduces
 # that arm byte-for-byte.
+#
+# phase2 (the v6.1 continuation past 14,000 updates) is deliberately NOT
+# matched: it drops comparability to run the better configuration. It sets
+# NUM_DEVICES=8 with the same 512 envs/device (global batch 131,072/update),
+# SAMPLER_PROFILE=continuous_banded_v3, and passes a resume checkpoint.
+# Architecture, LR, entropy schedule (on absolute updates), reward contract,
+# bank and seed are unchanged.
 set -euo pipefail
 
 if [ "$#" -ne 6 ]; then
@@ -30,13 +37,24 @@ UPDATES="$3"
 RUN_ROOT="$4"
 SIDECAR_SHA256="$5"
 RESUME_CHECKPOINT="$6"
+# A warm resume: params, optimizer clock and sampler history carry over; the
+# environments reset fresh. The env axis is not restored either way (the
+# checkpoint stores env_config, not env state), and phase2 changes the env
+# count, so the checkpoint's env_config is deliberately NOT reapplied — the
+# same launcher flags rebuild it. --sampler_migration_clear_window matters only
+# when SAMPLER_PROFILE advances the continuous rule (v2 -> v3) from a
+# checkpoint saved mid-window; it is inert for a same-rule resume.
 RESUME_ARGS=()
 if [ "$RESUME_CHECKPOINT" != none ]; then
     test -f "$RESUME_CHECKPOINT" || {
         echo "resume checkpoint does not exist: $RESUME_CHECKPOINT" >&2
         exit 2
     }
-    RESUME_ARGS=(--resume_from "$RESUME_CHECKPOINT" --load_env_from_checkpoint)
+    RESUME_ARGS=(
+        --resume_from "$RESUME_CHECKPOINT"
+        --no-load-env-from-checkpoint
+        --sampler_migration_clear_window
+    )
 fi
 [[ "$UPDATES" =~ ^[1-9][0-9]*$ ]] || {
     echo "UPDATES must be positive" >&2
@@ -71,6 +89,17 @@ if [ -n "$VF_COEF" ]; then
     VF_COEF_ARGS=(--vf_coef "$VF_COEF")
 fi
 
+# Sampler rule. The default is phase1's v2. phase2 advances to the capped v3:
+# the continuation enters the high-mastery regime where v2's family pin funnels
+# a whole family half onto its last unmastered cell (measured 45.2% at u13.5k of
+# reward_v2_scratch). v3 is the same distribution while no cell exceeds 15%.
+SAMPLER_PROFILE="${SAMPLER_PROFILE:-continuous_banded_v2}"
+case "$SAMPLER_PROFILE" in
+    continuous_banded_v2) TRAIN_PRESET=G-V8-CONTINUOUS-V2 ;;
+    continuous_banded_v3) TRAIN_PRESET=G-V8-CONTINUOUS-V3 ;;
+    *) echo "unsupported SAMPLER_PROFILE '$SAMPLER_PROFILE'" >&2; exit 2 ;;
+esac
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 NUM_DEVICES="${NUM_DEVICES:-4}"
@@ -90,11 +119,11 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export WANDB_DIR="${WANDB_DIR:-$RUN_ROOT/wandb}"
 
 exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
-    --config G-V8-CONTINUOUS-V2 \
+    --config "$TRAIN_PRESET" \
     --machine "${MACHINE:-euler}" \
     --accepted-bank-root "$BANK_ROOT" \
     --accepted-bank-scope full \
-    --accepted-bank-sampler-profile continuous_banded_v2 \
+    --accepted-bank-sampler-profile "$SAMPLER_PROFILE" \
     --terra-revision "$PROTOCOL_TERRA_REVISION" \
     --name "$RUN_NAME" \
     --exact_run_name \
