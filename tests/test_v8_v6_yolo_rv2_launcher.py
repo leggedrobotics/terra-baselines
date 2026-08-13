@@ -424,7 +424,7 @@ class ContinuationPhaseTest(unittest.TestCase):
             "GPU_COUNT=8; CPUS=8 ;;",
             submit,
         )
-        self.assertIn("--account='gpuhe/es_hutter'", submit)
+        self.assertIn("--account='es_hutter'", submit)
         self.assertIn('test "${SLURM_JOB_PARTITION:-}" = gpuhe.24h', sbatch)
         self.assertIn("exceeds partition MaxTime", submit)
 

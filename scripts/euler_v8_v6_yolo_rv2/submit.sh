@@ -392,7 +392,7 @@ case "$PHASE" in
 esac
 if [ "$SUBMIT" = stage ]; then
     ASSOCIATIONS="$(remote "sacctmgr -n -P show assoc where user='$TERRA_EULER_USER' format=Account")"
-    printf '%s\n' "$ASSOCIATIONS" | grep -Eq '^%?gpuhe/es_hutter$'
+    printf '%s\n' "$ASSOCIATIONS" | grep -Eq '^%?es_hutter$'
     remote "scontrol show partition '$PARTITION' -o | grep -q 'State=UP'"
     remote "sinfo -h -p '$PARTITION' -o '%G' | grep -Eq 'gpu:nvidia_geforce_${GPU_TYPE}:([$GPU_COUNT-9]|[1-9][0-9]+)'"
     PARTITION_MAX_TIME="$(remote "scontrol show partition '$PARTITION' -o" | tr ' ' '\n' | awk -F= '$1=="MaxTime" {print $2}')"
@@ -471,7 +471,7 @@ trap 'cleanup_new_job 130' INT TERM
 remote "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
 
 EXPORTS="ALL,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,VENV=$REMOTE_VENV,RUN_BASE=$REMOTE_RUNS,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,PHASE=$PHASE,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,R2_HORIZON=$R2_HORIZON,SEED=$SEED,BANK_ARCHIVE=$REMOTE_BANK,BANK_SHA=$BANK_SHA,BANK_DATASET_SHA=$BANK_DATASET_SHA,BANK_TREE_SHA=$BANK_TREE_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_ARTIFACT_SHA=$DISTANCE_SIDECAR_SHA,MATERIALIZATION_RECEIPT=$REMOTE_MATERIALIZATION_RECEIPT,MATERIALIZATION_RECEIPT_SHA=$MATERIALIZATION_RECEIPT_SHA,STATIC_RECEIPT_MANIFEST=$REMOTE_STATIC_MANIFEST,STATIC_RECEIPT_MANIFEST_SHA=$STATIC_RECEIPT_MANIFEST_SHA,D4A_RECEIPT=$REMOTE_D4A_RECEIPT,D4A_RECEIPT_SHA=$D4A_RECEIPT_SHA,D4A_MANIFEST=$REMOTE_D4A_MANIFEST,D4A_MANIFEST_SHA=$D4A_MANIFEST_SHA,SMOKE_JOB_ID=$SMOKE_JOB_ID,SMOKE_RUN=$SMOKE_RUN,ARM_NAME=$ARM_NAME,ACTION_LOGIT_MASKING=$ACTION_LOGIT_MASKING,RESUME_SOURCE_CHECKPOINT=$REMOTE_RESUME_SOURCE,RESUME_SOURCE_SHA=$([ "$RESUMING" = 1 ] && echo "$RESUME_SOURCE_SHA" || echo none),RESUME_CHECKPOINT=$REMOTE_RESUME_CHECKPOINT,RESUME_CHECKPOINT_SHA=$([ "$RESUMING" = 1 ] && echo "$RESUME_PREPARED_SHA" || echo none)"
-JOB_ID_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_v8_v6_yolo_rv2/run.sbatch' | sbatch --parsable --account='gpuhe/es_hutter' --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:$GPU_COUNT' --cpus-per-task='$CPUS' --exclude='eu-g6-064' --job-name='terra-v61-stall-age' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
+JOB_ID_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_v8_v6_yolo_rv2/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:$GPU_COUNT' --cpus-per-task='$CPUS' --exclude='eu-g6-064' --job-name='terra-v61-stall-age' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
 JOB_ID="${JOB_ID_RAW%%;*}"
 [[ "$JOB_ID" =~ ^[0-9]+$ ]]
 trap - ERR INT TERM
