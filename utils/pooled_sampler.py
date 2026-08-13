@@ -15,11 +15,13 @@ RULES = (
     "continuous_banded_v1",
     "continuous_banded_v2",
     "continuous_banded_v3",
+    "continuous_banded_v4",
 )
 CONTINUOUS_RULES = (
     "continuous_banded_v1",
     "continuous_banded_v2",
     "continuous_banded_v3",
+    "continuous_banded_v4",
 )
 STATE_SCHEMA = "terra_pooled_condition_sampler_state_v2"
 CONTINUOUS_STATE_SCHEMA = "terra_continuous_banded_sampler_state_v1"
@@ -31,6 +33,8 @@ NEXT_DEPTH_MASS = 0.15
 FRONTIER_MASS = 0.90
 DEPTH_PRIORITY_BASE = 2.0
 CONTINUOUS_MAX_MASS = 0.15
+OPEN_CONDITION_MASS = 0.80
+MASTERED_REPLAY_MASS = 0.20
 DEMOTION_THRESHOLD = 0.65
 
 
@@ -159,6 +163,12 @@ class PooledConditionSampler:
     under a one-way migration taken at an empty window boundary, or mid-window
     with the partial window explicitly discarded
     (``clear_window_on_migration``).
+
+    ``continuous_banded_v4`` removes the semantic family quota. It assigns
+    80% globally over open conditions using v2's depth weights and 20%
+    uniformly over mastered replay, then applies the same per-condition cap.
+    Family labels remain diagnostics only. Earlier continuous checkpoints may
+    migrate to v4 at the same explicit window boundary.
     """
 
     def __init__(
@@ -178,7 +188,12 @@ class PooledConditionSampler:
         self._index = {name: index for index, name in enumerate(self.names)}
         self._count = len(self.names)
         if (
-            settings.rule in ("adaptive", "continuous_banded_v3")
+            settings.rule
+            in (
+                "adaptive",
+                "continuous_banded_v3",
+                "continuous_banded_v4",
+            )
             and settings.max_mass * self._count < 1.0
         ):
             raise ValueError(
@@ -873,6 +888,8 @@ class PooledConditionSampler:
             return self._continuous_distribution_v2(mastered)
         if rule == "continuous_banded_v3":
             return self._continuous_distribution_v3(mastered)
+        if rule == "continuous_banded_v4":
+            return self._continuous_distribution_v4(mastered)
         raise ValueError(f"no banded distribution for rule {rule!r}")
 
     def _continuous_distribution_v2(
@@ -931,6 +948,40 @@ class PooledConditionSampler:
         if probabilities.max() <= self.settings.max_mass:
             return probabilities
         return _cap_distribution(probabilities, self.settings.max_mass)
+
+    def _continuous_distribution_v4(
+        self, mastered: np.ndarray | None = None
+    ) -> np.ndarray:
+        """Global open frontier plus mastered replay, under the v3 cap."""
+        state = self._mastered if mastered is None else mastered
+        open_mask = ~state
+        if not open_mask.any():
+            return self._uniform.copy()
+
+        probabilities = np.zeros(self._count, dtype=np.float64)
+        open_weights = np.zeros(self._count, dtype=np.float64)
+        open_weights[open_mask] = DEPTH_PRIORITY_BASE ** (
+            2 - self._depths[open_mask].astype(np.float64)
+        )
+        if state.any():
+            probabilities[open_mask] = (
+                OPEN_CONDITION_MASS
+                * open_weights[open_mask]
+                / open_weights[open_mask].sum()
+            )
+            probabilities[state] = MASTERED_REPLAY_MASS / int(state.sum())
+        else:
+            probabilities = open_weights / open_weights.sum()
+
+        if probabilities.max() > self.settings.max_mass:
+            probabilities = _cap_distribution(probabilities, self.settings.max_mass)
+        if np.any(probabilities <= 0.0) or not np.isclose(
+            probabilities.sum(), 1.0, rtol=0.0, atol=1e-12
+        ):
+            raise ValueError(
+                "continuous_banded_v4 must retain positive support and unit mass"
+            )
+        return probabilities
 
     def _adaptive_distribution(self) -> np.ndarray:
         competence = np.where(np.isnan(self._competence), 0.0, self._competence)
@@ -1030,7 +1081,7 @@ class PooledConditionSampler:
             family_active = {family: self._active_depth(family) for family in FAMILIES}
             for index in range(self._count):
                 if self.settings.rule != "continuous_banded_v1":
-                    # v2/v3 have no depth band: a condition is either on the
+                    # v2/v3/v4 have no depth band: a condition is either on the
                     # pooled frontier or in mastered replay.
                     role_by_condition.append(
                         "replay" if self._mastered[index] else "frontier"

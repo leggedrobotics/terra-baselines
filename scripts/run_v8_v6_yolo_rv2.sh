@@ -97,6 +97,7 @@ SAMPLER_PROFILE="${SAMPLER_PROFILE:-continuous_banded_v2}"
 case "$SAMPLER_PROFILE" in
     continuous_banded_v2) TRAIN_PRESET=G-V8-CONTINUOUS-V2 ;;
     continuous_banded_v3) TRAIN_PRESET=G-V8-CONTINUOUS-V3 ;;
+    continuous_banded_v4) TRAIN_PRESET=G-V8-CONTINUOUS-V4 ;;
     *) echo "unsupported SAMPLER_PROFILE '$SAMPLER_PROFILE'" >&2; exit 2 ;;
 esac
 

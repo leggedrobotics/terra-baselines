@@ -3,7 +3,7 @@ set -euo pipefail
 
 R2_HORIZON=450
 if [ "$#" -ne 1 ]; then
-    echo "usage: submit.sh smoke|phase1|resume_smoke|phase2  (MASK_VARIANT=mask|nomask|v61, default mask)" >&2
+    echo "usage: submit.sh smoke|phase1|resume_smoke|phase2  (MASK_VARIANT=mask|nomask|v61|v61_v4, default mask)" >&2
     exit 2
 fi
 PHASE="$1"
@@ -41,7 +41,11 @@ esac
 # terra computes the mask unconditionally, so flag-off there would still pay
 # its per-step cost). v61 is the post-day-2 arm: v6 readout without the
 # full-res rebalance, without vf_coef=0.5 and without masking, aux at 0.1.
+# v61_v4 is the same scratch architecture/reward contract with only the new
+# family-free continuous sampler; it has its own arm and run namespace.
 MASK_VARIANT="${MASK_VARIANT:-mask}"
+SCRATCH_SAMPLER_PROFILE=continuous_banded_v2
+PAIRED_BASELINE_ARM=reward_v2_scratch
 case "$MASK_VARIANT" in
     mask)
         EXPECTED_RUNTIME_TERRA_REVISION=04c67bbafce2cb3d1a1de35384dfde477d244349
@@ -69,6 +73,14 @@ case "$MASK_VARIANT" in
             EXPECTED_RUNTIME_TERRA_REVISION=46b5a1ddcd3b0e3a0d9e637af2e4ea94af51b4c8
             TERRA_REPO_DEFAULT=/home/lorenzo/moleworks/.worktrees/terra_v8_reward_timing_20260812
         fi
+        ;;
+    v61_v4)
+        EXPECTED_RUNTIME_TERRA_REVISION=3051054bc4c713d95905d3f954e6eabf55d6a85a
+        TERRA_REPO_DEFAULT=/home/lorenzo/moleworks/.worktrees/terra_v8_r2_reward_v2_20260810
+        ARM_NAME=v6_1_rv2_v4
+        ACTION_LOGIT_MASKING=0
+        SCRATCH_SAMPLER_PROFILE=continuous_banded_v4
+        PAIRED_BASELINE_ARM=v6_1_rv2
         ;;
     *) echo "invalid MASK_VARIANT '$MASK_VARIANT'" >&2; exit 2 ;;
 esac
@@ -267,7 +279,7 @@ case "$PHASE" in
     resume_smoke) SPAN="$RESUME_SOURCE_UPDATE->$((RESUME_SOURCE_UPDATE + 1))" ;;
     phase2) SPAN="$RESUME_SOURCE_UPDATE->$RESUME_TARGET_UPDATE" ;;
 esac
-echo "phase=$PHASE arm=$ARM_NAME baseline=reward_v2_scratch seed=$SEED absolute_updates=$SPAN"
+echo "phase=$PHASE arm=$ARM_NAME baseline=$PAIRED_BASELINE_ARM seed=$SEED absolute_updates=$SPAN sampler=$SCRATCH_SAMPLER_PROFILE"
 if [ "$RESUMING" = 1 ]; then
     test -f "$RESUME_SOURCE_LOCAL" || {
         echo "resume source checkpoint is not staged locally: $RESUME_SOURCE_LOCAL" >&2
@@ -404,9 +416,11 @@ if [ "$PHASE" = phase1 ] || [ "$PHASE" = phase2 ]; then
     # RESUME smoke that proved restore + v2->v3 migration + one step on 8 GPUs.
     GATING_PHASE=smoke
     GATING_RECEIPT=smoke_validation.json
+    GATING_SAMPLER_PROFILE="$SCRATCH_SAMPLER_PROFILE"
     if [ "$PHASE" = phase2 ]; then
         GATING_PHASE=resume_smoke
         GATING_RECEIPT=resume_validation.json
+        GATING_SAMPLER_PROFILE=continuous_banded_v3
     fi
     SMOKE_RUN="$REMOTE_RUNS/$BASELINES_REVISION/$GATING_PHASE/s$SEED/$ARM_NAME"
     remote "test -f '$SMOKE_RUN/$GATING_RECEIPT' -a -f '$SMOKE_RUN/run_contract.env' && \
@@ -421,6 +435,7 @@ if [ "$PHASE" = phase1 ] || [ "$PHASE" = phase2 ]; then
         "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
         "terra_baselines_revision=$BASELINES_REVISION" \
         "distance_artifact_sha256=$DISTANCE_SIDECAR_SHA" \
+        "sampler_profile=$GATING_SAMPLER_PROFILE" \
         "euler_user=$TERRA_EULER_USER"; do
         KEY="${EXPECTED%%=*}" VALUE="${EXPECTED#*=}"
         remote "test \"\$(awk -F= -v key='$KEY' '\$1==key {print \$2}' '$SMOKE_RUN/run_contract.env')\" = '$VALUE'"

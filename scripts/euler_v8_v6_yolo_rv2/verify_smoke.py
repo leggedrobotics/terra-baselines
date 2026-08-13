@@ -79,6 +79,39 @@ ARMS = {
         "parameter_count": 2_303_421,
         "parameter_count_without_carry_work": 2_303_405,
     },
+    # Same v6.1 system, isolated under the family-free sampler treatment.
+    "v6_1_rv2_v4": {
+        "resnet_blocks_per_stage": (2, 2, 3, 3),
+        "aux_coef": 0,
+        "aux_decoder_leaves": 0,
+        "vf_coef": 2.0,
+        "action_logit_masking": False,
+        "parameter_count": 2_303_421,
+        "parameter_count_without_carry_work": 2_303_405,
+        "sampler_profile": "continuous_banded_v4",
+        "experiment": "v8_v61_rv2_curriculum_v4_screen",
+        "paired_baseline_arm": "v6_1_rv2",
+    },
+}
+SAMPLERS = {
+    "continuous_banded_v2": {
+        "config_name": "G-V8-CONTINUOUS-V2",
+        "family_mass": ("0.5", "0.5"),
+        "depth_mass": (
+            "0.11346390374331551",
+            "0.3836076203208556",
+            "0.5029284759358292",
+        ),
+    },
+    "continuous_banded_v4": {
+        "config_name": "G-V8-CONTINUOUS-V4",
+        "family_mass": ("0.5151515151515151", "0.48484848484848486"),
+        "depth_mass": (
+            "0.12121212121212122",
+            "0.3939393939393939",
+            "0.48484848484848486",
+        ),
+    },
 }
 
 
@@ -95,6 +128,8 @@ def finite(tree: object, label: str) -> None:
 
 def one(path: Path, *, arm: dict[str, object], distance_artifact_sha256: str) -> dict:
     expected_count = arm["parameter_count"]
+    sampler_profile = arm.get("sampler_profile", "continuous_banded_v2")
+    sampler_contract = SAMPLERS[sampler_profile]
     checkpoint = helpers.load_pkl_object(str(path))
     if checkpoint.get("update") != 0 or checkpoint.get("next_update") != 1:
         raise ValueError(f"{path}: scratch smoke must advance update 0 exactly once")
@@ -131,7 +166,7 @@ def one(path: Path, *, arm: dict[str, object], distance_artifact_sha256: str) ->
 
     config = checkpoint["train_config"]
     expected_config = {
-        "config_name": "G-V8-CONTINUOUS-V2",
+        "config_name": sampler_contract["config_name"],
         "seed": 20260807,
         "num_devices": 4,
         "num_envs_per_device": 512,
@@ -178,10 +213,12 @@ def one(path: Path, *, arm: dict[str, object], distance_artifact_sha256: str) ->
             raise ValueError(f"{path}: {name}={observed!r}, expected {expected!r}")
     sampler_config = config_value(config, "pooled_sampler")
     accepted_bank = config_value(config, "accepted_bank")
-    if sampler_config.get("rule") != "continuous_banded_v2" or (
-        accepted_bank.sampler_profile != "continuous_banded_v2"
+    if sampler_config.get("rule") != sampler_profile or (
+        accepted_bank.sampler_profile != sampler_profile
     ):
-        raise ValueError(f"{path}: saved config does not consistently select v2")
+        raise ValueError(
+            f"{path}: saved config does not consistently select {sampler_profile}"
+        )
 
     env_stage_value = np.asarray(checkpoint["env_config"].reward_stage)
     if not np.all(env_stage_value == int(RewardStage.REWARD_V2)):
@@ -205,8 +242,8 @@ def one(path: Path, *, arm: dict[str, object], distance_artifact_sha256: str) ->
     if constants.get("potential_gamma") != float(REWARD_V2_POTENTIAL_GAMMA):
         raise ValueError(f"{path}: reward-v2 constant receipt changed")
     sampler = verify_sampler_state(checkpoint.get("pooled_sampler_state"))
-    if sampler.get("sampler_rule") != "continuous_banded_v2":
-        raise ValueError(f"{path}: sampler did not start on v2")
+    if sampler.get("sampler_rule") != sampler_profile:
+        raise ValueError(f"{path}: sampler did not start on {sampler_profile}")
     sampler_state = checkpoint["pooled_sampler_state"]
     conditions = sampler_state["conditions"]
     labels = sampler_state["labels"]
@@ -229,17 +266,13 @@ def one(path: Path, *, arm: dict[str, object], distance_artifact_sha256: str) ->
     }
     np.testing.assert_allclose(
         [family_mass["foundation"], family_mass["trench"]],
-        [0.5, 0.5],
+        [float(value) for value in sampler_contract["family_mass"]],
         rtol=0.0,
         atol=1e-12,
     )
     np.testing.assert_allclose(
         [depth_mass["0"], depth_mass["1"], depth_mass["2"]],
-        [
-            0.11346390374331551,
-            0.3836076203208556,
-            0.5029284759358292,
-        ],
+        [float(value) for value in sampler_contract["depth_mass"]],
         rtol=0.0,
         atol=1e-12,
     )
@@ -268,6 +301,8 @@ def main() -> None:
     if arm_name not in ARMS:
         raise ValueError(f"ARM_NAME must be one of {sorted(ARMS)}, got {arm_name!r}")
     arm = ARMS[arm_name]
+    sampler_profile = arm.get("sampler_profile", "continuous_banded_v2")
+    sampler_contract = SAMPLERS[sampler_profile]
     periodic = list((args.run / "checkpoints").glob("*_update_000001.pkl"))
     final = list((args.run / "checkpoints").glob("*_FINAL.pkl"))
     if len(periodic) != 1 or len(final) != 1:
@@ -279,19 +314,21 @@ def main() -> None:
             key, value = line.split("=", 1)
             contract[key] = value
     expected_contract = {
-        "experiment": "v8_v6_3m_yolo_rv2_architecture_screen",
+        "experiment": arm.get("experiment", "v8_v6_3m_yolo_rv2_architecture_screen"),
         "arm": arm_name,
-        "paired_baseline_arm": "reward_v2_scratch",
+        "paired_baseline_arm": arm.get("paired_baseline_arm", "reward_v2_scratch"),
         "absolute_start_update": "0",
         "absolute_target_update": "1",
         "updates": "1",
         "initialization": "random_no_teacher",
         "prepared_fork_from": "none",
         "entropy_schedule": "0.15_to_0.02_over_20000",
-        "sampler_profile": "continuous_banded_v2",
-        "initial_sampler_depth_mass_d0": "0.11346390374331551",
-        "initial_sampler_depth_mass_d1": "0.3836076203208556",
-        "initial_sampler_depth_mass_d2": "0.5029284759358292",
+        "sampler_profile": sampler_profile,
+        "initial_sampler_family_mass_foundation": sampler_contract["family_mass"][0],
+        "initial_sampler_family_mass_trench": sampler_contract["family_mass"][1],
+        "initial_sampler_depth_mass_d0": sampler_contract["depth_mass"][0],
+        "initial_sampler_depth_mass_d1": sampler_contract["depth_mass"][1],
+        "initial_sampler_depth_mass_d2": sampler_contract["depth_mass"][2],
         "reward_protocol_id": "material_potential_v2",
         "distance_artifact_sha256": args.distance_artifact_sha256,
         "map_encoder": "resnet_spatial_8x8_se_sa_xattn",

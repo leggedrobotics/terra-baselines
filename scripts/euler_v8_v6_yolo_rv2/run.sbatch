@@ -30,6 +30,12 @@ esac
 # The v6.1 arm reverts four of the eight bundled changes (full-res stage
 # rebalance, per-cell aux decoder, vf_coef 0.5, D3 masking), leaving the pure
 # 3-delta readout bundle on the reward-v2 baseline.
+SCRATCH_SAMPLER_PROFILE=continuous_banded_v2
+EXPERIMENT_NAME=v8_v6_3m_yolo_rv2_architecture_screen
+PAIRED_BASELINE_ARM=reward_v2_scratch
+PAIRED_BASELINE_LAUNCHER=scripts/run_v8_r2_reward_v2.sh
+SCREEN_SEMANTICS=combined_architecture_and_optimization_not_decomposable
+INHERITED_CONTRACT=reward_v2+global_distance_ledger+carry_input+continuous_banded_v2+phase1_14000_of_40000
 case "${ARM_NAME:?}" in
     v6_3m_yolo_rv2)
         EXPECTED_AUX_LEAVES=6
@@ -69,6 +75,24 @@ case "${ARM_NAME:?}" in
         EXPECTED_PARAMETERS=2303421
         EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK=2303405
         BUNDLED_CHANGES=v6_readout+se_sa_xattn+token_mixer_0.1+flatten32+latent_queries8+aux_coef_0
+        ;;
+    v6_1_rv2_v4)
+        EXPECTED_MASKING=0
+        RUN_PREFIX=v8_v6_yolo_rv2_v61_v4
+        BLOCKS_PER_STAGE=2,2,3,3
+        AUX_COEF=0
+        EXPECTED_AUX_LEAVES=0
+        VF_COEF=
+        CONTRACT_VF_COEF=2.0
+        EXPECTED_PARAMETERS=2303421
+        EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK=2303405
+        BUNDLED_CHANGES=continuous_banded_v4_open80_mastered20_cap015
+        SCRATCH_SAMPLER_PROFILE=continuous_banded_v4
+        EXPERIMENT_NAME=v8_v61_rv2_curriculum_v4_screen
+        PAIRED_BASELINE_ARM=v6_1_rv2
+        PAIRED_BASELINE_LAUNCHER=scripts/run_v8_v6_yolo_rv2.sh
+        SCREEN_SEMANTICS=single_curriculum_change_on_v6_1_reward_v2
+        INHERITED_CONTRACT=reward_v2+global_distance_ledger+carry_input+v6_1_architecture
         ;;
     *) echo "unsupported ARM_NAME '$ARM_NAME'" >&2; exit 2 ;;
 esac
@@ -131,7 +155,7 @@ TARGET_UPDATE=40000
 START_UPDATE=0
 NUM_DEVICES=4
 NUM_ENVS_PER_DEVICE=512
-SAMPLER_PROFILE=continuous_banded_v2
+SAMPLER_PROFILE="$SCRATCH_SAMPLER_PROFILE"
 EXPECTED_CPUS=4
 EVAL_FIRST=
 case "$PHASE" in
@@ -498,16 +522,34 @@ if [ "$RESUMING" = 1 ]; then
     OPTIMIZER_INITIAL_STEP=$((START_UPDATE * 2 * 32))
     RESTART_POLICY=resume_exact_from_the_pinned_source_checkpoint
 else
-    SAMPLER_CONTRACT=(
-        "initial_sampler_family_mass_foundation=0.5"
-        "initial_sampler_family_mass_trench=0.5"
-        "initial_sampler_depth_mass_d0=0.11346390374331551"
-        "initial_sampler_depth_mass_d1=0.3836076203208556"
-        "initial_sampler_depth_mass_d2=0.5029284759358292"
-    )
+    case "$SAMPLER_PROFILE" in
+        continuous_banded_v2)
+            SAMPLER_CONTRACT=(
+                "initial_sampler_family_mass_foundation=0.5"
+                "initial_sampler_family_mass_trench=0.5"
+                "initial_sampler_depth_mass_d0=0.11346390374331551"
+                "initial_sampler_depth_mass_d1=0.3836076203208556"
+                "initial_sampler_depth_mass_d2=0.5029284759358292"
+            )
+            ;;
+        continuous_banded_v4)
+            SAMPLER_CONTRACT=(
+                "initial_sampler_family_mass_foundation=0.5151515151515151"
+                "initial_sampler_family_mass_trench=0.48484848484848486"
+                "initial_sampler_depth_mass_d0=0.12121212121212122"
+                "initial_sampler_depth_mass_d1=0.3939393939393939"
+                "initial_sampler_depth_mass_d2=0.48484848484848486"
+            )
+            ;;
+        *) echo "unsupported scratch sampler '$SAMPLER_PROFILE'" >&2; exit 2 ;;
+    esac
     RESUME_CONTRACT=("resume_from=none")
     RUNTIME_TERRA_BASE="$([ "$ACTION_LOGIT_MASKING" = 1 ] && echo 3051054b_reward_v2_plus_d3_mask_04c67bba || echo 3051054b_reward_v2_baseline_exact)"
-    COMPARISON_ROLE=paired_treatment_of_reward_v2_scratch
+    if [ "$SAMPLER_PROFILE" = continuous_banded_v4 ]; then
+        COMPARISON_ROLE=curriculum_v4_scratch_on_v6_1_rv2
+    else
+        COMPARISON_ROLE=paired_treatment_of_reward_v2_scratch
+    fi
     SELECTION_SPAN="1000_to_${UPDATES}_promotion_only"
     INITIALIZATION=random_no_teacher
     OPTIMIZER_INITIAL_STEP=0
@@ -515,16 +557,16 @@ else
 fi
 printf '%s\n' \
     "status=RUNNING" \
-    "experiment=v8_v6_3m_yolo_rv2_architecture_screen" \
+    "experiment=$EXPERIMENT_NAME" \
     "arm=$ARM_NAME" \
     "comparison_role=$COMPARISON_ROLE" \
-    "paired_baseline_arm=reward_v2_scratch" \
-    "paired_baseline_launcher=scripts/run_v8_r2_reward_v2.sh" \
-    "screen_semantics=combined_architecture_and_optimization_not_decomposable" \
+    "paired_baseline_arm=$PAIRED_BASELINE_ARM" \
+    "paired_baseline_launcher=$PAIRED_BASELINE_LAUNCHER" \
+    "screen_semantics=$SCREEN_SEMANTICS" \
     "full_system_selection_updates=$SELECTION_SPAN" \
     "promotion_selection_rule=combined_exact_then_47_condition_macro_then_worst_then_earliest" \
     "bundled_changes=$BUNDLED_CHANGES" \
-    "inherited_from_baseline=reward_v2+global_distance_ledger+carry_input+continuous_banded_v2+phase1_14000_of_40000" \
+    "inherited_from_baseline=$INHERITED_CONTRACT" \
     "runtime_terra_base=$RUNTIME_TERRA_BASE" \
     "action_logit_masking=$([ "$ACTION_LOGIT_MASKING" = 1 ] && echo true || echo false)" \
     "phase=$PHASE" \

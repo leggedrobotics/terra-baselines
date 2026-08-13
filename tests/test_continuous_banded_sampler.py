@@ -348,6 +348,70 @@ def test_v3_caps_the_measured_u13_5_monopoly_state():
     )
 
 
+def test_v4_reallocates_the_measured_u14_mastered_family_state():
+    sampler = _v8_shaped_sampler("continuous_banded_v4")
+    foundation = [name for name in sampler.names if name.startswith("foundation")]
+    trench = [name for name in sampler.names if name.startswith("trench")]
+    # u14: 7/25 foundations and all 22 trenches mastered, leaving five
+    # depth-1 and thirteen depth-2 foundations open.
+    mastered = {foundation[0], foundation[1], *foundation[7:12], *trench}
+    masses = _masses(sampler, mastered)
+
+    open_depth1 = foundation[2:7]
+    open_depth2 = foundation[12:]
+    assert len(open_depth1) == 5 and len(open_depth2) == 13
+    assert all(masses[name] == pytest.approx(0.80 * 2 / 23) for name in open_depth1)
+    assert all(masses[name] == pytest.approx(0.80 / 23) for name in open_depth2)
+    assert all(masses[name] == pytest.approx(0.20 / 29) for name in mastered)
+    assert sum(masses[name] for name in open_depth1 + open_depth2) == pytest.approx(
+        0.80
+    )
+    assert sum(masses[name] for name in foundation if name in mastered) == (
+        pytest.approx(0.20 * 7 / 29)
+    )
+    assert sum(masses[name] for name in trench) == pytest.approx(0.20 * 22 / 29)
+    assert max(masses.values()) == pytest.approx(0.80 * 2 / 23)
+    assert effective_sample_size(sampler.probabilities) == pytest.approx(
+        24.21, abs=5e-3
+    )
+
+
+def test_v4_full_support_cap_and_completed_fallback():
+    sampler = _v8_shaped_sampler("continuous_banded_v4")
+    initial = _masses(sampler)
+    assert min(initial.values()) > 0.0
+    assert max(initial.values()) < sampler.settings.max_mass
+    assert sum(initial.values()) == pytest.approx(1.0)
+
+    one_open = _masses(sampler, set(sampler.names[1:]))
+    assert one_open[sampler.names[0]] == pytest.approx(sampler.settings.max_mass)
+    assert min(one_open.values()) > 0.0
+    assert sum(one_open.values()) == pytest.approx(1.0)
+
+    completed = _masses(sampler, set(sampler.names))
+    assert all(value == pytest.approx(1 / 47) for value in completed.values())
+
+
+def test_v4_migrates_v3_at_a_refresh_boundary_and_rejects_reverse():
+    source = _v8_shaped_sampler("continuous_banded_v3", seed=11)
+    source.start(0)
+    source.refresh(150)
+    v3_state = source.state_dict()
+
+    migrated = _v8_shaped_sampler("continuous_banded_v4", seed=11)
+    migrated.restore_state_dict(deepcopy(v3_state))
+    assert migrated.state_dict()["settings"]["rule"] == "continuous_banded_v4"
+    np.testing.assert_array_equal(
+        migrated.probabilities,
+        migrated._continuous_distribution_v4(migrated._mastered),
+    )
+
+    with pytest.raises(ValueError, match="settings changed"):
+        _v8_shaped_sampler("continuous_banded_v3", seed=11).restore_state_dict(
+            deepcopy(migrated.state_dict())
+        )
+
+
 def test_v3_migrates_only_at_an_empty_window_boundary():
     source = _sampler(seed=11, rule="continuous_banded_v2")
     source.start(0)

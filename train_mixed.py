@@ -4145,6 +4145,7 @@ if __name__ == "__main__":
             "continuous_banded_v1",
             "continuous_banded_v2",
             "continuous_banded_v3",
+            "continuous_banded_v4",
         ),
         default=None,
         help=(
@@ -4153,7 +4154,9 @@ if __name__ == "__main__":
             "family depth; continuous_banded_v2 additionally graduates "
             "conditions individually so stragglers cannot pin their family; "
             "continuous_banded_v3 adds the sampler max_mass cap on top of v2 "
-            "so no single condition can monopolize the population."
+            "so no single condition can monopolize the population; "
+            "continuous_banded_v4 replaces family halves with a global "
+            "80% open frontier and 20% mastered replay."
         ),
     )
     parser.add_argument(

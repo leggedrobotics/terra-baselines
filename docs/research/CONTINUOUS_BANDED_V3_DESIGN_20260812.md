@@ -1,9 +1,9 @@
 # continuous_banded_v3: v2 under a per-condition mass cap (design, 2026-08-12)
 
 One sampler rule change, motivated by two defects measured on the
-`reward_v2_scratch` phase1 run. Implementation lands on
-`experiment/v8-v6-yolo-rv2-20260810`; no launcher is wired to it yet —
-adoption happens per new run contract, never mid-run.
+`reward_v2_scratch` phase1 run. The cap-only implementation is preserved as
+`continuous_banded_v3` because checkpoints and launched continuations already
+carry that identifier.
 
 ## The two problems
 
@@ -45,12 +45,22 @@ on conditions it has never once solved. Pooling also swings the family
 split hard: on the u13.5k state it yields **92.2/7.8** foundation/trench,
 abandoning trench maintenance, versus 77.6/22.4 under the capped rule.
 
-The family halves are therefore doing real work: they are a persistent
-category budget, not staged-gate residue. That is the standard shape in
-this literature — AlphaStar's league mixes 35/50/15 across main, league,
-and exploiter channels, and OpenAI Five holds 80/20 self-play to past
-opponents — persistent category budgets with capping *within* a category,
-which is exactly what v3 does.
+The family halves therefore protected rehearsal in this particular
+counterexample, but that does not make a permanent 50/50 task-family quota a
+standard curriculum result. Opponent-mixture systems offer only a loose
+analogy for retaining replay, not direct evidence for splitting excavation
+conditions by semantic family. The closer task-curriculum literature instead
+combines current learning potential with coverage or staleness: PLR prioritizes
+levels by estimated future learning potential and mixes that priority with a
+staleness distribution
+[Jiang et al., 2021](https://proceedings.mlr.press/v139/jiang21b.html);
+ALP-GMM targets absolute learning progress while retaining random coverage
+[Portelas et al., 2020](https://proceedings.mlr.press/v100/portelas20a.html);
+and self-paced RL learns task distributions that move toward a declared target
+distribution at a competence-dependent pace
+[Klink et al., 2020](https://papers.nips.cc/paper_files/paper/2020/hash/68a9750337a418a86fe06c1991a1d64c-Abstract.html).
+These sources motivate priority plus maintenance; they do not determine
+Terra's masses, thresholds, or family partition.
 
 ## The rule
 
@@ -114,6 +124,61 @@ uniform-per-family at completion.
 - Arms currently in flight stay on v2 so their pairing remains internally
   fair (they share the defect equally).
 
+## Post-u14 diagnosis: the cap does not release a mastered family
+
+The selected v6.1 checkpoint at update 14,000 exposes a different failure mode
+from the u13.5 single-cell monopoly above. Its sampler state has mastered all
+22 trench conditions but only 7 of 25 foundation conditions. Nevertheless, v2
+assigns exactly 50% of the population to each family. Consequently **51.4%**
+of all assignment mass is on mastered conditions, while every one of the 18
+open conditions is a foundation. The maximum condition mass is only **4.11%**
+and target-distribution ESS is **38.62** of 47.
+
+This matters because the implemented v3 computes v2 first and applies its cap
+only when a condition exceeds 15%. At this exact state the v2 and v3 vectors
+are bit-identical. Thus v3 still solves the measured P1 single-condition
+monopoly, but it cannot solve completed-family waste when no individual cell
+hits the cap. This u14 result is an online sampler-state diagnosis, not held-out
+evidence that reallocating the mass will improve the policy.
+
+### Family-free successor (internal artifact id: `continuous_banded_v4`)
+
+Do not silently redefine the checkpointed v3 rule. The smallest successor to
+screen is a family-free open/replay mixture:
+
+```text
+p = 0.80 * depth_weighted(all open conditions)
+  + 0.20 * uniform(all mastered conditions)
+```
+
+The open pool reuses v2's `4:2:1` depth weights, the mastered pool supplies a
+global maintenance budget, and the existing 15% per-condition water-fill cap
+prevents a single open condition from monopolizing the population. Foundation
+and trench remain reporting and evaluation slices, but no longer determine
+assignment probability. A demoted condition rejoins the open pool at the next
+existing refresh. If one pool is empty, its mass goes to the other pool.
+
+At the exact u14 state, this provisional `80/20` rule assigns 80.0% to open
+foundations, 4.83% to mastered foundations, and 15.17% to mastered trenches.
+Each open depth-1 condition receives 6.96%, each open depth-2 condition 3.48%,
+and each mastered condition 0.69%; the maximum is 6.96% and ESS is 24.21. The
+lower ESS is intentional concentration on unfinished work, not a quality
+metric by itself.
+
+The `80/20` split is an engineering hypothesis, not a value copied from the
+papers above and not a claimed optimum. It is implemented under the distinct
+internal id `continuous_banded_v4`, with a scratch smoke path that leaves all
+existing v3 jobs unchanged. First test it in a bounded run
+with reward, model, PPO, bank, and batch fixed, while auditing foundation gain,
+trench retention, mass on zero-progress cells, and source-disjoint fixed-panel
+performance. Only if it parks on flat stragglers should the sampler add a
+PLR/ALP-style learning-progress and staleness score; 47 discrete conditions do
+not justify a general teacher or mixture-model framework before that evidence.
+
+The paper uses the publication-facing name **Continuous Banded v3** for this
+final family-free method and omits the repository's compatibility history. The
+internal `v4` id exists only to keep cap-only v3 artifacts reproducible.
+
 ## Open questions
 
 - `max_mass = 0.15` is an engineering constant, not tuned; the monopoly
@@ -121,3 +186,18 @@ uniform-per-family at completion.
   ~2% uniform share". Revisit only on evidence.
 - Whether the five never-succeeded foundations are walls (horizon/reward)
   or merely late is the D1-style question the cap makes cheap to defer.
+- Whether a 20% global mastered replay budget is sufficient for trench
+  retention once all open work lies in foundations. This is a preregistered
+  screen parameter, not a literature-derived constant.
+
+## Primary references
+
+- Minqi Jiang, Edward Grefenstette, and Tim Rocktäschel. [Prioritized Level
+  Replay](https://proceedings.mlr.press/v139/jiang21b.html). ICML, 2021.
+- Rémy Portelas, Cédric Colas, Katja Hofmann, and Pierre-Yves Oudeyer. [Teacher
+  algorithms for curriculum learning of Deep RL in continuously parameterized
+  environments](https://proceedings.mlr.press/v100/portelas20a.html). CoRL,
+  2020.
+- Pascal Klink, Carlo D'Eramo, Jan Peters, and Joni Pajarinen. [Self-Paced Deep
+  Reinforcement Learning](https://papers.nips.cc/paper_files/paper/2020/hash/68a9750337a418a86fe06c1991a1d64c-Abstract.html).
+  NeurIPS, 2020.

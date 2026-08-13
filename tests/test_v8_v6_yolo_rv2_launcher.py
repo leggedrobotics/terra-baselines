@@ -1,4 +1,4 @@
-"""v6_3m_yolo_rv2 / v6_1_rv2: paired with reward_v2_scratch, treatment flags apart."""
+"""v6 readout launch contracts, including the isolated v6.1+v4 scratch arm."""
 
 import re
 import unittest
@@ -64,6 +64,7 @@ LAUNCHER_DEFAULTS = (
     'SAMPLER_PROFILE="${SAMPLER_PROFILE:-continuous_banded_v2}"',
     "continuous_banded_v2) TRAIN_PRESET=G-V8-CONTINUOUS-V2 ;;",
     "continuous_banded_v3) TRAIN_PRESET=G-V8-CONTINUOUS-V3 ;;",
+    "continuous_banded_v4) TRAIN_PRESET=G-V8-CONTINUOUS-V4 ;;",
 )
 # The v6.1 continuation. UPDATES stays absolute, so the entropy schedule and the
 # optimizer clock continue rather than restart.
@@ -216,6 +217,66 @@ class PairedLauncherTest(unittest.TestCase):
                           "--resume_from", "--prepared_fork_from"):
             self.assertNotIn(forbidden, treatment)
 
+    def test_v61_v4_is_one_distinct_scratch_arm_and_resume_stays_v3(self):
+        v61 = sbatch_arm_case("v6_1_rv2")
+        v4 = sbatch_arm_case("v6_1_rv2_v4")
+        for key in (
+            "BLOCKS_PER_STAGE",
+            "AUX_COEF",
+            "EXPECTED_AUX_LEAVES",
+            "VF_COEF",
+            "CONTRACT_VF_COEF",
+            "EXPECTED_PARAMETERS",
+            "EXPECTED_PARAMETERS_WITHOUT_CARRY_WORK",
+        ):
+            self.assertEqual(v4[key], v61[key], key)
+        self.assertEqual(v4["RUN_PREFIX"], "v8_v6_yolo_rv2_v61_v4")
+        self.assertEqual(v4["SCRATCH_SAMPLER_PROFILE"], "continuous_banded_v4")
+        self.assertEqual(
+            v4["BUNDLED_CHANGES"],
+            "continuous_banded_v4_open80_mastered20_cap015",
+        )
+        self.assertEqual(v4["EXPERIMENT_NAME"], "v8_v61_rv2_curriculum_v4_screen")
+        self.assertEqual(v4["PAIRED_BASELINE_ARM"], "v6_1_rv2")
+        self.assertEqual(
+            v4["PAIRED_BASELINE_LAUNCHER"], "scripts/run_v8_v6_yolo_rv2.sh"
+        )
+
+        submit = SUBMIT.read_text()
+        variant = submit.split("    v61_v4)", 1)[1].split(";;", 1)[0]
+        self.assertIn("ARM_NAME=v6_1_rv2_v4", variant)
+        self.assertIn("ACTION_LOGIT_MASKING=0", variant)
+        self.assertIn("SCRATCH_SAMPLER_PROFILE=continuous_banded_v4", variant)
+        self.assertIn("PAIRED_BASELINE_ARM=v6_1_rv2", variant)
+        self.assertIn("terra_v8_r2_reward_v2_20260810", variant)
+        # Resume phases remain exclusive to the already-staged v61/v3 lineage.
+        self.assertIn('[ "${MASK_VARIANT:-mask}" != v61 ]', submit)
+        self.assertIn('GATING_SAMPLER_PROFILE="$SCRATCH_SAMPLER_PROFILE"', submit)
+        self.assertIn("GATING_SAMPLER_PROFILE=continuous_banded_v3", submit)
+
+        sbatch = SBATCH.read_text()
+        self.assertIn('SAMPLER_PROFILE="$SCRATCH_SAMPLER_PROFILE"', sbatch)
+        resume = sbatch.split("    resume_smoke)", 1)[1].split(";;", 1)[0]
+        phase2 = sbatch.split("    phase2)", 1)[1].split(";;", 1)[0]
+        self.assertIn("SAMPLER_PROFILE=continuous_banded_v3", resume)
+        self.assertIn("SAMPLER_PROFILE=continuous_banded_v3", phase2)
+        self.assertEqual(ARMS["v6_1_rv2_v4"]["sampler_profile"], "continuous_banded_v4")
+        self.assertEqual(
+            ARMS["v6_1_rv2_v4"]["experiment"],
+            "v8_v61_rv2_curriculum_v4_screen",
+        )
+        self.assertEqual(ARMS["v6_1_rv2_v4"]["paired_baseline_arm"], "v6_1_rv2")
+        for key in (
+            "resnet_blocks_per_stage",
+            "aux_coef",
+            "aux_decoder_leaves",
+            "vf_coef",
+            "action_logit_masking",
+            "parameter_count",
+            "parameter_count_without_carry_work",
+        ):
+            self.assertEqual(ARMS["v6_1_rv2_v4"][key], ARMS["v6_1_rv2"][key])
+
     def test_cluster_shape_matches_the_baseline_run(self):
         sbatch = SBATCH.read_text()
         baseline_sbatch = (
@@ -246,7 +307,8 @@ class PairedLauncherTest(unittest.TestCase):
         for default in (
             "NUM_DEVICES=4",
             "NUM_ENVS_PER_DEVICE=512",
-            "SAMPLER_PROFILE=continuous_banded_v2",
+            "SCRATCH_SAMPLER_PROFILE=continuous_banded_v2",
+            'SAMPLER_PROFILE="$SCRATCH_SAMPLER_PROFILE"',
             "START_UPDATE=0",
         ):
             self.assertIn(default, sbatch, default)
@@ -284,6 +346,7 @@ class PairedLauncherTest(unittest.TestCase):
                 "v6_3m_yolo_rv2": V6_3M_RV2_PARAMETERS,
                 "v6_3m_yolo_rv2_nomask": V6_3M_RV2_PARAMETERS,
                 "v6_1_rv2": V6_1_RV2_PARAMETERS,
+                "v6_1_rv2_v4": V6_1_RV2_PARAMETERS,
             },
         )
 
