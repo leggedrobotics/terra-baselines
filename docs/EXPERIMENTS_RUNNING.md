@@ -2,10 +2,10 @@
 
 ## v6.1 reward-v2 + stall age + Continuous Banded v3
 
-One direct continuation was submitted as Slurm job `10625259` and is pending
-for priority as of 2026-08-13 19:08 CEST. It starts from the selected v6.1
-reward-v2 checkpoint at update 14,000 and targets absolute update 40,000. The
-declared practical bundle contains exactly:
+One direct continuation is running as Slurm job `10625259` on `eu-g6-048`
+with eight RTX 4090 GPUs. It started at 2026-08-13 20:02 CEST from the selected
+v6.1 reward-v2 checkpoint at update 14,000 and targets absolute update 40,000.
+The declared practical bundle contains exactly:
 
 1. one material-stall-age observation; and
 2. the final family-free Continuous Banded v3 curriculum.
@@ -62,8 +62,15 @@ Pinned inputs:
   `68aea1a0f5dc3c05d11319fdf640ade05495125225533bc99ad92592475fcb75`;
 - terra-baselines launch revision:
   `dddc691c93ee21488cd7eeb8e01b067bf1f9733c`;
-- Slurm job: `10625259`, `PENDING (Priority)`, zero runtime consumed at the
-  recorded snapshot.
+- Slurm job: `10625259`, `RUNNING` on `eu-g6-048` at the recorded snapshot;
+- first rolling checkpoint: absolute update 14,500, 27,741,618 bytes,
+  SHA-256
+  `4d3ef5b0077108e2ef225a645b83bf359398035d1084f8f823033f3136f00315`.
+
+This allocated job is immutable and still uses Terra `c2d2a94a`, including
+the historical minimum-two eligible-cell action veto. The later isolated
+Terra correction `88c0099e` removes that arbitrary lower bound for future
+training; it is not injected into this continuation.
 
 The incorrectly prepared job `10616190` retained the old family-balanced
 sampler. It was cancelled while pending and consumed zero runtime; it produced
@@ -72,7 +79,8 @@ no checkpoint, W&B run or training evidence. Earlier resume-smoke job
 
 ### Readout
 
-1. Verify the first completed update and first finite rolling checkpoint.
+1. ~~Verify the first completed update and first finite rolling checkpoint.~~
+   Passed through the durable update-14,500 checkpoint above.
 2. Evaluate fixed promotion checkpoints against the existing v6.1 curve.
 3. Inspect stall-age mean/saturation and the frozen recurrence failure strata.
 4. Continue while fixed-panel performance improves; stop on a measured

@@ -48,8 +48,11 @@ The failures are not one mechanism:
 
 - 26/313 never dig; 134/313 dig at least half the target; only 27/313 dig at
   least 90%.
-- 92/313 retain illegal soil, 28/313 end loaded, and 120/313 have dump purity
-  below `1 - 1e-6`.  These categories overlap.
+- 92/313 retain off-zone staged soil at timeout, 28/313 end loaded, and
+  120/313 have dump purity below `1 - 1e-6`.  The frozen JSON calls the first
+  quantity `illegal_dump_volume`, but off-zone placement is a legal and
+  necessary intermediate action; only residual off-zone soil at termination
+  is incomplete.  These categories overlap.
 - 46/313 reach at least 75% exact completion and 20/313 reach at least 90%, so
   a real near-finish/horizon subset exists, but it is not the majority.
 - Failed maps have mean required volume 253.9 versus 115.4 for successes;
@@ -63,7 +66,7 @@ mean required volume 619 and 12.1 productive work cycles, consistent with a
 large-workload problem.  `fnd-slab-side1-obj` and
 `fnd-slab-ring3x-obj` have ordinary mean volume 188; the targeted true-effect
 traces below confirm an action-selection stall on one reset from each cell.
-d12/d16 failures frequently retain illegal soil.  Conversely,
+d12/d16 failures frequently retain unfinished off-zone staged soil.  Conversely,
 `v7-fnd-pads-adjacent` reaches 14/16 and every trench condition is at least
 10/16, which rules out a global inability to excavate, relocate, or finish.
 
@@ -145,26 +148,31 @@ propose another masking arm.  Its all-action enumeration is diagnostic only --
 it distinguishes a bad policy choice from a state with no effective local
 action and never changes the trained policy distribution.
 
-### Source-proven mechanics that now have prevalence tests
+### Source-proven mechanics and the no-minimum-action decision
 
 These are real runtime semantics, but they require measured prevalence before
 they explain aggregate failure.  The Supercluster trace and frozen-panel
 reduction record that incidence before any environment change is proposed.
 
-- A dig footprint containing at most one eligible tile is discarded.  A
-  terminal state with exactly one globally remaining target cell is therefore
-  directly unfinishable from that pose/terrain unless a multi-step sequence
-  first creates another eligible target tile.  This is a concrete endgame
-  obstruction, not by itself a proof that the map or state is globally
-  unrecoverable.
-- A loaded solo excavator cannot translate or rotate its base.  The terminal
-  audit enumerates all 12 cabin headings and classifies complete legal and
-  off-zone unloads.  A loaded state with no complete unload heading is an
-  exhaustive local deadlock, not merely a greedy-policy stall.
-- Positive-soil relifts use the same minimum-two-tile gate and reject a whole
-  selected pile if its volume exceeds int8 capacity.  This creates possible
-  cleanup traps, but it should be changed only if an actual policy terminal
-  state satisfies a fail-loud predicate.
+- The audited runtime discarded a dig or relift footprint containing at most
+  one eligible tile.  That lower bound is not part of the intended macro-action
+  abstraction: efficiency should be learned from return and time, not imposed
+  as an arbitrary minimum work unit.  Terra commit
+  `88c0099e59c5803ab56d45a4e29a0d552ffdc025` deletes the veto for both fresh
+  excavation and staged-soil relift and aligns the direct-service and map
+  admission geometry.  Exact completion, mass conservation, and the bucket
+  capacity guard are unchanged.  The already-running continuation is pinned
+  to the earlier runtime and therefore does not contain this later fix.
+- A loaded solo excavator cannot translate or rotate its base.  This is the
+  intended macro abstraction: one workspace may represent minutes of work,
+  and off-zone dumping followed by empty travel and relift is the planning
+  primitive.  The terminal audit still enumerates all 12 cabin headings to
+  distinguish policy refusal to stage from a genuinely unavailable unload;
+  it is not a proposal to enable loaded driving.
+- A selected positive-soil cone whose total volume exceeds the int8 bucket
+  capacity is still rejected as a whole.  This is a real upper-capacity guard,
+  unlike the deleted lower bound.  Its prevalence must be measured before
+  proposing partial lifts or another action semantic.
 - The reward distance is point-geodesic and assigns accepted-zone soil zero
   remaining haul cost.  It does not model the 7x11 footprint, five-tile motion,
   headings, or future serviceability.  This can make a locally positive dump
@@ -183,13 +191,14 @@ The selected sample is deliberately mechanism-enriched and cannot estimate
 population prevalence.  Within it:
 
 - `fnd-slab-apron-near` slot 142 ends clean, unloaded, 99.36% complete, with
-  exactly one unit/cell left.  The minimum-two-tile rule makes that state
-  directly unfinishable: effective repositioning actions still exist, but no
-  one-step action improves the exact objective and the unchanged greedy policy
-  does not escape by step 900.  This is a confirmed one-step mechanics
-  obstruction in one targeted trajectory, not a multi-step impossibility
-  proof.  All four sampled-policy trajectories avoid this endpoint and solve the
-  same reset, confirming that the map itself is feasible.
+  exactly one unit/cell left.  Under the audited runtime's now-retired
+  minimum-two rule, that state has no direct finishing dig: effective
+  repositioning actions still exist, but no one-step action improves the exact
+  objective and the unchanged greedy policy does not escape by step 900.  All
+  four sampled-policy trajectories avoid this endpoint and solve the same
+  reset, confirming that the map itself is feasible.  The lower-bound deletion
+  removes this arbitrary endpoint from future runtimes rather than adding a
+  terminal-only special case.
 - `fnd-slab-side1-obj` slot 247 and `fnd-slab-ring3x-obj` slot 177 take 450/450
   true no-effect actions and never change physical/task state.  Both finish by
   choosing `backward`, while rotations (and, for slot 177, `forward`) are
@@ -217,12 +226,15 @@ population prevalence.  Within it:
   distinction matters: effective rotation is an escape opportunity, not task
   progress by itself.
 
-Focused runtime unit tests independently pass for rejecting one-tile dig masks
-and preserving multi-tile masks.  The later 900-step matched trace passed its
-horizon gate by matching actions, effects, and every completion component
-through step 450.
+Focused runtime contracts on the replacement branch now pass for ordinary
+one-cell fresh excavation, ordinary one-cell staged-soil relift, exact mass
+conservation, the unchanged 127/128 bucket boundary, and single-cell
+direct-service admission.  The later 900-step matched trace passed its horizon
+gate by matching actions, effects, and every completion component through step
+450; it remains evidence about the frozen pre-fix policy/runtime only.
 
-The frozen 720-panel result also bounds the prevalence of the singleton defect.
+The frozen 720-panel result bounds the prevalence of the retired singleton
+veto in the audited run.
 Because every admitted target cell has unit depth, multiplying each terminal
 dig fraction by its frozen target volume reconstructs an integer count (maximum
 rounding residual `2.17e-5`).  Exactly 2/313 failures end with one undug target
@@ -230,8 +242,12 @@ cell: slot 142 (`fnd-slab-apron-near`) and slot 185
 (`fnd-slab-ring3x-obj`).  Eleven failures end with at most four undug cells.
 Thus undug-target singleton endpoints are rare (0.64% of failures) and cannot
 explain the main performance gap; the reduction measures endpoint incidence,
-not global state impossibility.  The frozen JSON does not expose spatial
-positive-soil cleanup singletons, so their prevalence remains unquantified.  The durable
+not global state impossibility.  Exact replay below nevertheless finds the old
+veto suppressing five policy-selected relift attempts in one cleanup-heavy
+trace, which supports deleting the lower bound even though it is not the
+dominant aggregate failure.  The frozen JSON does not expose spatial
+positive-soil cleanup singletons, so their panel-wide prevalence remains
+unquantified.  The durable
 reconstruction receipt is
 `/home/lorenzo/moleworks/.artifacts/terra_v8_v61_failure_audit_20260813/singleton_prevalence_v1.json`
 (SHA-256
@@ -261,7 +277,8 @@ selected failures.  Exact remains 2/12 (the two controls).  None of the four
 near-finish failures converts.  More strongly, every failure's last task-state
 change stays at the same early step seen in the 450 run: 111 or earlier.  The
 singleton remains at one cell; the 2--4-cell clean failures remain at 2--4;
-the loaded failures retain the same load/illegal soil; and the two obstacle
+the loaded failures retain the same load/off-zone staged-soil remainder; and
+the two obstacle
 resets remain at zero progress after 900 no-effect actions.
 
 This targeted result refutes “450 is simply too short” for these selected
@@ -290,7 +307,8 @@ The slot-level agreement is more informative than the totals:
 - None of the four seeds rescues any loaded/high-carry diagnostic reset or
   either obstacle reset.  Fifteen of the sixteen sampled carry trajectories
   end unloaded; slot 17 under seed 20260810 retains two units.  All still
-  finish with illegal soil and/or undug target.  On the two obstacle resets sampling
+  finish with off-zone staged soil and/or undug target.  On the two obstacle
+  resets sampling
   reduces the extreme 450/450 greedy no-effect count to 144--324 and all eight
   sampled trajectories change task state, yet none finishes.  These eight
   sampled trajectories therefore do not establish stochastic
@@ -308,6 +326,89 @@ history—not more horizon.  Obstacle and carry failures require a separate
 planning/observation investigation because all 24 sampled trajectories across
 those six resets fail to convert them.  No action mask is introduced or
 recommended by this result.
+
+### Intended staging and exact lifecycle replay
+
+Off-zone dumping is not an illegal action in this abstraction.  The intended
+macro-plan is `dig -> stage off-zone -> move empty -> relift -> ... -> final
+dump`; keeping the base fixed while loaded prevents one abstract action from
+standing in for repeated real-world loaded travel.  Reward-v2 likewise has no
+categorical wrong-dump penalty.  Its potential tracks remaining excavation,
+off-zone haul work, and carried work; matched-discount shaping telescopes over
+an equal endpoint, while extra actions still pay time.  The legacy JSON field
+`illegal_dump_volume` is therefore interpreted only as off-zone soil remaining
+at the endpoint.
+
+An exact recorded-action replay of the 12 selected traces classifies 172
+material events: 72 fresh digs, 16 relifts, 66 final-zone dumps, and 18
+off-zone staging dumps.  It separates refusal to start a relay from failure to
+close one:
+
+- Slots 100 and 234 perform direct dig/final-dump cycles, then enter cabin
+  cycles while carrying 22 and 21 units.  Each has 11 valid off-zone unload
+  headings.  The environment offers the intended stage; the greedy policy does
+  not choose it.
+- Slot 17 demonstrates the full primitive—five fresh digs, seven stages, nine
+  relifts, and six final dumps—then regresses after its best haul state and
+  freezes after step 93 with 71 units loaded and 29 off-zone.
+- Slot 250 performs eight fresh digs, 11 stages, six relifts, and three final
+  dumps, then stops material work after step 111 with 136 units off-zone.  This
+  is accumulation without cleanup closure, not absence of staging mechanics.
+
+No selected replay state triggers an accepted-first capacity fallback or a
+relift cone above the 127-unit bucket limit.  All 12 reset geometries pass the
+static relay screen with maximum hop count one.  Over the complete frozen
+training bank, the same optimistic reset-geometry screen finds zero infeasible
+targets and a maximum of two hops; only 68/4,512 layouts contain any two-hop
+target.  Every one of the 4,512 training action maps starts empty.  Thus the
+bank provides broad condition coverage but very little direct exposure to the
+rare `stage -> reposition -> relift -> cleanup` phase.  These static checks
+ignore dynamic holes, piles, and action ordering and are not rollout
+solvability proofs.
+
+The replay does not identify a dominant mechanics blocker.  There are zero
+over-capacity relift candidates, and the accepted-first fallback hypothesis is
+also structurally ruled out by the current representation: a legal load is at
+most 127 and one empty accepted cell can hold all 127 units.  The old minimum
+work-unit veto does matter locally—slot 250 chooses `DO` in five states where
+only a one-cell relift is eligible—but its removal is a hygiene correction,
+not an explanation of all cleanup failure.  Hidden `last_dig_mask` changes the
+counterfactual `DO` outcome or eligible region in 38 visited states, yet no
+identical archived full policy input has two different hidden-mask outcomes in
+this selected set.  This establishes omitted branch state, not a measured
+observation alias.
+
+One reward/serviceability counterexample deserves follow-up rather than a
+reward rewrite: slot 250 step 50 reduces point-geodesic remaining haul by 7.72
+while the newly staged soil cannot be relifted from any cabin heading at that
+same base pose.  This occurs in only one of ten H-improving staging events and
+does not prove global inaccessibility.  A broader dynamic station/heading audit
+must show that H repeatedly prefers unserviceable piles before replacing the
+potential.  For now reward-v2, no-loaded-motion semantics, exact completion,
+greedy evaluation, and the absence of action masking remain unchanged.
+
+The smallest next fresh-training observation treatment is compact rather than
+a new planner: expose what `DO` would do at the current pose (fresh dig,
+staged-soil relift, final dump, off-zone stage, or no-op) and its eligible
+volume.  Separately, replace material-change stall age with age since actual
+task progress (`Q` increases or remaining haul `H` decreases) if the current
+screen shows that relay loops persist.  The existing partial-completion reset
+generator can supply mass-conserving staged states for a small phase-mixture
+pilot instead of adding another sampler framework.  An actor-only GRU remains
+later in the ladder if explicit affordance and progress-state treatments still
+leave short cleanup cycles.
+
+The durable lifecycle receipt is
+`/home/lorenzo/moleworks/.artifacts/terra_v8_v61_failure_audit_20260813/staging_lifecycle_v1/receipt.json`
+(SHA-256
+`2cc7e9301751741f76380e12d4de71b4f3057ef199e11115fbad310bfc26781d`);
+the replay-map array SHA-256 is
+`9bc081fb2acf092cf699ab59f5513b616788ca59bc6ee004efc413eaf6dac0a7`,
+and the executed analysis script SHA-256 is
+`13ca753a44244748ffadce03268745838c061e405cc7c480a4ee1405f882a90c`.
+The receipt passes reset hashes and recorded action-effect parity.  Its FIFO
+pile links conserve aggregate off-zone volume but do not track individual soil
+cells, and same-base reliftability is a local test only.
 
 ### Greedy policy-input recurrence and logits
 
@@ -449,6 +550,14 @@ shapes and update-14,000 outputs remain unchanged at `stall_age=0`; matching
 zero Adam moments are added for those two leaves.  This is a continuation
 screen against the already measured v6.1 curve, not a newly trained matched
 control.
+
+The lifecycle replay narrows that screen's scope.  Material stall age should
+break the static blocked-action and loaded cabin-spin basins, but every
+stage/relift changes the raw map and resets the counter.  It therefore cannot
+detect a policy that endlessly moves the same soil without reducing remaining
+haul work.  If those loops remain after the continuation, the next scalar is
+normalized age since `Q` increased or `H` decreased, without adding time-to-go
+or changing reward in the same arm.
 
 Normalized time-to-go is a separate finite-horizon correctness treatment, not
 something to bundle with stall age or the GRU.  The branch probe decides
