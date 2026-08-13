@@ -2,9 +2,10 @@
 
 ## v6.1 reward-v2 + stall age + Continuous Banded v3
 
-One direct continuation is prepared but not yet submitted. It starts from the
-selected v6.1 reward-v2 checkpoint at update 14,000 and targets absolute update
-40,000. The declared practical bundle contains exactly:
+One direct continuation was submitted as Slurm job `10625259` and is pending
+for priority as of 2026-08-13 19:08 CEST. It starts from the selected v6.1
+reward-v2 checkpoint at update 14,000 and targets absolute update 40,000. The
+declared practical bundle contains exactly:
 
 1. one material-stall-age observation; and
 2. the final family-free Continuous Banded v3 curriculum.
@@ -59,8 +60,10 @@ Pinned inputs:
 - prepared checkpoint `v8_v61_stall_age_v3_u14000_prepared.pkl`, 27,741,529
   bytes, SHA-256
   `68aea1a0f5dc3c05d11319fdf640ade05495125225533bc99ad92592475fcb75`;
-- terra-baselines launch revision: pending final commit;
-- Slurm job: pending submission.
+- terra-baselines launch revision:
+  `dddc691c93ee21488cd7eeb8e01b067bf1f9733c`;
+- Slurm job: `10625259`, `PENDING (Priority)`, zero runtime consumed at the
+  recorded snapshot.
 
 The incorrectly prepared job `10616190` retained the old family-balanced
 sampler. It was cancelled while pending and consumed zero runtime; it produced
