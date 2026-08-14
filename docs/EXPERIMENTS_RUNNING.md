@@ -56,8 +56,18 @@ u39-to-u40 comparison had 38 conversions and 32 regressions for only +6 net,
 the extended line must be evaluated at multiple retained checkpoints rather
 than only at its final wall-time checkpoint.
 
-The exact submitted job ID and allocation state are appended here immediately
-after Slurm submission.
+Slurm job `10752100` was submitted at 2026-08-14 23:47 CEST with account
+`gpuhe/es_hutter`, QOS `es_hutter/gpuhe/24`, partition `gpuhe.24h`, and an
+exact request for eight RTX 4090 GPUs, eight CPUs, and 64 GB RAM.  At the
+recorded snapshot it is `PENDING (Priority)`, with no allocated node or start
+estimate.  The phase-3 run directory is reserved but contains no training
+evidence yet.  W&B remains in its completed u40 state until the allocation
+passes the in-job GPU/CUDA/NCCL/checkpoint gates and resumes it.
+
+The launcher is commit
+`bbaebc04c2ddc7c3ae667e434e223e1d01b95f84` on branch
+`experiment/v8-v61-u40-phase3-20260814`.  Its run directory is
+`/cluster/scratch/alesweber/codex_terra_edge_runs/terra_v8_v6_yolo_rv2/runs/dddc691c93ee21488cd7eeb8e01b067bf1f9733c/phase3/s20260807/v6_1_rv2_stall_age_v3`.
 
 ## Current issue checklist
 

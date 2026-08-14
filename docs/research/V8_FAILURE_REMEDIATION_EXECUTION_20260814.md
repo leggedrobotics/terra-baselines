@@ -246,6 +246,15 @@ must resume this checkpoint with these exact sources.  It must not use Terra
 `88c0099e`, `30ad500f`, `67c72d09`, or `794d4759`; those form a separate fresh
 environment/curriculum line.
 
+The unchanged extra-day segment is implemented by launcher commit
+`bbaebc04c2ddc7c3ae667e434e223e1d01b95f84` and was submitted as Slurm job
+`10752100`.  It resumes the same W&B run with `resume=must`; the checkpoint at
+u40 is ahead of the last logged `train/update=39991`.  Its absolute target is
+u70,000, deliberately beyond the approximately u67k expected to fit in the
+23:45 allocation, and it checkpoints every 500 updates.  At the recorded
+snapshot the exact 8xRTX-4090 request is `PENDING (Priority)` with no node or
+start estimate, so it has produced no new training evidence yet.
+
 The final sampler state has 46/47 mastered conditions.  Its only open
 condition is `fnd-slab-side1-obj`, which receives the 0.15 cap; the remaining
 0.85 is distributed across mastered conditions.  The resulting family masses
