@@ -80,10 +80,12 @@ its material progress rather than collapsing to zero.
   action type.
 - Report incidence and representative counterexamples in an artifact.
 
-Acceptance: the receipt identifies the pinned Terra revision, evaluated state
-source, transition count, mismatch counts, and whether the mismatch reaches
-states used by the partial-reset curriculum. No observation or dynamics change
-is authorized by the audit alone.
+Acceptance for this workstream: the receipt identifies the pinned Terra
+revision, selected archived state source, transition count, and mismatch
+counts.  Coverage of the parallel partial-reset curriculum is explicitly
+deferred until that bank is frozen and immutable; this receipt must not claim
+to cover it.  No observation or dynamics change is authorized by the audit
+alone.
 
 ### 4. Stall-age plus final-v3 continuation readout
 
@@ -130,6 +132,24 @@ Defer global pile-height preprocessing changes, accepted-first dump fallback,
 time-to-go, action masking, and broad reward redesign until higher-priority
 evidence requires them.
 
+## Issue-resolution ledger
+
+The immutable u40 continuation tests stall age plus final v3 only.  It does
+not contain the later Terra mechanics commits and must not be credited for
+their effects.
+
+| Issue | Current status | Bounded next action |
+| --- | --- | --- |
+| Missing action-outcome feedback and greedy attractors | Measured; a fresh arm is warranted, but two bits are not a guaranteed cycle or planning fix. | Test previous physical effect plus previous material/load change with reward, sampler, architecture, and no-mask contract fixed.  Promote only on reduced recurrence without full-panel regression; otherwise proceed to the recurrent-policy rung. |
+| Minimum actionable-unit veto | Fixed for a future fresh runtime by Terra `88c0099e`; it is absent from u40. | Carry it into the next fresh environment and retain exact-completion and mass-conservation tests.  Its measured direct ceiling is small. |
+| Atomic rejection of an over-capacity positive relift | Fixed for a future fresh runtime by Terra `30ad500f`; it is absent from u40. | Train and evaluate the capacity-bounded, mass-conserving `load what fits` transition before attributing policy benefit. |
+| Accepted-first dump without off-zone fallback | Source-level risk, not observed in the selected lifecycle audit: zero accepted-invalid/off-zone-valid states occurred. | Keep the reason-code diagnostic and add two-pass fallback only after a real trajectory reaches that branch. |
+| Traversability observation versus physics | Diagnosis revised by the incidence audit.  Sparse height-one soil was rarely false-blocked; the causal case was under-base holes hidden by the agent overlay. | Prevent dig/relift under the exact base footprint, define collision-reducing escape for pre-existing overlap, and preserve underlying blockers in the visible channel.  Do not add an action mask. |
+| Hidden `last_dig_mask` | It changed counterfactual DO eligibility in 38 visited states but produced zero measured exact full-input aliases. | Defer raw history exposure.  Let a large DO-decodability audit decide whether a compact affordance feature should subsume it. |
+| Point-geodesic potential ignores serviceability | One local counterexample: slot 250 step 50 improved H by 7.72 but left no same-base relift heading.  This does not prove global inaccessibility. | Keep reward-v2 and measure station, heading, and path serviceability over a larger panel before changing the potential. |
+| Clipped global pile heights | Not the cause of the measured target recurrences: no repeated policy-input hash had a different raw action-map hash. | Defer expansion unless a separate capacity or long-range planning audit finds height-dependent aliases. |
+| Relay and cleanup underexposure | Parallel curriculum arm in `.worktrees/terra_v8_relay_corridor_20260814`; outside this goal's edit scope. | Mix a bounded share of mass-conserved, in-distribution partial resets, exclude them from full-start v3 mastery updates, and judge only on the untouched full-start panel.  This treats exposure, not identical-input attractors. |
+
 ## Execution status
 
 ### Completed measurement repairs
@@ -150,18 +170,21 @@ evidence requires them.
   This workstream promotes only on exact-success gain plus failure-mechanism
   review.
 
-Focused aggregate, evaluator, fixed-bank, W&B, and sampler tests pass.  The
-final combined validation and commit remain pending until the continuation
-readout is complete.
+Fifty-nine focused aggregate, evaluator, fixed-bank, W&B, and sampler tests
+pass against paired Terra `c2d2a94a`; Python compilation and diff checks also
+pass.  The matched d16 action trace described below also passes its full-panel
+parity and mechanism checks.
 
 ### Traversability result
 
 The targeted audit is complete on pinned Terra `c2d2a94a`.  It exactly replayed
 5,400 archived action effects and enumerated 13,024 unloaded base-action
-counterfactuals.  The old concern that sparse height-one soil was routinely
-shown as blocked is not supported: only 17 counterfactuals (0.13%) were
-visible-false-blocked, and the archived policy selected one of them, which
-succeeded.
+counterfactuals.  Within these deliberately selected 12 rollouts, not as a
+720-panel prevalence estimate, the old concern that sparse height-one soil was
+routinely shown as blocked is not supported: only 17 counterfactuals (0.13%)
+were visible-false-blocked, and the archived policy selected one of them,
+which succeeded.  The still-parallel synthetic partial-reset bank has not
+been audited by this result.
 
 The audit instead found 802 visible-false-free actions, all in promotion slot
 300.  The policy selected 399 of those no-ops; every selected base action from
@@ -187,9 +210,166 @@ Artifacts:
 
 ### Continuation
 
-Job `10625259` remains the immutable stall-age plus final-v3 capability run.
-Its final `u40000` checkpoint and fixed-panel/recurrence readout are still
-pending; no preliminary training curve is treated as evaluation evidence.
+Job `10625259` completed with Slurm exit code zero after `22:48:04`.  The
+immutable final checkpoint is
+`v8_v61_stall_age_v3_u40000_FINAL_17cbd702f8b7558fb91538debcefac6f15f1554ea8ac800b2f213612004fb6d8.pkl`
+(SHA-256
+`17cbd702f8b7558fb91538debcefac6f15f1554ea8ac800b2f213612004fb6d8`).
+The local durable copy, run contract, and Slurm log are under
+`.artifacts/terra_v61_stall_age_continuation_20260814/final_u40000/`.
+
+The final sampler state has 46/47 mastered conditions.  Its only open
+condition is `fnd-slab-side1-obj`, which receives the 0.15 cap; the remaining
+0.85 is distributed across mastered conditions.  The resulting family masses
+are 0.593478 foundation and 0.406522 trench, confirming that final v3 did not
+retain the superseded 50/50 family allocation.  Sampler ESS is 26.174.
+
+The prepared u14 checkpoint initialized both 704-dimensional stall-age
+embeddings to exact zero.  At u40 their L2 norms are 11.263 for the actor and
+12.964 for the critic.  This proves that optimization used the scalar path; it
+does not establish that the learned dependence is beneficial.
+
+The independent targeted u40 recurrence probe passed receipt and NPZ
+recomputation (`receipt.json` SHA-256
+`94c29f5a3384426b3e24ede605540973fdc4393b6698698ee67d48dbe4d6537b`;
+arrays SHA-256
+`f75cdd7ab980aba949ca9d2e834b720f69cb42ef6493feb9d3f599f91504d877`).
+It solves 7/12 selected resets versus 2/12 in the historical u14 targeted
+rerun: both controls, all four formerly sampling-rescuable clean/high-dig
+failures, and carry slot 100.  Slot 100 is a real relay rather than a direct
+shortcut: it stages 28% of the soil off-zone, makes 30 empty/material-neutral
+decisions, relifts at stall age 0.9375, and finishes in 127 steps.
+
+All five remaining targeted failures revisit an exact full policy input.  Four
+saturate stall age and then enter one fixed point or short cycles; obstacle
+recurrence starts at decision 33, immediately after the 32-step cap.  Slot 17
+instead alternates dump and relift in a six-action cycle.  Those material
+changes continually reset stall age even though terminal progress is flat.
+Thus the combined continuation supports useful relay behavior and converts
+the easier attractor class, while stall age itself is neither an unbounded
+repetition counter nor a progress measure.  This is combined stall-age, v3,
+and 26k-update evidence, not component attribution or population-level
+evidence.
+
+The authoritative promotion-panel readout is complete under one matched
+Supercluster RTX-3060 inference contract: forward chunk 120 and
+`--xla_gpu_enable_cudnn_frontend=false`.  This is a new matched u14/u39/u40
+contract rather than a bit-identical replay of the old backend, but the u14
+readout independently reproduces the historical exact headline of `407/720`.
+Reset, identity, mutation, nonfinite, exact-completion, material-partition,
+and stall-age integrity gates pass for all three 720-map records.
+
+| Checkpoint | Exact | Foundation | Trench | Timeouts |
+| --- | ---: | ---: | ---: | ---: |
+| u14 | 407/720 | 115/384 | 292/336 | 313 |
+| u39 | 651/720 | 322/384 | 329/336 | 69 |
+| u40 | 657/720 | 324/384 | 333/336 | 63 |
+
+From u14 to u40, 254 maps convert to exact success and four regress, for a net
+gain of 250.  The regressions are promotion slots 84
+(`fnd-slab-apron-c3x`), 220 (`fnd-slab-ring3x-road`), 232
+(`fnd-slab-side1`), and 637 (`v7-trn-dogleg-adjacent`).  The descriptive
+diagnostics of the differently composed failure sets move in the same
+direction: authoritative no-effect actions fall from 72,245 to 8,831; mean
+terminal-soil fraction rises from 0.400 to 0.529; mean loaded soil falls from
+0.0112 to 0.0051; and mean off-zone staged soil falls from 0.0420 to 0.0289.
+
+The final thousand updates are not monotone at map level.  From u39 to u40,
+38 maps convert and 32 regress, for only +6 net.  In particular, selected
+carry slots 17 and 234 solve at u39 but regress at u40.  Therefore u40 is the
+best aggregate checkpoint, while u39 must be retained as a scientifically
+useful comparator; the +6 headline must not conceal the high late-training
+churn or be called a stable per-map improvement.
+
+The u39 checkpoint is preserved locally at
+`.artifacts/terra_v61_stall_age_continuation_20260814/final_eval/checkpoints/v8_v61_stall_age_v3_u39000_103e4c8903fa7e16f55e4e4c9df6e925b83212f0206b903c54664850019ae249.pkl`
+(SHA-256
+`103e4c8903fa7e16f55e4e4c9df6e925b83212f0206b903c54664850019ae249`),
+so the comparator is reproducible rather than only a retained JSON row.
+
+At u40, 72/720 episodes reach the stall-age cap for 15,691 decisions.  Among
+the 63 failures, 53 saturate the scalar.  The remaining failures still include
+all five exact-input recurrent cases found by the targeted probe, so the
+aggregate result agrees with the mechanism readout: the continuation removed
+most old failures but did not eliminate recurrent policy attractors.
+
+The residual set still supports the parallel relay/cleanup curriculum,
+without making it a universal explanation: using a `1e-6` positive-mass
+tolerance, 23/63 failures terminate with off-zone or loaded soil, while 10/63
+have already excavated at least 95% of the target.
+The hardest condition remains `fnd-slab-side1-obj` at 5/16 exact, followed by
+`fnd-proc-side1-road` at 8/16.  By contrast, trenches are 333/336 exact.  The
+partial-reset arm should therefore remain foundation- and relay/cleanup-focused
+and must still be judged on untouched full starts.
+
+The 720-map development-panel comparison also passes every integrity gate:
+u14 solves 377/720 and u40 solves 663/720.  Its manifest slot 119
+(`fnd-slab-apron-d16`, `curriculum-diverse-320-9150`) is a conversion rather
+than a retention control.  At u14 it times out after 450 steps with 47.97%
+excavated, 14.19% in the terminal zone, 33.78% staged off-zone, 404 no-effect
+actions, and 373 stall-saturated decisions.  At u40 the same reset reaches
+exact completion in 132 steps, with eight no-effect actions and no stall
+saturation.  The source checkpoint therefore did not already solve this
+current development reset.
+
+The core map geometry is byte-identical to the historical successful d16
+relay, but the canonical distance sidecar and scenario identifier changed;
+the historical 163-step, 17-dump, 9-rehandle trace also came from a different
+compact checkpoint.  Fixed JSON establishes the u40 conversion but cannot
+show which actions produced it, so a matched full-720, chunk-120 action trace
+was run under the same development-panel contract.
+
+That mechanism trace passes.  On u40, the policy makes five off-zone staging
+dumps totaling 115 units, five off-zone relifts totaling 115 units, and seven
+terminal deposits totaling all 148 source units before exact completion at
+step 132.  Its first explicit relay stages 21 units at step 11, aligns the
+cabin at steps 12 and 14, makes effectful unloaded base movements at steps 13
+and 15, relifts the 21 off-zone units at step 16, and deposits them in the
+terminal zone at step 19.  Cabin turns do not count as base relocation.  The
+same trace reaches a peak off-zone inventory of 94 units and finishes with no
+off-zone or carried soil.
+
+The u14 policy already executes one short stage-relocate-relift primitive at
+steps 17--22, so this is not evidence that the continuation invented staging
+from nothing.  It stages 71 units but relifts only 21, then times out with 50
+units off-zone.  The bounded result is therefore that the combined
+continuation learned to close this multistage relay on one canonical d16
+development reset; it is not component attribution to stall age or v3, a
+retention result, or a population-level relay-success estimate.  The event
+classifier follows aggregate off-zone mass through time and does not claim
+particle-level soil lineage.
+
+The durable trace artifact is
+`.artifacts/terra_v61_stall_age_continuation_20260814/final_eval/d16_trace/`.
+Its `comparison.json`, `receipt.json`, `trace_rows.jsonl`, and
+`full_panel_action_arrays.npz` hashes are respectively
+`6da467c9d891ff8e979e7525fc09dff85dd4502f6c54018d2e1be60676922cc0`,
+`ea1dfbde180bca4965ab5357bc96561432ff3d0ccd9d3a8d165ac6f3441cd98c`,
+`fd55ede383d1f91e685d549c40ef2b829d8eb37fe276ab3905f4725e9f79f226`,
+and `610307430d96dd1e535cf2d5fa4721ca718ae15b0d6d7929d6e5ca85387f09e1`.
+The trace has exact full-panel parity with both fixed development receipts;
+cross-process action identity to those earlier fixed runs is not claimed.
+
+The fail-closed combined analysis is
+`.artifacts/terra_v61_stall_age_continuation_20260814/final_eval/analysis/readout_analysis.json`
+(SHA-256
+`c3ae10f2df65e2f8a8b075047414363ecfce19ccca01c5e285e993e68d5a9953`).
+The development u14 and u40 JSON hashes are respectively
+`6189432fea05adb20a208ebcde0e3b3572fe9d184e096605646cf2d32acfa6b5`
+and
+`ddb006b31ae36d01bffc3e162ea82915909c85266bac9bb84734a500621fdbf2`.
+
+The paired fixed-panel artifact is
+`.artifacts/terra_v61_stall_age_continuation_20260814/final_eval/fixed_panel/u39000_u40000_fixed_panel_chunk120_legacy_cudnn.json`
+(SHA-256
+`0b1c8cca42566259c36369d1fef6c78f0f05b7db2b0064f60cd4af5dab047f3a`).
+The matched u14 artifact is
+`.artifacts/terra_v61_stall_age_continuation_20260814/final_eval/fixed_panel/u14000_fixed_panel_chunk120_legacy_cudnn.json`
+(SHA-256
+`cdd9bacb29de7032664acfde77171100bee6011fa921c9fa31a86d1fee313be6`).
+The targeted recurrence probe uses its separately declared 8+4 forward split
+and remains diagnostic only.  No preliminary training curve is treated as
+evaluation evidence.
 
 ## Evidence sources
 

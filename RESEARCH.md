@@ -39,13 +39,19 @@ seed, horizon, and fixed evaluations. The Atari policy is a deliberately small
 system control, not a pure encoder ablation, because its actor, critic, and
 local-map heads are also smaller.
 
-The active capability run continues the selected v6.1 reward-v2 checkpoint
+The completed capability run continued the selected v6.1 reward-v2 checkpoint
 with two declared changes: Continuous Banded v3 and one normalized material
 stall-age observation. Reward-v2, the v6.1 spatial architecture, action-mask
 setting, PPO shape, learning rate, horizon, bank, and seed remain fixed. This
 is a practical combined treatment, not a causal sampler or observation
 ablation. Fixed source-disjoint panels—not reward return or online success—
-decide whether to continue it.
+provide its behavioral evidence: the final checkpoint reaches 657/720 exact
+versus 407/720 for the matched source, while five selected recurrent failures
+and high late-checkpoint churn remain.
+
+The implementation, fixed-panel evidence, failure-mechanism readout, and
+bounded next actions are tracked in
+[V8 failure-remediation execution](docs/research/V8_FAILURE_REMEDIATION_EXECUTION_20260814.md).
 
 The mechanism is informed by, but does not copy constants from:
 
