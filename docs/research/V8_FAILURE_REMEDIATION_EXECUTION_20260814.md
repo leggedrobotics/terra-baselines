@@ -252,8 +252,9 @@ The unchanged extra-day segment is implemented by launcher commit
 u40 is ahead of the last logged `train/update=39991`.  Its absolute target is
 u70,000, deliberately beyond the approximately u67k expected to fit in the
 23:45 allocation, and it checkpoints every 500 updates.  At the recorded
-snapshot the exact 8xRTX-4090 request is `PENDING (Priority)` with no node or
-start estimate, so it has produced no new training evidence yet.
+snapshot the exact 8xRTX-4090 request is `PENDING (Priority)` with no allocated
+node and a scheduler-estimated start of 2026-08-15 07:15 CEST, so it has
+produced no new training evidence yet.
 
 The final sampler state has 46/47 mastered conditions.  Its only open
 condition is `fnd-slab-side1-obj`, which receives the 0.15 cap; the remaining

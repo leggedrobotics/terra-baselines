@@ -59,9 +59,10 @@ than only at its final wall-time checkpoint.
 Slurm job `10752100` was submitted at 2026-08-14 23:47 CEST with account
 `gpuhe/es_hutter`, QOS `es_hutter/gpuhe/24`, partition `gpuhe.24h`, and an
 exact request for eight RTX 4090 GPUs, eight CPUs, and 64 GB RAM.  At the
-recorded snapshot it is `PENDING (Priority)`, with no allocated node or start
-estimate.  The phase-3 run directory is reserved but contains no training
-evidence yet.  W&B remains in its completed u40 state until the allocation
+recorded snapshot it is `PENDING (Priority)`, with no allocated node; Slurm's
+current estimated start is 2026-08-15 07:15 CEST.  The phase-3 run directory is
+reserved but contains no training evidence yet.  W&B remains in its completed
+u40 state until the allocation
 passes the in-job GPU/CUDA/NCCL/checkpoint gates and resumes it.
 
 The launcher is commit
