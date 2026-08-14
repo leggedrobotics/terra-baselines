@@ -2,7 +2,7 @@
 
 Date: 2026-08-14
 
-Active Codex goal: `01a000fe-f5b4-7380-8df1-4ea8f2e343f1`
+Completed Codex goal: `01a000fe-f5b4-7380-8df1-4ea8f2e343f1`
 
 Goal objective: complete the non-overlapping Terra V8 failure-remediation
 workstream: repair canonical evaluation no-effect accounting, expose a clear
@@ -115,7 +115,7 @@ or v3 individually.
 
 These fixes are not retroactively injected into job `10625259`.
 
-## Conditional next treatments
+## Separate next treatments
 
 Only after the work packages above:
 
@@ -138,17 +138,20 @@ The immutable u40 continuation tests stall age plus final v3 only.  It does
 not contain the later Terra mechanics commits and must not be credited for
 their effects.
 
-| Issue | Current status | Bounded next action |
-| --- | --- | --- |
-| Missing action-outcome feedback and greedy attractors | Measured; a fresh arm is warranted, but two bits are not a guaranteed cycle or planning fix. | Test previous physical effect plus previous material/load change with reward, sampler, architecture, and no-mask contract fixed.  Promote only on reduced recurrence without full-panel regression; otherwise proceed to the recurrent-policy rung. |
-| Minimum actionable-unit veto | Fixed for a future fresh runtime by Terra `88c0099e`; it is absent from u40. | Carry it into the next fresh environment and retain exact-completion and mass-conservation tests.  Its measured direct ceiling is small. |
-| Atomic rejection of an over-capacity positive relift | Fixed for a future fresh runtime by Terra `30ad500f`; it is absent from u40. | Train and evaluate the capacity-bounded, mass-conserving `load what fits` transition before attributing policy benefit. |
-| Accepted-first dump without off-zone fallback | Source-level risk, not observed in the selected lifecycle audit: zero accepted-invalid/off-zone-valid states occurred. | Keep the reason-code diagnostic and add two-pass fallback only after a real trajectory reaches that branch. |
-| Traversability observation versus physics | Diagnosis revised by the incidence audit.  Sparse height-one soil was rarely false-blocked; the causal case was under-base holes hidden by the agent overlay. | Prevent dig/relift under the exact base footprint, define collision-reducing escape for pre-existing overlap, and preserve underlying blockers in the visible channel.  Do not add an action mask. |
-| Hidden `last_dig_mask` | It changed counterfactual DO eligibility in 38 visited states but produced zero measured exact full-input aliases. | Defer raw history exposure.  Let a large DO-decodability audit decide whether a compact affordance feature should subsume it. |
-| Point-geodesic potential ignores serviceability | One local counterexample: slot 250 step 50 improved H by 7.72 but left no same-base relift heading.  This does not prove global inaccessibility. | Keep reward-v2 and measure station, heading, and path serviceability over a larger panel before changing the potential. |
-| Clipped global pile heights | Not the cause of the measured target recurrences: no repeated policy-input hash had a different raw action-map hash. | Defer expansion unless a separate capacity or long-range planning audit finds height-dependent aliases. |
-| Relay and cleanup underexposure | Parallel curriculum arm in `.worktrees/terra_v8_relay_corridor_20260814`; outside this goal's edit scope. | Mix a bounded share of mass-conserved, in-distribution partial resets, exclude them from full-start v3 mastery updates, and judge only on the untouched full-start panel.  This treats exposure, not identical-input attractors. |
+| Issue | Status class | Current evidence | Bounded next action |
+| --- | --- | --- | --- |
+| Stall age plus final v3 | **Trained/evaluated** | The combined u14-to-u40 continuation improves exact completion from 407/720 to 657/720, but five selected recurrent failures remain and late checkpoint churn is high. | Continue the identical treatment for one more 24-hour segment and evaluate several retained checkpoints.  Do not attribute the gain to either component alone. |
+| Evaluator no-effect accounting and material-progress vector | **Diagnostic fixed** | Canonical no-effect counts now use Terra's transition flag, and fixed evaluation measures terminal dig/accepted/off-zone/carried fractions.  These repairs postdate the source that generated u40. | Keep these diagnostics in every subsequent fixed-panel readout; they are measurements, not policy treatments. |
+| Missing action-outcome feedback and greedy attractors | **Unresolved** | Exact no-effect fixed points and effective short cycles remain.  Prior physical effect plus material/load change is a supported fresh-arm hypothesis, not a guaranteed planning fix. | Run a matched fresh observation arm.  Promote only on reduced recurrence without full-panel regression; otherwise proceed to the recurrent-policy rung. |
+| Minimum actionable-unit veto | **Implemented/untrained** | Terra `88c0099e` removes the arbitrary singleton veto.  It is absent from u40 and its direct continuation. | Carry it into the next fresh environment and retain exact-completion and mass-conservation tests.  Its measured direct ceiling is small. |
+| Atomic rejection of an over-capacity positive relift | **Implemented/untrained** | Terra `30ad500f` implements capacity-bounded, mass-conserving `load what fits`.  It is absent from u40 and its direct continuation. | Train and evaluate the new transition before attributing policy benefit. |
+| Relay and cleanup underexposure | **Generator implemented/untrained** | Terra `67c72d09` adds natural relay-corridor partial resets and `794d4759` preserves trench access.  The baseline-side 25% mixture, reset provenance, and exclusion from full-start v3 mastery are not implemented yet. | Finish that narrow integration as a separate matched arm and judge only on the untouched full-start panel.  Do not merge it into the direct u40 continuation. |
+| Accepted-first dump without off-zone fallback | **Unresolved, low observed incidence** | The source-level risk remains, but the selected lifecycle audit observed zero accepted-invalid/off-zone-valid states. | Keep the reason-code diagnostic and add two-pass fallback only after a real trajectory reaches that branch. |
+| Traversability observation versus physics | **Audited/unfixed** | Sparse height-one soil was rarely false-blocked.  The causal selected case was under-base holes hidden by the agent overlay. | Prevent dig/relift under the exact base footprint, define collision-reducing escape for pre-existing overlap, and preserve underlying blockers in the visible channel.  Do not add an action mask. |
+| Hidden `last_dig_mask` and ambiguous `DO` outcome | **Deferred pending decodability** | Hidden state changed counterfactual DO eligibility in 38 visited states but produced zero measured exact full-input aliases. | Do not expose raw history now.  Use a large decodability audit to decide whether a compact five-way DO affordance should subsume it. |
+| Point-geodesic potential ignores serviceability | **Audited/unfixed** | One local counterexample improved H by 7.72 but had no same-base relift heading; this does not prove global inaccessibility. | Keep reward-v2 and measure station, heading, and path serviceability over a larger panel before changing the potential. |
+| Clipped global pile heights | **Deferred** | They did not cause the measured target recurrences: no repeated policy-input hash had a different raw action-map hash. | Revisit only if a separate capacity or long-range planning audit finds height-dependent aliases. |
+| Progress age and actor GRU | **Deferred rung** | Stall age delays some traps but saturates, and material-changing ping-pong resets it.  No matched recurrent treatment has run. | Try progress-aligned observations first; if explicit repairs leave multi-step cycles, test actor-only GRU-64 with contiguous sequence PPO and a sequence-batched feed-forward control. |
 
 ## Execution status
 
@@ -217,6 +220,31 @@ immutable final checkpoint is
 `17cbd702f8b7558fb91538debcefac6f15f1554ea8ac800b2f213612004fb6d8`).
 The local durable copy, run contract, and Slurm log are under
 `.artifacts/terra_v61_stall_age_continuation_20260814/final_u40000/`.
+
+The exact u40 reproduction boundary is immutable and intentionally excludes
+all later diagnostics, mechanics, and partial-reset work:
+
+- terra-baselines source:
+  `dddc691c93ee21488cd7eeb8e01b067bf1f9733c`;
+- Terra runtime source:
+  `c2d2a94a124759e9f21c2b37930f717e299f0c46`;
+- final checkpoint SHA-256:
+  `17cbd702f8b7558fb91538debcefac6f15f1554ea8ac800b2f213612004fb6d8`;
+- checkpoint clocks: `next_update=40000` and optimizer step `2560000`;
+- W&B run:
+  `v8_v61_stall_age_v3_dddc691c93_phase2_10625259`;
+- Slurm job: `10625259`;
+- run-contract SHA-256:
+  `4954a456a9c6ef5be40146e1993025cbbdb4d879531aa7957d1c9240ea042502`;
+  and
+- Slurm-log SHA-256:
+  `dd4381faa93de53c71f0976b86fb65b0e8ecd686c516c2e7257ebe10fbc0ef04`.
+
+The paired annotated Git tag `v8-v61-stall-age-u40-20260814` points to the
+respective source commit in each repository.  The direct one-day continuation
+must resume this checkpoint with these exact sources.  It must not use Terra
+`88c0099e`, `30ad500f`, `67c72d09`, or `794d4759`; those form a separate fresh
+environment/curriculum line.
 
 The final sampler state has 46/47 mastered conditions.  Its only open
 condition is `fnd-slab-side1-obj`, which receives the 0.15 cap; the remaining

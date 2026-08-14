@@ -1,105 +1,69 @@
-# Experiments — current state (updated 2026-08-13 CEST)
+# Experiments — current state (updated 2026-08-14 CEST)
 
 ## v6.1 reward-v2 + stall age + Continuous Banded v3
 
-One direct continuation is running as Slurm job `10625259` on `eu-g6-048`
-with eight RTX 4090 GPUs. It started at 2026-08-13 20:02 CEST from the selected
-v6.1 reward-v2 checkpoint at update 14,000 and targets absolute update 40,000.
-The declared practical bundle contains exactly:
+The first capability segment is complete.  Slurm job `10625259` continued the
+selected v6.1 policy from absolute update 14,000 to update 40,000 on eight RTX
+4090 GPUs and exited successfully after `22:48:04`.  The final held-out
+promotion result is 657/720 exact, versus 407/720 at the u14 source.  This is a
+combined stall-age plus final-v3 treatment, not a component ablation.
 
-1. one material-stall-age observation; and
-2. the final family-free Continuous Banded v3 curriculum.
+The exact u40 source is frozen as:
 
-This is a capability run, not a causal one-variable ablation. Reward-v2 and its
-timing, v6.1 spatial architecture, no-action-mask setting, PPO shape, learning
-rate, entropy schedule, horizon, bank and seed remain fixed.
-
-### Observation
-
-```text
-stall_age = min(consecutive transitions without material-state change, 32) / 32
-```
-
-The material signature is the raw soil/action map plus every active
-excavator's load and carry-relocation credit. Soil, load or carry changes reset
-the counter; pose and cabin motion do not. Separate zero-initialized 704-wide
-actor and critic embeddings inject the scalar without changing update-14,000
-outputs at age zero.
-
-### Curriculum
-
-Continuous Banded v3 has no foundation/trench assignment quota. It places 80%
-of assignment mass globally on open conditions with depth weights `4:2:1`,
-20% uniformly on mastered replay, and caps each condition at 15% by
-water-filling. At the source checkpoint, 29 conditions are mastered and 18 are
-open; v3 assigns exactly 0.80/0.20 open/replay mass, 84.83% foundation and
-15.17% trench mass, with maximum cell mass 6.96%.
-
-The source checkpoint stopped 50 updates into a sampler window. The offline
-materializer preserves model/Adam state, optimizer and entropy clocks,
-mastery, competence, closed-window history, refresh schedule and sampler RNG,
-then clears only that unfinished window and writes native v3 state. Runtime has
-no sampler-migration mode.
-
-### Compute and admission
-
-- requested shape: 8 RTX 4090, `gpuhe.24h`, 23:45;
-- PPO shape: 8 x 256 environments x 32 steps, 32 minibatches, two epochs;
-- global environments and transitions/update remain 2,048 and 65,536;
-- the allocation runs CUDA convolution-backward and NCCL preflight before
-  training;
-- the first completed update checks finite loss, parameters and optimizer;
-- checkpoints are written every 500 absolute updates, so a wall-time stop is
-  continuable.
-
-Pinned inputs:
-
-- Terra: `c2d2a94a124759e9f21c2b37930f717e299f0c46`;
-- source checkpoint SHA-256:
-  `79312602176e88b696c8c006b3b9af71a4cf121907c7aa8c4865722bd4830609`;
-- prepared checkpoint `v8_v61_stall_age_v3_u14000_prepared.pkl`, 27,741,529
-  bytes, SHA-256
-  `68aea1a0f5dc3c05d11319fdf640ade05495125225533bc99ad92592475fcb75`;
-- terra-baselines launch revision:
+- terra-baselines:
   `dddc691c93ee21488cd7eeb8e01b067bf1f9733c`;
-- Slurm job: `10625259`, `RUNNING` on `eu-g6-048` at the recorded snapshot;
-- first rolling checkpoint: absolute update 14,500, 27,741,618 bytes,
-  SHA-256
-  `4d3ef5b0077108e2ef225a645b83bf359398035d1084f8f823033f3136f00315`.
+- Terra:
+  `c2d2a94a124759e9f21c2b37930f717e299f0c46`;
+- final checkpoint:
+  `v8_v61_stall_age_v3_u40000_FINAL_17cbd702f8b7558fb91538debcefac6f15f1554ea8ac800b2f213612004fb6d8.pkl`;
+- checkpoint SHA-256:
+  `17cbd702f8b7558fb91538debcefac6f15f1554ea8ac800b2f213612004fb6d8`;
+- checkpoint clocks: `next_update=40000`, optimizer step `2560000`; and
+- W&B run:
+  `v8_v61_stall_age_v3_dddc691c93_phase2_10625259`.
 
-This allocated job is immutable and still uses Terra `c2d2a94a`, including
-the historical minimum-two eligible-cell action veto. The later isolated
-Terra correction `88c0099e` removes that arbitrary lower bound for future
-training; it is not injected into this continuation.
+The same annotated tag, `v8-v61-stall-age-u40-20260814`, identifies the paired
+source commit in each repository.
 
-The incorrectly prepared job `10616190` retained the old family-balanced
-sampler. It was cancelled while pending and consumed zero runtime; it produced
-no checkpoint, W&B run or training evidence. Earlier resume-smoke job
-`10572344` was likewise cancelled without allocation.
+### Direct one-day extension
 
-### Readout
+A second 23:45 segment resumes the native u40 checkpoint without changing the
+treatment.  Its absolute target is u70,000, deliberately beyond the roughly
+27,100 updates expected to fit in one allocation.  A wall-time exit near u67k
+with a verified rolling checkpoint is therefore `CONTINUABLE`, not a failed
+run.
 
-1. ~~Verify the first completed update and first finite rolling checkpoint.~~
-   Passed through the durable update-14,500 checkpoint above.
-2. Evaluate fixed promotion checkpoints against the existing v6.1 curve.
-3. Inspect stall-age mean/saturation and the frozen recurrence failure strata.
-4. Continue while fixed-panel performance improves; stop on a measured
-   plateau, not wall time.
+The extension preserves:
 
-If recurrence remains, the next separate experiment is an actor-only GRU-64
-head over the unchanged v6.1 encoder. It requires contiguous 32-step PPO
-sequences and a sequence-batched feed-forward control; it is not bundled here.
+- reward-v2 and its timing;
+- material stall age and Continuous Banded v3;
+- the v6.1 spatial MLP architecture and no-action-mask contract;
+- 8 x 256 environments x 32 steps, 32 minibatches, and two PPO epochs;
+- 65,536 transitions per absolute update;
+- learning rate, entropy schedule, horizon 450, bank, and seed 20260807;
+- the complete optimizer, sampler, and absolute update clocks; and
+- the original W&B lineage with `resume=must` because its last logged
+  `train/update=39991` does not exceed the u40 checkpoint.
 
-## Latest completed reference
+It does **not** include later Terra commits `88c0099e` or `30ad500f`, the relay
+partial-reset generator `67c72d09`/`794d4759`, new outcome observations, a DO
+affordance, reward changes, a GRU, or action masking.  Those remain separate
+fresh-treatment arms.
 
-The selected v6.1 update-14,000 policy scored 407/720 exact on the fixed
-promotion panel versus 281/720 for the code-matched compact policy. It improved
-foundations by 66 maps and trenches by 60, while all 313 remaining failures
-timed out. The failure and recurrence analysis is in
-[`research/V8_V61_FAILURE_AUDIT_20260813.md`](research/V8_V61_FAILURE_AUDIT_20260813.md),
-and the architecture result is in
-[`research/V8_V61_ABLATION_RESULT_20260813.md`](research/V8_V61_ABLATION_RESULT_20260813.md).
+Checkpoints remain every 500 absolute updates.  Fixed source-disjoint
+evaluation—not online return or mastery—is the decision evidence.  Because the
+u39-to-u40 comparison had 38 conversions and 32 regressions for only +6 net,
+the extended line must be evaluated at multiple retained checkpoints rather
+than only at its final wall-time checkpoint.
 
-Completed historical runs remain in [`EXPERIMENTS_LOG.md`](EXPERIMENTS_LOG.md)
-and git history. Superseded launchers and sampler modes are intentionally not
-kept as executable compatibility surfaces.
+The exact submitted job ID and allocation state are appended here immediately
+after Slurm submission.
+
+## Current issue checklist
+
+The living status ledger, exact u40 readout, and bounded next actions are in
+[`research/V8_FAILURE_REMEDIATION_EXECUTION_20260814.md`](research/V8_FAILURE_REMEDIATION_EXECUTION_20260814.md).
+The archived Oracle response remains unchanged in
+[`research/ORACLE_TERRA_STAGING_REVIEW_20260814.md`](research/ORACLE_TERRA_STAGING_REVIEW_20260814.md).
+
+Completed historical runs remain in [`EXPERIMENTS_LOG.md`](EXPERIMENTS_LOG.md).
