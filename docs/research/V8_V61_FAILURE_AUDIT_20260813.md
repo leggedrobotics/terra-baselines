@@ -655,6 +655,11 @@ training rather than merely inserting a cell into a feed-forward learner
   `c84efe77897177fedd7a54b4cb1c0f3c713e83f66eca3b958e2e4438d78665c8`;
   its substantive response ends with
   `ORACLE_V61_FIX_REVIEW_COMPLETE`.
+- Independent Oracle staging/reward review, preserved verbatim from
+  `~/Downloads/oracle_terra_1408`:
+  [`ORACLE_TERRA_STAGING_REVIEW_20260814.md`](ORACLE_TERRA_STAGING_REVIEW_20260814.md),
+  SHA-256
+  `06dd1f6e3f0f5277c159a6ae1e71aea1ea791be8df2503b4ec7b588128063ba9`.
 
 ## Stall-age continuation contract
 
