@@ -13,6 +13,7 @@ from utils.wandb_human import (
     curriculum_metrics,
     episode_metrics,
     fixed_eval_metrics,
+    full_start_episode_metrics,
     loss_metrics,
 )
 
@@ -84,6 +85,19 @@ def test_episode_metrics_are_rates_means_and_unknown_without_episodes():
     assert math.isnan(empty["behavior/absolute_completion"])
     assert math.isnan(empty["material_progress/loaded_soil_fraction"])
     assert "reward/trench" not in empty
+
+    full_start = full_start_episode_metrics(
+        np.asarray([2, 3]),
+        np.asarray([1, 2]),
+    )
+    assert full_start["train/full_start_episode_success_rate"] == pytest.approx(
+        3 / 5
+    )
+    no_full_starts = full_start_episode_metrics(
+        np.zeros(2, dtype=np.int64),
+        np.zeros(2, dtype=np.int64),
+    )
+    assert math.isnan(no_full_starts["train/full_start_episode_success_rate"])
 
 
 def test_curriculum_population_and_condition_table_use_actual_exposure():
@@ -187,10 +201,16 @@ def test_bounded_logging_schema_and_manual_workspace():
     assert metrics["kickstart/kl"] == pytest.approx(0.6)
     assert not any(key.startswith("diagnostics/") for key in metrics)
 
-    assert len(TRAINING_SCALAR_KEYS) <= 56
+    assert len(TRAINING_SCALAR_KEYS) <= 67
     assert "reward/terminal_objective_mix" in TRAINING_SCALAR_KEYS
+    assert "train/full_start_episode_success_rate" in TRAINING_SCALAR_KEYS
     assert {
         f"curriculum/population/{label}" for label in (*FAMILIES, *BRANCH_DEPTHS)
+    }.issubset(TRAINING_SCALAR_KEYS)
+    assert {
+        "curriculum/partial_reset_target_share_90",
+        "curriculum/partial_reset_target_share_75",
+        "curriculum/partial_reset_target_share_50",
     }.issubset(TRAINING_SCALAR_KEYS)
     banned = ("integrity/", "curriculum_levels", "sampler_q/", "diagnostics/")
     assert not any(key.startswith(banned) for key in TRAINING_SCALAR_KEYS)

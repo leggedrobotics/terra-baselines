@@ -162,6 +162,42 @@ def test_stall_age_input_is_required_and_appended_after_existing_features():
         raise AssertionError("missing stall_age observation was accepted")
 
 
+def test_reset_context_uses_two_zero_initialized_branch_embeddings():
+    env = SimpleNamespace(
+        batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
+    )
+    context_config = config(False)
+    context_config["reward_v2_reset_context_observation"] = True
+    _, params = get_model_ready(
+        jax.random.PRNGKey(3),
+        context_config,
+        env,
+    )
+    model_params = params["params"]
+    for name in (
+        "reward_v2_reset_context_actor_embedding",
+        "reward_v2_reset_context_critic_embedding",
+    ):
+        values = np.asarray(model_params[name])
+        assert values.shape == (2, FUSED_WIDTH)
+        np.testing.assert_array_equal(values, np.zeros_like(values))
+
+    observation = raw_obs()
+    observation["reward_v2_reset_context"] = jnp.asarray(
+        [[0.0, 1.0], [0.25, 0.75], [0.9, 0.1]], dtype=jnp.float32
+    )
+    model_input = obs_to_model_input(
+        observation,
+        jnp.zeros((3, 5), dtype=jnp.int32),
+        context_config,
+    )
+    assert len(model_input) == 23
+    np.testing.assert_array_equal(
+        np.asarray(model_input[22]),
+        np.asarray(observation["reward_v2_reset_context"]),
+    )
+
+
 def test_stall_age_receipt_is_carried_into_continuation_checkpoints():
     receipt = {
         "schema": "terra_v8_v61_stall_age_v3_prepared_v1",

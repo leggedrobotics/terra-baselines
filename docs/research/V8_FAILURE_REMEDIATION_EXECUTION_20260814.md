@@ -14,15 +14,16 @@ checkpoint is available.
 ## Scope boundary
 
 This work does not edit trench generation, trench excavation ordering, or the
-partial-reset generator. Those are being developed in parallel. It also does
-not mutate the allocated continuation, change reward-v2, add action masking,
-or bundle a new policy observation into the partial-reset experiment.
+partial-reset generator. It also does not mutate the allocated continuation,
+change reward-v2, or add action masking. The separate fresh partial-reset arm
+now consumes the paired Terra generator through its narrow sidecar API and
+adds only the reset-context observation described below.
 
-The parallel partial-reset implementation is owned at
+The paired partial-reset implementation is owned at
 `/home/lorenzo/moleworks/.worktrees/terra_v8_relay_corridor_20260814`. This
-workstream must not edit, format, clean, commit, or otherwise mutate that
-worktree. A later audit may consume a completed immutable dataset from it, but
-must not import uncommitted source as evaluation authority.
+baselines workstream does not edit, format, clean, commit, or otherwise mutate
+that worktree. Training consumes only a Terra-validated sidecar bank whose
+content digest is bound into checkpoints and evaluation receipts.
 
 ## Why these items come first
 
@@ -132,6 +133,58 @@ Defer global pile-height preprocessing changes, accepted-first dump fallback,
 time-to-go, action masking, and broad reward redesign until higher-priority
 evidence requires them.
 
+## Backplay-inspired synthetic partial-reset arm
+
+The relay/cleanup exposure treatment is implemented as one fixed, absolute
+update schedule. Update indices are zero-based and do not restart when a
+24-hour segment resumes:
+
+- updates 0--2,499: 25% partial lanes at 90% completion;
+- updates 2,500--4,999: 25% partial lanes distributed across 75% and 90%;
+- updates 5,000--7,499: 25% partial lanes distributed across 50%, 75%, and
+  90%;
+- updates 7,500--9,999: the same cumulative tier window while total partial
+  share fades linearly from 25% to zero; and
+- update 10,000 onward: full starts only.
+
+The three tier shares and their aggregate target share are logged separately.
+Partial lanes draw from the current Continuous Banded v3 probabilities
+renormalized over the one condition subset supported by all three tiers. Full
+lanes retain ordinary v3 draws. All assignment, reset, and transition exposure
+counts remain truthful to the actual training mixture; only partial-start
+episode outcomes are excluded from v3 competence and mastery updates.
+
+The legacy `train/episode_success_rate` remains unchanged for dashboard
+continuity. During the partial curriculum it mixes full- and partial-start
+episodes and is therefore not a matched online comparison. The separate
+`train/full_start_episode_success_rate` uses only completed tier-0 episodes and
+is the comparable online diagnostic across control and treatment. It remains
+secondary to the untouched fixed 720-map full-start evaluation, which is the
+primary decision evidence.
+
+The causal pair uses the same fresh v6.1 architecture and reward-v2 contract:
+
+- matched control: full starts plus
+  `--reward-v2-reset-context-observation`;
+- treatment: the same flag plus `--partial-reset-root` and its validated bank
+  digest.
+
+The observation is the constant-per-episode pair
+`[Q_reset, H_reset / V0]`, added through separate zero-initialized actor and
+critic embeddings. Both control and treatment reject parameter-only warm
+starts so they begin from fresh parameters. Native `--resume_from` remains
+supported for segmented runs; the treatment additionally requires the same
+bank digest and continues the schedule from the absolute checkpoint update.
+Action masking and stall age are excluded from this causal arm. Online and
+fixed-bank evaluation force tier 0 and therefore remain full-start tests.
+
+This is **Backplay-inspired**, not an implementation of Backplay. It moves a
+synthetic start-state distribution backward through completion windows, but
+does not reset along successful policy trajectories, replay demonstrations, or
+provide per-state success witnesses. The implementation is untrained and
+there is no claim yet that it improves relay learning, solves the generated
+states, or improves the untouched 720-map full-start panel.
+
 ## Issue-resolution ledger
 
 The immutable u40 continuation tests stall age plus final v3 only.  It does
@@ -145,7 +198,7 @@ their effects.
 | Missing action-outcome feedback and greedy attractors | **Unresolved** | Exact no-effect fixed points and effective short cycles remain.  Prior physical effect plus material/load change is a supported fresh-arm hypothesis, not a guaranteed planning fix. | Run a matched fresh observation arm.  Promote only on reduced recurrence without full-panel regression; otherwise proceed to the recurrent-policy rung. |
 | Minimum actionable-unit veto | **Implemented/untrained** | Terra `88c0099e` removes the arbitrary singleton veto.  It is absent from u40 and its direct continuation. | Carry it into the next fresh environment and retain exact-completion and mass-conservation tests.  Its measured direct ceiling is small. |
 | Atomic rejection of an over-capacity positive relift | **Implemented/untrained** | Terra `30ad500f` implements capacity-bounded, mass-conserving `load what fits`.  It is absent from u40 and its direct continuation. | Train and evaluate the new transition before attributing policy benefit. |
-| Relay and cleanup underexposure | **Generator implemented/untrained** | Terra `67c72d09` adds natural relay-corridor partial resets and `794d4759` preserves trench access.  The baseline-side 25% mixture, reset provenance, and exclusion from full-start v3 mastery are not implemented yet. | Finish that narrow integration as a separate matched arm and judge only on the untouched full-start panel.  Do not merge it into the direct u40 continuation. |
+| Relay and cleanup underexposure | **Treatment implemented/untrained** | Terra `67c72d09` adds natural relay-corridor partial resets and `794d4759` preserves trench access. The baseline side now implements the fixed 10k schedule, reset provenance, common-support v3 sampling, full-start-only mastery updates, reset-context matched control, full-start evaluation, and bank-bound native resume. | Run the fresh matched control/treatment pair and judge only on the untouched full-start panel plus recurrence/relay strata. Do not credit this arm with Backplay demonstrations or merge it into the direct u40 continuation. |
 | Accepted-first dump without off-zone fallback | **Unresolved, low observed incidence** | The source-level risk remains, but the selected lifecycle audit observed zero accepted-invalid/off-zone-valid states. | Keep the reason-code diagnostic and add two-pass fallback only after a real trajectory reaches that branch. |
 | Traversability observation versus physics | **Audited/unfixed** | Sparse height-one soil was rarely false-blocked.  The causal selected case was under-base holes hidden by the agent overlay. | Prevent dig/relift under the exact base footprint, define collision-reducing escape for pre-existing overlap, and preserve underlying blockers in the visible channel.  Do not add an action mask. |
 | Hidden `last_dig_mask` and ambiguous `DO` outcome | **Deferred pending decodability** | Hidden state changed counterfactual DO eligibility in 38 visited states but produced zero measured exact full-input aliases. | Do not expose raw history now.  Use a large decodability audit to decide whether a compact five-way DO affordance should subsume it. |

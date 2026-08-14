@@ -141,6 +141,7 @@ from utils.wandb_human import (
     condition_rows,
     curriculum_metrics,
     episode_metrics,
+    full_start_episode_metrics,
     loss_metrics,
 )
 import json
@@ -174,11 +175,127 @@ def kickstart_coef_schedule(
     return float(initial_coef * 0.5 * (1.0 + math.cos(math.pi * fraction)))
 
 
+PARTIAL_RESET_CURRICULUM_SCHEMA = "terra_partial_reset_curriculum_v1"
+PARTIAL_RESET_INITIAL_SHARE = 0.25
+PARTIAL_RESET_PHASE_UPDATES = 2500
+PARTIAL_RESET_TOTAL_UPDATES = 4 * PARTIAL_RESET_PHASE_UPDATES
+PARTIAL_RESET_COMPLETION_BY_TIER = {0: 0.0, 1: 0.90, 2: 0.75, 3: 0.50}
+
+
+@dataclass(frozen=True)
+class PartialResetSchedule:
+    tiers: tuple[int, ...]
+    share: float
+
+    @property
+    def completion_fraction(self) -> float:
+        if not self.tiers:
+            return 0.0
+        return min(PARTIAL_RESET_COMPLETION_BY_TIER[tier] for tier in self.tiers)
+
+
+def partial_reset_schedule(
+    update_index: int,
+) -> PartialResetSchedule:
+    """Return the fixed 10k-update cumulative Backplay window."""
+    update_index = int(update_index)
+    if update_index < 0:
+        raise ValueError("partial reset update_index must be nonnegative")
+    if update_index < PARTIAL_RESET_PHASE_UPDATES:
+        return PartialResetSchedule(tiers=(1,), share=PARTIAL_RESET_INITIAL_SHARE)
+    if update_index < 2 * PARTIAL_RESET_PHASE_UPDATES:
+        return PartialResetSchedule(tiers=(2, 1), share=PARTIAL_RESET_INITIAL_SHARE)
+    if update_index < 3 * PARTIAL_RESET_PHASE_UPDATES:
+        return PartialResetSchedule(
+            tiers=(3, 2, 1), share=PARTIAL_RESET_INITIAL_SHARE
+        )
+    if update_index >= PARTIAL_RESET_TOTAL_UPDATES:
+        return PartialResetSchedule(tiers=(), share=0.0)
+
+    anneal_progress = (
+        update_index - 3 * PARTIAL_RESET_PHASE_UPDATES
+    ) / float(PARTIAL_RESET_PHASE_UPDATES)
+    share = PARTIAL_RESET_INITIAL_SHARE * (1.0 - anneal_progress)
+    return PartialResetSchedule(
+        tiers=(3, 2, 1), share=max(0.0, float(share))
+    )
+
+
+def partial_reset_lane_tiers(
+    shape: tuple[int, ...],
+    schedule: PartialResetSchedule,
+    *,
+    seed: int,
+) -> np.ndarray:
+    """Choose one deterministic, nested partial-lane population for a schedule."""
+    size = int(np.prod(shape))
+    count = int(round(float(schedule.share) * size))
+    tiers = np.zeros(size, dtype=np.int32)
+    if count:
+        if not schedule.tiers:
+            raise ValueError("nonzero partial share requires at least one tier")
+        order = np.random.default_rng(int(seed)).permutation(size)
+        active_tiers = np.resize(np.asarray(schedule.tiers, dtype=np.int32), count)
+        tiers[order[:count]] = active_tiers
+    return tiers.reshape(shape)
+
+
+def partial_reset_bank_sha256(root: str | Path) -> str:
+    """Use Terra's loader-validated identity for the partial action sidecar."""
+    from terra.maps_buffer import partial_reset_bank_sha256 as terra_bank_sha256
+
+    return terra_bank_sha256(Path(root).resolve())
+
+
+def assign_reset_tiers(env_cfg, tiers: np.ndarray):
+    current = jnp.asarray(env_cfg.reset_tier)
+    assigned = jnp.asarray(tiers, dtype=current.dtype)
+    if assigned.shape != current.shape:
+        raise ValueError(
+            f"reset tier assignment shape {assigned.shape} != env shape "
+            f"{current.shape}"
+        )
+    return env_cfg._replace(reset_tier=assigned)
+
+
+def condition_outcome_histograms(
+    done: jax.Array,
+    task_done: jax.Array,
+    curriculum_level: jax.Array,
+    include: jax.Array,
+    num_stages: int,
+) -> tuple[jax.Array, jax.Array]:
+    """Count completed and successful episodes selected by ``include``."""
+    if not (
+        done.shape
+        == task_done.shape
+        == curriculum_level.shape
+        == include.shape
+    ):
+        raise ValueError("condition outcome inputs must have identical shapes")
+    ended = jnp.logical_and(done, include)
+    successes = jnp.logical_and(ended, task_done)
+    episodes = (
+        jnp.zeros((num_stages,), dtype=jnp.int32)
+        .at[curriculum_level.reshape(-1)]
+        .add(ended.reshape(-1).astype(jnp.int32))
+    )
+    task_dones = (
+        jnp.zeros((num_stages,), dtype=jnp.int32)
+        .at[curriculum_level.reshape(-1)]
+        .add(successes.reshape(-1).astype(jnp.int32))
+    )
+    return episodes, task_dones
+
+
 class Transition(struct.PyTreeNode):
     done: jax.Array
     task_done: jax.Array
     curriculum_level: jax.Array
     active_curriculum_level: jax.Array
+    active_reset_tier: jax.Array
+    ended_reset_tier: jax.Array
+    next_reset_tier: jax.Array
     action: jax.Array
     value: jax.Array
     reward: jax.Array
@@ -445,6 +562,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "resnet_blocks_per_stage": None,
         "carry_work_observation": False,
         "stall_age_observation": False,
+        "reward_v2_reset_context_observation": False,
         # V6 readout block: all three change parameter shapes.
         "flatten_reduce_channels": None,
         "attn_latent_queries": 4,
@@ -493,8 +611,8 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             "--critic_hidden_dims, --resnet_stage_channels, "
             "--resnet_blocks_per_stage, --flatten_reduce_channels, "
             "--attn_latent_queries, and --aux_coef values, and the "
-            "carry-work/stall-age observations, action-logit-masking and reward-v2 "
-            "timing contracts."
+            "carry-work/stall-age/reward-v2-reset-context observations, "
+            "action-logit-masking and reward-v2 timing contracts."
         )
 
 
@@ -986,6 +1104,56 @@ def _attach_stall_age_receipt(checkpoint: dict, receipt: dict | None) -> None:
         checkpoint["stall_age_prepared_continuation"] = copy.deepcopy(receipt)
 
 
+def partial_reset_curriculum_receipt(config, next_update: int) -> dict | None:
+    if config.partial_reset_root is None:
+        return None
+    last_update = max(0, int(next_update) - 1)
+    schedule = partial_reset_schedule(last_update)
+    return {
+        "schema": PARTIAL_RESET_CURRICULUM_SCHEMA,
+        "partial_reset_root": str(Path(config.partial_reset_root).resolve()),
+        "partial_reset_bank_sha256": config.partial_reset_bank_sha256,
+        "phase_updates": PARTIAL_RESET_PHASE_UPDATES,
+        "total_updates": PARTIAL_RESET_TOTAL_UPDATES,
+        "initial_partial_share": PARTIAL_RESET_INITIAL_SHARE,
+        "tier_completion_fractions": dict(PARTIAL_RESET_COMPLETION_BY_TIER),
+        "next_update": int(next_update),
+        "last_applied_tiers": list(schedule.tiers),
+        "last_applied_share": float(schedule.share),
+    }
+
+
+def _validate_partial_reset_resume(
+    checkpoint: dict,
+    checkpoint_mode: str | None,
+    config,
+    resume_update: int,
+) -> None:
+    if checkpoint_mode != "resume":
+        return
+    saved = checkpoint.get("partial_reset_curriculum")
+    enabled = config.partial_reset_root is not None
+    if not enabled:
+        if saved is not None:
+            raise ValueError(
+                "resume checkpoint uses partial resets; pass its partial reset bank"
+            )
+        return
+    if not isinstance(saved, dict) or saved.get("schema") != (
+        PARTIAL_RESET_CURRICULUM_SCHEMA
+    ):
+        raise ValueError("partial-reset resume requires its curriculum receipt")
+    expected = partial_reset_curriculum_receipt(config, resume_update)
+    saved_contract = dict(saved)
+    expected_contract = dict(expected)
+    saved_contract.pop("partial_reset_root", None)
+    expected_contract.pop("partial_reset_root", None)
+    if saved_contract != expected_contract:
+        raise ValueError(
+            "partial-reset resume schedule does not match the checkpoint/global update"
+        )
+
+
 def pooled_sampler_settings(config) -> SamplerSettings | None:
     raw = getattr(config, "pooled_sampler", None)
     if not raw or not raw.get("enabled", False):
@@ -1372,6 +1540,14 @@ class MixedAgentTrainConfig:
     curriculum_last_level_type: str | None = None
     pooled_sampler: dict | None = None
     accepted_bank: AcceptedBank | None = None
+    # One Backplay-inspired reset treatment. The paired Terra runtime loads a
+    # sidecar bank whose source slots match the accepted full-start bank.
+    partial_reset_root: str | None = None
+    partial_reset_bank_sha256: str | None = None
+    # Consume Terra's constant-per-episode reset baseline
+    # [Q_reset, H_reset / V0]. This architecture treatment is independently
+    # useful for a matched full-start control; loading a partial bank requires it.
+    reward_v2_reset_context_observation: bool = False
     # Optional single-map training path. When set, map loading uses this path directly
     # and does not rely on DATASET_PATH / DATASET_SIZE.
     single_map_path: str | None = None
@@ -1463,12 +1639,73 @@ class MixedAgentTrainConfig:
                 "the stall-age continuation is unmasked; do not combine "
                 "--stall_age_observation with --action_logit_masking"
             )
+        if (
+            self.reward_v2_reset_context_observation
+            and self.action_logit_masking
+        ):
+            raise ValueError(
+                "the reward-v2 reset-context treatment is unmasked; do not "
+                "combine --reward-v2-reset-context-observation with "
+                "--action_logit_masking"
+            )
+        if (
+            self.reward_v2_reset_context_observation
+            and self.warm_start_from is not None
+        ):
+            raise ValueError(
+                "reward-v2 reset-context treatments require fresh training or "
+                "native --resume_from; parameter-only warm starts are unsupported"
+            )
         if self.reward_stage == "annealed_objective":
             sampler = self.pooled_sampler or {}
             if sampler.get("rule") not in CONTINUOUS_RULES:
                 raise ValueError(
                     "annealed_objective requires a continuous_banded sampler"
                 )
+        if self.partial_reset_root is not None:
+            if self.reward_stage != "reward_v2":
+                raise ValueError("partial resets require the reward_v2 objective")
+            if self.stall_age_observation:
+                raise ValueError(
+                    "the partial-reset causal arm excludes --stall_age_observation"
+                )
+            sampler = self.pooled_sampler or {}
+            if not sampler.get("enabled", False) or sampler.get("rule") != (
+                "continuous_banded_v3"
+            ):
+                raise ValueError(
+                    "partial resets require the enabled continuous_banded_v3 sampler"
+                )
+            if self.accepted_bank is None:
+                raise ValueError("partial resets require an accepted full-start bank")
+            if not self.reward_v2_reset_context_observation:
+                raise ValueError(
+                    "partial resets require --reward-v2-reset-context-observation"
+                )
+            if (
+                not isinstance(self.partial_reset_bank_sha256, str)
+                or len(self.partial_reset_bank_sha256) != 64
+            ):
+                raise ValueError("partial reset bank requires its SHA-256 identity")
+            try:
+                int(self.partial_reset_bank_sha256, 16)
+            except ValueError as error:
+                raise ValueError(
+                    "partial reset bank SHA-256 must be hexadecimal"
+                ) from error
+        elif (
+            self.partial_reset_bank_sha256 is not None
+        ):
+            raise ValueError(
+                "partial reset identity requires --partial-reset-root"
+            )
+        if (
+            self.reward_v2_reset_context_observation
+            and self.reward_stage != "reward_v2"
+        ):
+            raise ValueError(
+                "reward-v2 reset-context observation requires the reward_v2 objective"
+            )
         self.map_encoder = canonical_map_encoder(self.map_encoder)
         if self.attention_compute_dtype not in ("encoder", "float32", "bfloat16"):
             raise ValueError(
@@ -1901,6 +2138,13 @@ def make_mixed_agent_states(
     env_kwargs = {}
     if config.distance_protocol_id is not None:
         env_kwargs["distance_protocol_id"] = config.distance_protocol_id
+    if config.partial_reset_root is not None:
+        partial_reset_root = Path(config.partial_reset_root).resolve()
+        if not partial_reset_root.is_dir():
+            raise FileNotFoundError(
+                f"partial reset bank does not exist: {partial_reset_root}"
+            )
+        env_kwargs["partial_reset_root"] = partial_reset_root
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,
         shuffle_maps=False,
@@ -1909,6 +2153,22 @@ def make_mixed_agent_states(
     )
     if single_map_path is not None:
         print(f"📍 Using single map path: {single_map_path}")
+    if config.partial_reset_root is not None:
+        if env.partial_reset_bank_sha256 != config.partial_reset_bank_sha256:
+            raise RuntimeError(
+                "Terra partial-reset bank identity changed after CLI validation"
+            )
+        print(f"↩️  Using partial reset bank: {partial_reset_root}", flush=True)
+        print(
+            f"↩️  Partial reset bank SHA-256: {env.partial_reset_bank_sha256}",
+            flush=True,
+        )
+        print(
+            "↩️  Reset schedule: u0-2499 25%@[90]; u2500-4999 "
+            "25%@[75,90]; u5000-7499 25%@[50,75,90]; u7500-9999 "
+            "[50,75,90] faded 25%->0; then full starts only.",
+            flush=True,
+        )
 
     # Get environment parameters with agent types from config
     if env_params is None:
@@ -2259,6 +2519,15 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
 
     if config.single_map_path is not None:
         tags.append(f"single-map:{_tag_value(Path(config.single_map_path).stem)}")
+    if config.partial_reset_root is not None:
+        tags.extend(
+            (
+                "partial-reset:backplay-window-v1",
+                f"partial-bank:{config.partial_reset_bank_sha256[:12]}",
+            )
+        )
+    if config.reward_v2_reset_context_observation:
+        tags.append("obs:reward-v2-reset-context")
 
     return list(dict.fromkeys(tags))
 
@@ -2364,6 +2633,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             raise RuntimeError(
                 f"Failed to load checkpoint from {checkpoint_path}"
             ) from e
+    if checkpoint is not None:
+        _validate_partial_reset_resume(
+            checkpoint,
+            checkpoint_mode,
+            config,
+            resume_update,
+        )
     # Initialize training components (optionally with env override)
     rng, env, env_params, train_state = make_mixed_agent_states(
         config, env_params_override=env_params_override
@@ -2636,6 +2912,35 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 f"for {checkpoint_mode.replace('_', ' ')}.",
                 flush=True,
             )
+        partial_reset_supported_levels = None
+        partial_reset_supported_mask = None
+        if config.partial_reset_root is not None:
+            if pooled_sampler is None:
+                raise ValueError(
+                    "partial resets require an active continuous_banded_v3 sampler"
+                )
+            partial_reset_supported_levels = np.asarray(
+                env.partial_reset_supported_levels,
+                dtype=bool,
+            )
+            expected_support_shape = (4, len(pooled_sampler.names))
+            if partial_reset_supported_levels.shape != expected_support_shape:
+                raise ValueError(
+                    "Terra partial-reset support shape "
+                    f"{partial_reset_supported_levels.shape} != "
+                    f"{expected_support_shape}"
+                )
+            if not np.all(
+                partial_reset_supported_levels[1:]
+                == partial_reset_supported_levels[1]
+            ):
+                raise ValueError(
+                    "Terra partial-reset tiers 1-3 must expose identical "
+                    "condition support"
+                )
+            partial_reset_supported_mask = partial_reset_supported_levels[1]
+            if not np.any(partial_reset_supported_mask):
+                raise ValueError("partial reset bank supports no common conditions")
         reward_anneal_state = _restore_reward_anneal_checkpoint(
             config.reward_stage,
             checkpoint,
@@ -2658,11 +2963,25 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 (config.num_devices, config.num_envs_per_device, -1)
             )
 
-            reset_env_params = env_params
+            lane_shape = (config.num_devices, config.num_envs_per_device)
+            if config.partial_reset_root is None:
+                initial_partial_schedule = PartialResetSchedule(tiers=(), share=0.0)
+            else:
+                initial_partial_schedule = partial_reset_schedule(resume_update)
+            initial_reset_tiers = partial_reset_lane_tiers(
+                lane_shape,
+                initial_partial_schedule,
+                seed=config.seed,
+            )
+            reset_env_params = assign_reset_tiers(env_params, initial_reset_tiers)
             if pooled_sampler is not None:
-                initial_levels = pooled_sampler.sample_levels(
-                    (config.num_devices, config.num_envs_per_device)
-                )
+                if config.partial_reset_root is None:
+                    initial_levels = pooled_sampler.sample_levels(lane_shape)
+                else:
+                    initial_levels = pooled_sampler.sample_levels_for_reset_tiers(
+                        initial_reset_tiers,
+                        partial_reset_supported_levels,
+                    )
                 pooled_sampler.observe_reset_exposures(
                     np.bincount(
                         initial_levels.reshape(-1),
@@ -2670,7 +2989,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     )
                 )
                 reset_env_params = assign_curriculum_levels(
-                    env_params,
+                    reset_env_params,
                     initial_levels,
                 )
 
@@ -2844,6 +3163,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         task_done=timestep.info["task_done"],
                         curriculum_level=timestep.env_cfg.curriculum.level,
                         active_curriculum_level=active_curriculum_level,
+                        active_reset_tier=prev_timestep.state.reset_tier,
+                        ended_reset_tier=timestep.info["ended_reset_tier"],
+                        next_reset_tier=timestep.state.reset_tier,
                         action=action,
                         value=value,
                         reward=timestep.reward,
@@ -2929,6 +3251,57 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         num_stages,
                     ),
                     "devices",
+                )
+                ended_reset_count = jax.lax.psum(
+                    jnp.sum(transitions.done.astype(jnp.int32)),
+                    "devices",
+                )
+                partial_reset_count = jax.lax.psum(
+                    jnp.sum(
+                        jnp.logical_and(
+                            transitions.done,
+                            transitions.next_reset_tier != 0,
+                        ).astype(jnp.int32)
+                    ),
+                    "devices",
+                )
+                transition_count = jax.lax.psum(
+                    jnp.asarray(transitions.done.size, dtype=jnp.int32),
+                    "devices",
+                )
+                partial_transition_count = jax.lax.psum(
+                    jnp.sum((transitions.active_reset_tier != 0).astype(jnp.int32)),
+                    "devices",
+                )
+                full_start_episode_count, full_start_task_done_count = (
+                    condition_outcome_histograms(
+                        transitions.done,
+                        transitions.task_done,
+                        transitions.active_curriculum_level,
+                        transitions.ended_reset_tier == 0,
+                        num_stages,
+                    )
+                )
+                partial_episode_count, partial_task_done_count = (
+                    condition_outcome_histograms(
+                        transitions.done,
+                        transitions.task_done,
+                        transitions.active_curriculum_level,
+                        transitions.ended_reset_tier != 0,
+                        num_stages,
+                    )
+                )
+                full_start_episode_count = jax.lax.psum(
+                    full_start_episode_count, "devices"
+                )
+                full_start_task_done_count = jax.lax.psum(
+                    full_start_task_done_count, "devices"
+                )
+                partial_episode_count = jax.lax.psum(
+                    partial_episode_count, "devices"
+                )
+                partial_task_done_count = jax.lax.psum(
+                    partial_task_done_count, "devices"
                 )
                 if config.stall_age_observation:
                     rollout_stall_age = transitions.obs["stall_age"].astype(jnp.float32)
@@ -3108,6 +3481,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     transition_integrity,
                     reset_exposure_count,
                     transition_exposure_count,
+                    ended_reset_count,
+                    partial_reset_count,
+                    transition_count,
+                    partial_transition_count,
+                    full_start_episode_count,
+                    full_start_task_done_count,
+                    partial_episode_count,
+                    partial_task_done_count,
                     stall_age_stats,
                 )
 
@@ -3192,6 +3573,27 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     [need_episode_flush] * config.num_devices,
                     dtype=jnp.bool_,
                 )
+                if config.partial_reset_root is None:
+                    current_partial_schedule = PartialResetSchedule(
+                        tiers=(), share=0.0
+                    )
+                else:
+                    current_partial_schedule = partial_reset_schedule(i)
+                next_reset_tiers = partial_reset_lane_tiers(
+                    (config.num_devices, config.num_envs_per_device),
+                    current_partial_schedule,
+                    seed=config.seed,
+                )
+                next_env_cfg = assign_reset_tiers(
+                    runner_state[2].env_cfg,
+                    next_reset_tiers,
+                )
+                runner_state = (
+                    runner_state[0],
+                    runner_state[1],
+                    runner_state[2]._replace(env_cfg=next_env_cfg),
+                    *runner_state[3:],
+                )
                 sampler_refreshed = False
                 if pooled_sampler is not None:
                     pooled_sampler.start(i)
@@ -3211,8 +3613,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         )
                     next_env_cfg = assign_curriculum_levels(
                         runner_state[2].env_cfg,
-                        pooled_sampler.sample_levels(
-                            (config.num_devices, config.num_envs_per_device)
+                        (
+                            pooled_sampler.sample_levels(
+                                (config.num_devices, config.num_envs_per_device)
+                            )
+                            if config.partial_reset_root is None
+                            else pooled_sampler.sample_levels_for_reset_tiers(
+                                next_reset_tiers,
+                                partial_reset_supported_levels,
+                            )
                         ),
                     )
                     runner_state = (
@@ -3246,6 +3655,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     transition_integrity,
                     reset_exposure_count,
                     transition_exposure_count,
+                    ended_reset_count,
+                    partial_reset_count,
+                    transition_count,
+                    partial_transition_count,
+                    full_start_episode_count,
+                    full_start_task_done_count,
+                    partial_episode_count,
+                    partial_task_done_count,
                     stall_age_stats,
                 ) = jax.block_until_ready(
                     _update_step(
@@ -3258,6 +3675,28 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 )
                 transition_integrity_single = unreplicate(transition_integrity)
                 stall_age_stats_single = unreplicate(stall_age_stats)
+                full_start_episode_single = np.asarray(
+                    unreplicate(full_start_episode_count)
+                )
+                full_start_task_done_single = np.asarray(
+                    unreplicate(full_start_task_done_count)
+                )
+                partial_episode_single = np.asarray(
+                    unreplicate(partial_episode_count)
+                )
+                partial_task_done_single = np.asarray(
+                    unreplicate(partial_task_done_count)
+                )
+                ended_reset_single = int(np.asarray(unreplicate(ended_reset_count)))
+                partial_reset_single = int(
+                    np.asarray(unreplicate(partial_reset_count))
+                )
+                transition_count_single = int(
+                    np.asarray(unreplicate(transition_count))
+                )
+                partial_transition_single = int(
+                    np.asarray(unreplicate(partial_transition_count))
+                )
                 _assert_transition_integrity(transition_integrity_single)
                 reset_exposure_single = None
                 transition_exposure_single = None
@@ -3302,7 +3741,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             episode_payload,
                         )
                     if pooled_sampler is not None:
-                        pooled_sampler.observe_episode_payload(episode_payload)
+                        if config.partial_reset_root is None:
+                            pooled_sampler.observe_episode_payload(episode_payload)
+                        else:
+                            pooled_sampler.observe_exact_episode_counts(
+                                full_start_episode_single,
+                                full_start_task_done_single,
+                            )
 
                 if config.fail_on_nonfinite and (
                     need_finite_check or need_checkpoint or need_final_state
@@ -3340,6 +3785,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                     episode_payload,
                                     include_trench_reward=include_trench_reward,
                                 ),
+                                **full_start_episode_metrics(
+                                    full_start_episode_single,
+                                    full_start_task_done_single,
+                                ),
                                 **loss_metrics(
                                     loss_info_single,
                                     entropy_coef=float(ent_coef_current),
@@ -3358,6 +3807,52 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                     ),
                                     "train/stall_age_saturated_fraction": float(
                                         stall_age_stats_single["saturated_fraction"]
+                                    ),
+                                }
+                            )
+                        if config.partial_reset_root is not None:
+                            partial_episodes = int(partial_episode_single.sum())
+                            partial_successes = int(
+                                partial_task_done_single.sum()
+                            )
+                            log_dict.update(
+                                {
+                                    "curriculum/partial_reset_target_share": float(
+                                        np.mean(next_reset_tiers != 0)
+                                    ),
+                                    "curriculum/partial_reset_target_share_90": float(
+                                        np.mean(next_reset_tiers == 1)
+                                    ),
+                                    "curriculum/partial_reset_target_share_75": float(
+                                        np.mean(next_reset_tiers == 2)
+                                    ),
+                                    "curriculum/partial_reset_target_share_50": float(
+                                        np.mean(next_reset_tiers == 3)
+                                    ),
+                                    "curriculum/partial_reset_min_completion_fraction": (
+                                        current_partial_schedule.completion_fraction
+                                    ),
+                                    "curriculum/partial_reset_actual_reset_share": (
+                                        partial_reset_single / ended_reset_single
+                                        if ended_reset_single
+                                        else float("nan")
+                                    ),
+                                    "curriculum/partial_reset_actual_transition_share": (
+                                        partial_transition_single
+                                        / transition_count_single
+                                    ),
+                                    "curriculum/partial_reset_supported_condition_count": float(
+                                        np.sum(partial_reset_supported_mask)
+                                    ),
+                                    "curriculum/partial_reset_supported_probability_mass": float(
+                                        pooled_sampler.probabilities[
+                                            partial_reset_supported_mask
+                                        ].sum()
+                                    ),
+                                    "train/partial_reset_episode_success_rate": (
+                                        partial_successes / partial_episodes
+                                        if partial_episodes
+                                        else float("nan")
                                     ),
                                 }
                             )
@@ -3396,8 +3891,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     wandb.log(log_dict)
 
                 if need_checkpoint:
-                    env_config_checkpoint = _strip_checkpoint_env_axis(
+                    checkpoint_env_cfg = assign_reset_tiers(
                         env_params_single,
+                        np.zeros_like(np.asarray(env_params_single.reset_tier)),
+                    )
+                    env_config_checkpoint = _strip_checkpoint_env_axis(
+                        checkpoint_env_cfg,
                         config.num_envs_per_device,
                     )
                     checkpoint = {
@@ -3422,6 +3921,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         checkpoint["pooled_sampler_state"] = pooled_sampler.state_dict()
                     if reward_anneal_state is not None:
                         checkpoint["reward_anneal_state"] = dict(reward_anneal_state)
+                    partial_reset_receipt = partial_reset_curriculum_receipt(
+                        config, i + 1
+                    )
+                    if partial_reset_receipt is not None:
+                        checkpoint["partial_reset_curriculum"] = (
+                            partial_reset_receipt
+                        )
                     checkpoint_name = f"{config.name}.pkl"
                     if config.keep_checkpoint_history:
                         checkpoint_name = f"{config.name}_update_{i + 1:06d}.pkl"
@@ -3481,6 +3987,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         jax.random.fold_in(rng_eval_base, 1),
                         config.num_devices * config.num_envs_per_device,
                     ).reshape((config.num_devices, config.num_envs_per_device, -1))
+                    eval_env_cfg = runner_state[2].env_cfg
+                    eval_env_cfg = assign_reset_tiers(
+                        eval_env_cfg,
+                        np.zeros(
+                            (config.num_devices, config.num_envs_per_device),
+                            dtype=np.int32,
+                        ),
+                    )
                     (
                         eval_env_params_reset,
                         eval_target_maps,
@@ -3492,7 +4006,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         eval_dumpability_mask_init,
                         eval_action_maps,
                         eval_distance_maps,
-                    ) = env.prepare_reset(runner_state[2].env_cfg, reset_rng_eval)
+                    ) = env.prepare_reset(eval_env_cfg, reset_rng_eval)
                     reset_fn_p = jax.pmap(env.reset_prepared, axis_name="devices")
                     eval_timestep = reset_fn_p(
                         eval_env_params_reset,
@@ -3631,8 +4145,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         except Exception:
             agent_types_str = "unknown_unknown"
 
+        final_env_cfg = train_info["runner_state"][2].env_cfg
+        final_env_cfg = assign_reset_tiers(
+            final_env_cfg,
+            np.zeros_like(np.asarray(final_env_cfg.reset_tier)),
+        )
         final_env_config = _strip_checkpoint_env_axis(
-            train_info["runner_state"][2].env_cfg,
+            final_env_cfg,
             config.num_envs_per_device,
         )
         final_train_state = train_info["runner_state"][1]
@@ -3665,6 +4184,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             ]
         if train_info["reward_anneal_state"] is not None:
             final_checkpoint["reward_anneal_state"] = train_info["reward_anneal_state"]
+        partial_reset_receipt = partial_reset_curriculum_receipt(
+            config, config.num_updates
+        )
+        if partial_reset_receipt is not None:
+            final_checkpoint["partial_reset_curriculum"] = partial_reset_receipt
         final_path = Path(config.checkpoint_dir) / f"{config.name}_FINAL.pkl"
         helpers.save_pkl_object(final_checkpoint, str(final_path))
         print(f"💾 Final mixed agent model saved to {final_path}")
@@ -4092,6 +4616,24 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--partial-reset-root",
+        type=Path,
+        default=None,
+        help=(
+            "Enable the one 10k-update Backplay-inspired treatment using a "
+            "Terra-validated partial action sidecar bank."
+        ),
+    )
+    parser.add_argument(
+        "--reward-v2-reset-context-observation",
+        action="store_true",
+        help=(
+            "Consume Terra's constant-per-episode reward_v2 reset context "
+            "[Q_reset, H_reset/V0]. Required by --partial-reset-root and "
+            "independently usable for a matched full-start control."
+        ),
+    )
+    parser.add_argument(
         "--terra-revision",
         type=str,
         default=None,
@@ -4128,7 +4670,7 @@ if __name__ == "__main__":
         default=None,
         help=(
             "Named V8 population contract. continuous_banded_v3 uses a global "
-            "80% open frontier and 20% mastered replay, with a per-condition "
+            "80%% open frontier and 20%% mastered replay, with a per-condition "
             "max_mass cap."
         ),
     )
@@ -4606,6 +5148,12 @@ if __name__ == "__main__":
             f"length (got {len(resnet_stage_channels)} vs {len(resnet_blocks_per_stage)})."
         )
 
+    partial_reset_root = None
+    partial_reset_digest = None
+    if args.partial_reset_root is not None:
+        partial_reset_root = str(args.partial_reset_root.resolve())
+        partial_reset_digest = partial_reset_bank_sha256(partial_reset_root)
+
     name = resolve_run_name(args.name, args.machine, DT, args.exact_run_name)
 
     config = MixedAgentTrainConfig(
@@ -4656,6 +5204,11 @@ if __name__ == "__main__":
         curriculum_last_level_type=curriculum_last_level_type,
         pooled_sampler=pooled_sampler_override,
         accepted_bank=accepted_bank,
+        partial_reset_root=partial_reset_root,
+        partial_reset_bank_sha256=partial_reset_digest,
+        reward_v2_reset_context_observation=(
+            args.reward_v2_reset_context_observation
+        ),
         single_map_path=args.map_path,
         replay_map_count=args.replay_map_count,
         target_map_repeat=args.target_map_repeat,

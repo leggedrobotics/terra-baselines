@@ -300,6 +300,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         stall_age_observation=bool(
             _config_option(config, "stall_age_observation", False)
         ),
+        reward_v2_reset_context_observation=bool(
+            _config_option(config, "reward_v2_reset_context_observation", False)
+        ),
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
         use_aux_decoder=use_aux_decoder,
@@ -347,6 +350,10 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     ]
     if bool(_config_option(config, "stall_age_observation", False)):
         obs.append(jnp.zeros((init_batch_size, 1), dtype=jnp.float32))
+    if bool(
+        _config_option(config, "reward_v2_reset_context_observation", False)
+    ):
+        obs.append(jnp.zeros((init_batch_size, 2), dtype=jnp.float32))
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
     # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
@@ -1385,6 +1392,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     token_mixer_residual_init_scale: float = 0.0
     carry_work_observation: bool = False
     stall_age_observation: bool = False
+    reward_v2_reset_context_observation: bool = False
     attn_latent_queries: int = 4
     flatten_reduce_channels: int | None = None
     use_aux_decoder: bool = False
@@ -1417,6 +1425,19 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 "stall_age_critic_embedding",
                 nn.initializers.zeros_init(),
                 (704,),
+                jnp.float32,
+            )
+        if self.reward_v2_reset_context_observation:
+            self.reward_v2_reset_context_actor_embedding = self.param(
+                "reward_v2_reset_context_actor_embedding",
+                nn.initializers.zeros_init(),
+                (2, 704),
+                jnp.float32,
+            )
+            self.reward_v2_reset_context_critic_embedding = self.param(
+                "reward_v2_reset_context_critic_embedding",
+                nn.initializers.zeros_init(),
+                (2, 704),
                 jnp.float32,
             )
 
@@ -1613,6 +1634,32 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 )
             actor_x = x + stall_age * self.stall_age_actor_embedding
             critic_x = x + stall_age * self.stall_age_critic_embedding
+        if self.reward_v2_reset_context_observation:
+            context_index = 23 if self.stall_age_observation else 22
+            if len(obs) <= context_index:
+                raise ValueError(
+                    "reward_v2_reset_context_observation requires reward-v2 "
+                    f"reset context in obs[{context_index}]"
+                )
+            reward_v2_reset_context = jnp.asarray(
+                obs[context_index], dtype=jnp.float32
+            ).reshape((B, 2))
+            if (
+                x.shape[-1]
+                != self.reward_v2_reset_context_actor_embedding.shape[1]
+            ):
+                raise ValueError(
+                    "reward-v2 reset context is supported only for the v6.1 "
+                    f"fused width 704, got {x.shape[-1]}"
+                )
+            actor_x = actor_x + (
+                reward_v2_reset_context
+                @ self.reward_v2_reset_context_actor_embedding
+            )
+            critic_x = critic_x + (
+                reward_v2_reset_context
+                @ self.reward_v2_reset_context_critic_embedding
+            )
 
         v = self.mlp_v(critic_x)
         xpi = self.mlp_pi(actor_x)

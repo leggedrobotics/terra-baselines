@@ -657,6 +657,49 @@ class PooledConditionSampler:
         self._assignments += np.bincount(samples, minlength=self._count)
         return samples.reshape(shape).astype(np.int32)
 
+    def sample_levels_for_reset_tiers(
+        self,
+        reset_tiers: np.ndarray,
+        supported_levels: np.ndarray,
+    ) -> np.ndarray:
+        """Sample full lanes normally and partial lanes only from valid sidecars."""
+        tiers = np.asarray(reset_tiers)
+        support = np.asarray(supported_levels)
+        if tiers.dtype.kind not in "iu" or np.any((tiers < 0) | (tiers > 3)):
+            raise ValueError("reset_tiers must contain integer tiers in [0, 3]")
+        if support.shape != (4, self._count) or support.dtype.kind != "b":
+            raise ValueError(
+                "supported_levels must be boolean [4, condition_count]"
+            )
+        if not np.all(support[1:] == support[1]):
+            raise ValueError(
+                "partial reset tiers 1-3 must share one common condition support"
+            )
+        samples = self._rng.choice(
+            self._count,
+            size=tiers.size,
+            p=self._probabilities,
+        ).astype(np.int32)
+        flat_tiers = tiers.reshape(-1)
+        for tier in (1, 2, 3):
+            lanes = np.flatnonzero(flat_tiers == tier)
+            if not lanes.size:
+                continue
+            probabilities = np.where(
+                support[tier], self._probabilities, 0.0
+            ).astype(np.float64)
+            mass = float(probabilities.sum())
+            if mass <= 0.0:
+                raise ValueError(f"partial reset tier {tier} has no supported condition")
+            probabilities /= mass
+            samples[lanes] = self._rng.choice(
+                self._count,
+                size=lanes.size,
+                p=probabilities,
+            )
+        self._assignments += np.bincount(samples, minlength=self._count)
+        return samples.reshape(tiers.shape)
+
     def observe_reset_exposures(self, counts: np.ndarray) -> None:
         """Count maps actually instantiated by reset, separately from episodes."""
         values = np.asarray(counts)
@@ -712,6 +755,32 @@ class PooledConditionSampler:
                     )
                 ]
             )
+        self._window_updates += 1
+
+    def observe_exact_episode_counts(
+        self,
+        episode_counts: np.ndarray,
+        task_done_counts: np.ndarray,
+    ) -> None:
+        """Add full-start exact outcomes without mixing in shaped reset episodes."""
+        if self.settings.rule not in CONTINUOUS_RULES:
+            raise ValueError(
+                "exact episode counts are supported only by continuous_banded"
+            )
+        episodes = np.asarray(episode_counts)
+        successes = np.asarray(task_done_counts)
+        for label, values in (
+            ("episode_counts", episodes),
+            ("task_done_counts", successes),
+        ):
+            if values.shape != (self._count,):
+                raise ValueError(f"{label} must match the condition count")
+            if values.dtype.kind not in "iub" or np.any(values < 0):
+                raise ValueError(f"{label} must contain nonnegative integers")
+        if np.any(successes > episodes):
+            raise ValueError("task_done_counts cannot exceed episode_counts")
+        self._episodes += episodes.astype(np.int64)
+        self._completion_sum += successes.astype(np.float64)
         self._window_updates += 1
 
     def refresh(self, update_index: int) -> None:

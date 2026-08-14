@@ -52,6 +52,8 @@ TRAINING_SCALAR_KEYS = frozenset(
         "train/ended_episodes",
         "train/stall_age_mean",
         "train/stall_age_saturated_fraction",
+        "train/full_start_episode_success_rate",
+        "train/partial_reset_episode_success_rate",
         "train/update",
         "behavior/absolute_completion",
         "behavior/dig_completion",
@@ -75,6 +77,15 @@ TRAINING_SCALAR_KEYS = frozenset(
         "curriculum/target_ess",
         "curriculum/target_entropy_normalized",
         "curriculum/refreshes",
+        "curriculum/partial_reset_target_share",
+        "curriculum/partial_reset_target_share_90",
+        "curriculum/partial_reset_target_share_75",
+        "curriculum/partial_reset_target_share_50",
+        "curriculum/partial_reset_min_completion_fraction",
+        "curriculum/partial_reset_actual_reset_share",
+        "curriculum/partial_reset_actual_transition_share",
+        "curriculum/partial_reset_supported_condition_count",
+        "curriculum/partial_reset_supported_probability_mass",
         "ppo/total_loss",
         "ppo/policy_loss",
         "ppo/value_loss",
@@ -97,6 +108,18 @@ TRAINING_SCALAR_KEYS = frozenset(
 
 def _safe_rate(numerator: float, denominator: float) -> float:
     return float(numerator) / float(denominator) if denominator else float("nan")
+
+
+def full_start_episode_metrics(
+    episode_counts: np.ndarray,
+    task_done_counts: np.ndarray,
+) -> dict[str, float]:
+    """Summarize exact outcomes from full-start episodes only."""
+    episodes = int(np.asarray(episode_counts).sum())
+    successes = int(np.asarray(task_done_counts).sum())
+    return {
+        "train/full_start_episode_success_rate": _safe_rate(successes, episodes)
+    }
 
 
 def episode_metrics(payload: dict, *, include_trench_reward: bool) -> dict[str, float]:

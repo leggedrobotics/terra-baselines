@@ -23,6 +23,7 @@ from eval_mcts import rollout_episode
 from train import TrainConfig
 from train_mixed import (
     MixedAgentTrainConfig,
+    PARTIAL_RESET_CURRICULUM_SCHEMA,
     _validate_checkpoint_architecture,
     make_mixed_agent_states,
 )
@@ -149,6 +150,32 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             )
         },
     }
+    if bool(_field(config, "reward_v2_reset_context_observation", False)):
+        # Conditional inclusion keeps historical fingerprints unchanged while
+        # binding both the partial arm and its matched full-start control.
+        contract["architecture"]["reward_v2_reset_context_observation"] = True
+    partial_reset_digest = _field(config, "partial_reset_bank_sha256")
+    if partial_reset_digest is not None:
+        raw_partial_receipt = checkpoint.get("partial_reset_curriculum")
+        if not isinstance(raw_partial_receipt, dict) or raw_partial_receipt.get(
+            "schema"
+        ) != PARTIAL_RESET_CURRICULUM_SCHEMA:
+            raise ValueError("partial-reset checkpoint lacks its curriculum receipt")
+        partial_reset_receipt = dict(raw_partial_receipt)
+        partial_reset_receipt.pop("partial_reset_root", None)
+        for dynamic_field in (
+            "next_update",
+            "last_applied_tiers",
+            "last_applied_share",
+        ):
+            partial_reset_receipt.pop(dynamic_field, None)
+        contract["partial_reset"] = {
+            "bank_sha256": partial_reset_digest,
+            "observation": bool(
+                _field(config, "reward_v2_reset_context_observation", False)
+            ),
+            "curriculum": _jsonable(partial_reset_receipt),
+        }
     encoded = json.dumps(
         contract,
         sort_keys=True,
@@ -293,6 +320,10 @@ def configure_for_bank(train_config, relative_path: str, count: int):
     config.curriculum_last_level_type = "none"
     config.pooled_sampler = None
     config.accepted_bank = None
+    # The policy keeps its two-scalar architecture, but held-out evaluation
+    # never loads or samples the partial sidecar bank.
+    config.partial_reset_root = None
+    config.partial_reset_bank_sha256 = None
     config.single_map_path = None
     config.replay_map_count = 0
     config.target_map_repeat = 0
