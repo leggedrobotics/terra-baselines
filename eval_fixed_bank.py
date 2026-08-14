@@ -675,7 +675,7 @@ def graded_summary(per_map: list[dict]) -> dict:
 
 
 def comparison_gate(reference: dict, candidate: dict) -> dict:
-    """Compare two evaluations of the same bank without panel-size constants."""
+    """Return a historical diagnostic screen, not an automatic promotion verdict."""
     reference_overall = reference["overall"]
     candidate_overall = candidate["overall"]
     reference_episodes = int(reference_overall["episodes"])
@@ -730,6 +730,9 @@ def comparison_gate(reference: dict, candidate: dict) -> dict:
     integrity_passed = reference_integrity_passed and candidate_integrity_passed
     return {
         "schema": "terra_fixed_bank_comparison_gate_v1",
+        "decision_authority": "advisory_diagnostics_only",
+        "passed_is_promotion_decision": False,
+        "promotion_requires": "exact-success gain plus failure-mechanism review",
         "reference_episodes": reference_episodes,
         "candidate_episodes": candidate_episodes,
         "exact_map_gain": exact_map_gain,
@@ -748,6 +751,113 @@ def comparison_gate(reference: dict, candidate: dict) -> dict:
         "integrity_passed": integrity_passed,
         "passed": bool(progress_passed and guards_passed and integrity_passed),
     }
+
+
+def validate_progress_diagnostics(
+    material: dict[str, np.ndarray],
+    stall_age: dict[str, np.ndarray],
+    episode_lengths: np.ndarray,
+) -> None:
+    """Fail closed on malformed per-map material and stall diagnostics."""
+    lengths = np.asarray(episode_lengths)
+    if lengths.ndim != 1 or not np.all(np.isfinite(lengths)):
+        raise RuntimeError("episode lengths must be a finite one-dimensional array")
+    count = len(lengths)
+
+    def require(name: str, source: dict[str, np.ndarray]) -> np.ndarray:
+        if name not in source:
+            raise RuntimeError(f"fixed evaluation omitted diagnostic {name}")
+        value = np.asarray(source[name])
+        if value.shape != (count,):
+            raise RuntimeError(
+                f"fixed evaluation diagnostic {name} has shape {value.shape}, "
+                f"expected {(count,)}"
+            )
+        return value
+
+    supported = require("material_progress_supported", material).astype(bool)
+    measured = require("loaded_soil_measured", material).astype(bool)
+    if not bool(supported.all() and measured.all()):
+        raise RuntimeError(
+            "fixed evaluation requires supported material progress and measured load"
+        )
+
+    source_volume = require("source_soil_volume", material).astype(np.float64)
+    fraction_names = (
+        "dig_fraction",
+        "terminal_soil_fraction",
+        "off_zone_staged_soil_fraction",
+        "loaded_soil_fraction",
+    )
+    fractions = {
+        name: require(name, material).astype(np.float64) for name in fraction_names
+    }
+    numeric = [source_volume, *fractions.values()]
+    if not all(np.all(np.isfinite(value)) for value in numeric):
+        raise RuntimeError("fixed evaluation returned nonfinite material progress")
+    if np.any(source_volume <= 0):
+        raise RuntimeError("fixed evaluation returned a nonpositive source-soil volume")
+    tolerance = 1e-5
+    if any(
+        np.any((value < -tolerance) | (value > 1.0 + tolerance))
+        for value in fractions.values()
+    ):
+        raise RuntimeError("fixed evaluation material fractions fall outside [0, 1]")
+    partition_error = np.abs(
+        fractions["terminal_soil_fraction"]
+        + fractions["off_zone_staged_soil_fraction"]
+        + fractions["loaded_soil_fraction"]
+        - fractions["dig_fraction"]
+    )
+    if np.any(partition_error > tolerance):
+        raise RuntimeError("fixed evaluation material partition does not conserve soil")
+
+    available = require("stall_age_available", stall_age).astype(bool)
+    stall_numeric_names = (
+        "stall_age_decision_mean",
+        "maximum_stall_age",
+        "stall_age_saturated_decision_fraction",
+    )
+    stall_numeric = {
+        name: require(name, stall_age).astype(np.float64)
+        for name in stall_numeric_names
+    }
+    raw_saturation_count = require(
+        "stall_age_saturated_decision_count", stall_age
+    ).astype(np.float64)
+    if not np.all(np.isfinite(raw_saturation_count)) or np.any(
+        raw_saturation_count != np.floor(raw_saturation_count)
+    ):
+        raise RuntimeError("fixed evaluation stall saturation count is not integral")
+    saturation_count = raw_saturation_count.astype(np.int64)
+    if not all(np.all(np.isfinite(value)) for value in stall_numeric.values()):
+        raise RuntimeError("fixed evaluation returned nonfinite stall-age diagnostics")
+    if any(
+        np.any((value < -tolerance) | (value > 1.0 + tolerance))
+        for value in stall_numeric.values()
+    ):
+        raise RuntimeError("fixed evaluation normalized stall age falls outside [0, 1]")
+    if np.any(
+        stall_numeric["stall_age_decision_mean"]
+        > stall_numeric["maximum_stall_age"] + tolerance
+    ):
+        raise RuntimeError("fixed evaluation mean stall age exceeds its maximum")
+    if np.any(saturation_count < 0) or np.any(saturation_count > lengths):
+        raise RuntimeError(
+            "fixed evaluation returned an invalid stall saturation count"
+        )
+    expected_fraction = saturation_count / np.maximum(lengths, 1)
+    if np.any(
+        available
+        & (
+            np.abs(
+                stall_numeric["stall_age_saturated_decision_fraction"]
+                - expected_fraction
+            )
+            > tolerance
+        )
+    ):
+        raise RuntimeError("fixed evaluation stall saturation fraction is inconsistent")
 
 
 def grouped_results(
@@ -799,7 +909,7 @@ def grouped_results(
         else:
             termination_reason = "horizon_censored"
         metric_values = {
-            key: float(np.asarray(values)[index])
+            key: np.asarray(values)[index].item()
             for key, values in completion_metrics.items()
         }
         integrity_values = {
@@ -888,6 +998,97 @@ def grouped_results(
             "trajectory_max": float(maximum.max()),
         }
 
+    def material_progress_summary(selected: list[dict]) -> dict:
+        fields = (
+            "dig_fraction",
+            "terminal_soil_fraction",
+            "off_zone_staged_soil_fraction",
+            "loaded_soil_fraction",
+        )
+        if not selected or any(field not in selected[0] for field in fields):
+            return {"available": False}
+        available = np.asarray(
+            [bool(row.get("material_progress_supported", False)) for row in selected],
+            dtype=bool,
+        )
+        measured_load = np.asarray(
+            [bool(row.get("loaded_soil_measured", False)) for row in selected],
+            dtype=bool,
+        )
+        if not bool(available.all() and measured_load.all()):
+            return {
+                "available": False,
+                "available_episodes": int(available.sum()),
+                "measured_load_episodes": int(measured_load.sum()),
+                "episodes": len(selected),
+            }
+        values = {
+            field: np.asarray([row[field] for row in selected], dtype=np.float64)
+            for field in fields
+        }
+        partition_error = np.abs(
+            values["terminal_soil_fraction"]
+            + values["off_zone_staged_soil_fraction"]
+            + values["loaded_soil_fraction"]
+            - values["dig_fraction"]
+        )
+        return {
+            "available": True,
+            "source_soil_volume_mean": float(
+                np.mean([row["source_soil_volume"] for row in selected])
+            ),
+            **{f"{field}_mean": float(value.mean()) for field, value in values.items()},
+            "maximum_partition_error": float(partition_error.max()),
+        }
+
+    def stall_age_summary(selected: list[dict]) -> dict:
+        if not selected or "stall_age_available" not in selected[0]:
+            return {"available": False}
+        available_rows = [
+            row for row in selected if bool(row.get("stall_age_available", False))
+        ]
+        if not available_rows:
+            return {
+                "available": False,
+                "available_episodes": 0,
+                "episodes": len(selected),
+            }
+        return {
+            "available": len(available_rows) == len(selected),
+            "available_episodes": len(available_rows),
+            "episodes": len(selected),
+            "decision_mean": float(
+                np.mean([row["stall_age_decision_mean"] for row in available_rows])
+            ),
+            "maximum": float(
+                np.max([row["maximum_stall_age"] for row in available_rows])
+            ),
+            "saturated_decisions": int(
+                np.sum(
+                    [
+                        row["stall_age_saturated_decision_count"]
+                        for row in available_rows
+                    ]
+                )
+            ),
+            "episodes_with_saturation": int(
+                np.sum(
+                    [
+                        row["stall_age_saturated_decision_count"] > 0
+                        for row in available_rows
+                    ]
+                )
+            ),
+            "saturated_decision_fraction_mean": float(
+                np.mean(
+                    [
+                        row["stall_age_saturated_decision_fraction"]
+                        for row in available_rows
+                    ]
+                )
+            ),
+        }
+
     def summarize(field: str) -> dict:
         values = sorted({row[field] for row in per_map})
         result = {}
@@ -901,6 +1102,8 @@ def grouped_results(
                 "terminations": sum(int(row["terminated"]) for row in selected),
                 "successful_efficiency": successful_efficiency(selected),
                 "carry_work": carry_work_summary(selected),
+                "material_progress": material_progress_summary(selected),
+                "stall_age": stall_age_summary(selected),
             }
         return result
 
@@ -913,6 +1116,8 @@ def grouped_results(
             "terminations": int(terminations.sum()),
             "successful_efficiency": successful_efficiency(per_map),
             "carry_work": carry_work_summary(per_map),
+            "material_progress": material_progress_summary(per_map),
+            "stall_age": stall_age_summary(per_map),
         },
         "by_family": summarize("family"),
         "by_primary_cell": summarize("primary_cell"),
@@ -1199,9 +1404,7 @@ def main() -> None:
                 raise ValueError(f"{path}: missing R2 reward protocol receipt")
             observed = {key: receipt.get(key) for key in expected_protocol}
             if observed != expected_protocol:
-                raise ValueError(
-                    f"{path}: R2 reward protocol mismatch: {observed!r}"
-                )
+                raise ValueError(f"{path}: R2 reward protocol mismatch: {observed!r}")
     reference_train_config = checkpoints[0][1]["train_config"]
     for _, checkpoint in checkpoints:
         if "model" not in checkpoint:
@@ -1363,9 +1566,7 @@ def main() -> None:
                 key: np.asarray(value, dtype=np.float32)
                 for key, value in stats.get("carry_work", {}).items()
             }
-            require_carry_work = bool(
-                _field(config, "carry_work_observation", False)
-            )
+            require_carry_work = bool(_field(config, "carry_work_observation", False))
             if require_carry_work:
                 for key in ("terminal_normalized", "maximum_normalized"):
                     if key not in carry_work or carry_work[key].shape != (count,):
@@ -1374,12 +1575,8 @@ def main() -> None:
                         )
             carry_metrics = (
                 {
-                    "terminal_carry_work_normalized": carry_work[
-                        "terminal_normalized"
-                    ],
-                    "maximum_carry_work_normalized": carry_work[
-                        "maximum_normalized"
-                    ],
+                    "terminal_carry_work_normalized": carry_work["terminal_normalized"],
+                    "maximum_carry_work_normalized": carry_work["maximum_normalized"],
                 }
                 if require_carry_work
                 else {}
@@ -1407,12 +1604,80 @@ def main() -> None:
                 not integrity_supported,
                 dtype=bool,
             )
+            raw_material_progress = stats.get("material_progress", {})
+            material_progress_supported = np.asarray(
+                raw_material_progress.get("supported", np.zeros(count, dtype=bool)),
+                dtype=bool,
+            )
+            if material_progress_supported.shape != (count,) or not bool(
+                material_progress_supported.all()
+            ):
+                raise RuntimeError(
+                    "fixed evaluation did not return a supported per-map material "
+                    "progress ledger"
+                )
+            loaded_soil_measured = np.asarray(
+                raw_material_progress.get(
+                    "loaded_soil_measured", np.zeros(count, dtype=bool)
+                ),
+                dtype=bool,
+            )
+            if loaded_soil_measured.shape != (count,) or not bool(
+                loaded_soil_measured.all()
+            ):
+                raise RuntimeError(
+                    "fixed evaluation did not measure per-map terminal carried soil"
+                )
+            material_progress_metrics = {
+                "material_progress_supported": material_progress_supported,
+                "loaded_soil_measured": loaded_soil_measured,
+                **{
+                    key: np.asarray(raw_material_progress[key])
+                    for key in (
+                        "source_soil_volume",
+                        "dig_fraction",
+                        "terminal_soil_fraction",
+                        "off_zone_staged_soil_fraction",
+                        "loaded_soil_fraction",
+                    )
+                },
+            }
+            raw_stall_age = stats.get("stall_age", {})
+            stall_age_metrics = {
+                "stall_age_available": np.asarray(
+                    raw_stall_age.get("available", np.zeros(count, dtype=bool)),
+                    dtype=bool,
+                ),
+                "stall_age_decision_mean": np.asarray(
+                    raw_stall_age.get("decision_mean", np.zeros(count)),
+                    dtype=np.float32,
+                ),
+                "maximum_stall_age": np.asarray(
+                    raw_stall_age.get("maximum", np.zeros(count)),
+                    dtype=np.float32,
+                ),
+                "stall_age_saturated_decision_count": np.asarray(
+                    raw_stall_age.get(
+                        "saturated_decision_count", np.zeros(count, dtype=np.int32)
+                    ),
+                    dtype=np.int32,
+                ),
+                "stall_age_saturated_decision_fraction": np.asarray(
+                    raw_stall_age.get("saturated_decision_fraction", np.zeros(count)),
+                    dtype=np.float32,
+                ),
+            }
             if (
                 not np.all(np.isfinite(lengths))
                 or successes.shape != (count,)
                 or terminations.shape != (count,)
             ):
                 raise RuntimeError("fixed evaluation returned invalid arrays")
+            validate_progress_diagnostics(
+                material_progress_metrics,
+                stall_age_metrics,
+                lengths,
+            )
             if completion_contract == "exact_visible_dump_v1":
                 absolute = terminal_completion.get("absolute")
                 if absolute is None or absolute.shape != (count,):
@@ -1453,7 +1718,9 @@ def main() -> None:
                     f"terminal_{key}": values
                     for key, values in terminal_completion.items()
                 }
-                | carry_metrics,
+                | carry_metrics
+                | material_progress_metrics
+                | stall_age_metrics,
                 integrity_metrics=integrity_metrics,
                 productive_workspace_cycles=workspace_cycles,
                 productive_workspace_cycles_available=workspace_cycles_available,
@@ -1469,13 +1736,20 @@ def main() -> None:
             record = {
                 "schema": "terra_fixed_bank_eval_v4",
                 "completion_contract": completion_contract,
+                "material_progress_contract": {
+                    "name": "source_soil_partition_v1",
+                    "denominator": "required negative-target volume",
+                    "loaded_soil_source": "measured preserved terminal agent state",
+                    "identity": (
+                        "terminal_soil_fraction + off_zone_staged_soil_fraction + "
+                        "loaded_soil_fraction == dig_fraction"
+                    ),
+                },
                 "checkpoint": str(checkpoint_path),
                 "checkpoint_sha256": sha256_file(checkpoint_path),
                 "checkpoint_update": int(checkpoint.get("next_update", 0)),
                 "treatment_fingerprint": reference_treatment,
-                "r2_protocol_receipt": checkpoints[0][1].get(
-                    "r2_protocol_receipt"
-                ),
+                "r2_protocol_receipt": checkpoints[0][1].get("r2_protocol_receipt"),
                 "bank_root": str(bank_root),
                 "accepted_bank": (
                     None
@@ -1515,7 +1789,7 @@ def main() -> None:
                 record["explicit_episode_bank"] = explicit_episode_panel.receipt()
             records.append(record)
             with output.open("w") as handle:
-                json.dump(records, handle, indent=2, sort_keys=True)
+                json.dump(records, handle, indent=2, sort_keys=True, allow_nan=False)
                 handle.write("\n")
             overall = summary["overall"]
             graded = summary["graded"]

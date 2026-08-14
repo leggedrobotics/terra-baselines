@@ -9,7 +9,6 @@ import jax.numpy as jnp
 import numpy as np
 from flax import struct
 
-
 NUM_ACTIONS = 8
 MAX_AGENTS = 4
 REWARD_COMPONENT_RTOL = 1e-5
@@ -19,6 +18,71 @@ TERMINATION_REASONS = (
     "task_done_and_timeout",
     "other",
 )
+
+
+def source_soil_volume(
+    target_map: jax.Array,
+) -> jax.Array:
+    """Return the fixed source-soil denominator for each batched episode.
+
+    Full and partial Terra tasks retain their required negative target even
+    when all source soil is already staged.  Its volume is therefore the one
+    stable denominator; target-free states are unsupported rather than given a
+    second implicit contract.
+    """
+    target_map = jnp.asarray(target_map, dtype=jnp.float32)
+    return jnp.clip(-target_map, a_min=0.0).sum(axis=(-2, -1))
+
+
+def normalized_material_progress(
+    *,
+    source_volume: jax.Array,
+    dig_fraction: jax.Array,
+    terminal_soil_volume: jax.Array,
+    off_zone_staged_soil_volume: jax.Array,
+    loaded_soil_volume: jax.Array | None = None,
+) -> dict[str, jax.Array]:
+    """Normalize the terminal material ledger by one source-volume denominator.
+
+    Terra already reports the excavated fraction and the two world-volume
+    buckets.  Fixed evaluation passes the measured terminal carrier volume.
+    Training auto-resets terminal states, so it uses the independently enforced
+    mass-conserving remainder.  Both remain meaningful when strict
+    ``absolute_completion`` is zero solely because an otherwise complete
+    episode ends while loaded.
+    """
+    source_volume = jnp.asarray(source_volume, dtype=jnp.float32)
+    source_present = source_volume > 0
+    inverse_source = jnp.where(
+        source_present,
+        1.0 / jnp.maximum(source_volume, 1.0),
+        0.0,
+    )
+    dig_fraction = jnp.where(
+        source_present,
+        jnp.asarray(dig_fraction, dtype=jnp.float32),
+        0.0,
+    )
+    terminal_soil_fraction = (
+        jnp.asarray(terminal_soil_volume, dtype=jnp.float32) * inverse_source
+    )
+    off_zone_staged_soil_fraction = (
+        jnp.asarray(off_zone_staged_soil_volume, dtype=jnp.float32) * inverse_source
+    )
+    if loaded_soil_volume is None:
+        loaded_soil_fraction = (
+            dig_fraction - terminal_soil_fraction - off_zone_staged_soil_fraction
+        )
+    else:
+        loaded_soil_fraction = (
+            jnp.asarray(loaded_soil_volume, dtype=jnp.float32) * inverse_source
+        )
+    return {
+        "dig_fraction": dig_fraction,
+        "terminal_soil_fraction": terminal_soil_fraction,
+        "off_zone_staged_soil_fraction": off_zone_staged_soil_fraction,
+        "loaded_soil_fraction": loaded_soil_fraction,
+    }
 
 
 class EpisodeStep(struct.PyTreeNode):
@@ -37,13 +101,17 @@ class EpisodeStep(struct.PyTreeNode):
     transition_mass_residual: jax.Array
     target_mutation: jax.Array
     obstacle_mutation: jax.Array
-    dig_completion: jax.Array
     dump_purity: jax.Array
     dump_volume_completion: jax.Array
     combined_completion: jax.Array
     unloaded_completion: jax.Array
+    source_soil_volume: jax.Array
     accepted_dump_volume: jax.Array
-    illegal_dump_volume: jax.Array
+    off_zone_staged_soil_volume: jax.Array
+    dig_fraction: jax.Array
+    terminal_soil_fraction: jax.Array
+    off_zone_staged_soil_fraction: jax.Array
+    loaded_soil_fraction: jax.Array
 
 
 class EpisodeAccumulator(struct.PyTreeNode):
@@ -99,12 +167,16 @@ class EpisodeAggregate(struct.PyTreeNode):
     exact_dump_volume_sum: jax.Array
     accepted_dump_volume_sum: jax.Array
     buffer_only_dump_volume_sum: jax.Array
-    illegal_dump_volume_sum: jax.Array
-    dig_completion_sum: jax.Array
+    off_zone_staged_soil_volume_sum: jax.Array
+    dig_fraction_sum: jax.Array
     dump_purity_sum: jax.Array
     dump_volume_completion_sum: jax.Array
     combined_completion_sum: jax.Array
     unloaded_completion_sum: jax.Array
+    source_soil_volume_sum: jax.Array
+    terminal_soil_fraction_sum: jax.Array
+    off_zone_staged_soil_fraction_sum: jax.Array
+    loaded_soil_fraction_sum: jax.Array
 
 
 _MAX_AGGREGATE_FIELDS = (
@@ -189,12 +261,16 @@ def empty_episode_aggregate(group_count: int) -> EpisodeAggregate:
         exact_dump_volume_sum=zeros_float,
         accepted_dump_volume_sum=zeros_float,
         buffer_only_dump_volume_sum=zeros_float,
-        illegal_dump_volume_sum=zeros_float,
-        dig_completion_sum=zeros_float,
+        off_zone_staged_soil_volume_sum=zeros_float,
+        dig_fraction_sum=zeros_float,
         dump_purity_sum=zeros_float,
         dump_volume_completion_sum=zeros_float,
         combined_completion_sum=zeros_float,
         unloaded_completion_sum=zeros_float,
+        source_soil_volume_sum=zeros_float,
+        terminal_soil_fraction_sum=zeros_float,
+        off_zone_staged_soil_fraction_sum=zeros_float,
+        loaded_soil_fraction_sum=zeros_float,
     )
 
 
@@ -547,16 +623,16 @@ def update_episode_aggregate(
             jnp.zeros_like(step.accepted_dump_volume),
             expected_group_count,
         ),
-        illegal_dump_volume_sum=_masked_scatter_sum(
+        off_zone_staged_soil_volume_sum=_masked_scatter_sum(
             group,
             done,
-            step.illegal_dump_volume,
+            step.off_zone_staged_soil_volume,
             expected_group_count,
         ),
-        dig_completion_sum=_masked_scatter_sum(
+        dig_fraction_sum=_masked_scatter_sum(
             group,
             done,
-            step.dig_completion,
+            step.dig_fraction,
             expected_group_count,
         ),
         dump_purity_sum=_masked_scatter_sum(
@@ -581,6 +657,30 @@ def update_episode_aggregate(
             group,
             done,
             step.unloaded_completion,
+            expected_group_count,
+        ),
+        source_soil_volume_sum=_masked_scatter_sum(
+            group,
+            done,
+            step.source_soil_volume,
+            expected_group_count,
+        ),
+        terminal_soil_fraction_sum=_masked_scatter_sum(
+            group,
+            done,
+            step.terminal_soil_fraction,
+            expected_group_count,
+        ),
+        off_zone_staged_soil_fraction_sum=_masked_scatter_sum(
+            group,
+            done,
+            step.off_zone_staged_soil_fraction,
+            expected_group_count,
+        ),
+        loaded_soil_fraction_sum=_masked_scatter_sum(
+            group,
+            done,
+            step.loaded_soil_fraction,
             expected_group_count,
         ),
     )
@@ -740,12 +840,20 @@ def aggregate_to_payload(
         "buffer_only_dump_volume_sum": float(
             arrays["buffer_only_dump_volume_sum"].sum()
         ),
-        "illegal_dump_volume_sum": float(arrays["illegal_dump_volume_sum"].sum()),
-        "dig_completion_sum": float(arrays["dig_completion_sum"].sum()),
+        "off_zone_staged_soil_volume_sum": float(
+            arrays["off_zone_staged_soil_volume_sum"].sum()
+        ),
+        "dig_fraction_sum": float(arrays["dig_fraction_sum"].sum()),
         "dump_purity_sum": float(arrays["dump_purity_sum"].sum()),
         "dump_volume_completion_sum": float(arrays["dump_volume_completion_sum"].sum()),
         "combined_completion_sum": float(arrays["combined_completion_sum"].sum()),
         "unloaded_completion_sum": float(arrays["unloaded_completion_sum"].sum()),
+        "source_soil_volume_sum": float(arrays["source_soil_volume_sum"].sum()),
+        "terminal_soil_fraction_sum": float(arrays["terminal_soil_fraction_sum"].sum()),
+        "off_zone_staged_soil_fraction_sum": float(
+            arrays["off_zone_staged_soil_fraction_sum"].sum()
+        ),
+        "loaded_soil_fraction_sum": float(arrays["loaded_soil_fraction_sum"].sum()),
     }
     rates = {
         "task_done_rate": (
@@ -761,9 +869,27 @@ def aggregate_to_payload(
             else None
         ),
     }
+    material_progress = {
+        name: (totals[f"{name}_sum"] / total_episodes if total_episodes else None)
+        for name in (
+            "dig_fraction",
+            "terminal_soil_fraction",
+            "off_zone_staged_soil_fraction",
+            "loaded_soil_fraction",
+        )
+    }
     return {
         "schema": "terra_training_episode_aggregate_v2",
         "contract": "exact_visible_dump_v1",
+        "material_progress_contract": {
+            "name": "source_soil_partition_v1",
+            "denominator": "episode source-soil volume",
+            "loaded_soil_source": "mass-conserving remainder after terminal auto-reset",
+            "identity": (
+                "terminal_soil_fraction + off_zone_staged_soil_fraction + "
+                "loaded_soil_fraction == dig_fraction"
+            ),
+        },
         "numerical_tolerances": {
             "step_reward_component_relative": REWARD_COMPONENT_RTOL,
             "episode_reward_drift_relative_informational": REWARD_COMPONENT_RTOL,
@@ -781,6 +907,7 @@ def aggregate_to_payload(
         "stage_names": list(stage_names),
         "totals": totals,
         "rates": rates,
+        "material_progress": material_progress,
         "groups": rows,
     }
 

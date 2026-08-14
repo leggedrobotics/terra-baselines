@@ -118,7 +118,9 @@ from utils.episode_aggregates import (
     empty_episode_aggregate,
     EpisodeStep,
     new_episode_accumulator,
+    normalized_material_progress,
     reduce_episode_aggregate,
+    source_soil_volume,
     update_episode_aggregate,
 )
 from utils.accepted_bank import ARMS as ACCEPTED_BANK_ARMS
@@ -2763,11 +2765,23 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         config,
                     )
 
+                    progress_source_volume = source_soil_volume(
+                        prev_timestep.state.world.target_map.map,
+                    )
+
                     # STEP ENV
                     _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
                     action_env = wrap_action(action, env.batch_cfg.action_type)
                     timestep = env.step(prev_timestep, action_env, _rng_env)
                     reward_components = timestep.info["reward_components"]
+                    material_progress = normalized_material_progress(
+                        source_volume=progress_source_volume,
+                        dig_fraction=reward_components["dig_completion_total"],
+                        terminal_soil_volume=reward_components["accepted_dump_volume"],
+                        off_zone_staged_soil_volume=reward_components[
+                            "illegal_dump_volume"
+                        ],
+                    )
                     (
                         _,
                         next_family_id,
@@ -2796,15 +2810,20 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         ],
                         target_mutation=timestep.info["target_mutation"],
                         obstacle_mutation=timestep.info["obstacle_mutation"],
-                        dig_completion=reward_components["dig_completion_total"],
                         dump_purity=reward_components["dump_completion_action_map"],
                         dump_volume_completion=reward_components[
                             "total_dig_dump_completion"
                         ],
                         combined_completion=reward_components["absolute_completion"],
                         unloaded_completion=reward_components["unloaded_completion"],
+                        source_soil_volume=progress_source_volume,
                         accepted_dump_volume=reward_components["accepted_dump_volume"],
-                        illegal_dump_volume=reward_components["illegal_dump_volume"],
+                        # Terra retains this legacy reward-component key; new
+                        # receipts name the legal intermediate state directly.
+                        off_zone_staged_soil_volume=reward_components[
+                            "illegal_dump_volume"
+                        ],
+                        **material_progress,
                     )
                     active_curriculum_level = episode_accumulator.stage_id
                     episode_accumulator, pending_aggregate = update_episode_aggregate(

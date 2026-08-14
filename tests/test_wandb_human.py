@@ -32,10 +32,13 @@ def _episode_payload(episodes=2):
             "productive_workspace_cycles": 4 if episodes else 0,
             "no_effect_action_count": 1 if episodes else 0,
             "action_counts": [1, 1, 1, 1, 1, 1, 0, 0] if episodes else [0] * 8,
-            "dig_completion_sum": 1.4 if episodes else 0.0,
             "dump_purity_sum": 1.0 if episodes else 0.0,
             "dump_volume_completion_sum": 1.2 if episodes else 0.0,
             "combined_completion_sum": 1.3 if episodes else 0.0,
+            "dig_fraction_sum": 1.8 if episodes else 0.0,
+            "terminal_soil_fraction_sum": 1.2 if episodes else 0.0,
+            "off_zone_staged_soil_fraction_sum": 0.2 if episodes else 0.0,
+            "loaded_soil_fraction_sum": 0.4 if episodes else 0.0,
         },
         "rates": {
             "task_done_rate": 0.5 if episodes else None,
@@ -63,6 +66,12 @@ def test_episode_metrics_are_rates_means_and_unknown_without_episodes():
     assert metrics["train/episode_success_rate"] == 0.5
     assert metrics["behavior/mean_episode_length"] == 3.0
     assert metrics["behavior/absolute_completion"] == pytest.approx(0.65)
+    assert metrics["material_progress/dig_fraction"] == pytest.approx(0.9)
+    assert metrics["material_progress/terminal_soil_fraction"] == pytest.approx(0.6)
+    assert metrics["material_progress/off_zone_staged_soil_fraction"] == pytest.approx(
+        0.1
+    )
+    assert metrics["material_progress/loaded_soil_fraction"] == pytest.approx(0.2)
     assert metrics["reward/episode_return"] == 4.0
     assert metrics["reward/agent"] == 2.5
     assert metrics["reward/trench"] == 0.25
@@ -73,6 +82,7 @@ def test_episode_metrics_are_rates_means_and_unknown_without_episodes():
     assert math.isnan(empty["train/episode_success_rate"])
     assert math.isnan(empty["train/episode_timeout_rate"])
     assert math.isnan(empty["behavior/absolute_completion"])
+    assert math.isnan(empty["material_progress/loaded_soil_fraction"])
     assert "reward/trench" not in empty
 
 
@@ -177,7 +187,7 @@ def test_bounded_logging_schema_and_manual_workspace():
     assert metrics["kickstart/kl"] == pytest.approx(0.6)
     assert not any(key.startswith("diagnostics/") for key in metrics)
 
-    assert len(TRAINING_SCALAR_KEYS) <= 50
+    assert len(TRAINING_SCALAR_KEYS) <= 56
     assert "reward/terminal_objective_mix" in TRAINING_SCALAR_KEYS
     assert {
         f"curriculum/population/{label}" for label in (*FAMILIES, *BRANCH_DEPTHS)
@@ -195,6 +205,18 @@ def test_bounded_logging_schema_and_manual_workspace():
         for section in spec["sections"]
         for panel in section["panels"]
     )
+    task_progress = next(
+        panel
+        for section in spec["sections"]
+        for panel in section["panels"]
+        if panel["title"] == "Task progress"
+    )
+    assert {
+        "material_progress/dig_fraction",
+        "material_progress/terminal_soil_fraction",
+        "material_progress/off_zone_staged_soil_fraction",
+        "material_progress/loaded_soil_fraction",
+    }.issubset(task_progress["y"])
     assert {
         panel["x"] for section in spec["sections"] for panel in section["panels"]
     } == {"train/update", "eval/update"}

@@ -60,6 +60,10 @@ TRAINING_SCALAR_KEYS = frozenset(
         "behavior/no_effect_action_rate",
         "behavior/mean_episode_length",
         "behavior/productive_workspace_cycles_per_episode",
+        "material_progress/dig_fraction",
+        "material_progress/terminal_soil_fraction",
+        "material_progress/off_zone_staged_soil_fraction",
+        "material_progress/loaded_soil_fraction",
         *{f"behavior/action_fraction/{name}" for name in ACTION_NAMES},
         "reward/episode_return",
         "reward/agent",
@@ -118,9 +122,19 @@ def episode_metrics(payload: dict, *, include_trench_reward: bool) -> dict[str, 
             else float("nan")
         ),
         "behavior/absolute_completion": per_episode("combined_completion_sum"),
-        "behavior/dig_completion": per_episode("dig_completion_sum"),
+        "behavior/dig_completion": per_episode("dig_fraction_sum"),
         "behavior/dump_volume_completion": per_episode("dump_volume_completion_sum"),
         "behavior/dump_purity": per_episode("dump_purity_sum"),
+        "material_progress/dig_fraction": per_episode("dig_fraction_sum"),
+        "material_progress/terminal_soil_fraction": per_episode(
+            "terminal_soil_fraction_sum"
+        ),
+        "material_progress/off_zone_staged_soil_fraction": per_episode(
+            "off_zone_staged_soil_fraction_sum"
+        ),
+        "material_progress/loaded_soil_fraction": per_episode(
+            "loaded_soil_fraction_sum"
+        ),
         "behavior/no_effect_action_rate": _safe_rate(
             totals["no_effect_action_count"], steps
         ),
