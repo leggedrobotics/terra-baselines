@@ -19,13 +19,13 @@ class Config(dict):
     __getattr__ = dict.__getitem__
 
 
-# The compact V8 architecture control (scripts/run_v8_architecture_control_v1.sh).
+# Frozen compact V8 architecture used by the architecture comparison.
 COMPACT = dict(
     map_encoder="resnet_spatial_8x8_se_xattn",
     resnet_stage_channels=(24, 48, 64, 96),
     resnet_blocks_per_stage=(2, 2, 3, 3),
 )
-# spatial_v6_3m (scripts/run_v8_v6_yolo_v1.sh).
+# Frozen spatial-v6 architecture used by the architecture comparison.
 V6_3M = dict(
     map_encoder="resnet_spatial_8x8_se_sa_xattn",
     resnet_stage_channels=(24, 48, 64, 96),
@@ -35,7 +35,7 @@ V6_3M = dict(
     attn_latent_queries=8,
     aux_coef=0.25,
 )
-COMPACT_PARAMETERS = 2_856_685  # frozen in euler_v8_architecture_control_v1
+COMPACT_PARAMETERS = 2_856_685
 V6_3M_PARAMETERS = 2_134_755
 
 
@@ -375,53 +375,6 @@ class V6UpdateTest(unittest.TestCase):
             float(jnp.linalg.norm(flat["['params']['mlp_pi']['layers_0']['kernel']"])),
             0.0,
         )
-
-
-class V6LauncherTest(unittest.TestCase):
-    def test_arm_flags_match_the_frozen_architecture(self):
-        from pathlib import Path
-
-        root = Path(__file__).resolve().parents[1]
-        runner = (root / "scripts" / "run_v8_v6_yolo_v1.sh").read_text()
-        sbatch = (root / "scripts" / "euler_v8_v6_yolo_v1" / "run.sbatch").read_text()
-        submit = (root / "scripts" / "euler_v8_v6_yolo_v1" / "submit.sh").read_text()
-
-        for flag in (
-            "--config G-V8-CONTINUOUS-V2",
-            "--accepted-bank-sampler-profile continuous_banded_v2",
-            "--map_encoder resnet_spatial_8x8_se_sa_xattn",
-            '--resnet_blocks_per_stage "3,3,2,2"',
-            "--token_mixer_residual_init_scale 0.1",
-            "--flatten_reduce_channels 32",
-            "--attn_latent_queries 8",
-            "--aux_coef 0.25",
-            "--vf_coef 0.5",
-            "--no_value_clip",
-            "--flat_minibatch_shuffle",
-            "--fail_on_nonfinite",
-        ):
-            self.assertIn(flag, runner, flag)
-        self.assertNotIn("--warm_start_from", runner)
-        self.assertNotIn("--teacher_checkpoint", runner)
-        self.assertNotIn("--resume_from", runner)
-
-        self.assertIn(f"EXPECTED_PARAMETERS={V6_3M_PARAMETERS}", sbatch)
-        self.assertIn("sampler_profile=continuous_banded_v2", sbatch)
-        self.assertIn("num_devices=1", sbatch)
-        self.assertIn("optimizer_steps_per_update=64", sbatch)
-        self.assertIn("samples_per_optimizer_step=512", sbatch)
-        self.assertIn(
-            "PROTOCOL_TERRA_REVISION=a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4", sbatch
-        )
-        self.assertIn('test "${#GPU_NAMES[@]}" -eq 1', sbatch)
-        self.assertIn("used < 45.0", sbatch)
-        self.assertIn("export NUM_DEVICES=1 NUM_ENVS_PER_DEVICE=512", sbatch)
-        self.assertIn("NUM_MINIBATCHES=32", sbatch)
-        self.assertLess(
-            submit.index('if [ "$SUBMIT" = 0 ]'), submit.index('ssh "$REMOTE_HOST"')
-        )
-        self.assertIn("--gpus='$GPU_TYPE:1'", submit)
-        self.assertIn("gpuhe.120h", submit)
 
 
 if __name__ == "__main__":

@@ -52,6 +52,7 @@ remain separate. Exact is solved maps / evaluated maps.
 | 08-03 | all-free capability-floor evaluation | local fixed eval | selected P5/P5b checkpoints | 0.385--0.718 / 0.465--0.736 | generalists 0/32; trench specialist 1/32 promotion only | integrity-clean diagnostic; physically easier but target-mask OOD, excluded from constrained macro |
 | 08-03 | P5c five-arm low-entropy screen | `9461489`, `9461500`, `9461504`, `9461507`, `9461512` | none | deep latest 0.624 / 0.586 | deep latest 168/512 / 143/512 | all fixed evaluations clean; no arm passed the long-run gate at two consecutive checkpoints |
 | 08-10 | V8 Atari-base small-system control | `10128519` | 19,000 (descriptive promotion selection) | 0.457 / 0.428 | 16/752 / 20/752 | completed 20k; zero mastered conditions and depth 0/0; negative 480k-system result, not an encoder-only ablation |
+| 08-14 | V8 v6.1 reward-v2 + stall age + final-v3 continuation | `10625259` | 40,000 | 0.956 / 0.959 | 657/720 / 663/720 | completed u14->u40; promotion exact 407->657 with 254 conversions and 4 regressions; u39->u40 was high-churn 38/32 for only +6 net, so this is a strong combined-treatment capability result but not stall-age or sampler attribution |
 
 P5b result root:
 `/home/lorenzo/moleworks/.artifacts/terra_p5b_results_20260802_6c56610e`.

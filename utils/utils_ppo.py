@@ -29,6 +29,7 @@ def _config_option(config, name: str, default):
 
 def clip_action_map_in_obs(obs):
     """Clip action maps to [-1, 1] on the intuition that a binary map is enough for the agent to take decisions."""
+    obs = dict(obs)
     obs["action_map"] = jnp.clip(obs["action_map"], a_min=-1, a_max=1)
     return obs
 
@@ -52,6 +53,25 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         if _config_option(train_cfg, "action_logit_masking", False)
         else None
     )
+    stall_age = None
+    if _config_option(train_cfg, "stall_age_observation", False):
+        if "stall_age" not in obs:
+            raise ValueError(
+                "stall_age_observation requires Terra obs['stall_age']"
+            )
+        stall_age = jnp.asarray(obs["stall_age"], dtype=jnp.float32)
+    reward_v2_reset_context = None
+    if _config_option(train_cfg, "reward_v2_reset_context_observation", False):
+        if "reward_v2_reset_context" not in obs:
+            raise ValueError(
+                "reward_v2_reset_context_observation requires Terra "
+                "obs['reward_v2_reset_context']"
+            )
+        reward_v2_reset_context = jnp.asarray(
+            obs["reward_v2_reset_context"], dtype=jnp.float32
+        )
+        if reward_v2_reset_context.shape[-1:] != (2,):
+            raise ValueError("reward_v2_reset_context must end with width 2")
     # Feature engineering
     if _config_option(train_cfg, "clip_action_maps", True):
         obs = clip_action_map_in_obs(obs)
@@ -87,10 +107,15 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs["interaction_mask"],         # [20] - Interaction map
         prev_actions,                    # [21] - Previous actions history
     ]
+    if stall_age is not None:
+        obs.append(stall_age[..., None])  # [22] - normalized material-stall age
+    if reward_v2_reset_context is not None:
+        # [22] without stall age, otherwise [23]. The pair is the episode's
+        # fixed [Q_reset, H_reset/V0] baseline, not current progress.
+        obs.append(reward_v2_reset_context)
     if _config_option(train_cfg, "action_logit_masking", False):
-        # [22] - Effect-based action mask from the env (D3). Appended last so
-        # every existing index and the len>=22 layout checks stay valid; the
-        # model consumes nothing at [22], only policy() masking reads it.
+        # Effect-based action mask from the env (D3). Appended last; the model
+        # consumes no fixed index for it, only policy() masking reads it.
         obs = obs + [action_mask]
     return obs
 

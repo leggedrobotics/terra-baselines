@@ -23,6 +23,10 @@ import jax.random as jrandom
 from tensorflow_probability.substrates import jax as tfp
 
 from utils.models import load_neural_network
+from utils.episode_aggregates import (
+    normalized_material_progress,
+    source_soil_volume,
+)
 from utils.helpers import (
     checkpoint_batch_config,
     load_pkl_object,
@@ -49,6 +53,40 @@ except ImportError as e:
     _MCTX_IMPORT_ERR = e
 
 _DEFAULT_MAPS_DIR = Path(__file__).parent / "inference" / "maps"
+
+# Largest per-forward episode batch the policy is evaluated with. The full
+# promotion panel is 720 episodes and the rollout used to run all of them
+# through the model in one call, which made every v6-family eval die with
+#   UNKNOWN: CUDNN_STATUS_EXECUTION_FAILED  (external/.../cuda_dnn.cc:7927)
+# on the flatten-reduce 1x1 conv (utils/models.py, ``flatten_reduce_channels``).
+# The op only breaks when it consumes the token mixer's output -- dropping
+# either the mixer or flatten_reduce makes batch 720 pass -- and only above a
+# batch threshold that sits between 180 and 360. It is cuDNN algorithm
+# selection, not the model: it reproduces on 3090 and 4090, jitted and eager,
+# in bf16 and f32, with 1.4 GiB of 17.6 GiB in use, and training never saw it
+# because it never runs the encoder above 512/device through that path.
+#
+# Chunking the forward is exact rather than approximate: the model has no
+# batch-mixing ops (no BatchNorm, no batch reductions), so every episode's
+# output depends on its own row only. A standalone check of the affected conv
+# at batch 720 gave a bit-identical output sum chunked at 90/128/180 and
+# unchunked. 720 % 120 == 0, so every chunk has the same shape.
+EVAL_FORWARD_CHUNK = 120
+
+
+def _apply_in_batch_chunks(model, model_params, obs_model):
+    """Run the policy forward over episodes in chunks of EVAL_FORWARD_CHUNK."""
+    batch = obs_model[0].shape[0]
+    if batch <= EVAL_FORWARD_CHUNK:
+        return model.apply(model_params, obs_model)
+    values, logits = [], []
+    for start in range(0, batch, EVAL_FORWARD_CHUNK):
+        stop = start + EVAL_FORWARD_CHUNK
+        chunk = jax.tree_util.tree_map(lambda leaf: leaf[start:stop], obs_model)
+        v_chunk, logits_chunk = model.apply(model_params, chunk)
+        values.append(v_chunk)
+        logits.append(logits_chunk)
+    return jnp.concatenate(values, axis=0), jnp.concatenate(logits, axis=0)
 
 
 # ----------------------------------------------------------------------------
@@ -220,6 +258,27 @@ def _append_to_obs(o, obs_log):
     return obs_log
 
 
+def _loaded_soil_volume(timestep) -> jax.Array:
+    """Return measured carried soil per environment from a live timestep."""
+    try:
+        active = jnp.asarray(timestep.state.agent.agent_active, dtype=jnp.float32)
+        loaded_by_agent = jnp.stack(
+            [
+                agent_state.loaded.astype(jnp.float32).sum(axis=-1)
+                for agent_state in timestep.state.agent.agent_states
+            ],
+            axis=1,
+        )
+        return (loaded_by_agent * active).sum(axis=1)
+    except (AttributeError, TypeError, ValueError):
+        loaded_by_agent = jnp.maximum(timestep.observation["agent_states"][:, :, 5], 0)
+        active = jnp.asarray(
+            timestep.observation.get("agent_active", jnp.ones_like(loaded_by_agent)),
+            dtype=jnp.float32,
+        )
+        return (loaded_by_agent * active).sum(axis=1)
+
+
 def rollout_episode(
     env: TerraEnvBatch,
     model,
@@ -362,6 +421,19 @@ def rollout_episode(
         )
         obs = timestep.observation
 
+    try:
+        material_source_volume = source_soil_volume(
+            obs["target_map"],
+        )
+        material_progress_supported = material_source_volume > 0
+    except (KeyError, TypeError, ValueError):
+        material_source_volume = jnp.zeros(
+            rl_config.num_test_rollouts, dtype=jnp.float32
+        )
+        material_progress_supported = jnp.zeros(
+            rl_config.num_test_rollouts, dtype=jnp.bool_
+        )
+
     t_counter = 0
     reward_seq = []
     episode_terminated_once = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.bool_)
@@ -377,6 +449,7 @@ def rollout_episode(
     terminal_dump_mask_integrity = jnp.zeros_like(terminal_total_completion)
     terminal_accepted_dump_volume = jnp.zeros_like(terminal_total_completion)
     terminal_illegal_dump_volume = jnp.zeros_like(terminal_total_completion)
+    terminal_loaded_soil_volume = jnp.zeros_like(terminal_total_completion)
     terminal_productive_workspace_cycles = jnp.full(
         (rl_config.num_test_rollouts,), -1, dtype=jnp.int32
     )
@@ -386,9 +459,7 @@ def rollout_episode(
     terminal_carry_work_normalized = jnp.zeros(
         rl_config.num_test_rollouts, dtype=jnp.float32
     )
-    maximum_carry_work_normalized = jnp.zeros_like(
-        terminal_carry_work_normalized
-    )
+    maximum_carry_work_normalized = jnp.zeros_like(terminal_carry_work_normalized)
     if expected_slot_indices is None:
         expected_slot_indices = jnp.arange(rl_config.num_test_rollouts, dtype=jnp.int32)
     else:
@@ -397,6 +468,11 @@ def rollout_episode(
         raise ValueError("expected_slot_indices must have one entry per test rollout")
     terminal_slot_indices = expected_slot_indices
     no_effect_action_count = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.int32)
+    stall_age_decision_sum = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.float32)
+    stall_age_decision_count = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.int32)
+    stall_age_saturated_decision_count = jnp.zeros_like(stall_age_decision_count)
+    maximum_stall_age = jnp.zeros_like(stall_age_decision_sum)
+    stall_age_available = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.bool_)
     maximum_mass_residual = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.int32)
     target_mutation = jnp.zeros(rl_config.num_test_rollouts, dtype=jnp.bool_)
     obstacle_mutation = jnp.zeros_like(target_mutation)
@@ -453,6 +529,20 @@ def rollout_episode(
         if record_observations:
             obs_seq = _append_to_obs(obs, obs_seq)
         active_env_mask = ~episode_terminated_once
+        if "stall_age" in obs:
+            stall_age = jnp.asarray(obs["stall_age"], dtype=jnp.float32).reshape(
+                active_env_mask.shape
+            )
+            stall_age_decision_sum += jnp.where(active_env_mask, stall_age, 0.0)
+            stall_age_decision_count += active_env_mask.astype(jnp.int32)
+            stall_age_saturated_decision_count += (
+                active_env_mask & (stall_age >= 1.0 - 1e-6)
+            ).astype(jnp.int32)
+            maximum_stall_age = jnp.maximum(
+                maximum_stall_age,
+                jnp.where(active_env_mask, stall_age, 0.0),
+            )
+            stall_age_available |= active_env_mask
 
         if use_mcts:
             rng, timestep, prev_actions, action, ppo_act, mcts_act = mcts_step(
@@ -467,13 +557,11 @@ def rollout_episode(
             obs_model = obs_to_model_input(
                 timestep.observation, prev_actions, rl_config
             )
-            v, logits_pi = model.apply(model_params, obs_model)
+            v, logits_pi = _apply_in_batch_chunks(model, model_params, obs_model)
             # D3: evaluation must respect the same masked distribution the
             # policy trained under (obs_model[22] when the flag is on).
             if _config_option(rl_config, "action_logit_masking", False):
-                logits_pi = jnp.where(
-                    obs_model[22], logits_pi, jnp.float32(-1e9)
-                )
+                logits_pi = jnp.where(obs_model[22], logits_pi, jnp.float32(-1e9))
             if deterministic:
                 action = jnp.argmax(logits_pi, axis=-1)
             else:
@@ -564,20 +652,14 @@ def rollout_episode(
                 state_finite = jnp.all(jnp.stack(finite_per_leaf), axis=0)
                 nonfinite_state |= active_env_mask & ~state_finite
 
-        changed_action_map = jnp.any(
-            next_obs["action_map"] != obs["action_map"], axis=(-2, -1)
-        )
-        changed_agent = jnp.any(
-            next_obs["agent_states"] != obs["agent_states"], axis=(-2, -1)
-        )
         no_effect_action_count += (
-            active_env_mask & ~changed_action_map & ~changed_agent
+            active_env_mask & ~timestep.info["action_had_effect"]
         ).astype(jnp.int32)
 
         reward_components = timestep.info.get("reward_components", {})
         if next_obs["agent_states"].shape[-1] >= 9:
-            carry_work = next_obs["agent_states"][..., 8].astype(jnp.float32).sum(
-                axis=-1
+            carry_work = (
+                next_obs["agent_states"][..., 8].astype(jnp.float32).sum(axis=-1)
             )
             maximum_carry_work_normalized = jnp.maximum(
                 maximum_carry_work_normalized,
@@ -648,6 +730,12 @@ def rollout_episode(
             reward_components.get("illegal_dump_volume", terminal_illegal_dump_volume),
             terminal_illegal_dump_volume,
         )
+        if preserve_terminal_states:
+            terminal_loaded_soil_volume = jnp.where(
+                active_env_mask & step_done,
+                _loaded_soil_volume(timestep),
+                terminal_loaded_soil_volume,
+            )
         if "productive_workspace_cycles" in timestep.info:
             workspace_cycles = jnp.asarray(
                 timestep.info["productive_workspace_cycles"], dtype=jnp.int32
@@ -899,6 +987,17 @@ def rollout_episode(
     p = do_means / do_total
     diversity_entropy = -jnp.sum(jnp.where(p > 0, p * jnp.log(p + 1e-8), 0.0))
 
+    material_progress = normalized_material_progress(
+        source_volume=material_source_volume,
+        dig_fraction=terminal_dig_completion,
+        terminal_soil_volume=terminal_accepted_dump_volume,
+        off_zone_staged_soil_volume=terminal_illegal_dump_volume,
+        loaded_soil_volume=(
+            terminal_loaded_soil_volume if preserve_terminal_states else None
+        ),
+    )
+    stall_age_denominator = jnp.maximum(stall_age_decision_count, 1)
+
     stats = {
         "episode_done_once": episode_succeeded_once,
         "episode_terminated_once": episode_terminated_once,
@@ -920,6 +1019,25 @@ def rollout_episode(
             "dump_mask_integrity": terminal_dump_mask_integrity,
             "accepted_dump_volume": terminal_accepted_dump_volume,
             "illegal_dump_volume": terminal_illegal_dump_volume,
+        },
+        "material_progress": {
+            "supported": material_progress_supported,
+            "loaded_soil_measured": jnp.full(
+                material_progress_supported.shape,
+                preserve_terminal_states,
+                dtype=jnp.bool_,
+            ),
+            "source_soil_volume": material_source_volume,
+            **material_progress,
+        },
+        "stall_age": {
+            "available": stall_age_available,
+            "decision_mean": stall_age_decision_sum / stall_age_denominator,
+            "maximum": maximum_stall_age,
+            "saturated_decision_count": stall_age_saturated_decision_count,
+            "saturated_decision_fraction": (
+                stall_age_saturated_decision_count / stall_age_denominator
+            ),
         },
         "integrity": {
             "supported": integrity_supported,

@@ -12,25 +12,20 @@ RULES = (
     "uniform",
     "fixed",
     "adaptive",
-    "continuous_banded_v1",
-    "continuous_banded_v2",
     "continuous_banded_v3",
 )
-CONTINUOUS_RULES = (
-    "continuous_banded_v1",
-    "continuous_banded_v2",
-    "continuous_banded_v3",
-)
+CONTINUOUS_RULES = ("continuous_banded_v3",)
+LEGACY_SOURCE_RULE = "continuous_banded_v2"
 STATE_SCHEMA = "terra_pooled_condition_sampler_state_v2"
 CONTINUOUS_STATE_SCHEMA = "terra_continuous_banded_sampler_state_v1"
 CONTINUOUS_RECEIPT_SCHEMA = "terra_continuous_banded_sampler_v1"
 FAMILIES = ("foundation", "trench")
 ALL_FAMILY_FLOOR_MASS = 0.10
-ACTIVE_DEPTH_MASS = 0.75
-NEXT_DEPTH_MASS = 0.15
 FRONTIER_MASS = 0.90
 DEPTH_PRIORITY_BASE = 2.0
 CONTINUOUS_MAX_MASS = 0.15
+OPEN_CONDITION_MASS = 0.80
+MASTERED_REPLAY_MASS = 0.20
 DEMOTION_THRESHOLD = 0.65
 
 
@@ -133,30 +128,16 @@ class PooledConditionSampler:
     exposure. Mastered conditions remain in the uniform floor and re-enter
     automatically if their EMA falls below the threshold.
 
-    ``continuous_banded_v1`` instead keeps a 10% per-family floor across every
-    condition, puts 75% on the family's shallowest incomplete depth, and 15%
-    on the next depth. Foundation and trench each retain exactly half the
-    population. Only exact completed training episodes update its mastery EMA.
+    ``continuous_banded_v2`` remains only as the tag on the selected
+    update-14000 source checkpoint. Its private distribution is used by the
+    one-off offline materializer to validate that source.
 
-    ``continuous_banded_v2`` removes the family-level depth gate that let a
-    few stubborn conditions pin their whole family: the 90% frontier mass is
-    spread over every unmastered condition, weighted
-    ``DEPTH_PRIORITY_BASE ** (2 - depth)`` so shallow work still leads without
-    starving any unmastered condition, and any condition with an eligible
-    window may graduate regardless of depth. A v2 sampler may resume a v1
-    checkpoint: mastery state carries over and the probability vector is
-    recomputed under the v2 rule.
-
-    ``continuous_banded_v3`` is v2 plus one per-condition mass cap. v2 keeps
-    each family pinned at half the population, so a nearly-mastered family
-    funnels its whole half onto its last unmastered condition: at u13.5k of
-    the reward_v2_scratch run one cell held 45.2% of assignment mass. v3
-    caps any condition at ``settings.max_mass`` and redistributes the excess
-    proportionally over the uncapped conditions, ignoring family boundaries
-    when it does so. While no condition exceeds the cap, v3 and v2 are the
-    same distribution. Graduation, demotion, windows, and refresh boundaries
-    are identical to v2, and a v3 sampler may resume a v1 or v2 checkpoint
-    under a one-way migration taken at an empty window boundary.
+    ``continuous_banded_v3`` removes the semantic family quota. It assigns
+    80% globally over open conditions using v2's depth weights and 20%
+    uniformly over mastered replay, then applies the same per-condition cap.
+    Family labels remain diagnostics only. The materializer explicitly clears
+    the source's current window while producing a native v3 checkpoint; normal
+    training accepts only native v3 state.
     """
 
     def __init__(
@@ -338,8 +319,16 @@ class PooledConditionSampler:
             }
         return result
 
-    def restore_state_dict(self, state: dict) -> None:
-        """Restore a sampler checkpoint after validating its full contract."""
+    def restore_state_dict(
+        self, state: dict, *, clear_window_on_migration: bool = False
+    ) -> None:
+        """Restore a sampler checkpoint after validating its full contract.
+
+        ``clear_window_on_migration`` applies only to a one-way continuous rule
+        migration whose checkpoint sits mid-window: instead of refusing, discard
+        the partial window's exposure so no window mixes two rules. It is inert
+        for a same-rule resume, which always keeps the partial window.
+        """
 
         top_keys = {
             "schema",
@@ -384,15 +373,17 @@ class PooledConditionSampler:
             else None
         )
         migrating = (
-            self.settings.rule in CONTINUOUS_RULES
-            and stored_rule in CONTINUOUS_RULES
-            and CONTINUOUS_RULES.index(stored_rule)
-            < CONTINUOUS_RULES.index(self.settings.rule)
+            self.settings.rule == "continuous_banded_v3"
+            and stored_rule == LEGACY_SOURCE_RULE
         )
         if migrating:
-            # One-way rule migration: a newer continuous sampler may resume an
-            # older continuous checkpoint (v1->v2, v2->v3, v1->v3), never the
-            # reverse. Every other setting must still match exactly.
+            # The selected update-14000 source is v2; its one-off materializer
+            # migrates that state to v3. Every other setting must match exactly.
+            if not clear_window_on_migration:
+                raise ValueError(
+                    "legacy v2 state is accepted only by the explicit offline "
+                    "v3 checkpoint materializer"
+                )
             expected_settings = {**expected_settings, "rule": stored_rule}
         contracts = (
             ("conditions", state["conditions"], list(self.names)),
@@ -537,14 +528,20 @@ class PooledConditionSampler:
 
         current = restore_window(state["current_window"], "current_window")
         closed = restore_window(state["closed_window"], "closed_window")
-        if migrating and (
-            any(vector.any() for vector in current[:5]) or current[5] != 0
-        ):
+        if migrating:
             # Windows drive graduation, so a window may never mix exposure
-            # taken under two different rules: migrate at a refresh boundary.
-            raise ValueError(
-                "continuous_banded rule migration requires an empty current "
-                "window; migrate at a refresh boundary, not mid-window"
+            # taken under two different rules: migrate at a refresh boundary,
+            # or discard the partial window explicitly. Discarding costs the
+            # exposure taken since the last boundary and nothing else: mastery,
+            # competence, the closed window, and the refresh grid all survive,
+            # so the next boundary still lands on the checkpoint's schedule.
+            current = (
+                np.zeros(self._count, dtype=np.int64),
+                np.zeros(self._count, dtype=np.float64),
+                np.zeros(self._count, dtype=np.int64),
+                np.zeros(self._count, dtype=np.int64),
+                np.zeros(self._count, dtype=np.int64),
+                0,
             )
 
         refresh = state["refresh"]
@@ -660,6 +657,49 @@ class PooledConditionSampler:
         self._assignments += np.bincount(samples, minlength=self._count)
         return samples.reshape(shape).astype(np.int32)
 
+    def sample_levels_for_reset_tiers(
+        self,
+        reset_tiers: np.ndarray,
+        supported_levels: np.ndarray,
+    ) -> np.ndarray:
+        """Sample full lanes normally and partial lanes only from valid sidecars."""
+        tiers = np.asarray(reset_tiers)
+        support = np.asarray(supported_levels)
+        if tiers.dtype.kind not in "iu" or np.any((tiers < 0) | (tiers > 3)):
+            raise ValueError("reset_tiers must contain integer tiers in [0, 3]")
+        if support.shape != (4, self._count) or support.dtype.kind != "b":
+            raise ValueError(
+                "supported_levels must be boolean [4, condition_count]"
+            )
+        if not np.all(support[1:] == support[1]):
+            raise ValueError(
+                "partial reset tiers 1-3 must share one common condition support"
+            )
+        samples = self._rng.choice(
+            self._count,
+            size=tiers.size,
+            p=self._probabilities,
+        ).astype(np.int32)
+        flat_tiers = tiers.reshape(-1)
+        for tier in (1, 2, 3):
+            lanes = np.flatnonzero(flat_tiers == tier)
+            if not lanes.size:
+                continue
+            probabilities = np.where(
+                support[tier], self._probabilities, 0.0
+            ).astype(np.float64)
+            mass = float(probabilities.sum())
+            if mass <= 0.0:
+                raise ValueError(f"partial reset tier {tier} has no supported condition")
+            probabilities /= mass
+            samples[lanes] = self._rng.choice(
+                self._count,
+                size=lanes.size,
+                p=probabilities,
+            )
+        self._assignments += np.bincount(samples, minlength=self._count)
+        return samples.reshape(tiers.shape)
+
     def observe_reset_exposures(self, counts: np.ndarray) -> None:
         """Count maps actually instantiated by reset, separately from episodes."""
         values = np.asarray(counts)
@@ -717,6 +757,32 @@ class PooledConditionSampler:
             )
         self._window_updates += 1
 
+    def observe_exact_episode_counts(
+        self,
+        episode_counts: np.ndarray,
+        task_done_counts: np.ndarray,
+    ) -> None:
+        """Add full-start exact outcomes without mixing in shaped reset episodes."""
+        if self.settings.rule not in CONTINUOUS_RULES:
+            raise ValueError(
+                "exact episode counts are supported only by continuous_banded"
+            )
+        episodes = np.asarray(episode_counts)
+        successes = np.asarray(task_done_counts)
+        for label, values in (
+            ("episode_counts", episodes),
+            ("task_done_counts", successes),
+        ):
+            if values.shape != (self._count,):
+                raise ValueError(f"{label} must match the condition count")
+            if values.dtype.kind not in "iub" or np.any(values < 0):
+                raise ValueError(f"{label} must contain nonnegative integers")
+        if np.any(successes > episodes):
+            raise ValueError("task_done_counts cannot exceed episode_counts")
+        self._episodes += episodes.astype(np.int64)
+        self._completion_sum += successes.astype(np.float64)
+        self._window_updates += 1
+
     def refresh(self, update_index: int) -> None:
         if self.settings.rule in CONTINUOUS_RULES:
             if self._last_refresh_update is None or not self.due(update_index):
@@ -762,17 +828,7 @@ class PooledConditionSampler:
         self._last_refresh_update = int(update_index)
         self._refreshes += 1
 
-    def _active_depth(
-        self, family: str, mastered: np.ndarray | None = None
-    ) -> int | None:
-        state = self._mastered if mastered is None else mastered
-        unmastered = (self._families == family) & ~state
-        if not unmastered.any():
-            return None
-        return int(self._depths[unmastered].min())
-
     def _refresh_continuous_mastery(self) -> None:
-        active_depths = {family: self._active_depth(family) for family in FAMILIES}
         eligible = self._episodes >= self.settings.min_episodes
         for index in range(self._count):
             if not eligible[index]:
@@ -795,56 +851,12 @@ class PooledConditionSampler:
                     self._mastered[index] = False
                 continue
 
-            family = str(self._families[index])
-            if (
-                self.settings.rule == "continuous_banded_v1"
-                and self._depths[index] != active_depths[family]
-            ):
-                # v1 preview is observable but remains locked until its
-                # family reaches this depth. v2/v3 graduate any eligible cell.
-                continue
             if self._competence[index] >= self.settings.mastery_threshold:
                 self._mastered[index] = True
-
-    def _continuous_distribution(
-        self, mastered: np.ndarray | None = None
-    ) -> np.ndarray:
-        state = self._mastered if mastered is None else mastered
-        probabilities = np.zeros(self._count, dtype=np.float64)
-        for family in FAMILIES:
-            family_mask = self._families == family
-            active_depth = self._active_depth(family, state)
-            if active_depth is None:
-                probabilities[family_mask] = 0.5 / int(family_mask.sum())
-                continue
-            active = family_mask & (self._depths == active_depth)
-            next_depth = active_depth + 1
-            next_band = family_mask & (self._depths == next_depth)
-            probabilities[family_mask] += (
-                0.5 * ALL_FAMILY_FLOOR_MASS / int(family_mask.sum())
-            )
-            if next_band.any():
-                active_mass = ACTIVE_DEPTH_MASS
-                next_mass = NEXT_DEPTH_MASS
-            else:
-                active_mass = ACTIVE_DEPTH_MASS + NEXT_DEPTH_MASS
-                next_mass = 0.0
-            probabilities[active] += 0.5 * active_mass / int(active.sum())
-            if next_mass:
-                probabilities[next_band] += 0.5 * next_mass / int(next_band.sum())
-        if np.any(probabilities <= 0.0) or not np.isclose(
-            probabilities.sum(), 1.0, rtol=0.0, atol=1e-12
-        ):
-            raise ValueError(
-                "continuous_banded must retain positive support and unit mass"
-            )
-        return probabilities
 
     def _distribution_for_rule(
         self, rule: str, mastered: np.ndarray | None = None
     ) -> np.ndarray:
-        if rule == "continuous_banded_v1":
-            return self._continuous_distribution(mastered)
         if rule == "continuous_banded_v2":
             return self._continuous_distribution_v2(mastered)
         if rule == "continuous_banded_v3":
@@ -888,25 +900,36 @@ class PooledConditionSampler:
     def _continuous_distribution_v3(
         self, mastered: np.ndarray | None = None
     ) -> np.ndarray:
-        """v2 under one per-condition mass cap.
+        """Global open frontier plus mastered replay, under one condition cap."""
+        state = self._mastered if mastered is None else mastered
+        open_mask = ~state
+        if not open_mask.any():
+            return self._uniform.copy()
 
-        The v2 family halves stay: they keep both families in every window
-        and bound how much of the population a family of unlearnable
-        stragglers can collectively absorb. Only the runaway single condition
-        is corrected - anything above ``settings.max_mass`` is water-filled
-        back over the uncapped conditions in proportion to their v2 mass,
-        which crosses family boundaries because the excess belongs to the
-        population, not to the family that produced it. Below the cap v3 *is*
-        v2, so the rule only acts in the regime it was added for.
+        probabilities = np.zeros(self._count, dtype=np.float64)
+        open_weights = np.zeros(self._count, dtype=np.float64)
+        open_weights[open_mask] = DEPTH_PRIORITY_BASE ** (
+            2 - self._depths[open_mask].astype(np.float64)
+        )
+        if state.any():
+            probabilities[open_mask] = (
+                OPEN_CONDITION_MASS
+                * open_weights[open_mask]
+                / open_weights[open_mask].sum()
+            )
+            probabilities[state] = MASTERED_REPLAY_MASS / int(state.sum())
+        else:
+            probabilities = open_weights / open_weights.sum()
 
-        ``_cap_distribution`` raises rather than returning an over-cap vector
-        when the cap is infeasible for the graph (``max_mass * count < 1``);
-        that combination is rejected at construction.
-        """
-        probabilities = self._continuous_distribution_v2(mastered)
-        if probabilities.max() <= self.settings.max_mass:
-            return probabilities
-        return _cap_distribution(probabilities, self.settings.max_mass)
+        if probabilities.max() > self.settings.max_mass:
+            probabilities = _cap_distribution(probabilities, self.settings.max_mass)
+        if np.any(probabilities <= 0.0) or not np.isclose(
+            probabilities.sum(), 1.0, rtol=0.0, atol=1e-12
+        ):
+            raise ValueError(
+                "continuous_banded_v3 must retain positive support and unit mass"
+            )
+        return probabilities
 
     def _adaptive_distribution(self) -> np.ndarray:
         competence = np.where(np.isnan(self._competence), 0.0, self._competence)
@@ -1002,30 +1025,21 @@ class PooledConditionSampler:
             ],
         }
         if self.settings.rule in CONTINUOUS_RULES:
-            role_by_condition = []
-            family_active = {family: self._active_depth(family) for family in FAMILIES}
-            for index in range(self._count):
-                if self.settings.rule != "continuous_banded_v1":
-                    # v2/v3 have no depth band: a condition is either on the
-                    # pooled frontier or in mastered replay.
-                    role_by_condition.append(
-                        "replay" if self._mastered[index] else "frontier"
-                    )
-                    continue
-                family = str(self._families[index])
-                active_depth = family_active[family]
-                if active_depth is None:
-                    role = "all_mastered"
-                elif self._depths[index] == active_depth:
-                    role = "active"
-                elif self._depths[index] == active_depth + 1:
-                    role = "next"
-                else:
-                    role = "floor_only"
-                role_by_condition.append(role)
+            role_by_condition = [
+                "replay" if mastered else "frontier" for mastered in self._mastered
+            ]
+            family_active_depth = {}
+            for family in FAMILIES:
+                open_in_family = (self._families == family) & ~self._mastered
+                family_active_depth[family] = (
+                    int(self._depths[open_in_family].min())
+                    if open_in_family.any()
+                    else None
+                )
             result["mastery"] = {
                 "mastered": self._mastered.tolist(),
-                "family_active_depth": family_active,
+                # Diagnostic only: v3 does not use family to allocate mass.
+                "family_active_depth": family_active_depth,
                 "role": role_by_condition,
                 "exact_success_ema": result["competence"],
             }

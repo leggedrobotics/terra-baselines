@@ -19,6 +19,7 @@ from eval_fixed_bank import (
     manifest_reset_keys,
     selected_map_indices,
     validate_checkpoint_sequence,
+    validate_progress_diagnostics,
     verify_exact_reset,
 )
 
@@ -171,6 +172,74 @@ class FixedBankEvalTest(unittest.TestCase):
         self.assertEqual(per_map[1]["terminal_absolute"], 0.5)
         self.assertEqual(summary["termination_reasons"]["timeout"], 1)
 
+    def test_grouping_exposes_material_partition_and_stall_age(self):
+        rows = [
+            {
+                "slot_index": index + 1,
+                "map_id": f"map-{index}",
+                "family": "foundation",
+                "primary_cell": "relay",
+            }
+            for index in range(2)
+        ]
+        per_map, summary = grouped_results(
+            rows,
+            np.array([True, False]),
+            np.ones(2, dtype=bool),
+            np.array([50, 450]),
+            completion_metrics={
+                "material_progress_supported": np.ones(2, dtype=bool),
+                "loaded_soil_measured": np.ones(2, dtype=bool),
+                "source_soil_volume": np.array([10.0, 10.0]),
+                "dig_fraction": np.array([1.0, 0.9]),
+                "terminal_soil_fraction": np.array([0.8, 0.5]),
+                "off_zone_staged_soil_fraction": np.array([0.1, 0.2]),
+                "loaded_soil_fraction": np.array([0.1, 0.2]),
+                "stall_age_available": np.ones(2, dtype=bool),
+                "stall_age_decision_mean": np.array([0.2, 0.4]),
+                "maximum_stall_age": np.array([0.5, 1.0]),
+                "stall_age_saturated_decision_count": np.array([0, 3]),
+                "stall_age_saturated_decision_fraction": np.array([0.0, 0.3]),
+            },
+        )
+
+        self.assertIs(per_map[0]["material_progress_supported"], True)
+        self.assertEqual(per_map[1]["loaded_soil_fraction"], 0.2)
+        material = summary["overall"]["material_progress"]
+        self.assertTrue(material["available"])
+        self.assertAlmostEqual(material["dig_fraction_mean"], 0.95)
+        self.assertAlmostEqual(material["maximum_partition_error"], 0.0)
+        stall = summary["overall"]["stall_age"]
+        self.assertTrue(stall["available"])
+        self.assertAlmostEqual(stall["decision_mean"], 0.3)
+        self.assertEqual(stall["episodes_with_saturation"], 1)
+
+    def test_progress_diagnostics_fail_closed_on_nonconserving_or_bad_shape(self):
+        material = {
+            "material_progress_supported": np.array([True, True]),
+            "loaded_soil_measured": np.array([True, True]),
+            "source_soil_volume": np.array([10.0, 10.0]),
+            "dig_fraction": np.array([1.0, 0.9]),
+            "terminal_soil_fraction": np.array([0.8, 0.5]),
+            "off_zone_staged_soil_fraction": np.array([0.1, 0.2]),
+            "loaded_soil_fraction": np.array([0.1, 0.2]),
+        }
+        stall = {
+            "stall_age_available": np.array([True, True]),
+            "stall_age_decision_mean": np.array([0.2, 0.4]),
+            "maximum_stall_age": np.array([0.5, 1.0]),
+            "stall_age_saturated_decision_count": np.array([0, 3]),
+            "stall_age_saturated_decision_fraction": np.array([0.0, 0.3]),
+        }
+        validate_progress_diagnostics(material, stall, np.array([50, 10]))
+
+        broken_partition = {**material, "loaded_soil_fraction": np.array([0.0, 0.2])}
+        with self.assertRaisesRegex(RuntimeError, "does not conserve"):
+            validate_progress_diagnostics(broken_partition, stall, np.array([50, 10]))
+        broken_shape = {**stall, "maximum_stall_age": np.zeros((2, 1))}
+        with self.assertRaisesRegex(RuntimeError, "has shape"):
+            validate_progress_diagnostics(material, broken_shape, np.array([50, 10]))
+
     def test_environment_contract_is_explicit(self):
         self.assertEqual(
             environment_completion_contract(),
@@ -281,6 +350,8 @@ class FixedBankEvalTest(unittest.TestCase):
         self.assertAlmostEqual(gate["exact_rate_quantum"], 0.1)
         self.assertTrue(gate["progress_passed"])
         self.assertTrue(gate["passed"])
+        self.assertEqual(gate["decision_authority"], "advisory_diagnostics_only")
+        self.assertFalse(gate["passed_is_promotion_decision"])
 
         exact_candidate = summary([1.0] + [0.50] * 9)
         gate = comparison_gate(reference, exact_candidate)

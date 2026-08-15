@@ -70,8 +70,8 @@ Full sources: `V8_ARCH_SCALING_DIAGNOSIS_20260810.md` (measurements),
 
 Day-2 evidence invalidated the premises behind four of the eight bundled
 changes, so both yolo arms were killed and replaced by one arm that keeps only
-the readout redesign. Exactly three deltas remain against
-`scripts/run_v8_r2_reward_v2.sh`:
+the readout redesign. Exactly three architecture deltas remained against the
+frozen compact reward-v2 source contract:
 
 | # | flag | v6.1 | was (yolo) |
 |---|---|---|---|
@@ -93,13 +93,10 @@ Parameters: 2,303,421 under carry-work (2,303,405 without). The count rises vs
 the yolo arms only because the stage rebalance is reverted (the dropped aux head
 is 24,804 of it); it is still 19.4% below the compact baseline's 2,856,701.
 
-Wiring: `MASK_VARIANT=v61` in `scripts/euler_v8_v6_yolo_rv2/submit.sh`; the
-three reverted knobs are env-parameterized in the shared launcher
-(`BLOCKS_PER_STAGE`, `AUX_COEF`, `VF_COEF`; empty `VF_COEF` drops the flag),
-whose defaults still reproduce `v6_3m_yolo_rv2` exactly. Per-arm parameter
-counts, aux-leaf counts and contract values live in one table each in
-`run.sbatch` and `verify_smoke.py`, cross-checked against a built model in
-`tests/test_v8_v6_yolo_rv2_launcher.py`.
+The phase-1 implementation was frozen at commit `9abf88eb`. Its configurable
+multi-arm launch wiring was removed after the immutable checkpoints and
+receipts were recorded; the active launcher now supports only the selected
+v6.1 continuation recipe.
 
 ## Deliberately NOT changed
 

@@ -95,8 +95,10 @@ SECTIONS = (
                 "train/update",
                 (
                     "behavior/absolute_completion",
-                    "behavior/dig_completion",
-                    "behavior/dump_volume_completion",
+                    "material_progress/dig_fraction",
+                    "material_progress/terminal_soil_fraction",
+                    "material_progress/off_zone_staged_soil_fraction",
+                    "material_progress/loaded_soil_fraction",
                 ),
             ),
             (

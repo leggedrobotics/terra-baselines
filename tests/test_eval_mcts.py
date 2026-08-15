@@ -10,6 +10,7 @@ import eval_mixed
 from eval_mcts import make_mcts_recurrent_fn, make_mcts_step_fn, rollout_episode
 from terra.actions import TrackedAction
 from terra.env import TimeStep
+from utils.utils_ppo import clip_action_map_in_obs
 
 BATCH_SIZE = 2
 
@@ -17,6 +18,7 @@ BATCH_SIZE = 2
 def _observation():
     zeros_12 = jnp.zeros((BATCH_SIZE, 12))
     zeros_map = jnp.zeros((BATCH_SIZE, 4, 4))
+    target_map = zeros_map.at[:, 0, :2].set(-1)
     return {
         "agent_states": jnp.zeros((BATCH_SIZE, 4, 8)),
         "agent_active": jnp.ones((BATCH_SIZE, 4)),
@@ -33,12 +35,13 @@ def _observation():
         "traversability_mask": zeros_map,
         "reachability_mask": zeros_map,
         "action_map": zeros_map,
-        "target_map": zeros_map,
+        "target_map": target_map,
         "agent_width": jnp.ones((BATCH_SIZE,)),
         "agent_height": jnp.ones((BATCH_SIZE,)),
         "padding_mask": zeros_map,
         "dumpability_mask": jnp.ones((BATCH_SIZE, 4, 4)),
         "interaction_mask": zeros_map,
+        "stall_age": jnp.zeros((BATCH_SIZE,), dtype=jnp.float32),
     }
 
 
@@ -108,11 +111,21 @@ class FakeRolloutEnv(FakeEnv):
             "dump_completion_action_map": completion,
             "absolute_completion": completion,
             "unloaded_completion": jnp.ones_like(completion),
-            "accepted_dump_volume": completion * 2,
-            "illegal_dump_volume": jnp.zeros_like(completion),
+            "accepted_dump_volume": jnp.array([2.0, 0.25]),
+            "illegal_dump_volume": jnp.array([0.0, 0.15]),
         }
+        next_agent_states = (
+            timestep.observation["agent_states"]
+            .at[1, 0, 5]
+            .set(jnp.where(done[1], 0.4, 0.0))
+        )
         return timestep._replace(
             state=next_state,
+            observation={
+                **timestep.observation,
+                "agent_states": next_agent_states,
+                "stall_age": next_state.astype(jnp.float32) / 2.0,
+            },
             reward=jnp.array([1.0, 2.0]),
             done=done,
             info={
@@ -130,6 +143,14 @@ class FakeRolloutEnv(FakeEnv):
 
 
 class RolloutEpisodeAccountingTest(unittest.TestCase):
+    def test_action_map_clipping_does_not_mutate_raw_height_observation(self):
+        raw = {"action_map": jnp.array([[[3, -2]]], dtype=jnp.int8)}
+        clipped = clip_action_map_in_obs(raw)
+
+        np.testing.assert_array_equal(raw["action_map"], [[[3, -2]]])
+        np.testing.assert_array_equal(clipped["action_map"], [[[1, -1]]])
+        self.assertIsNot(raw, clipped)
+
     def test_explicit_timestep_skips_reset_without_changing_default_rollout(self):
         config = _config()
         config.num_prev_actions = 3
@@ -207,7 +228,26 @@ class RolloutEpisodeAccountingTest(unittest.TestCase):
         np.testing.assert_array_equal(
             stats["integrity"]["slot_index_zero_based"], [4, 9]
         )
+        # Action-map and pose observations stay unchanged.  Effect accounting
+        # must use Terra's transition diagnostic rather than observation
+        # equality: slot 0 has one effective action, while slot 1 has two
+        # explicitly reported no-effect actions before its terminal load state.
+        np.testing.assert_array_equal(
+            stats["integrity"]["no_effect_action_count"], [0, 2]
+        )
         self.assertFalse(stats["integrity"]["supported"])
+        progress = stats["material_progress"]
+        np.testing.assert_array_equal(progress["supported"], [True, True])
+        np.testing.assert_array_equal(progress["loaded_soil_measured"], [True, True])
+        np.testing.assert_allclose(progress["source_soil_volume"], [2.0, 2.0])
+        np.testing.assert_allclose(progress["dig_fraction"], [1.0, 0.4])
+        np.testing.assert_allclose(progress["terminal_soil_fraction"], [1.0, 0.125])
+        np.testing.assert_allclose(
+            progress["off_zone_staged_soil_fraction"], [0.0, 0.075]
+        )
+        np.testing.assert_allclose(progress["loaded_soil_fraction"], [0.0, 0.2])
+        np.testing.assert_array_equal(stats["stall_age"]["available"], [True, True])
+        np.testing.assert_allclose(stats["stall_age"]["decision_mean"], [0.0, 0.25])
 
     def test_opt_in_action_and_completion_traces_are_first_episode_aligned(self):
         config = _config()

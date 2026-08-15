@@ -239,25 +239,22 @@ numbers still match.
 
 ## Current V8 curriculum
 
-The authoritative design, evidence, decisions, and operational contract are in
-[V8 improvement set](docs/research/V8_IMPROVEMENT_SET_20260810.md) and the
-[reward and termination audit](docs/research/V8_REWARD_TERMINATION_AUDIT.md).
-The accepted follow-up map treatment is one uninterrupted
-`continuous_banded_v2` process per arm, not separate Stage A/B/C jobs:
+The current method is
+[Continuous Banded v3](docs/research/CONTINUOUS_BANDED_V3_DESIGN_20260812.md).
+It is one uninterrupted process over all 47 V8 conditions:
 
-- all 47 V8 conditions have positive probability from update 0;
-- foundation and trench each receive 50% of target assignment probability;
-- within each family, 10% is uniform over every condition and 90% is spread
-  over every unmastered condition with shallow-to-deep weights `4:2:1`;
-- any eligible condition can graduate independently from exact completed
-  training episodes, so one straggler cannot pin its family; and
-- source-disjoint fixed panels audit and select checkpoints but never control
-  the online sampler.
+- 80% of assignment mass is distributed globally over open conditions with
+  immutable depth weights `4:2:1`;
+- 20% is uniform replay over mastered conditions;
+- no foundation/trench quota affects sampling;
+- a 15% per-condition water-fill cap prevents a single-condition monopoly;
+- exact-success EMA with minimum exposure controls mastery and demotion; and
+- source-disjoint fixed panels audit checkpoints but never update the sampler.
 
-The completed compact/Atari experiment used `continuous_banded_v1`; that fact
-is historical evidence, not the sampler contract for the next reward screen.
-An explicit one-way migration validates and preserves its sampler state before
-both matched R2 arms recompute probabilities under v2.
+Earlier family-balanced samplers are historical experiment provenance, not
+selectable training modes. The selected v6.1 update-14,000 source is converted
+offline into a native v3 checkpoint; runtime training has no compatibility or
+sampler-migration mode.
 
 Here, depth is immutable map-difficulty metadata and band is a changing sampler
 role. Online success is weighted by the live sampler distribution; it is not a
@@ -271,20 +268,25 @@ seed, horizon, and fixed evaluations. The Atari policy is a deliberately small
 system control, not a pure encoder ablation, because its actor, critic, and
 local-map heads are also smaller.
 
-The next mainline reward question is R2: compare the current dense recipe with
-one normalized material-potential reward-v2 bundle after both arms take the
-same v1-to-v2 sampler migration, output-preserving carry-input expansion,
-fresh optimizer, and LR warmup. Only if reward-v2 wins does R3 fork the selected
-v2 checkpoint into fixed-shaping and episode-latched dense-to-sparse children.
-The former whole-objective anneal is retired from the mainline because it
-changes several reward semantics at once. Fixed source-disjoint panels, not
-reward return or online success, decide both comparisons.
+The completed capability run continued the selected v6.1 reward-v2 checkpoint
+with two declared changes: Continuous Banded v3 and one normalized material
+stall-age observation. Reward-v2, the v6.1 spatial architecture, action-mask
+setting, PPO shape, learning rate, horizon, bank, and seed remain fixed. This
+is a practical combined treatment, not a causal sampler or observation
+ablation. Fixed source-disjoint panels—not reward return or online success—
+provide its behavioral evidence: the final checkpoint reaches 657/720 exact
+versus 407/720 for the matched source, while five selected recurrent failures
+and high late-checkpoint churn remain.
 
-The active reward and termination audit preserves exact success, separates
-strict completion from continuous material progress, and records the
-diagnostics and analytic admission gates required before R2. Its
-fixed-checkpoint experiment proposal supersedes the older sampler-depth reward
-trigger and whole-objective fade.
+The reward and termination audit preserves exact success, separates strict
+completion from continuous material progress, and records the diagnostics and
+analytic admission gates that preceded R2. Its fixed-checkpoint experiment
+proposal superseded the older sampler-depth reward trigger and whole-objective
+fade.
+
+The implementation, fixed-panel evidence, failure-mechanism readout, and
+bounded next actions are tracked in
+[V8 failure-remediation execution](docs/research/V8_FAILURE_REMEDIATION_EXECUTION_20260814.md).
 
 The mechanism is informed by, but does not copy constants from Prioritized
 Level Replay, Self-Paced Deep Reinforcement Learning, Replay-Guided Adversarial

@@ -10,6 +10,8 @@ from utils.episode_aggregates import (
     empty_episode_aggregate,
     merge_episode_aggregates,
     new_episode_accumulator,
+    normalized_material_progress,
+    source_soil_volume,
     update_episode_aggregate,
 )
 
@@ -59,13 +61,17 @@ def _step(
         transition_mass_residual=zeros_int,
         target_mutation=zeros_bool,
         obstacle_mutation=zeros_bool,
-        dig_completion=jnp.ones((batch,), dtype=jnp.float32),
         dump_purity=jnp.ones((batch,), dtype=jnp.float32),
         dump_volume_completion=jnp.ones((batch,), dtype=jnp.float32),
         combined_completion=jnp.ones((batch,), dtype=jnp.float32),
         unloaded_completion=jnp.ones((batch,), dtype=jnp.float32),
-        accepted_dump_volume=zeros_float,
-        illegal_dump_volume=zeros_float,
+        source_soil_volume=jnp.ones((batch,), dtype=jnp.float32),
+        accepted_dump_volume=jnp.ones((batch,), dtype=jnp.float32),
+        off_zone_staged_soil_volume=zeros_float,
+        dig_fraction=jnp.ones((batch,), dtype=jnp.float32),
+        terminal_soil_fraction=jnp.ones((batch,), dtype=jnp.float32),
+        off_zone_staged_soil_fraction=zeros_float,
+        loaded_soil_fraction=zeros_float,
     )
 
 
@@ -167,6 +173,83 @@ def test_success_timeout_and_simultaneous_terminal_reasons_are_distinct():
     assert payload["totals"]["episode_count"] == 3
     assert payload["totals"]["task_done_count"] == 2
     assert payload["totals"]["timeout_count"] == 2
+
+
+def test_source_normalization_preserves_loaded_timeout_progress():
+    target = jnp.array(
+        [
+            [[-1, -1], [-1, -1]],
+            [[-1, -1], [-1, -1]],
+        ],
+        dtype=jnp.int8,
+    )
+    source = source_soil_volume(target)
+    np.testing.assert_allclose(source, np.array([4.0, 4.0]))
+    np.testing.assert_allclose(
+        source_soil_volume(jnp.zeros((1, 2, 2), dtype=jnp.int8)), [0.0]
+    )
+
+    progress_source = jnp.array([20.0, 4.0], dtype=jnp.float32)
+    progress = normalized_material_progress(
+        source_volume=progress_source,
+        dig_fraction=jnp.array([1.0, 1.0]),
+        terminal_soil_volume=jnp.array([18.0, 3.0]),
+        off_zone_staged_soil_volume=jnp.array([1.0, 0.0]),
+    )
+    np.testing.assert_allclose(progress["dig_fraction"], [1.0, 1.0])
+    np.testing.assert_allclose(progress["terminal_soil_fraction"], [0.9, 0.75])
+    np.testing.assert_allclose(progress["off_zone_staged_soil_fraction"], [0.05, 0.0])
+    np.testing.assert_allclose(
+        progress["loaded_soil_fraction"], [0.05, 0.25], atol=1e-6
+    )
+    np.testing.assert_allclose(
+        progress["terminal_soil_fraction"]
+        + progress["off_zone_staged_soil_fraction"]
+        + progress["loaded_soil_fraction"],
+        progress["dig_fraction"],
+    )
+
+    accumulator = new_episode_accumulator(
+        jnp.zeros((1,), dtype=jnp.int32),
+        jnp.zeros((1,), dtype=jnp.int32),
+        jnp.zeros((1,), dtype=jnp.int32),
+    )
+    terminal_step = _step(
+        reward=[0.0],
+        done=[True],
+        task_done=[False],
+        timeout=[True],
+        agent_reward=[0.0],
+    ).replace(
+        combined_completion=jnp.array([0.0], dtype=jnp.float32),
+        source_soil_volume=progress_source[:1],
+        accepted_dump_volume=jnp.array([18.0], dtype=jnp.float32),
+        off_zone_staged_soil_volume=jnp.array([1.0], dtype=jnp.float32),
+        **{key: value[:1] for key, value in progress.items()},
+    )
+    _, aggregate = _update(
+        accumulator,
+        empty_episode_aggregate(16),
+        terminal_step,
+    )
+    payload = aggregate_to_payload(
+        aggregate,
+        family_names=("unknown", "foundation"),
+        primary_cell_names=("unknown", "easy"),
+        stage_names=("F0",),
+        update=1,
+        run_name="material-progress-fixture",
+    )
+    assert payload["totals"]["combined_completion_sum"] == 0.0
+    assert payload["material_progress"] == pytest.approx(
+        {
+            "dig_fraction": 1.0,
+            "terminal_soil_fraction": 0.9,
+            "off_zone_staged_soil_fraction": 0.05,
+            "loaded_soil_fraction": 0.05,
+        }
+    )
+    assert "illegal_dump_volume_sum" not in payload["totals"]
 
 
 def test_shard_merge_matches_one_population_and_preserves_maxima():

@@ -59,6 +59,15 @@ def test_v8_preset_uses_the_frozen_weighted_stage_sampler():
     assert config.curriculum.last_level_type == "none"
 
 
+def test_v8_v3_preset_selects_global_open_replay_sampler():
+    config = get_config("G-V8-CONTINUOUS-V3")
+    assert config.accepted_bank_arm == "G-UNIFORM"
+    assert config.maps == []
+    assert config.pooled_sampler.enabled
+    assert config.pooled_sampler.rule == "continuous_banded_v3"
+    assert config.pooled_sampler.max_mass == 0.15
+
+
 @pytest.mark.parametrize("arm", ("F-SPECIALIST", "T-SPECIALIST"))
 def test_family_specialists_use_the_frozen_uniform_treatment(arm):
     specialist = get_config(arm)
