@@ -1,4 +1,4 @@
-# Experiments — current state (updated 2026-08-14 CEST)
+# Experiments — current state (updated 2026-08-15 CEST)
 
 ## v6.1 reward-v2 + stall age + Continuous Banded v3
 
@@ -58,17 +58,55 @@ than only at its final wall-time checkpoint.
 
 Slurm job `10752100` was submitted at 2026-08-14 23:47 CEST with account
 `gpuhe/es_hutter`, QOS `es_hutter/gpuhe/24`, partition `gpuhe.24h`, and an
-exact request for eight RTX 4090 GPUs, eight CPUs, and 64 GB RAM.  At the
-recorded snapshot it is `PENDING (Priority)`, with no allocated node; Slurm's
-current estimated start is 2026-08-15 07:15 CEST.  The phase-3 run directory is
-reserved but contains no training evidence yet.  W&B remains in its completed
-u40 state until the allocation
-passes the in-job GPU/CUDA/NCCL/checkpoint gates and resumes it.
+exact request for eight RTX 4090 GPUs, eight CPUs, and 64 GB RAM.  It started
+on `eu-g6-077` at 2026-08-15 02:51 CEST and was still running at the latest
+ledger refresh.  Its rolling checkpoints and later fixed-panel evaluations,
+not allocation alone, determine whether the u40 treatment continues to improve.
 
 The launcher is commit
 `bbaebc04c2ddc7c3ae667e434e223e1d01b95f84` on branch
 `experiment/v8-v61-u40-phase3-20260814`.  Its run directory is
 `/cluster/scratch/alesweber/codex_terra_edge_runs/terra_v8_v6_yolo_rv2/runs/dddc691c93ee21488cd7eeb8e01b067bf1f9733c/phase3/s20260807/v6_1_rv2_stall_age_v3`.
+
+## Fresh relay partial-reset run to u200,000
+
+The new environment/runtime and the Backplay-inspired relay curriculum are now
+merged to the default branches.  The exact training sources are:
+
+- Terra `25f855db3d913fd638c4e56b1740437a2b7122ca`;
+- terra-baselines `2778766683fb8a0a53a761385fae05cf9396dda9`;
+- seed `20260815`; and
+- partial-reset bank digest
+  `fb73b1d12dfad98c9aa79680d4d3ac178bf84b537e1be1e822535c65473a23f5`.
+
+This is fresh training, not a u40 continuation.  It uses reward-v2 timing
+variant zero, Continuous Banded v3, the v6.1 spatial actor/critic with
+2,306,237 parameters, eight RTX 4090 GPUs, 8 x 256 environments, 32 rollout
+steps, 32 minibatches, two PPO epochs, no action mask, no stall-age scalar, and
+the reset-context observation required by the partial-start treatment.
+
+The runtime sidecar contains all three validated tiers for 96 independent
+`fnd-slab-apron-d16` training maps, with zero rejected triplets.  Partial starts
+occupy at most 25% of lanes during the first 10,000 updates and anneal to zero;
+all later training and all fixed evaluation use ordinary full starts.  Partial
+episode outcomes cannot update full-start v3 mastery.  The merged generator
+also contains trench leaf-first ordering, but this first immutable sidecar does
+not claim broad 47-condition synthetic coverage.
+
+One 200,000-update job would exceed the observed throughput budget of a
+119:45 allocation, so the run is split into two native segments with one W&B
+identity and absolute clocks:
+
+- job `10777230`: fresh u0 -> u100,000, currently `PENDING (Priority)`;
+- job `10777232`: u100,000 -> u200,000, currently
+  `PENDING (Dependency)` on `afterok:10777230`.
+
+Both jobs request one node, eight RTX 4090 GPUs, eight CPUs, 64 GB RAM,
+`gpuhe.120h`, and 119:45 wall time under `gpuhe/es_hutter`.  The resume job
+fails closed unless the u100,000 checkpoint contains the same partial-bank,
+architecture, reward, sampler, optimizer, and absolute-update contracts.
+Submission is execution evidence only; promotion still requires the untouched
+720-map full-start panel and the relay/recurrence diagnostics.
 
 ## Current issue checklist
 
