@@ -46,7 +46,11 @@ export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-con
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -eq 4
-NUM_DEVICES=4 "$PYTHON" "$BASELINES_ROOT/scripts/euler/check_jax_runtime.py" --min-devices 4
+"$PYTHON" - <<'PY'
+import jax
+
+assert jax.local_device_count() == 4, jax.devices()
+PY
 PARTIAL_BANK_SHA="$PARTIAL_BANK_SHA" PARTIAL_BANK="$PARTIAL_BANK" "$PYTHON" - <<'PY'
 import os
 from terra.maps_buffer import partial_reset_bank_sha256
