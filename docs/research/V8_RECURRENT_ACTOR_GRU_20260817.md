@@ -87,11 +87,12 @@ pilot.
 
 ## Execution
 
-- Slurm job: `10949597` (`gpuhe.120h`, 4 RTX 4090 GPUs; pending priority)
+- Slurm job: `10949597` (`gpuhe.120h`, 4 RTX 4090 GPUs; running)
 - Baselines source: `e5e1c3c50da92636f1be0d8de421e914e34e848f`
 - Terra runtime: `25f855db3d913fd638c4e56b1740437a2b7122ca`
 - Target: update 100,000 from a fresh initialization
-- Current gate: first finite PPO update pending
+- Current gate: passed update 1 and the next scheduled full finite-state check;
+  post-compile throughput was about 16.9k transitions/s through update 12
 
 Initial job `10949464` failed before model initialization because its committed
 source archive lacked an ignored local JAX-check helper. Commit `e5e1c3c`
