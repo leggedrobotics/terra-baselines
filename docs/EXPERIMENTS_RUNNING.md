@@ -1,4 +1,4 @@
-# Experiments — current state (updated 2026-08-15 CEST)
+# Experiments — current state (updated 2026-08-17 CEST)
 
 ## v6.1 reward-v2 + stall age + Continuous Banded v3
 
@@ -73,7 +73,9 @@ The launcher is commit
 The new environment/runtime and the Backplay-inspired relay curriculum are now
 merged to the default branches.  The exact training sources are:
 
-- Terra `25f855db3d913fd638c4e56b1740437a2b7122ca`;
+- Terra base `25f855db3d913fd638c4e56b1740437a2b7122ca`, with the
+  pre-allocation runtime patch
+  `ebdc3ad7b0e7ef505bb6d442a97d18d986cced44` described below;
 - terra-baselines `2778766683fb8a0a53a761385fae05cf9396dda9`;
 - seed `20260815`; and
 - partial-reset bank digest
@@ -107,6 +109,20 @@ fails closed unless the u100,000 checkpoint contains the same partial-bank,
 architecture, reward, sampler, optimizer, and absolute-update contracts.
 Submission is execution evidence only; promotion still requires the untouched
 720-map full-start panel and the relay/recurrence diagnostics.
+
+Before either job was allocated, the shared staged Terra runtime was patched
+in place with Terra `ebdc3ad7` to prevent dig/relift under the active base and
+to preserve underlying terrain blockers in the visible traversability channel.
+The same job IDs and queue positions were retained.  The immutable Slurm guard
+still names the base revision `25f855db`; therefore
+`RUNTIME_PATCH_EBDC3AD7.env` in both the staged runtime and run directory is
+the authoritative addendum for the effective source, file hashes, backup, and
+validation.  The commit is pushed on
+`origin/experiment/v8-relay-corridor-resets-20260814` but is not yet merged to
+Terra `main`.  Local validation passed 47 focused tests, and the two exact
+regressions passed again from the staged Euler source.  At the 2026-08-17
+09:50 CEST snapshot, `10777230` remained `PENDING (Priority)` and `10777232`
+remained `PENDING (Dependency)`; neither job was resubmitted.
 
 ## Current issue checklist
 
