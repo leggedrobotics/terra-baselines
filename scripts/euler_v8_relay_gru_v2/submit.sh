@@ -29,7 +29,7 @@ REMOTE_HOST="${REMOTE_HOST:-euler-$TERRA_EULER_USER}"
 REMOTE_VENV="${TERRA_REMOTE_VENV:-/cluster/project/rsl/lterenzi/terra_curriculum_20260730_c14bd7d_3ce0e84_py312_jax0426}"
 REMOTE_WORK_ROOT="${TERRA_REMOTE_WORK_ROOT:-$TERRA_EULER_SCRATCH_ROOT/codex_terra_edge_validation}"
 REMOTE_RUN_ROOT="${TERRA_REMOTE_RUN_ROOT:-$TERRA_EULER_SCRATCH_ROOT/codex_terra_edge_runs}"
-CAMPAIGN=terra_v8_relay_gru_v1
+CAMPAIGN=terra_v8_relay_gru_v2
 REMOTE_WORK="$REMOTE_WORK_ROOT/$CAMPAIGN"
 REMOTE_RUNS="$REMOTE_RUN_ROOT/$CAMPAIGN/runs"
 REMOTE_INPUTS="$REMOTE_RUN_ROOT/$CAMPAIGN/inputs"
@@ -46,7 +46,7 @@ test "$(sha256sum "$PARTIAL_BANK_ARCHIVE" | awk '{print $1}')" = "$PARTIAL_BANK_
 
 echo "terra_baselines_revision=$BASELINES_REVISION"
 echo "runtime_terra_revision=$RUNTIME_TERRA_REVISION"
-echo "actor_core=gru hidden=64 devices=4 envs_per_device=512 target=$TARGET_UPDATE"
+echo "actor_core=gru head=concat-skip hidden=64 devices=4 envs_per_device=512 target=$TARGET_UPDATE"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: local contract passed; no external mutation"
     exit 0
@@ -97,11 +97,11 @@ if [ "$SUBMIT" = stage ]; then
     exit 0
 fi
 
-RUN_NAME="v8_relay_gru64_${BASELINES_REVISION:0:12}_s${SEED}"
+RUN_NAME="v8_relay_gru64r_${BASELINES_REVISION:0:12}_s${SEED}"
 RUN_DIR="$REMOTE_RUNS/$BASELINES_REVISION/s$SEED"
 remote "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
 EXPORTS="ALL,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,PROTOCOL_TERRA_REVISION=$PROTOCOL_TERRA_REVISION,SEED=$SEED,VENV=$REMOTE_VENV,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$FULL_BANK_ARCHIVE_SHA,BANK_DATASET_SHA=$FULL_BANK_DATASET_SHA,BANK_RELEASE_ID=$RELEASE_ID,DISTANCE_SIDECAR_SHA=$DISTANCE_SIDECAR_SHA,PARTIAL_ARCHIVE=$REMOTE_PARTIAL,PARTIAL_ARCHIVE_SHA=$PARTIAL_BANK_ARCHIVE_SHA,PARTIAL_BANK_SHA=$PARTIAL_BANK_SHA,TARGET_UPDATE=$TARGET_UPDATE"
-JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_v8_relay_gru_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:$GPU_COUNT' --cpus-per-task='$CPUS' --exclude='eu-g6-064' --job-name='terra-v8-gru64' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
+JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_v8_relay_gru_v2/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:$GPU_COUNT' --cpus-per-task='$CPUS' --exclude='eu-g6-064' --job-name='terra-v8-gru64r' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
 JOB_ID="${JOB_RAW%%;*}"
 [[ "$JOB_ID" =~ ^[0-9]+$ ]]
 printf '%s\n' "job_id=$JOB_ID" "run_dir=$RUN_DIR" "target_update=$TARGET_UPDATE"

@@ -17,11 +17,14 @@ Replace only the actor head:
 
 ```
 fused observation (704)
-  -> Dense(160), ReLU
-  -> GRU(64), float32
+  -> Dense(160), ReLU          = actor_input
+  -> GRU(64), float32          = gru_output          [v2: memory channel only]
+  -> concat([gru_output, actor_input])               [v2 concat skip]
   -> Dense(48), ReLU
   -> logits(8)
 ```
+
+(v1 fed `gru_output` alone into Dense(48); see Execution for why that failed.)
 
 The encoder processes flattened `batch*time` once. Only the small actor head is
 scanned. PPO stores the actor carry at the start of each 32-step rollout,
@@ -87,14 +90,39 @@ pilot.
 
 ## Execution
 
-- Slurm job: `10949597` (`gpuhe.120h`, 4 RTX 4090 GPUs; running)
+### v1 (pure GRU head) — killed 2026-08-17
+
+- Slurm job: `10949597` (`gpuhe.120h`, 4 RTX 4090 GPUs; cancelled at ~u3,800)
 - Baselines source: `e5e1c3c50da92636f1be0d8de421e914e34e848f`
 - Terra runtime: `25f855db3d913fd638c4e56b1740437a2b7122ca`
-- Target: update 100,000 from a fresh initialization
-- Current gate: passed update 1 and the next scheduled full finite-state check;
-  post-compile throughput was about 16.9k transitions/s through update 12
+
+Outcome: matched the feed-forward relay to ~u800 (completion ~0.30), then
+plateaued flat for 3,000+ updates while the relay broke out via exact-success
+bootstrap. Recurrent PPO machinery audited clean and telemetry healthy
+(approx_kl/clip/entropy indistinguishable from the relay run); checkpoint
+probe showed the update gate never left z~=0.5, so all current-observation
+information reached the logits attenuated through the 64-d tanh blend.
+Full diagnosis: `V8_RECURRENT_GRU_PLATEAU_DIAGNOSIS_20260817.md`.
 
 Initial job `10949464` failed before model initialization because its committed
 source archive lacked an ignored local JAX-check helper. Commit `e5e1c3c`
 replaces that dependency with the direct in-job JAX device assertion used by
 the replacement job; the failure contains no training or policy evidence.
+
+### v2 (concat-skip head)
+
+Design change, one variable versus v1: the post-GRU MLP consumes
+`concat([gru_output(64), actor_input(160)])` instead of the GRU output alone,
+so current-step features reach the logits without passing through the gated
+state and the GRU only adds memory. +7,680 parameters (delta vs feed-forward
+now 46,336). Rollout, replay, storage, and PPO are unchanged.
+
+Gate-bias initialization was considered and deliberately NOT changed: the skip
+already guarantees pass-through structurally, a negative update-gate bias
+would shorten the memory the pilot exists to test, and keeping the cell at
+Flax defaults makes the v1-to-v2 comparison a single-variable change. It stays
+on the follow-up list if v2's memory channel remains unused.
+
+Same contract as v1 otherwise: fresh initialization, same banks, sampler,
+reward-v2, optimizer, 4 x 512 envs, 32 steps, 32 minibatches, 2 epochs,
+seed 20260817, target update 100,000; campaign `terra_v8_relay_gru_v2`.

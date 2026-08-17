@@ -58,7 +58,7 @@ from terra.maps_buffer import partial_reset_bank_sha256
 assert partial_reset_bank_sha256(os.environ["PARTIAL_BANK"]) == os.environ["PARTIAL_BANK_SHA"]
 PY
 
-EXPECTED_PARAMETERS=2344893
+EXPECTED_PARAMETERS=2352573
 EXPECTED_PARAMETERS="$EXPECTED_PARAMETERS" "$PYTHON" - <<'PY'
 import os
 from types import SimpleNamespace
@@ -93,7 +93,7 @@ assert count == int(os.environ["EXPECTED_PARAMETERS"]), count
 PY
 
 export WANDB_ENTITY WANDB_PROJECT WANDB_MODE=online WANDB_RESUME=never
-export WANDB_RUN_ID="v8_relay_gru64_${BASELINES_REVISION:0:10}_s${SEED}"
+export WANDB_RUN_ID="v8_relay_gru64r_${BASELINES_REVISION:0:10}_s${SEED}"
 export WANDB_DIR="$RUN_DIR/wandb"
 scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/slurm_job.txt"
 nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
@@ -103,6 +103,7 @@ printf '%s\n' \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
     "actor_core=gru" \
     "actor_gru_hidden_dim=64" \
+    "actor_head=concat_skip" \
     "model_parameter_count=$EXPECTED_PARAMETERS" \
     "num_devices=4" \
     "num_envs_per_device=512" \
@@ -114,6 +115,6 @@ printf '%s\n' \
     "slurm_job_id=$SLURM_JOB_ID" > "$RUN_DIR/run_contract.env"
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PYTHON_BIN="$PYTHON" MACHINE=euler
-"$BASELINES_ROOT/scripts/run_v8_relay_gru_v1.sh" \
+"$BASELINES_ROOT/scripts/run_v8_relay_gru_v2.sh" \
     "$BANK" "$PARTIAL_BANK" "$RUN_NAME" "$TARGET_UPDATE" "$RUN_DIR" \
     "$DISTANCE_SIDECAR_SHA" none

@@ -1489,6 +1489,11 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             self.actor_gru = ScannedGRU(
                 features=self.actor_gru_hidden_dim,
             )
+            # Concat skip: post_gru consumes [gru_output, actor_input] so the
+            # current-step features reach the logits without passing through
+            # the 64-d gated state. The v1 pure-GRU head plateaued because the
+            # cell's half-open update gate attenuated exactly that information
+            # (docs/research/V8_RECURRENT_GRU_PLATEAU_DIAGNOSIS_20260817.md).
             self.actor_post_gru = MLP(
                 hidden_dim_layers=self.hidden_dim_pi[1:] + (num_actions,),
                 use_layer_norm=self.mlp_use_layernorm,
@@ -1780,7 +1785,11 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 jnp.zeros((actor_input.shape[0], 1), dtype=jnp.bool_),
             ),
         )
-        logits = self.actor_post_gru(actor_output[:, 0].astype(jnp.float32))
+        logits = self.actor_post_gru(
+            jnp.concatenate(
+                [actor_output[:, 0].astype(jnp.float32), actor_input], axis=-1
+            )
+        )
         value = self.mlp_v(critic_x)
         return value, logits, next_hidden
 
@@ -1818,7 +1827,11 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             actor_hidden.astype(jnp.float32),
             (actor_input, dones),
         )
-        logits = self.actor_post_gru(actor_output)
+        logits = self.actor_post_gru(
+            jnp.concatenate(
+                [actor_output.astype(jnp.float32), actor_input], axis=-1
+            )
+        )
         value = self.mlp_v(critic_x).reshape(batch_size, sequence_length, -1)
         return value, logits, final_hidden
 

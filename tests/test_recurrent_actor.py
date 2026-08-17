@@ -117,10 +117,12 @@ def test_gru_step_matches_sequence_with_terminal_reset():
     _, feedforward_params = get_model_ready(
         jax.random.PRNGKey(0), _config(actor_core="mlp"), env
     )
+    # GRU64 cell (43,392) + concat-skip head: post_gru consumes
+    # [gru_output 64, actor_input 160] instead of the feed-forward 160.
     assert (
         sum(x.size for x in jax.tree.leaves(params))
         - sum(x.size for x in jax.tree.leaves(feedforward_params))
-        == 38_656
+        == 46_336
     )
 
 

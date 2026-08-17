@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 7 ]; then
-    echo "usage: run_v8_relay_gru_v1.sh BANK_ROOT PARTIAL_RESET_ROOT RUN_NAME TARGET_UPDATES RUN_ROOT DISTANCE_SHA RESUME_CHECKPOINT_OR_NONE" >&2
+    echo "usage: run_v8_relay_gru_v2.sh BANK_ROOT PARTIAL_RESET_ROOT RUN_NAME TARGET_UPDATES RUN_ROOT DISTANCE_SHA RESUME_CHECKPOINT_OR_NONE" >&2
     exit 2
 fi
 
