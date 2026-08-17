@@ -14,6 +14,7 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [V8 recurrent actor pilot](docs/research/V8_RECURRENT_ACTOR_GRU_20260817.md)
 - [Training and evaluation overview](README.md)
 - [`configs/training_configs.yaml`](configs/training_configs.yaml): named
   agent/map/curriculum presets

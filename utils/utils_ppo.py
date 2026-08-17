@@ -142,6 +142,48 @@ def policy(
     return value, pi
 
 
+def is_recurrent_actor(config) -> bool:
+    return _config_option(config, "actor_core", "mlp") == "gru"
+
+
+def initial_actor_hidden(batch_size: int, config):
+    """Return the centralized actor carry for a fresh batch of episodes."""
+    if not is_recurrent_actor(config):
+        return jnp.zeros((batch_size, 0), dtype=jnp.float32)
+    hidden_dim = int(_config_option(config, "actor_gru_hidden_dim", 64))
+    return jnp.zeros((batch_size, hidden_dim), dtype=jnp.float32)
+
+
+def recurrent_policy_step(apply_fn, params, obs, actor_hidden):
+    value, logits_pi, next_hidden = apply_fn(
+        params,
+        obs,
+        actor_hidden,
+        method="actor_step",
+    )
+    pi = tfp.distributions.Categorical(logits=logits_pi)
+    return value, pi, next_hidden
+
+
+def recurrent_policy_sequence(apply_fn, params, obs, actor_hidden, dones):
+    value, logits_pi, final_hidden = apply_fn(
+        params,
+        obs,
+        actor_hidden,
+        dones,
+        method="actor_sequence",
+    )
+    pi = tfp.distributions.Categorical(logits=logits_pi)
+    return value, pi, final_hidden
+
+
+def value_ppo(train_state, obs, prev_actions, config):
+    """Bootstrap the critic without advancing recurrent actor memory."""
+    model_obs = obs_to_model_input(obs, prev_actions, config)
+    value = train_state.apply_fn(train_state.params, model_obs, method="value")
+    return value[:, 0]
+
+
 def policy_with_intermediates(
     apply_fn,
     params,
@@ -179,6 +221,30 @@ def select_action_ppo(
     action = pi.sample(seed=rng)
     log_prob = pi.log_prob(action)
     return action, log_prob, value[:, 0], pi
+
+
+def select_action_ppo_recurrent(
+    train_state,
+    obs: jnp.ndarray,
+    prev_actions: jnp.ndarray,
+    actor_hidden: jnp.ndarray,
+    rng: jax.random.PRNGKey,
+    config,
+):
+    if not is_recurrent_actor(config):
+        raise ValueError("select_action_ppo_recurrent requires actor_core='gru'")
+    if _config_option(config, "action_logit_masking", False):
+        raise ValueError("recurrent pilot does not support action-logit masking")
+    model_obs = obs_to_model_input(obs, prev_actions, config)
+    value, pi, next_hidden = recurrent_policy_step(
+        train_state.apply_fn,
+        train_state.params,
+        model_obs,
+        actor_hidden,
+    )
+    action = pi.sample(seed=rng)
+    log_prob = pi.log_prob(action)
+    return action, log_prob, value[:, 0], pi, next_hidden
 
 
 def wrap_action(action, action_type):

@@ -109,6 +109,19 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             f"Unsupported model_core='{model_core}'. Expected 'mlp' or 'transformer'."
         )
     map_encoder = canonical_map_encoder(getattr(config, "map_encoder", "atari"))
+    actor_core = _config_option(config, "actor_core", "mlp")
+    if actor_core not in ("mlp", "gru"):
+        raise ValueError(
+            f"Unsupported actor_core={actor_core!r}. Expected 'mlp' or 'gru'."
+        )
+    actor_gru_hidden_dim = int(
+        _config_option(config, "actor_gru_hidden_dim", 64)
+    )
+    if actor_gru_hidden_dim < 1:
+        raise ValueError(
+            "actor_gru_hidden_dim must be >= 1, "
+            f"got {actor_gru_hidden_dim}."
+        )
 
     model_kwargs = {}
     if model_size == "medium":
@@ -290,6 +303,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         agent_types_max=2,  # Maximum agent type value (0=excavator, 1=truck, 2=skidsteer)
         action_type=env.batch_cfg.action_type,
         model_core=model_core,
+        actor_core=actor_core,
+        actor_gru_hidden_dim=actor_gru_hidden_dim,
         map_encoder=map_encoder,
         encoder_compute_dtype=encoder_compute_dtype,
         attention_compute_dtype=attention_compute_dtype,
@@ -366,10 +381,28 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         host = jax.devices("cpu")[0]
     except RuntimeError:
         print("model.init: no cpu backend available, initializing on default device")
-        params = model.init(rng, obs)
+        if actor_core == "gru":
+            params = model.init(
+                rng,
+                obs,
+                jnp.zeros((init_batch_size, actor_gru_hidden_dim), jnp.float32),
+                method=model.actor_step,
+            )
+        else:
+            params = model.init(rng, obs)
     else:
         with jax.default_device(host):
-            params = model.init(rng, obs)
+            if actor_core == "gru":
+                params = model.init(
+                    rng,
+                    obs,
+                    jnp.zeros(
+                        (init_batch_size, actor_gru_hidden_dim), jnp.float32
+                    ),
+                    method=model.actor_step,
+                )
+            else:
+                params = model.init(rng, obs)
 
     print(f"Model: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
     return model, params
@@ -1361,6 +1394,26 @@ class TransformerEncoderBlock(nn.Module):
         return x
 
 
+class ResettableGRUCell(nn.Module):
+    """GRU transition whose carry is cleared after terminal transitions."""
+
+    features: int
+
+    @nn.compact
+    def __call__(self, carry, inputs):
+        features, done = inputs
+        next_hidden, output = nn.GRUCell(
+            features=self.features,
+            dtype=jnp.float32,
+            param_dtype=jnp.float32,
+            name="cell",
+        )(carry.astype(jnp.float32), features.astype(jnp.float32))
+        carry = jnp.where(
+            done[:, None], jnp.zeros_like(next_hidden), next_hidden
+        )
+        return carry, output
+
+
 class SimplifiedCoupledCategoricalNet(nn.Module):
     """
     The full net for centralized dual-agent policy.
@@ -1386,6 +1439,8 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     resnet_attn_out: int = 128
     local_map_hidden_dim_layers_mlp: Sequence[int] = (256, 32)
     model_core: str = "mlp"  # "mlp" or "transformer"
+    actor_core: str = "mlp"  # "mlp" or "gru"
+    actor_gru_hidden_dim: int = 64
     map_encoder: str = "atari"
     encoder_compute_dtype: Any = jnp.float32
     attention_compute_dtype: Any = None
@@ -1409,11 +1464,41 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             use_layer_norm=self.mlp_use_layernorm,
             last_layer_init_scaling=0.01,
         )
-        self.mlp_pi = MLP(
-            hidden_dim_layers=self.hidden_dim_pi + (num_actions,),
-            use_layer_norm=self.mlp_use_layernorm,
-            last_layer_init_scaling=0.01,
-        )
+        if self.actor_core == "mlp":
+            self.mlp_pi = MLP(
+                hidden_dim_layers=self.hidden_dim_pi + (num_actions,),
+                use_layer_norm=self.mlp_use_layernorm,
+                last_layer_init_scaling=0.01,
+            )
+        elif self.actor_core == "gru":
+            if len(self.hidden_dim_pi) < 2:
+                raise ValueError(
+                    "actor_core='gru' requires at least two actor head widths"
+                )
+            self.actor_pre_gru = MLP(
+                hidden_dim_layers=(self.hidden_dim_pi[0],),
+                use_layer_norm=self.mlp_use_layernorm,
+            )
+            ScannedGRU = nn.scan(
+                ResettableGRUCell,
+                variable_broadcast="params",
+                split_rngs={"params": False},
+                in_axes=1,
+                out_axes=1,
+            )
+            self.actor_gru = ScannedGRU(
+                features=self.actor_gru_hidden_dim,
+            )
+            self.actor_post_gru = MLP(
+                hidden_dim_layers=self.hidden_dim_pi[1:] + (num_actions,),
+                use_layer_norm=self.mlp_use_layernorm,
+                last_layer_init_scaling=0.01,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported actor_core={self.actor_core!r}. "
+                "Expected 'mlp' or 'gru'."
+            )
         if self.stall_age_observation:
             self.stall_age_actor_embedding = self.param(
                 "stall_age_actor_embedding",
@@ -1494,7 +1579,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             ]
             self.transformer_out_proj = nn.Dense(self.intermediate_mlp_dim)
 
-    def __call__(self, obs: Array) -> Array:
+    def _fused_features(self, obs: Array) -> tuple[Array, Array]:
         # OPTIMIZED: Batched processing for both agents
         # Variable agents: obs[0] is [B, MAX_AGENTS, num_state_obs], obs[2] is num_agents
         agent_states_all = obs[0]
@@ -1661,10 +1746,81 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 @ self.reward_v2_reset_context_critic_embedding
             )
 
-        v = self.mlp_v(critic_x)
-        xpi = self.mlp_pi(actor_x)
+        return actor_x, critic_x
 
-        return v, xpi
+    def __call__(self, obs: Array) -> Array:
+        """Feed-forward actor/critic path retained for existing checkpoints."""
+        if self.actor_core != "mlp":
+            raise ValueError(
+                "actor_core='gru' requires actor_step or actor_sequence with "
+                "an explicit recurrent state"
+            )
+        actor_x, critic_x = self._fused_features(obs)
+        return self.mlp_v(critic_x), self.mlp_pi(actor_x)
+
+    def value(self, obs: Array) -> Array:
+        """Evaluate the feed-forward critic without advancing actor memory."""
+        _, critic_x = self._fused_features(obs)
+        return self.mlp_v(critic_x)
+
+    def actor_step(
+        self,
+        obs: Array,
+        actor_hidden: Array,
+    ) -> tuple[Array, Array, Array]:
+        """One recurrent actor step; episode reset is applied by the caller."""
+        if self.actor_core != "gru":
+            raise ValueError("actor_step requires actor_core='gru'")
+        actor_x, critic_x = self._fused_features(obs)
+        actor_input = nn.relu(self.actor_pre_gru(actor_x).astype(jnp.float32))
+        next_hidden, actor_output = self.actor_gru(
+            actor_hidden.astype(jnp.float32),
+            (
+                actor_input[:, None, :],
+                jnp.zeros((actor_input.shape[0], 1), dtype=jnp.bool_),
+            ),
+        )
+        logits = self.actor_post_gru(actor_output[:, 0].astype(jnp.float32))
+        value = self.mlp_v(critic_x)
+        return value, logits, next_hidden
+
+    def actor_sequence(
+        self,
+        obs: Array,
+        actor_hidden: Array,
+        dones: Array,
+    ) -> tuple[Array, Array, Array]:
+        """Replay intact ``[batch,time]`` actor sequences through the GRU.
+
+        The expensive spatial encoder is evaluated once over flattened
+        ``batch*time`` observations. ``dones[:, t]`` resets memory only after
+        producing the action distribution for transition ``t``.
+        """
+        if self.actor_core != "gru":
+            raise ValueError("actor_sequence requires actor_core='gru'")
+        dones = jnp.asarray(dones, dtype=jnp.bool_)
+        if dones.ndim != 2:
+            raise ValueError(
+                f"actor_sequence dones must be [batch,time], got {dones.shape}"
+            )
+        batch_size, sequence_length = dones.shape
+        flat_obs = [
+            jnp.reshape(x, (batch_size * sequence_length,) + x.shape[2:])
+            for x in obs
+        ]
+        actor_x, critic_x = self._fused_features(flat_obs)
+        actor_input = nn.relu(self.actor_pre_gru(actor_x).astype(jnp.float32))
+        actor_input = actor_input.reshape(
+            batch_size, sequence_length, actor_input.shape[-1]
+        )
+
+        final_hidden, actor_output = self.actor_gru(
+            actor_hidden.astype(jnp.float32),
+            (actor_input, dones),
+        )
+        logits = self.actor_post_gru(actor_output)
+        value = self.mlp_v(critic_x).reshape(batch_size, sequence_length, -1)
+        return value, logits, final_hidden
 
 
 class PreviousActionsNet2(nn.Module):

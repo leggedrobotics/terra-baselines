@@ -139,6 +139,8 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             for name in (
                 "model_size",
                 "model_core",
+                "actor_core",
+                "actor_gru_hidden_dim",
                 "map_encoder",
                 "encoder_compute_dtype",
                 "attention_compute_dtype",

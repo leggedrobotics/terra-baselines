@@ -32,7 +32,13 @@ from utils.helpers import (
     load_pkl_object,
     replicate_checkpoint_env_config,
 )
-from utils.utils_ppo import _config_option, obs_to_model_input, wrap_action
+from utils.utils_ppo import (
+    _config_option,
+    initial_actor_hidden,
+    is_recurrent_actor,
+    obs_to_model_input,
+    wrap_action,
+)
 from terra.env import TerraEnvBatch
 from terra.actions import (
     WheeledAction,
@@ -87,6 +93,34 @@ def _apply_in_batch_chunks(model, model_params, obs_model):
         values.append(v_chunk)
         logits.append(logits_chunk)
     return jnp.concatenate(values, axis=0), jnp.concatenate(logits, axis=0)
+
+
+def _apply_recurrent_in_batch_chunks(
+    model,
+    model_params,
+    obs_model,
+    actor_hidden,
+):
+    """Chunk observations and recurrent carries with identical boundaries."""
+    batch = obs_model[0].shape[0]
+    values, logits, next_hidden = [], [], []
+    for start in range(0, batch, EVAL_FORWARD_CHUNK):
+        stop = min(start + EVAL_FORWARD_CHUNK, batch)
+        chunk = jax.tree_util.tree_map(lambda leaf: leaf[start:stop], obs_model)
+        v_chunk, logits_chunk, hidden_chunk = model.apply(
+            model_params,
+            chunk,
+            actor_hidden[start:stop],
+            method="actor_step",
+        )
+        values.append(v_chunk)
+        logits.append(logits_chunk)
+        next_hidden.append(hidden_chunk)
+    return (
+        jnp.concatenate(values, axis=0),
+        jnp.concatenate(logits, axis=0),
+        jnp.concatenate(next_hidden, axis=0),
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -304,6 +338,12 @@ def rollout_episode(
     )
     print(f"[eval_mcts] mode: {mode_str}, seed={seed}")
 
+    if use_mcts and is_recurrent_actor(rl_config):
+        raise ValueError(
+            "MCTS is unsupported for recurrent actors because search nodes do "
+            "not carry the actor GRU state"
+        )
+
     if initial_timestep is not None and use_mcts:
         raise ValueError("an explicit initial timestep is not supported with MCTS")
     if initial_timestep is not None and reset_keys is not None:
@@ -373,6 +413,7 @@ def rollout_episode(
         (rl_config.num_test_rollouts, rl_config.num_prev_actions),
         dtype=jnp.int32,
     )
+    actor_hidden = initial_actor_hidden(rl_config.num_test_rollouts, rl_config)
 
     tile_size = env_cfgs.tile_size[0].item()
     move_tiles = env_cfgs.agent.move_tiles[0].item()
@@ -557,7 +598,20 @@ def rollout_episode(
             obs_model = obs_to_model_input(
                 timestep.observation, prev_actions, rl_config
             )
-            v, logits_pi = _apply_in_batch_chunks(model, model_params, obs_model)
+            if is_recurrent_actor(rl_config):
+                v, logits_pi, next_actor_hidden = (
+                    _apply_recurrent_in_batch_chunks(
+                        model,
+                        model_params,
+                        obs_model,
+                        actor_hidden,
+                    )
+                )
+            else:
+                v, logits_pi = _apply_in_batch_chunks(
+                    model, model_params, obs_model
+                )
+                next_actor_hidden = actor_hidden
             # D3: evaluation must respect the same masked distribution the
             # policy trained under (obs_model[22] when the flag is on).
             if _config_option(rl_config, "action_logit_masking", False):
@@ -605,6 +659,11 @@ def rollout_episode(
             # Match training: action history is cleared at episode boundaries.
             prev_actions = jnp.where(
                 timestep.done[:, None], jnp.zeros_like(prev_actions), prev_actions
+            )
+            actor_hidden = jnp.where(
+                timestep.done[:, None],
+                jnp.zeros_like(next_actor_hidden),
+                next_actor_hidden,
             )
 
         reward = jnp.where(active_env_mask, timestep.reward, 0.0)
