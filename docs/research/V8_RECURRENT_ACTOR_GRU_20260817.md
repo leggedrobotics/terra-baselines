@@ -84,3 +84,11 @@ to distinguish solved cycles, saturated memory, and remaining planning failures.
 
 No compatibility modes or additional recurrent architectures are part of this
 pilot.
+
+## Execution
+
+- Slurm job: `10949464` (`gpuhe.120h`, 4 RTX 4090 GPUs)
+- Baselines source: `466f23a7342317c35dd819605809b6b069227839`
+- Terra runtime: `25f855db3d913fd638c4e56b1740437a2b7122ca`
+- Target: update 100,000 from a fresh initialization
+- Current gate: allocated on `eu-g6-034`; first finite PPO update pending
