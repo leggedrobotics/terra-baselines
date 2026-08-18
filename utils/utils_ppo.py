@@ -16,6 +16,15 @@ _LOCAL_MAP_KEYS = (
 )
 
 
+# Terra's fresh-trench dig-alignment export (terra/env.py::_state_to_obs_dict).
+# Order is load-bearing: it fixes the width-3 vector the encoder consumes.
+_TRENCH_ALIGNMENT_KEYS = (
+    "fresh_trench_dig_alignment_valid",
+    "fresh_trench_dig_yaw_error",
+    "fresh_trench_dig_standoff_error",
+)
+
+
 def _config_option(config, name: str, default):
     try:
         value = getattr(config, name)
@@ -72,6 +81,21 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         )
         if reward_v2_reset_context.shape[-1:] != (2,):
             raise ValueError("reward_v2_reset_context must end with width 2")
+    trench_alignment = None
+    if _config_option(train_cfg, "trench_alignment_observation", False):
+        missing = [key for key in _TRENCH_ALIGNMENT_KEYS if key not in obs]
+        if missing:
+            raise ValueError(
+                "trench_alignment_observation requires Terra obs keys "
+                f"{list(_TRENCH_ALIGNMENT_KEYS)}; missing {missing}"
+            )
+        trench_alignment = jnp.stack(
+            [
+                jnp.asarray(obs[key], dtype=jnp.float32)
+                for key in _TRENCH_ALIGNMENT_KEYS
+            ],
+            axis=-1,
+        )
     # Feature engineering
     if _config_option(train_cfg, "clip_action_maps", True):
         obs = clip_action_map_in_obs(obs)
@@ -113,6 +137,12 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         # [22] without stall age, otherwise [23]. The pair is the episode's
         # fixed [Q_reset, H_reset/V0] baseline, not current progress.
         obs.append(reward_v2_reset_context)
+    if trench_alignment is not None:
+        # [22] with no other optional entry, otherwise shifted by however many
+        # of stall age / reset context are on. Width 3:
+        # [alignment_valid, yaw_error, standoff_error] for the prospective
+        # fresh-trench DO. (1, 0, 0) whenever the gate is inapplicable.
+        obs.append(trench_alignment)
     if _config_option(train_cfg, "action_logit_masking", False):
         # Effect-based action mask from the env (D3). Appended last; the model
         # consumes no fixed index for it, only policy() masking reads it.

@@ -563,6 +563,8 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "carry_work_observation": False,
         "stall_age_observation": False,
         "reward_v2_reset_context_observation": False,
+        # Fresh-trench alignment adds two (3, 704) embeddings.
+        "trench_alignment_observation": False,
         # V6 readout block: all three change parameter shapes.
         "flatten_reduce_channels": None,
         "attn_latent_queries": 4,
@@ -1535,6 +1537,12 @@ class MixedAgentTrainConfig:
     skidsteer_capacity: int | None = None
     truck_road_restricted: bool | None = None
     enforce_foundation_border_alignment: bool | None = None
+    # Fresh-trench dig-alignment pilot (C0/T1). The three observations and the
+    # finite-metadata requirement are identical in both arms; only the gate
+    # differs. None leaves the frozen Terra default (off).
+    enforce_trench_dig_alignment: bool | None = None
+    require_trench_alignment_metadata: bool = False
+    trench_alignment_observation: bool = False
 
     # Curriculum/maps override (from YAML config)
     # Format: list of dicts with keys: maps_path, max_steps_in_episode, rewards_type, apply_trench_rewards
@@ -1884,6 +1892,7 @@ def create_mixed_agent_env_config(
     skidsteer_capacity=None,
     truck_road_restricted=None,
     enforce_foundation_border_alignment=None,
+    enforce_trench_dig_alignment=None,
     # F15: resolution-scaling overrides (all None = no change)
     agent_move_tiles=None,
     dig_radius_tiles=None,
@@ -1903,6 +1912,9 @@ def create_mixed_agent_env_config(
         skidsteer_capacity: Override for skidsteer capacity
         truck_road_restricted: Whether trucks are restricted to roads
         enforce_foundation_border_alignment: Whether foundation border alignment is enforced
+        enforce_trench_dig_alignment: Whether the fresh-trench dig pose gate is
+            enforced (T1 treatment). The tolerance/standoff band stays frozen at
+            the Terra defaults; only this on/off toggle is per-arm.
         agent_move_tiles: F15 override for agent.move_tiles (tiles/move action)
         dig_radius_tiles: F15 override for agent.dig_radius_tiles (workspace/cone reach)
         reward_normalizer: F15 override for rewards.normalizer (per-tile reward scaling)
@@ -1950,6 +1962,10 @@ def create_mixed_agent_env_config(
         env_config = env_config._replace(
             enforce_foundation_border_alignment=enforce_foundation_border_alignment
         )
+    if enforce_trench_dig_alignment is not None:
+        env_config = env_config._replace(
+            enforce_trench_dig_alignment=bool(enforce_trench_dig_alignment)
+        )
 
     # F15: tile-denominated agent geometry. These survive update_env_cfgs (which
     # only recomputes width/height/tile_size), so the _replace here is the
@@ -1971,6 +1987,59 @@ def create_mixed_agent_env_config(
         )
 
     return env_config
+
+
+def _preflight_trench_alignment_metadata(env, env_params, curriculum_levels) -> None:
+    """Fail at startup when a bank lacks generated finite trench sections.
+
+    Terra only self-validates when ``enforce_trench_dig_alignment`` is on, so
+    the C0 control would otherwise train on a bank T1 cannot use. Both arms of
+    the pilot must load the identical enriched bank, so this runs the same
+    fail-closed checks for both:
+
+    1. the canonical loader contract (``require_finite_segments``), which
+       rejects inconsistent counts, stale axis/endpoint pairs, and bad widths;
+    2. Terra's own array-level reset validator, forced on regardless of arm.
+    """
+    from terra.maps_buffer import _trench_records_from_metadata
+
+    dataset_root = os.getenv("DATASET_PATH", "")
+    if not dataset_root:
+        raise RuntimeError(
+            "require_trench_alignment_metadata needs DATASET_PATH to locate "
+            "the frozen trench bank."
+        )
+    levels = curriculum_levels or []
+    if not levels:
+        raise RuntimeError(
+            "require_trench_alignment_metadata needs explicit curriculum "
+            "levels; the default config.py bank is not a pilot bank."
+        )
+    max_trench_type = 4  # terra.maps_buffer.load_maps_from_disk
+    for level in levels:
+        folder = Path(dataset_root) / level["maps_path"]
+        metadata_paths = sorted((folder / "metadata").glob("trench_*.json"))
+        if not metadata_paths:
+            raise RuntimeError(
+                f"No trench metadata under {folder / 'metadata'}; repoint the "
+                "config at the enriched frozen trench bank."
+            )
+        for metadata_path in metadata_paths:
+            with open(metadata_path) as handle:
+                metadata = json.load(handle)
+            _trench_records_from_metadata(
+                metadata,
+                max_trench_type,
+                require_finite_segments=True,
+            )
+        print(
+            f"🧭 Finite trench metadata verified: {len(metadata_paths)} maps in "
+            f"{level['maps_path']}",
+            flush=True,
+        )
+    env._validate_trench_alignment_metadata_requirements(
+        env_params._replace(enforce_trench_dig_alignment=True)
+    )
 
 
 def _print_resolution_scaling_table(config) -> None:
@@ -2229,6 +2298,7 @@ def make_mixed_agent_states(
                 skidsteer_capacity=config.skidsteer_capacity,
                 truck_road_restricted=config.truck_road_restricted,
                 enforce_foundation_border_alignment=config.enforce_foundation_border_alignment,
+                enforce_trench_dig_alignment=config.enforce_trench_dig_alignment,
                 # F15 resolution-scaling overrides
                 agent_move_tiles=config.agent_move_tiles,
                 dig_radius_tiles=config.dig_radius_tiles,
@@ -2290,6 +2360,13 @@ def make_mixed_agent_states(
         env_params, config.reward_stage, config.reward_v2_timing_variant
     )
     env_params = env_params._replace(terminal_reward_mix=0.0)
+
+    if config.require_trench_alignment_metadata:
+        _preflight_trench_alignment_metadata(env, env_params, curriculum_levels)
+    print(
+        "🧭 Fresh-trench dig gate (effective): "
+        f"{bool(np.ravel(np.asarray(env_params.enforce_trench_dig_alignment))[0])}"
+    )
 
     # Report the effective value after preset, CLI, and checkpoint precedence.
     print(
@@ -4996,6 +5073,9 @@ if __name__ == "__main__":
     skidsteer_capacity = None
     truck_road_restricted = None
     enforce_foundation_border_alignment = None
+    enforce_trench_dig_alignment = None
+    require_trench_alignment_metadata = False
+    trench_alignment_observation = False
     curriculum_levels_override = None
     curriculum_increase_level_threshold = None
     curriculum_decrease_level_threshold = None
@@ -5046,6 +5126,13 @@ if __name__ == "__main__":
             truck_road_restricted = preset.truck_road_restricted
             enforce_foundation_border_alignment = (
                 preset.enforce_foundation_border_alignment
+            )
+            enforce_trench_dig_alignment = preset.enforce_trench_dig_alignment
+            require_trench_alignment_metadata = bool(
+                preset.require_trench_alignment_metadata
+            )
+            trench_alignment_observation = bool(
+                preset.trench_alignment_observation
             )
 
             # Apply maps/curriculum from preset (convert MapLevel objects to dict format)
@@ -5358,6 +5445,9 @@ if __name__ == "__main__":
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,
         enforce_foundation_border_alignment=enforce_foundation_border_alignment,
+        enforce_trench_dig_alignment=enforce_trench_dig_alignment,
+        require_trench_alignment_metadata=require_trench_alignment_metadata,
+        trench_alignment_observation=trench_alignment_observation,
         curriculum_levels_override=curriculum_levels_override,
         curriculum_increase_level_threshold=curriculum_increase_level_threshold,
         curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,

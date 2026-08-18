@@ -923,3 +923,59 @@ T-MEDIUM-UNIFORM-WARM:
   pooled_sampler:
     enabled: true
     rule: uniform
+
+# -----------------------------------------------------------------------------
+# Fresh-trench dig-alignment pilot (2026-08-18)
+# Authority: TRENCH_FRESH_DIG_ALIGNMENT_RESEARCH_NOTE_20260818.md
+#
+# Exactly two arms. Everything matches except enforce_trench_dig_alignment:
+#   C0 control   = finite metadata + 3 observations, gate OFF
+#   T1 treatment = finite metadata + 3 observations, gate ON
+# The legacy trench reward (apply_trench_rewards) stays OFF in both arms.
+# Yaw tolerance / standoff band stay frozen at the Terra defaults
+# (0.2619 rad, 3.5-7.0 m); only the on/off toggle is per-arm.
+#
+# Both arms read the single YAML anchor `&trench_align_bank` below, pinned to
+# the pooled 12-condition slice (net4 + v7-trn excluded per preflight) of the
+# enriched frozen bank terra_v8_trench_finite_enriched_20260819
+# (DATASET_PATH points at the bank root, DATASET_SIZE=1152). Training refuses
+# to start against a bank without finite sections:
+# require_trench_alignment_metadata runs the fail-closed preflight for BOTH
+# arms.
+# -----------------------------------------------------------------------------
+
+trench_align_c0_v1:
+  description: Fresh-trench dig-alignment pilot C0 control (metadata + obs, gate off)
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  trench_alignment_observation: true
+  require_trench_alignment_metadata: true
+  enforce_trench_dig_alignment: false
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: &trench_align_bank train_pilot_pooled_12cond
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+trench_align_t1_v1:
+  description: Fresh-trench dig-alignment pilot T1 treatment (metadata + obs, gate on)
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  trench_alignment_observation: true
+  require_trench_alignment_metadata: true
+  enforce_trench_dig_alignment: true
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: *trench_align_bank
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false

@@ -303,6 +303,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         reward_v2_reset_context_observation=bool(
             _config_option(config, "reward_v2_reset_context_observation", False)
         ),
+        trench_alignment_observation=bool(
+            _config_option(config, "trench_alignment_observation", False)
+        ),
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
         use_aux_decoder=use_aux_decoder,
@@ -354,6 +357,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         _config_option(config, "reward_v2_reset_context_observation", False)
     ):
         obs.append(jnp.zeros((init_batch_size, 2), dtype=jnp.float32))
+    if bool(_config_option(config, "trench_alignment_observation", False)):
+        obs.append(jnp.zeros((init_batch_size, 3), dtype=jnp.float32))
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
     # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
@@ -1393,6 +1398,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     carry_work_observation: bool = False
     stall_age_observation: bool = False
     reward_v2_reset_context_observation: bool = False
+    trench_alignment_observation: bool = False
     attn_latent_queries: int = 4
     flatten_reduce_channels: int | None = None
     use_aux_decoder: bool = False
@@ -1438,6 +1444,21 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 "reward_v2_reset_context_critic_embedding",
                 nn.initializers.zeros_init(),
                 (2, 704),
+                jnp.float32,
+            )
+        if self.trench_alignment_observation:
+            # [alignment_valid, yaw_error, standoff_error]. Zero init keeps a
+            # gate-off C0 arm behaviorally identical at initialization.
+            self.trench_alignment_actor_embedding = self.param(
+                "trench_alignment_actor_embedding",
+                nn.initializers.zeros_init(),
+                (3, 704),
+                jnp.float32,
+            )
+            self.trench_alignment_critic_embedding = self.param(
+                "trench_alignment_critic_embedding",
+                nn.initializers.zeros_init(),
+                (3, 704),
                 jnp.float32,
             )
 
@@ -1659,6 +1680,32 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             critic_x = critic_x + (
                 reward_v2_reset_context
                 @ self.reward_v2_reset_context_critic_embedding
+            )
+        if self.trench_alignment_observation:
+            alignment_index = (
+                22
+                + int(self.stall_age_observation)
+                + int(self.reward_v2_reset_context_observation)
+            )
+            if len(obs) <= alignment_index:
+                raise ValueError(
+                    "trench_alignment_observation requires the width-3 "
+                    "fresh-trench alignment vector at "
+                    f"obs[{alignment_index}]"
+                )
+            trench_alignment = jnp.asarray(
+                obs[alignment_index], dtype=jnp.float32
+            ).reshape((B, 3))
+            if x.shape[-1] != self.trench_alignment_actor_embedding.shape[1]:
+                raise ValueError(
+                    "trench alignment is supported only for the v6.1 fused "
+                    f"width 704, got {x.shape[-1]}"
+                )
+            actor_x = actor_x + (
+                trench_alignment @ self.trench_alignment_actor_embedding
+            )
+            critic_x = critic_x + (
+                trench_alignment @ self.trench_alignment_critic_embedding
             )
 
         v = self.mlp_v(critic_x)

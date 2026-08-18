@@ -97,6 +97,14 @@ class TrainingConfig:
     truck_road_restricted: Optional[bool] = None
     enforce_foundation_border_alignment: Optional[bool] = None
 
+    # Fresh-trench dig-alignment pilot (C0 control / T1 treatment).
+    # The observation and metadata requirement are identical across both arms;
+    # only enforce_trench_dig_alignment differs. Tolerance/standoff stay frozen
+    # at the Terra defaults (0.2619 rad, 3.5-7.0 m).
+    enforce_trench_dig_alignment: Optional[bool] = None
+    require_trench_alignment_metadata: bool = False
+    trench_alignment_observation: bool = False
+
 
 # Cache for loaded configs
 _TRAINING_CONFIGS: Dict[str, TrainingConfig] = {}
@@ -193,6 +201,13 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             truck_road_restricted=cfg.get("truck_road_restricted"),
             enforce_foundation_border_alignment=cfg.get(
                 "enforce_foundation_border_alignment"
+            ),
+            enforce_trench_dig_alignment=cfg.get("enforce_trench_dig_alignment"),
+            require_trench_alignment_metadata=cfg.get(
+                "require_trench_alignment_metadata", False
+            ),
+            trench_alignment_observation=cfg.get(
+                "trench_alignment_observation", False
             ),
         )
 
