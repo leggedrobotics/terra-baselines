@@ -124,6 +124,50 @@ regressions passed again from the staged Euler source.  At the 2026-08-17
 09:50 CEST snapshot, `10777230` remained `PENDING (Priority)` and `10777232`
 remained `PENDING (Dependency)`; neither job was resubmitted.
 
+## Fresh-trench dig-alignment C0/T1 pilot (launched 2026-08-19)
+
+Two matched-seed 4x RTX 4090 arms test the empty-excavator fresh-trench dig
+gate causally.  The ONLY difference is `enforce_trench_dig_alignment`
+(C0 off / T1 on); both arms carry the finite-metadata requirement and the
+width-3 alignment observation via zero-init (3, 704) actor/critic embeddings
+(2,307,645 parameters, feed-forward v6.1 spatial encoder, no GRU, no partial
+resets, no stall age, no reset context, no action mask).
+
+Sources and inputs:
+
+- terra-baselines `f64694a569fbeb1353f2f908c46b9baab5f7e22b`
+  (branch `experiment/trench-pose-alignment-20260818`);
+- Terra `a4b838b6cb894fdf982b614d4deea96f778fd7b0`
+  (branch `experiment/trench-fresh-dig-alignment-20260818`);
+- bank archive
+  `terra_v8_trench_pilot_pooled_bank_20260819.tar.zst`, SHA-256
+  `e88370a5314bad189e75dbacd706cd12d08d9d5f920d6c877bbace7aca55d48c`:
+  the pooled 12-condition slice (1,152 maps) of the finite-enriched V8 R2
+  release (`.artifacts/terra_v8_trench_finite_enriched_20260819`); net4 and
+  v7-trn conditions are excluded per the 2,400-map strict-gate preflight
+  (61 net4 maps fail structurally; receipts in Terra `tools/`);
+- reward stage `reward_v2` timing variant 0, distance protocol
+  `obstacle_geodesic_8_physical_global_v1`, sidecar SHA `f0c43065…`;
+- seed `20260818` both arms, 4 x 512 envs x 32 steps, 32 minibatches, two PPO
+  epochs, 65,536 transitions/update, target u100,000, checkpoints every 500.
+
+Jobs (submitted 2026-08-19, `gpuhe.120h`, es_hutter, 119:45, one node,
+4 x RTX 4090, 8 CPUs, 64 GB each):
+
+- C0 `11152229`, T1 `11152230`; run dirs
+  `…/codex_terra_edge_runs/terra_trench_align_v1/runs/f64694a5…/s20260818/{c0,t1}`;
+- W&B `trench_align_{c0,t1}_f64694a569_s20260818`.
+
+Both arms passed a local 4090 first-update smoke (3/3 updates, finite model,
+optimizer, and loss tensors asserted; gate prints False/True respectively).
+Preregistration, endpoints, and stop rules:
+Terra `TRENCH_ALIGNMENT_PILOT_PREREGISTRATION_20260819.md` (pilot decision at
+u10,000; T1 invalid fresh-`DO` fraction must fall by half; stop if T1 exact
+completion trails C0 by more than 5 pp at two successive evaluations).
+Known debt before endpoint measurement: the fixed-bank evaluators do not yet
+set `trench_alignment_observation`; wire it before evaluating pilot
+checkpoints.
+
 ## Current issue checklist
 
 The living status ledger, exact u40 readout, and bounded next actions are in
