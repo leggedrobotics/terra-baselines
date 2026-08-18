@@ -14,6 +14,7 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [V8 paper-experiment handover](docs/research/V8_PAPER_EXPERIMENT_HANDOVER_20260818.md)
 - [V8 recurrent actor pilot](docs/research/V8_RECURRENT_ACTOR_GRU_20260817.md)
 - [V8 GRU v1 plateau diagnosis](docs/research/V8_RECURRENT_GRU_PLATEAU_DIAGNOSIS_20260817.md)
 - [Training and evaluation overview](README.md)
