@@ -104,6 +104,54 @@ Read the detailed evidence instead of reconstructing it:
 - `docs/research/V8_REWARD_TERMINATION_AUDIT.md`
 - `docs/research/V8_FAILURE_REMEDIATION_EXECUTION_20260814.md`
 
+### Matched-update comparison: relay run versus prior v6.1 lineage (2026-08-19)
+
+Recorded at Lorenzo's request as the paper's motivating evidence for
+introducing the partial-reset (relay) curriculum. Online W&B training metrics,
+medians over the listed update windows.
+
+Runs:
+
+- Current: `v8_relay_partial_2778766683_s20260815` (fresh init, relay partial
+  resets + continuous_banded_v3 + reward-v2, no stall age; still running).
+- Older lineage: `v8_v6_yolo_rv2_v61_9abf88eb60_phase1_10405296` (u1-13,991)
+  continued as `v8_v61_stall_age_v3_dddc691c93_phase2_10625259`
+  (u14,001-66,991, crashed at u67k; stall-age observation active in phase2).
+- Closer control candidate for u<=14k only:
+  `v8_rv2p1_02ccb62fb3_phase1_10480220` (parallel reward-v2 arm, finished at
+  u13,991).
+
+| window | success (relay / old) | completion (relay / old) | no-effect (relay / old) | return (relay / old) |
+|---|---|---|---|---|
+| u5-6k | 0.383 / 0.292 | 0.529 / 0.481 | 0.371 / 0.400 | -0.69 / -1.63 |
+| u10-11k | 0.481 / 0.447 | 0.618 / 0.600 | 0.338 / 0.379 | 0.36 / -0.09 |
+| u20-21k | 0.847 / 0.689 | 0.909 / 0.824 | 0.151 / 0.192 | 4.35 / 2.37 |
+| u30-31k | 0.932 / 0.847 | 0.960 / 0.913 | 0.112 / 0.150 | 5.54 / 4.29 |
+| u40-41k | 0.982 / 0.937 | 0.990 / 0.964 | 0.045 / 0.109 | 6.14 / 5.55 |
+
+The relay run leads at every matched window; the gap is widest mid-run
+(u20k: +0.158 success) and the terminal no-effect rate is about 2.4x lower
+(0.045 versus 0.109 at u40k). The old lineage additionally died at u67k while
+the relay run continues with a queued u200k extension.
+
+Confounds and claim limits (all apply):
+
+- Multi-variable difference: relay resets, absence of stall age, fresh
+  initialization versus continuation, seed, and Terra-runtime revision differ
+  together. This table motivates, it does not attribute.
+- Online training metrics only; the fixed-panel evaluation contract in this
+  document remains the promotion instrument.
+- The older lineage never logged `full_start_episode_success_rate`; its
+  success column is overall online success. The relay run's u5-6k window
+  includes partial-reset episodes (share <=25% before annealing to zero by
+  about u14k), which drag its overall success down, so the early-window lead
+  is understated rather than inflated.
+- The active partial bank is the d16-only 96-map treatment. Per the live-run
+  section above, do not present this as evidence for a general relay
+  curriculum; a causal paper claim requires paired arms differing only in the
+  partial-reset treatment on a frozen multi-stratum bank, judged on the fixed
+  panel.
+
 ## Live experiment snapshot
 
 Refresh Slurm and W&B before relying on this section. The following was verified
