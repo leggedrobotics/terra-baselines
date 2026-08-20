@@ -318,6 +318,12 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         reward_v2_reset_context_observation=bool(
             _config_option(config, "reward_v2_reset_context_observation", False)
         ),
+        movement_feasibility_observation=bool(
+            _config_option(config, "movement_feasibility_observation", False)
+        ),
+        previous_outcome_observation=bool(
+            _config_option(config, "previous_outcome_observation", False)
+        ),
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
         use_aux_decoder=use_aux_decoder,
@@ -368,6 +374,10 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     if bool(
         _config_option(config, "reward_v2_reset_context_observation", False)
     ):
+        obs.append(jnp.zeros((init_batch_size, 2), dtype=jnp.float32))
+    if bool(_config_option(config, "movement_feasibility_observation", False)):
+        obs.append(jnp.zeros((init_batch_size, 4), dtype=jnp.float32))
+    if bool(_config_option(config, "previous_outcome_observation", False)):
         obs.append(jnp.zeros((init_batch_size, 2), dtype=jnp.float32))
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
@@ -1448,6 +1458,8 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     carry_work_observation: bool = False
     stall_age_observation: bool = False
     reward_v2_reset_context_observation: bool = False
+    movement_feasibility_observation: bool = False
+    previous_outcome_observation: bool = False
     attn_latent_queries: int = 4
     flatten_reduce_channels: int | None = None
     use_aux_decoder: bool = False
@@ -1526,6 +1538,32 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             )
             self.reward_v2_reset_context_critic_embedding = self.param(
                 "reward_v2_reset_context_critic_embedding",
+                nn.initializers.zeros_init(),
+                (2, 704),
+                jnp.float32,
+            )
+        if self.movement_feasibility_observation:
+            self.movement_feasibility_actor_embedding = self.param(
+                "movement_feasibility_actor_embedding",
+                nn.initializers.zeros_init(),
+                (4, 704),
+                jnp.float32,
+            )
+            self.movement_feasibility_critic_embedding = self.param(
+                "movement_feasibility_critic_embedding",
+                nn.initializers.zeros_init(),
+                (4, 704),
+                jnp.float32,
+            )
+        if self.previous_outcome_observation:
+            self.previous_outcome_actor_embedding = self.param(
+                "previous_outcome_actor_embedding",
+                nn.initializers.zeros_init(),
+                (2, 704),
+                jnp.float32,
+            )
+            self.previous_outcome_critic_embedding = self.param(
+                "previous_outcome_critic_embedding",
                 nn.initializers.zeros_init(),
                 (2, 704),
                 jnp.float32,
@@ -1749,6 +1787,35 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             critic_x = critic_x + (
                 reward_v2_reset_context
                 @ self.reward_v2_reset_context_critic_embedding
+            )
+
+        next_optional_index = 22
+        if self.stall_age_observation:
+            next_optional_index += 1
+        if self.reward_v2_reset_context_observation:
+            next_optional_index += 1
+        if self.movement_feasibility_observation:
+            movement_feasibility = jnp.asarray(
+                obs[next_optional_index], dtype=jnp.float32
+            ).reshape((B, 4))
+            actor_x = actor_x + (
+                movement_feasibility
+                @ self.movement_feasibility_actor_embedding
+            )
+            critic_x = critic_x + (
+                movement_feasibility
+                @ self.movement_feasibility_critic_embedding
+            )
+            next_optional_index += 1
+        if self.previous_outcome_observation:
+            previous_outcome = jnp.asarray(
+                obs[next_optional_index], dtype=jnp.float32
+            ).reshape((B, 2))
+            actor_x = actor_x + (
+                previous_outcome @ self.previous_outcome_actor_embedding
+            )
+            critic_x = critic_x + (
+                previous_outcome @ self.previous_outcome_critic_embedding
             )
 
         return actor_x, critic_x

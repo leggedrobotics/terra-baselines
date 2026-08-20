@@ -574,6 +574,8 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "carry_work_observation": False,
         "stall_age_observation": False,
         "reward_v2_reset_context_observation": False,
+        "movement_feasibility_observation": False,
+        "previous_outcome_observation": False,
         # V6 readout block: all three change parameter shapes.
         "flatten_reduce_channels": None,
         "attn_latent_queries": 4,
@@ -1536,6 +1538,8 @@ class MixedAgentTrainConfig:
     reward_v2_timing_variant: int = 0
     carry_work_observation: bool = False
     stall_age_observation: bool = False
+    movement_feasibility_observation: bool = False
+    previous_outcome_observation: bool = False
     # D3: mask provably-ineffective actions out of the sampling distribution
     # (env supplies obs["action_mask"]; DO_NOTHING always stays valid).
     action_logit_masking: bool = False
@@ -1666,6 +1670,16 @@ class MixedAgentTrainConfig:
             )
         if self.reward_stage == "reward_v2" and not self.carry_work_observation:
             raise ValueError("reward_v2 requires --carry_work_observation")
+        if self.movement_feasibility_observation or self.previous_outcome_observation:
+            if tuple(self.agent_types_override or ()) != (0,) or tuple(
+                self.action_types_override or ()
+            ) != (0,):
+                raise ValueError(
+                    "movement feedback observations require one tracked excavator: "
+                    "agent_types_override=(0,), action_types_override=(0,)"
+                )
+            if self.action_logit_masking:
+                raise ValueError("movement feedback observations are unmasked")
         if self.reward_v2_timing_variant not in (0, 1):
             raise ValueError(
                 "reward_v2_timing_variant must be 0 (frozen reward_v2) or 1 "
@@ -2211,6 +2225,12 @@ def make_mixed_agent_states(
                 f"partial reset bank does not exist: {partial_reset_root}"
             )
         env_kwargs["partial_reset_root"] = partial_reset_root
+    env_kwargs["movement_feasibility_observation"] = bool(
+        config.movement_feasibility_observation
+    )
+    env_kwargs["previous_outcome_observation"] = bool(
+        config.previous_outcome_observation
+    )
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,
         shuffle_maps=False,
@@ -2669,6 +2689,10 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         )
     if config.reward_v2_reset_context_observation:
         tags.append("obs:reward-v2-reset-context")
+    if config.movement_feasibility_observation:
+        tags.append("obs:movement-feasibility")
+    if config.previous_outcome_observation:
+        tags.append("obs:previous-outcome")
 
     return list(dict.fromkeys(tags))
 
@@ -5078,6 +5102,16 @@ if __name__ == "__main__":
         help="Append Terra's normalized material-stall age after v6.1 fusion.",
     )
     parser.add_argument(
+        "--movement-feasibility-observation",
+        action="store_true",
+        help="Append four unmasked tracked-base movement feasibility bits.",
+    )
+    parser.add_argument(
+        "--previous-outcome-observation",
+        action="store_true",
+        help="Append the previous transition's physical/material outcome bits.",
+    )
+    parser.add_argument(
         "--action_logit_masking",
         action="store_true",
         help="Mask provably-ineffective actions out of the sampling "
@@ -5512,6 +5546,10 @@ if __name__ == "__main__":
         reward_v2_timing_variant=args.reward_v2_timing_variant,
         carry_work_observation=args.carry_work_observation,
         stall_age_observation=args.stall_age_observation,
+        movement_feasibility_observation=(
+            args.movement_feasibility_observation
+        ),
+        previous_outcome_observation=args.previous_outcome_observation,
         action_logit_masking=args.action_logit_masking,
         distance_protocol_id=args.distance_protocol_id,
         distance_sidecar_sha256=args.distance_sidecar_sha256,

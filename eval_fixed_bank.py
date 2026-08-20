@@ -156,6 +156,10 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
         # Conditional inclusion keeps historical fingerprints unchanged while
         # binding both the partial arm and its matched full-start control.
         contract["architecture"]["reward_v2_reset_context_observation"] = True
+    if bool(_field(config, "movement_feasibility_observation", False)):
+        contract["architecture"]["movement_feasibility_observation"] = True
+    if bool(_field(config, "previous_outcome_observation", False)):
+        contract["architecture"]["previous_outcome_observation"] = True
     partial_reset_digest = _field(config, "partial_reset_bank_sha256")
     if partial_reset_digest is not None:
         raw_partial_receipt = checkpoint.get("partial_reset_curriculum")

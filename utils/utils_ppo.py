@@ -72,6 +72,30 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         )
         if reward_v2_reset_context.shape[-1:] != (2,):
             raise ValueError("reward_v2_reset_context must end with width 2")
+    movement_feasibility = None
+    if _config_option(train_cfg, "movement_feasibility_observation", False):
+        if "movement_feasibility" not in obs:
+            raise ValueError(
+                "movement_feasibility_observation requires Terra "
+                "obs['movement_feasibility']"
+            )
+        movement_feasibility = jnp.asarray(
+            obs["movement_feasibility"], dtype=jnp.float32
+        )
+        if movement_feasibility.shape[-1:] != (4,):
+            raise ValueError("movement_feasibility must end with width 4")
+    previous_action_outcome = None
+    if _config_option(train_cfg, "previous_outcome_observation", False):
+        if "previous_action_outcome" not in obs:
+            raise ValueError(
+                "previous_outcome_observation requires Terra "
+                "obs['previous_action_outcome']"
+            )
+        previous_action_outcome = jnp.asarray(
+            obs["previous_action_outcome"], dtype=jnp.float32
+        )
+        if previous_action_outcome.shape[-1:] != (2,):
+            raise ValueError("previous_action_outcome must end with width 2")
     # Feature engineering
     if _config_option(train_cfg, "clip_action_maps", True):
         obs = clip_action_map_in_obs(obs)
@@ -113,6 +137,10 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         # [22] without stall age, otherwise [23]. The pair is the episode's
         # fixed [Q_reset, H_reset/V0] baseline, not current progress.
         obs.append(reward_v2_reset_context)
+    if movement_feasibility is not None:
+        obs.append(movement_feasibility)
+    if previous_action_outcome is not None:
+        obs.append(previous_action_outcome)
     if _config_option(train_cfg, "action_logit_masking", False):
         # Effect-based action mask from the env (D3). Appended last; the model
         # consumes no fixed index for it, only policy() masking reads it.

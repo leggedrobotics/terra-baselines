@@ -11,6 +11,23 @@ traversability-observation versus movement-physics incidence audit, and
 evaluate the stall-age plus Continuous Banded v3 continuation when its final
 checkpoint is available.
 
+## 2026-08-21 decision update
+
+The GRU-u44 failure audit changes the next policy treatment. Base movements
+account for 9,050 of 9,306 ineffective decisions across the 46 failures, while
+the first-cycle counterfactual found a physically effective alternative on all
+44 failures with an exact cycle anchor. The five-way `DO` proposal is also too
+coarse: one action can simultaneously excavate fresh soil and relift staged
+soil. It is therefore deferred.
+
+The next fresh experiment is the two-arm pilot in
+[`V8_MOVEMENT_FEEDBACK_PILOT_20260821.md`](V8_MOVEMENT_FEEDBACK_PILOT_20260821.md).
+Both arms share the repaired one-pass soil mechanics and the under-base
+footprint/visible-blocker fixes. The treatment adds four unmasked current
+movement-feasibility bits and two previous-transition outcome bits; the
+control adds neither. This tests the combined six-bit observation package,
+not its individual components and not the mechanics changes themselves.
+
 ## Scope boundary
 
 This work does not edit trench generation, trench excavation ordering, or the
