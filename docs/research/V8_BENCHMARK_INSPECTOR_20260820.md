@@ -19,6 +19,41 @@ more than recurrence, including seed, device count, parameter count,
 sequence-minibatch training, and effective training runtime. Their comparison
 cannot be called a recurrence-only ablation.
 
+## V1 readout
+
+The fixed promotion-panel evaluation is complete. All four checkpoints were
+evaluated on one RTX 4090 under the same deterministic 720-map contract:
+
+| checkpoint | exact | macro terminal completion | worst-condition completion | successful mean steps |
+| --- | ---: | ---: | ---: | ---: |
+| GRU u40k | 677/720 | 0.9591 | 0.4656 | 89.7 |
+| GRU u44k | 674/720 | 0.9584 | 0.6190 | 86.4 |
+| feed-forward u44k | 652/720 | 0.9424 | 0.4351 | 87.9 |
+| feed-forward u86k | 670/720 | 0.9541 | 0.4237 | 83.6 |
+
+At matched u44k, the recurrent-agent treatment gains 22 exact maps over the
+feed-forward policy (674 versus 652). It also remains four maps ahead of the
+feed-forward u86k frontier. This is strong sample-efficiency evidence for the
+complete recurrent treatment, not a recurrence-only causal estimate.
+
+The online curve hid meaningful held-out churn. GRU u40k to u44k converts 24
+maps and regresses on 27, for a net loss of three exact maps, despite shorter
+successful episodes and a much higher worst-condition completion score. The
+latest online success rate must therefore not be used as checkpoint promotion
+evidence by itself.
+
+The same-process carry intervention establishes that the trained GRU uses its
+memory: with identical current observations and five-action histories, normal
+and zeroed carry produce different actions on 17 decisions, spanning all 12
+target maps. Removing carry increases target no-effect actions from 24.3% to
+50.9%. It does not change target exact completion, however: both arms solve
+9/12. Slots 250, 247, and 177 remain failed observable input/action cycles.
+Thus memory improves control robustness but is not yet shown to cause the
+historical target conversions or to remove the last three traps.
+
+The durable local evidence bundle is
+`/home/lorenzo/moleworks/.artifacts/terra_v8_gru_benchmark_20260820`.
+
 ## V1 workflow
 
 ```text
