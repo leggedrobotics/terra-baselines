@@ -409,10 +409,16 @@ def build_dashboard_data(
                         f"{receipt_path}: media {name} mismatch: "
                         f"{receipt.get(name)!r} != {expected!r}"
                     )
-            media_timing[role] = (
-                int(receipt["frame_cadence_steps"]),
-                int(receipt["frames_per_episode"]),
-            )
+            try:
+                timing = (
+                    int(receipt["frame_cadence_steps"]),
+                    int(receipt["frames_per_episode"]),
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"{receipt_path}: invalid media timing") from exc
+            if min(timing) < 1:
+                raise ValueError(f"{receipt_path}: invalid media timing {timing!r}")
+            media_timing[role] = timing
             trace_summaries[role] = {
                 str(row["slot"]): row["trace_summary"]
                 for row in receipt.get("episodes", [])
