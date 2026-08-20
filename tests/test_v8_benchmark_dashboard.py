@@ -3,6 +3,9 @@ import hashlib
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
 
 from scripts.build_v8_benchmark_dashboard import (
     aligned_rows,
@@ -18,6 +21,8 @@ from scripts.render_v8_fixed_panel_gifs import (
     longest_true_run,
     summarize_trace,
     terminal_cycle,
+    verify_manifest_reset_receipt,
+    verify_prepared_manifest_reset,
 )
 
 
@@ -217,6 +222,52 @@ class DashboardTest(unittest.TestCase):
         summary = summarize_trace(trace)
         self.assertEqual(summary["terminal_observation_action_cycle"]["period"], 1)
         self.assertIsNone(summary["terminal_recurrent_state_action_cycle"])
+
+    def test_renderer_verifies_input_seed_receipt_not_advanced_state_key(self):
+        state_keys = np.asarray([[0, 101], [0, 202]], dtype=np.uint32)
+        base_receipt = {"passed": True, "slots": 2, "env_steps_min": 0}
+        seed_receipt = {
+            "passed": True,
+            "map_selection_decoupled": True,
+            "sha256": hashlib.sha256(
+                np.ascontiguousarray(state_keys).tobytes()
+            ).hexdigest(),
+        }
+        fixed_record = {
+            "reset_verification": {
+                **base_receipt,
+                "manifest_episode_seeds": seed_receipt,
+            }
+        }
+        self.assertEqual(
+            verify_manifest_reset_receipt(
+                fixed_record,
+                base_receipt,
+                state_keys,
+            ),
+            fixed_record["reset_verification"],
+        )
+
+        stale = json.loads(json.dumps(fixed_record))
+        stale["reset_verification"]["manifest_episode_seeds"]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(RuntimeError, "reset receipt"):
+            verify_manifest_reset_receipt(stale, base_receipt, state_keys)
+
+        with patch(
+            "scripts.render_v8_fixed_panel_gifs.verify_exact_reset",
+            return_value=base_receipt,
+        ) as reset_check:
+            observed = verify_prepared_manifest_reset(
+                object(),
+                object(),
+                Path("promotion"),
+                2,
+                object(),
+                state_keys,
+                fixed_record,
+            )
+        self.assertEqual(observed, fixed_record["reset_verification"])
+        self.assertNotIn("expected_state_keys", reset_check.call_args.kwargs)
 
 
 if __name__ == "__main__":

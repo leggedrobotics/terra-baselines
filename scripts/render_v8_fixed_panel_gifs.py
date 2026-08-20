@@ -63,6 +63,56 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
+def verify_manifest_reset_receipt(
+    record: dict[str, Any],
+    reset_verification: dict[str, Any],
+    environment_state_keys,
+) -> dict[str, Any]:
+    """Match the renderer reset inputs to the canonical fixed-eval receipt."""
+    state_keys_host = np.ascontiguousarray(np.asarray(environment_state_keys))
+    observed = {
+        **reset_verification,
+        "manifest_episode_seeds": {
+            "passed": True,
+            "map_selection_decoupled": True,
+            "sha256": hashlib.sha256(state_keys_host.tobytes()).hexdigest(),
+        },
+    }
+    expected = record.get("reset_verification")
+    if not isinstance(expected, dict) or observed != expected:
+        raise RuntimeError(
+            "renderer reset receipt does not match the fixed evaluation"
+        )
+    return observed
+
+
+def verify_prepared_manifest_reset(
+    env,
+    env_params,
+    directory: Path,
+    count: int,
+    timestep,
+    environment_state_keys,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    # reset_prepared consumes the supplied keys and advances timestep.state.key.
+    # Canonical fixed evaluation therefore verifies the frozen input-key receipt,
+    # not equality between the input keys and the post-reset state key.
+    reset_verification = verify_exact_reset(
+        env,
+        env_params,
+        None,
+        directory,
+        count,
+        timestep=timestep,
+    )
+    return verify_manifest_reset_receipt(
+        record,
+        reset_verification,
+        environment_state_keys,
+    )
+
+
 def load_fixed_record(path: Path, index: int) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, list) or not payload:
@@ -351,14 +401,14 @@ def run(args: argparse.Namespace) -> None:
     timestep, env_params, state_keys = prepare_manifest_episode_reset(
         env, env_params, map_keys, state_keys
     )
-    verify_exact_reset(
+    reset_verification = verify_prepared_manifest_reset(
         env,
         env_params,
-        None,
         directory,
         count,
-        timestep=timestep,
-        expected_state_keys=state_keys,
+        timestep,
+        state_keys,
+        record,
     )
     model = SimpleNamespace(apply=initialized_state.apply_fn)
     renderer = TerraEnv.new(
@@ -603,6 +653,7 @@ def run(args: argparse.Namespace) -> None:
         "deterministic": True,
         "selected_slots": selected_slots,
         "canonical_forward_chunk": eval_mcts.EVAL_FORWARD_CHUNK,
+        "reset_verification": reset_verification,
         "frame_cadence_steps": args.frame_stride,
         "frames_per_episode": len(next(iter(frames.values()))),
         "full_panel_terminal_parity_verified": True,
