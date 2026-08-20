@@ -11,7 +11,8 @@
 set -euo pipefail
 umask 027
 
-for REQUIRED in TARGET_UPDATE RUN_DIR RUN_NAME BASELINES_ROOT BASELINES_REVISION \
+for REQUIRED in PHASE TARGET_UPDATE RESUME_CHECKPOINT RUN_DIR RUN_NAME \
+    BASELINES_ROOT BASELINES_REVISION \
     RUNTIME_TERRA_ROOT RUNTIME_TERRA_REVISION PROTOCOL_TERRA_REVISION SEED VENV \
     TERRA_EULER_USER TERRA_EULER_HOME_ROOT WANDB_ENTITY WANDB_PROJECT \
     BANK_ARCHIVE BANK_ARCHIVE_SHA BANK_DATASET_SHA BANK_RELEASE_ID \
@@ -20,7 +21,27 @@ for REQUIRED in TARGET_UPDATE RUN_DIR RUN_NAME BASELINES_ROOT BASELINES_REVISION
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
-test "$TARGET_UPDATE" = 100000
+# scratch = fresh run; resume = wallclock continuation submitted with
+# afterany on the scratch job, discovering the newest checkpoint at start.
+case "$PHASE:$TARGET_UPDATE:$RESUME_CHECKPOINT" in
+    scratch:100000:none) WANDB_RESUME=never ;;
+    resume:100000:latest) WANDB_RESUME=must ;;
+    *) echo "unsupported PHASE:TARGET_UPDATE:RESUME_CHECKPOINT '$PHASE:$TARGET_UPDATE:$RESUME_CHECKPOINT'" >&2; exit 2 ;;
+esac
+
+RESUME_ARG=none
+if [ "$PHASE" = resume ]; then
+    LATEST="$(ls -1 "$RUN_DIR/checkpoints/"*_update_*.pkl 2>/dev/null | sort | tail -1)"
+    test -n "$LATEST" || { echo "resume phase found no checkpoint in $RUN_DIR/checkpoints" >&2; exit 2; }
+    LATEST_UPDATE="$(basename "$LATEST" .pkl | sed 's/.*_update_0*//')"
+    [[ "$LATEST_UPDATE" =~ ^[0-9]+$ ]]
+    if [ "$LATEST_UPDATE" -ge "$TARGET_UPDATE" ]; then
+        echo "target update $TARGET_UPDATE already reached by $LATEST; nothing to do"
+        exit 0
+    fi
+    echo "resuming from $LATEST (update $LATEST_UPDATE)"
+    RESUME_ARG="$LATEST"
+fi
 test "$(id -un)" = "$TERRA_EULER_USER"
 test "$HOME" = "$TERRA_EULER_HOME_ROOT"
 test "$(cat "$BASELINES_ROOT/REVISION")" = "$BASELINES_REVISION"
@@ -92,13 +113,17 @@ count = sum(int(np.asarray(x).size) for x in jax.tree.leaves(params))
 assert count == int(os.environ["EXPECTED_PARAMETERS"]), count
 PY
 
-export WANDB_ENTITY WANDB_PROJECT WANDB_MODE=online WANDB_RESUME=never
-export WANDB_RUN_ID="v8_relay_gru64r_${BASELINES_REVISION:0:10}_s${SEED}"
+export WANDB_ENTITY WANDB_PROJECT WANDB_MODE=online WANDB_RESUME
+export WANDB_RUN_ID="${WANDB_RUN_ID:-v8_relay_gru64r_${BASELINES_REVISION:0:10}_s${SEED}}"
 export WANDB_DIR="$RUN_DIR/wandb"
-scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/slurm_job.txt"
-nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
+scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/${PHASE}_slurm_job.txt"
+nvidia-smi -q > "$RUN_DIR/${PHASE}_nvidia_smi.txt"
+CONTRACT="$RUN_DIR/run_contract.env"
+[ "$PHASE" = resume ] && CONTRACT="$RUN_DIR/resume_contract.env"
 printf '%s\n' \
     "status=RUNNING" \
+    "phase=$PHASE" \
+    "resume_checkpoint=$RESUME_ARG" \
     "terra_baselines_revision=$BASELINES_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
     "actor_core=gru" \
@@ -112,9 +137,9 @@ printf '%s\n' \
     "global_envs=2048" \
     "transitions_per_update=65536" \
     "partial_reset_bank_sha256=$PARTIAL_BANK_SHA" \
-    "slurm_job_id=$SLURM_JOB_ID" > "$RUN_DIR/run_contract.env"
+    "slurm_job_id=$SLURM_JOB_ID" > "$CONTRACT"
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PYTHON_BIN="$PYTHON" MACHINE=euler
 "$BASELINES_ROOT/scripts/run_v8_relay_gru_v2.sh" \
     "$BANK" "$PARTIAL_BANK" "$RUN_NAME" "$TARGET_UPDATE" "$RUN_DIR" \
-    "$DISTANCE_SIDECAR_SHA" none
+    "$DISTANCE_SIDECAR_SHA" "$RESUME_ARG"
