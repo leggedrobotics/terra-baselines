@@ -2,6 +2,15 @@
 
 Date: 2026-08-21
 
+## Launch status
+
+Training source is frozen at terra-baselines
+`5d7284f6ca6d3c7a53a3ba2dea669c66d3c0ca14` and Terra
+`c8ab920504e09173760c8beba71589102d54ed21`. Slurm accepted control job
+`11364188` and feedback job `11364189`. At 2026-08-21 00:56 CEST both are
+`PENDING (Priority)`: neither has an allocation, update-1 receipt, W&B history,
+or training result yet.
+
 ## Question
 
 Does compact movement feedback reduce the blocked-movement attractors that

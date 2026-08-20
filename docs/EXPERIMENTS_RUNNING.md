@@ -1,4 +1,36 @@
-# Experiments — current state (updated 2026-08-14 CEST)
+# Experiments — current state (updated 2026-08-21 00:56 CEST)
+
+## V8 paired movement-feedback GRU pilot
+
+Two independent fresh-scratch jobs were submitted on 2026-08-21. At the
+recorded snapshot both are `PENDING (Priority)` with no allocated node, no
+W&B history, and no training evidence:
+
+| Arm | Slurm | W&B ID | Requested resources |
+| --- | ---: | --- | --- |
+| repaired-runtime control | `11364188` | `v8_movefb_c_5d7284f6ca_s20260821` | 4 x RTX 4090, 8 CPUs, 64 GB, 71:45 |
+| six-bit feedback | `11364189` | `v8_movefb_f_5d7284f6ca_s20260821` | 4 x RTX 4090, 8 CPUs, 64 GB, 71:45 |
+
+There is no dependency between the jobs. They compare equal transition counts,
+not wall time. Each allocation must pass exact GPU/TRES, CUDA convolution,
+NCCL, bank identity, u0 parity, and a finite W&B-disabled update-1 smoke before
+starting its fresh production run. Do not call either arm healthy while it is
+only queued, allocated, compiling, or running the smoke.
+
+Frozen training source:
+
+- terra-baselines `5d7284f6ca6d3c7a53a3ba2dea669c66d3c0ca14`;
+- Terra `c8ab920504e09173760c8beba71589102d54ed21`;
+- paired seed `20260821`, terminal update `50,000`;
+- full-bank archive `b04513ffd1d6a33721802538f76b521bddc81fac492e0ad923ce790d0edec725`;
+- partial-bank archive `eb200b151f6b47d9f2ea5f53f6b13cdb45b595a54029fd5d866ec732fea1c8b8`; and
+- run root
+  `/cluster/scratch/alesweber/codex_terra_edge_runs/terra_v8_movement_feedback_v1/runs/5d7284f6ca6d3c7a53a3ba2dea669c66d3c0ca14/c8ab920504e09173760c8beba71589102d54ed21/s20260821`.
+
+The preregistered question, scope, and u50 decision gate are in
+[`research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md`](research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md).
+The older sections below are retained as historical lineage and are superseded
+where their live scheduler wording conflicts with this timestamp.
 
 ## v6.1 reward-v2 + stall age + Continuous Banded v3
 

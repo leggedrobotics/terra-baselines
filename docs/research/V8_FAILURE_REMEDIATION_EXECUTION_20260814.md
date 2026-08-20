@@ -27,6 +27,9 @@ footprint/visible-blocker fixes. The treatment adds four unmasked current
 movement-feasibility bits and two previous-transition outcome bits; the
 control adds neither. This tests the combined six-bit observation package,
 not its individual components and not the mechanics changes themselves.
+The paired jobs are `11364188` (control) and `11364189` (feedback); both were
+still `PENDING (Priority)` at 2026-08-21 00:56 CEST, so this status is a
+submission record rather than training evidence.
 
 ## Scope boundary
 
