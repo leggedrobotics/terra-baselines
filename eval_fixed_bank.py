@@ -27,7 +27,12 @@ from train_mixed import (
     _validate_checkpoint_architecture,
     make_mixed_agent_states,
 )
-from utils.accepted_bank import V8_RELEASE_ID, load_accepted_bank
+from utils.accepted_bank import (
+    EVALUATION_PANEL_FAMILY_DEFAULT,
+    V8_RELEASE_ID,
+    load_accepted_bank,
+)
+from utils.models import validate_model_params_match
 from utils.explicit_episode_bank import ExplicitEpisodePanel
 from utils.explicit_episode_bank import load_explicit_episode_panel
 from utils.helpers import load_pkl_object
@@ -154,6 +159,25 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
         # Conditional inclusion keeps historical fingerprints unchanged while
         # binding both the partial arm and its matched full-start control.
         contract["architecture"]["reward_v2_reset_context_observation"] = True
+    if bool(_field(config, "trench_alignment_observation", False)):
+        # Same conditional-inclusion rule: the width-3 alignment vector adds two
+        # (3, 704) embeddings, so it is architecture, and it must bind the C0
+        # control to its matched T1 treatment.
+        contract["architecture"]["trench_alignment_observation"] = True
+    trench_gate = _field(config, "enforce_trench_dig_alignment")
+    if trench_gate is not None or bool(
+        _field(config, "require_trench_alignment_metadata", False)
+    ):
+        # The C0/T1 pilot's only intended divergence. Recorded outside
+        # "architecture" because the gate changes the environment, not shapes.
+        contract["trench_dig_alignment"] = {
+            "enforce_trench_dig_alignment": (
+                None if trench_gate is None else bool(trench_gate)
+            ),
+            "require_trench_alignment_metadata": bool(
+                _field(config, "require_trench_alignment_metadata", False)
+            ),
+        }
     partial_reset_digest = _field(config, "partial_reset_bank_sha256")
     if partial_reset_digest is not None:
         raw_partial_receipt = checkpoint.get("partial_reset_curriculum")
@@ -333,6 +357,11 @@ def configure_for_bank(train_config, relative_path: str, count: int):
     config.warm_start_from = None
     config.resume_update = None
     config.load_env_from_checkpoint = False
+    # Deliberately NOT reset here: trench_alignment_observation (architecture),
+    # enforce_trench_dig_alignment (the arm's env treatment) and
+    # require_trench_alignment_metadata (fail-closed bank contract) are
+    # properties of the trained policy, so they ride along from the checkpoint's
+    # own train_config and make the eval env auto-match the trained one.
     return config
 
 
@@ -1305,6 +1334,17 @@ def main() -> None:
             "Required with --accepted-panel; no Git metadata is consulted."
         ),
     )
+    parser.add_argument(
+        "--panel-family",
+        default=EVALUATION_PANEL_FAMILY_DEFAULT,
+        help=(
+            "Evaluate 'evaluation/<family>/<panel>' instead of the declared "
+            "'evaluation/main/<panel>'. Use 'gate_main' on the fresh-trench "
+            "finite-metadata enriched bank, whose root dataset.json still "
+            "declares the frozen main panels on purpose. Only affects "
+            "--accepted-panel/--diagnostic-panel."
+        ),
+    )
     parser.add_argument("--horizon", type=int, default=450)
     parser.add_argument("--seed", type=int, default=20260724)
     parser.add_argument("--stochastic", action="store_true")
@@ -1357,6 +1397,10 @@ def main() -> None:
             "--capability-panel, and --explicit-episode-panel"
         )
     panel_name = args.accepted_panel or args.diagnostic_panel or args.capability_panel
+    if args.panel_family != EVALUATION_PANEL_FAMILY_DEFAULT and panel_name is None:
+        raise ValueError(
+            "--panel-family requires --accepted-panel or --diagnostic-panel"
+        )
     accepted_bank = None
     explicit_episode_panel = None
     if args.explicit_episode_panel is not None:
@@ -1384,12 +1428,20 @@ def main() -> None:
         release_id = json.loads((bank_root / "dataset.json").read_text()).get(
             "release_id"
         )
+        if args.capability_panel is not None and (
+            args.panel_family != EVALUATION_PANEL_FAMILY_DEFAULT
+        ):
+            raise ValueError(
+                "--panel-family applies to the main evaluation panels, not the "
+                "capability-floor panels"
+            )
         accepted_bank = load_accepted_bank(
             bank_root,
             "G-UNIFORM",
             args.terra_revision,
             allow_diagnostic_control=args.diagnostic_panel is not None,
             curriculum_stage="full" if release_id == V8_RELEASE_ID else None,
+            evaluation_panel_family=args.panel_family,
         )
         available_panels = (
             accepted_bank.capability_floor_evaluation_panels
@@ -1454,17 +1506,53 @@ def main() -> None:
         os.environ["DATASET_PATH"] = str(bank_root)
         os.environ["DATASET_SIZE"] = str(count)
         config = configure_for_bank(reference_train_config, relative_path, count)
+        # The eval config is a rewrite of the checkpoint's own train_config, so
+        # re-run the architecture contract against what actually builds the
+        # model: any field the rewrite dropped fails here instead of silently
+        # evaluating a different network.
+        for _, checkpoint in checkpoints:
+            _validate_checkpoint_architecture(checkpoint, config)
         if explicit_episode_panel is None:
             env_config_override = None
         else:
             from terra.benchmark_protocol import frozen_benchmark_protocol
 
             env_config_override, _ = frozen_benchmark_protocol()
+            if bool(getattr(config, "enforce_trench_dig_alignment", None)):
+                raise ValueError(
+                    "explicit-episode panels replace the env config with the "
+                    "frozen benchmark protocol, which cannot carry this "
+                    "checkpoint's enforce_trench_dig_alignment=True treatment; "
+                    "use --accepted-panel on a gate-capable panel family"
+                )
         _, env, env_params, initialized_state = make_mixed_agent_states(
             config,
             env_params=env_config_override,
         )
         env_params = jax.tree_util.tree_map(lambda value: value[0], env_params)
+        expected_trench_gate = bool(
+            getattr(config, "enforce_trench_dig_alignment", None) or False
+        )
+        raw_trench_gate = getattr(env_params, "enforce_trench_dig_alignment", None)
+        if raw_trench_gate is None:
+            if expected_trench_gate:
+                raise RuntimeError(
+                    "the checkpoint was trained with enforce_trench_dig_alignment"
+                    "=True but this Terra runtime has no fresh-trench dig gate"
+                )
+        else:
+            effective_trench_gate = bool(np.ravel(np.asarray(raw_trench_gate))[0])
+            if effective_trench_gate != expected_trench_gate:
+                raise RuntimeError(
+                    "fresh-trench dig gate mismatch between the checkpoint "
+                    f"config ({expected_trench_gate}) and the eval env "
+                    f"({effective_trench_gate})"
+                )
+            print(
+                "🧭 eval env fresh-trench dig gate (effective): "
+                f"{effective_trench_gate}",
+                flush=True,
+            )
         if explicit_episode_panel is not None:
             selection_rows = [
                 {
@@ -1538,6 +1626,12 @@ def main() -> None:
                 count,
             )
         model = SimpleNamespace(apply=initialized_state.apply_fn)
+        for checkpoint_path, checkpoint in checkpoints:
+            validate_model_params_match(
+                initialized_state.params,
+                checkpoint["model"],
+                f"{checkpoint_path}",
+            )
         previous_summary = None
         previous_checkpoint = None
 
@@ -1799,6 +1893,19 @@ def main() -> None:
                         ),
                         "diagnostic_contract_sha256": (
                             accepted_bank.diagnostic_contract_sha256
+                        ),
+                        # Conditional: recording it unconditionally would change
+                        # every historical record's bank identity dict, which
+                        # downstream tooling compares verbatim.
+                        **(
+                            {}
+                            if accepted_bank.evaluation_panel_family
+                            == EVALUATION_PANEL_FAMILY_DEFAULT
+                            else {
+                                "evaluation_panel_family": (
+                                    accepted_bank.evaluation_panel_family
+                                )
+                            }
                         ),
                     }
                 ),

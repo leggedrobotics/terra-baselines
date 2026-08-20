@@ -29,6 +29,7 @@ from train_mixed import (
     make_mixed_agent_states,
 )
 from utils.helpers import load_pkl_object
+from utils.models import validate_model_params_match
 
 sys.modules["__main__"].TrainConfig = TrainConfig
 sys.modules["__main__"].MixedAgentTrainConfig = MixedAgentTrainConfig
@@ -633,8 +634,16 @@ def main() -> None:
         args.identity,
         args.treatment,
     )
+    # The identity config is a rewrite of the checkpoint's own train_config;
+    # re-run the architecture contract against what actually builds the model.
+    for _, checkpoint in checkpoints:
+        _validate_checkpoint_architecture(checkpoint, config)
     _, env, env_params, initialized_state = make_mixed_agent_states(config)
     env_params = jax.tree_util.tree_map(lambda value: value[0], env_params)
+    for path, checkpoint in checkpoints:
+        validate_model_params_match(
+            initialized_state.params, checkpoint["model"], str(path)
+        )
     reset_keys = declared_reset_keys()
     reset_verification = verify_single_identity_reset(
         env,

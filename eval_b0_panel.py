@@ -33,6 +33,7 @@ from train_mixed import (
     make_mixed_agent_states,
 )
 from utils.helpers import load_pkl_object
+from utils.models import validate_model_params_match
 
 sys.modules["__main__"].TrainConfig = TrainConfig
 sys.modules["__main__"].MixedAgentTrainConfig = MixedAgentTrainConfig
@@ -679,11 +680,20 @@ def main() -> None:
         args.panel,
         len(rows),
     )
+    # The panel config is a rewrite of the checkpoint's own train_config; re-run
+    # the architecture contract against what actually builds the model so a
+    # dropped observation flag fails here instead of evaluating another network.
+    for _, checkpoint in checkpoints:
+        _validate_checkpoint_architecture(checkpoint, config)
     _, env, env_params, initialized_state = make_mixed_agent_states(config)
     env_params = jax.tree_util.tree_map(
         lambda value: value[0],
         env_params,
     )
+    for path, checkpoint in checkpoints:
+        validate_model_params_match(
+            initialized_state.params, checkpoint["model"], str(path)
+        )
     reset_keys = exact_reset_keys(len(rows))
     reset_verification = verify_exact_reset(
         env,

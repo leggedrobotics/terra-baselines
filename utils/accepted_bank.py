@@ -173,12 +173,16 @@ class AcceptedBank:
     v7_core_condition_ids: tuple[str, ...] = ()
     curriculum_depths: tuple[int, ...] = ()
     curriculum_graph_sha256: str | None = None
+    # Which evaluation/<family>/* directories `evaluation_panels` point at.
+    evaluation_panel_family: str = "main"
 
     def __getattr__(self, name: str):
         # Checkpoints written before sampler profiles were named unpickle into
         # this class without the new field in their instance dictionary.
         if name == "sampler_profile":
             return None
+        if name == "evaluation_panel_family":
+            return "main"
         raise AttributeError(name)
 
 
@@ -1085,6 +1089,52 @@ def _validate_evaluation_panels(
     return tuple(validated)
 
 
+EVALUATION_PANEL_FAMILY_DEFAULT = "main"
+
+
+def _substituted_panel_family(root: Path, panels: object, family: str) -> dict:
+    """Repoint the declared evaluation panels at a sibling panel family.
+
+    A derived bank (e.g. the fresh-trench finite-metadata enrichment) ships
+    ``evaluation/<family>/{development,promotion,sealed}`` next to the frozen
+    ``evaluation/main/*`` and deliberately leaves the root ``dataset.json``
+    byte-identical to the receipt it was derived from. Each substituted panel
+    directory is self-describing, so its own ``dataset.json`` slot_count and
+    manifest supply the declaration that the root would otherwise carry; the
+    panel contract itself is then enforced by ``_validate_evaluation_panels``
+    exactly as for the declared family.
+    """
+    if not isinstance(panels, dict):
+        raise ValueError("evaluation_panels must be an object to substitute a family")
+    substituted = {}
+    for name, panel in panels.items():
+        if not isinstance(panel, dict):
+            raise ValueError(f"evaluation panel {name} must be an object")
+        declared = panel.get("maps_path")
+        expected_prefix = f"evaluation/{EVALUATION_PANEL_FAMILY_DEFAULT}/"
+        if not isinstance(declared, str) or not declared.startswith(expected_prefix):
+            raise ValueError(
+                f"evaluation panel {name} declares {declared!r}; a panel family "
+                f"substitution requires a path under {expected_prefix!r}"
+            )
+        maps_path = f"evaluation/{family}/" + declared[len(expected_prefix) :]
+        _, directory = _safe_relative_directory(root, maps_path)
+        index = json.loads((directory / "dataset.json").read_text())
+        slot_count = index.get("slot_count")
+        rows = _json_lines(directory / "manifest.jsonl")
+        conditions = {
+            row.get("primary_cell")
+            for row in rows
+            if isinstance(row.get("primary_cell"), str)
+        }
+        substituted[name] = {
+            "maps_path": maps_path,
+            "slot_count": slot_count,
+            "conditions": len(conditions),
+        }
+    return substituted
+
+
 def _selected(level: AcceptedLevel, arm: str) -> bool:
     if arm == "F-ANCHOR":
         return level.family == "foundation" and level.branch_depth == "Anchor"
@@ -1105,6 +1155,7 @@ def load_accepted_bank(
     allow_diagnostic_control: bool = False,
     curriculum_stage: str | None = None,
     sampler_profile: str | None = None,
+    evaluation_panel_family: str = EVALUATION_PANEL_FAMILY_DEFAULT,
 ) -> AcceptedBank:
     """Validate the canonical index and select the levels owned by one arm."""
     if arm not in ARMS:
@@ -1204,9 +1255,34 @@ def load_accepted_bank(
         expected_capability_ids = tuple(
             index.get("v6_capability_floor_condition_ids", ())
         )
+    declared_panels = index.get("evaluation_panels")
+    if evaluation_panel_family == EVALUATION_PANEL_FAMILY_DEFAULT:
+        panels_to_validate = declared_panels
+    else:
+        # A substituted family is a strict subset of the declared macro (slots
+        # are renumbered and unusable conditions dropped), so the root's frozen
+        # condition list cannot be required verbatim; require containment.
+        panels_to_validate = _substituted_panel_family(
+            root_path, declared_panels, evaluation_panel_family
+        )
+        if expected_main_ids is not None:
+            for name, panel in sorted(panels_to_validate.items()):
+                _, directory = _safe_relative_directory(root_path, panel["maps_path"])
+                observed = {
+                    row.get("primary_cell")
+                    for row in _json_lines(directory / "manifest.jsonl")
+                }
+                unknown = sorted(observed - set(expected_main_ids))
+                if unknown:
+                    raise ValueError(
+                        f"evaluation panel {name} in family "
+                        f"{evaluation_panel_family!r} introduces conditions "
+                        f"outside the frozen macro: {unknown}"
+                    )
+        expected_main_ids = None
     evaluation_panels = _validate_evaluation_panels(
         root_path,
-        index.get("evaluation_panels"),
+        panels_to_validate,
         protocol_sha256,
         expected_condition_ids=expected_main_ids,
     )
@@ -1369,4 +1445,5 @@ def load_accepted_bank(
         v7_core_condition_ids=v7_core_condition_ids,
         curriculum_depths=curriculum_depths,
         curriculum_graph_sha256=curriculum_graph_sha256,
+        evaluation_panel_family=evaluation_panel_family,
     )

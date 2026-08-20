@@ -9,7 +9,7 @@ import jax
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from tqdm import tqdm
-from utils.models import load_neural_network
+from utils.models import load_neural_network_for_checkpoint
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
@@ -487,9 +487,11 @@ if __name__ == "__main__":
         shuffle_maps=False,
     )
 
-    model = load_neural_network(config, env)
     model_params = log["model"]
-    
+    model = load_neural_network_for_checkpoint(
+        config, env, model_params, context=str(args.run_name)
+    )
+
     obs_seq, cum_rewards, state_seq, agent_paths, agent_distances, agent_do_actions, agent_types, active_agent_history = rollout_episode_with_paths(
         env,
         model,

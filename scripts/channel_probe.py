@@ -104,6 +104,7 @@ from train_mixed import (
     make_mixed_agent_states,
 )
 from utils.helpers import load_pkl_object
+from utils.models import validate_model_params_match
 from utils.utils_ppo import obs_to_model_input, policy, wrap_action
 
 sys.modules["__main__"].TrainConfig = TrainConfig
@@ -559,8 +560,16 @@ def main() -> None:
         os.environ["DATASET_PATH"] = str(bank_root)
         os.environ["DATASET_SIZE"] = str(count)
         config = configure_for_bank(reference_train_config, relative_path, count)
+        # The probe config is a rewrite of the checkpoint's own train_config;
+        # re-check the architecture against what actually builds the model.
+        for _, checkpoint in checkpoints:
+            _validate_checkpoint_architecture(checkpoint, config)
         _, env, env_params, initialized_state = make_mixed_agent_states(config)
         env_params = jax.tree_util.tree_map(lambda value: value[0], env_params)
+        for path, checkpoint in checkpoints:
+            validate_model_params_match(
+                initialized_state.params, checkpoint["model"], str(path)
+            )
         reset_keys = exact_reset_keys(count)
 
         cache_key = hashlib.sha256(

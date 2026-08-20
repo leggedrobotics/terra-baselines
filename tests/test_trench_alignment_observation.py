@@ -217,3 +217,97 @@ def test_pilot_arms_differ_only_in_the_gate():
         m.max_steps_in_episode for m in treatment.maps
     ]
     assert control.curriculum == treatment.curriculum
+
+
+def fingerprint_config(**overrides):
+    """A checkpoint-architecture dict as `checkpoint_treatment_fingerprint` reads it."""
+    return {
+        "name": "trench_align",
+        "seed": 20260818,
+        "model_size": "medium",
+        "map_encoder": "resnet_spatial_8x8_se_sa_xattn",
+        "carry_work_observation": True,
+        **overrides,
+    }
+
+
+def test_evaluator_model_config_follows_the_checkpoint_architecture():
+    """The checkpoint is the single source of truth; nothing is passed by hand."""
+    from eval_fixed_bank import configure_for_bank
+    from utils.utils_ppo import _config_option
+
+    trained = SimpleNamespace(
+        trench_alignment_observation=True,
+        enforce_trench_dig_alignment=True,
+        require_trench_alignment_metadata=True,
+        num_minibatches=32,
+    )
+    treated = configure_for_bank(trained, "evaluation/gate_main/development", 608)
+    assert _config_option(treated, "trench_alignment_observation", False) is True
+    assert treated.enforce_trench_dig_alignment is True
+    assert treated.require_trench_alignment_metadata is True
+
+    # A pre-pilot checkpoint simply has no such field; it must read as off.
+    legacy = configure_for_bank(
+        SimpleNamespace(num_minibatches=32), "evaluation/main/development", 720
+    )
+    assert _config_option(legacy, "trench_alignment_observation", False) is False
+
+
+def test_treatment_fingerprint_records_the_pilot_treatment_only_when_present():
+    from eval_fixed_bank import checkpoint_treatment_fingerprint
+
+    baseline = checkpoint_treatment_fingerprint(
+        {"train_config": fingerprint_config()}
+    )
+    assert "trench_alignment_observation" not in baseline["contract"]["architecture"]
+    assert "trench_dig_alignment" not in baseline["contract"]
+
+    treated = checkpoint_treatment_fingerprint(
+        {
+            "train_config": fingerprint_config(
+                trench_alignment_observation=True,
+                enforce_trench_dig_alignment=True,
+                require_trench_alignment_metadata=True,
+            )
+        }
+    )
+    assert treated["contract"]["architecture"]["trench_alignment_observation"] is True
+    assert treated["contract"]["trench_dig_alignment"] == {
+        "enforce_trench_dig_alignment": True,
+        "require_trench_alignment_metadata": True,
+    }
+    assert treated["sha256"] != baseline["sha256"]
+
+
+def test_architecture_validation_rejects_a_rebuild_without_the_alignment_flag():
+    from train_mixed import _validate_checkpoint_architecture
+
+    checkpoint = {"train_config": {"trench_alignment_observation": True}}
+    _validate_checkpoint_architecture(
+        checkpoint, SimpleNamespace(trench_alignment_observation=True)
+    )
+    with pytest.raises(ValueError) as error:
+        _validate_checkpoint_architecture(checkpoint, SimpleNamespace())
+    assert "trench_alignment_observation" in str(error.value)
+
+
+def test_rebuilt_model_must_reproduce_the_checkpoint_parameters():
+    from utils.models import validate_model_params_match
+
+    env = SimpleNamespace(
+        batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
+    )
+    _, treated_params = get_model_ready(
+        jax.random.PRNGKey(1), model_config(True), env
+    )
+    _, baseline_params = get_model_ready(
+        jax.random.PRNGKey(1), model_config(False), env
+    )
+    validate_model_params_match(treated_params, treated_params, "matched rebuild")
+    validate_model_params_match(baseline_params, baseline_params, "matched rebuild")
+    with pytest.raises(ValueError) as error:
+        validate_model_params_match(
+            baseline_params, treated_params, "flag-off rebuild"
+        )
+    assert "trench_alignment_actor_embedding" in str(error.value)

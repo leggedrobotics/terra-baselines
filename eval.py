@@ -1,7 +1,7 @@
 import numpy as np
 import jax
 import math
-from utils.models import load_neural_network
+from utils.models import load_neural_network_for_checkpoint
 from utils.helpers import load_pkl_object
 from terra.env import TerraEnvBatch
 from terra.actions import (
@@ -12,7 +12,7 @@ from terra.actions import (
 )
 import jax.numpy as jnp
 from utils.utils_ppo import _config_option, obs_to_model_input, wrap_action
-from train_mixed_agents import MixedAgentTrainConfig
+from train_mixed import MixedAgentTrainConfig  # needed for unpickling checkpoints
 
 #sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
 
@@ -282,8 +282,13 @@ if __name__ == "__main__":
     env = TerraEnvBatch(rendering=False, shuffle_maps=shuffle_maps)
     config.num_embeddings_agent_min = 60
 
-    model = load_neural_network(config, env)
     model_params = log["model"]
+    # The checkpoint's own train_config is the single source of truth for the
+    # architecture (incl. trench_alignment_observation); prove the rebuild
+    # reproduces its parameter tree before rolling out.
+    model = load_neural_network_for_checkpoint(
+        config, env, model_params, context=str(args.run_name)
+    )
     # model_params = jax.tree_map(lambda x: x[0], replicated_params)
     deterministic = bool(args.deterministic)
     print(f"\nDeterministic = {deterministic}\n")

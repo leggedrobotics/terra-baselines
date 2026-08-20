@@ -387,6 +387,50 @@ def load_neural_network(config, env):
     return model
 
 
+def _params_shape_index(params) -> dict:
+    """Flatten a parameter pytree to {dotted path: shape}."""
+    leaves = jax.tree_util.tree_flatten_with_path(params)[0]
+    return {
+        jax.tree_util.keystr(path): tuple(int(dim) for dim in jnp.shape(leaf))
+        for path, leaf in leaves
+    }
+
+
+def validate_model_params_match(rebuilt_params, checkpoint_params, context: str) -> None:
+    """Fail loudly when a rebuilt model does not match a checkpoint's parameters.
+
+    Every evaluator rebuilds the network from the CHECKPOINT's own recorded
+    training config, so the checkpoint is the single source of truth for
+    architecture flags such as ``trench_alignment_observation``. Any flag the
+    rebuild fails to pick up changes the parameter tree (here: the two
+    ``trench_alignment_*_embedding`` (3, 704) leaves), so comparing the trees
+    turns a silently different policy into an error at load time.
+    """
+    rebuilt = _params_shape_index(rebuilt_params)
+    saved = _params_shape_index(checkpoint_params)
+    missing = sorted(set(saved) - set(rebuilt))
+    extra = sorted(set(rebuilt) - set(saved))
+    reshaped = sorted(
+        f"{name}: checkpoint={saved[name]}, rebuilt={rebuilt[name]}"
+        for name in set(saved) & set(rebuilt)
+        if saved[name] != rebuilt[name]
+    )
+    if missing or extra or reshaped:
+        raise ValueError(
+            f"{context}: the model rebuilt from the checkpoint's train_config "
+            "does not match the checkpoint parameters. "
+            f"missing_in_rebuild={missing}, absent_from_checkpoint={extra}, "
+            f"shape_mismatch={reshaped}"
+        )
+
+
+def load_neural_network_for_checkpoint(config, env, checkpoint_params, *, context: str):
+    """Rebuild a checkpoint's model from its own config and prove the shapes match."""
+    model, rebuilt_params = get_model_ready(jax.random.PRNGKey(0), config, env)
+    validate_model_params_match(rebuilt_params, checkpoint_params, context)
+    return model
+
+
 def normalize(x: Array, x_min: Array, x_max: Array) -> Array:
     """
     Normalizes to [-1, 1]

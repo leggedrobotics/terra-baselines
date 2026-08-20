@@ -22,7 +22,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from tensorflow_probability.substrates import jax as tfp
 
-from utils.models import load_neural_network
+from utils.models import load_neural_network_for_checkpoint
 from utils.episode_aggregates import (
     normalized_material_progress,
     source_soil_volume,
@@ -1379,8 +1379,12 @@ def main():
     )
     config.num_embeddings_agent_min = 60
 
-    model = load_neural_network(config, env)
     model_params = log["model"]
+    # Architecture (incl. trench_alignment_observation) comes from the
+    # checkpoint's own train_config; the rebuild must reproduce its parameters.
+    model = load_neural_network_for_checkpoint(
+        config, env, model_params, context=str(args.run_name)
+    )
     deterministic = bool(args.deterministic)
 
     if args.use_mcts:
