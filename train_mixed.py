@@ -129,6 +129,7 @@ from utils.accepted_bank import (
     AcceptedBank,
     load_accepted_bank,
 )
+from utils.accepted_bank import V8_CONDITION_PROFILES
 from utils.pooled_sampler import (
     CONTINUOUS_RULES,
     PooledConditionSampler,
@@ -1677,10 +1678,6 @@ class MixedAgentTrainConfig:
         if self.partial_reset_root is not None:
             if self.reward_stage != "reward_v2":
                 raise ValueError("partial resets require the reward_v2 objective")
-            if self.stall_age_observation:
-                raise ValueError(
-                    "the partial-reset causal arm excludes --stall_age_observation"
-                )
             sampler = self.pooled_sampler or {}
             if not sampler.get("enabled", False) or sampler.get("rule") != (
                 "continuous_banded_v3"
@@ -2653,7 +2650,10 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         sampler_profile = getattr(config.accepted_bank, "sampler_profile", None)
         curriculum_stage = getattr(config.accepted_bank, "curriculum_stage", None)
         if sampler_profile in V8_CONTINUOUS_PROFILES:
-            tags.append("support:all47-continuous")
+            tags.append(
+                "support:"
+                f"{_tag_value(getattr(config.accepted_bank, 'condition_profile', 'full'))}"
+            )
         elif curriculum_stage is not None:
             tags.append("curriculum-stage:" f"{_tag_value(curriculum_stage)}")
         if sampler_profile is not None:
@@ -4134,6 +4134,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                 config.accepted_bank.environment_protocol_sha256
                             ),
                             "sampler_profile": (config.accepted_bank.sampler_profile),
+                            "condition_profile": getattr(
+                                config.accepted_bank, "condition_profile", "full"
+                            ),
                         }
                         if (
                             config.accepted_bank.sampler_profile
@@ -4141,7 +4144,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         ):
                             receipt_contract.update(
                                 {
-                                    "support_scope": "all47_continuous",
+                                    "support_scope": getattr(
+                                        config.accepted_bank,
+                                        "condition_profile",
+                                        "full",
+                                    ),
                                     "curriculum_graph_sha256": (
                                         config.accepted_bank.curriculum_graph_sha256
                                     ),
@@ -4862,6 +4869,16 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--accepted-bank-condition-profile",
+        choices=V8_CONDITION_PROFILES,
+        default=None,
+        help=(
+            "Select a named condition view after validating the immutable V8 "
+            "release. trench_aligned_37_v1 keeps 25 foundation and 12 "
+            "strict-gate-compatible trench conditions."
+        ),
+    )
+    parser.add_argument(
         "--pooled-sampler-interval",
         type=int,
         default=None,
@@ -5082,6 +5099,8 @@ if __name__ == "__main__":
     curriculum_last_level_type = None
     pooled_sampler_override = None
     accepted_bank_arm = None
+    accepted_bank_condition_profile = "full"
+    requires_partial_reset = False
     accepted_bank = None
 
     if args.config is not None:
@@ -5108,6 +5127,10 @@ if __name__ == "__main__":
             )
             dump_rewards_enabled = preset.reward_options.dump_rewards_enabled
             accepted_bank_arm = preset.accepted_bank_arm
+            accepted_bank_condition_profile = (
+                preset.accepted_bank_condition_profile
+            )
+            requires_partial_reset = bool(preset.requires_partial_reset)
             sampler = preset.pooled_sampler
             pooled_sampler_override = {
                 field: getattr(sampler, field) for field in sampler.__dataclass_fields__
@@ -5241,6 +5264,10 @@ if __name__ == "__main__":
             raise ValueError(
                 "--accepted-bank-sampler-profile requires an accepted-bank config"
             )
+        if args.accepted_bank_condition_profile not in (None, "full"):
+            raise ValueError(
+                "--accepted-bank-condition-profile requires an accepted-bank config"
+            )
     else:
         if accepted_bank_arm not in ACCEPTED_BANK_ARMS:
             raise ValueError(
@@ -5251,6 +5278,22 @@ if __name__ == "__main__":
             raise ValueError(f"--config {args.config} requires --accepted-bank-root")
         if args.terra_revision is None:
             raise ValueError(f"--config {args.config} requires --terra-revision")
+        if (
+            args.accepted_bank_condition_profile is not None
+            and accepted_bank_condition_profile != "full"
+            and args.accepted_bank_condition_profile
+            != accepted_bank_condition_profile
+        ):
+            raise ValueError(
+                f"--config {args.config} freezes condition profile "
+                f"{accepted_bank_condition_profile!r}"
+            )
+        if args.accepted_bank_condition_profile is not None:
+            accepted_bank_condition_profile = args.accepted_bank_condition_profile
+        if requires_partial_reset and args.partial_reset_root is None:
+            raise ValueError(
+                f"--config {args.config} requires --partial-reset-root"
+            )
         if curriculum_levels_override:
             raise ValueError("accepted-bank configs must not hard-code map paths")
         if args.map_path is not None:
@@ -5266,6 +5309,7 @@ if __name__ == "__main__":
             args.terra_revision,
             curriculum_stage=args.accepted_bank_stage,
             sampler_profile=args.accepted_bank_sampler_profile,
+            condition_profile=accepted_bank_condition_profile,
         )
         os.environ["DATASET_PATH"] = str(accepted_bank.root)
         os.environ["DATASET_SIZE"] = str(accepted_bank.map_count_per_condition)
@@ -5312,7 +5356,8 @@ if __name__ == "__main__":
             f"📦 Accepted bank: {accepted_bank.root} | "
             f"{accepted_bank_arm} | {len(accepted_bank.levels)} conditions x "
             f"{accepted_bank.map_count_per_condition} maps | "
-            f"sampler={accepted_bank.sampler_profile or 'release-default'}",
+            f"sampler={accepted_bank.sampler_profile or 'release-default'} | "
+            f"conditions={accepted_bank.condition_profile}",
             flush=True,
         )
 

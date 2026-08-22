@@ -155,6 +155,10 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             )
         },
     }
+    condition_profile = _field(bank, "condition_profile", "full")
+    if condition_profile != "full":
+        # Preserve historical fingerprints while binding any narrowed V8 view.
+        contract["bank"]["condition_profile"] = condition_profile
     if bool(_field(config, "reward_v2_reset_context_observation", False)):
         # Conditional inclusion keeps historical fingerprints unchanged while
         # binding both the partial arm and its matched full-start control.

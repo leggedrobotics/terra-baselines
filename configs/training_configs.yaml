@@ -1042,3 +1042,31 @@ trench_align_generalist_v1:
     - {path: train/037__v7-fnd-bearing-walls-adjacent, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
     - {path: train/038__v7-fnd-pads-adjacent, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
     - {path: train/039__v7-fnd-courtyard-pads-adjacent, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+
+# Supported capability recipe: the immutable V8 bank is selected through its
+# explicit accepted-bank view, while the launcher supplies the pinned partial
+# sidecar bank. Unlike the causal partial-reset arm, this recipe intentionally
+# combines reset context and material stall age.
+trench_align_generalist_partial_v1:
+  description: Gate-on 37-condition generalist with relay-first partial resets
+  accepted_bank_arm: G-UNIFORM
+  accepted_bank_condition_profile: trench_aligned_37_v1
+  requires_partial_reset: true
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  trench_alignment_observation: true
+  require_trench_alignment_metadata: true
+  enforce_trench_dig_alignment: true
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: continuous_banded_v3
+    update_interval: 150
+    mastery_threshold: 0.80
+    min_episodes: 32
+    competence_ema: 0.30
+    max_mass: 0.15
