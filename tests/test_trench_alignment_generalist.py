@@ -9,6 +9,7 @@ from scripts import build_trench_aligned_runtime_bank
 from utils.accepted_bank import AcceptedLevel
 from utils.accepted_bank import V8_TRENCH_ALIGNED_EXCLUDED_CONDITION_IDS
 from utils.accepted_bank import _v8_stage_selection
+from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
 
 
 def test_gate_on_generalist_scope_is_exactly_the_supported_v8_subset():
@@ -89,6 +90,39 @@ def test_trench_aligned_view_is_exactly_25_foundation_plus_12_trench():
     )
 
 
+def test_trench_aligned_view_explicitly_preserves_sparse_canonical_depths():
+    names = ["f0", "f1", "f2a", "f2b", "t0", "t2a", "t2b", "t2c"]
+    labels = {
+        "f0": {"family": "foundation", "curriculum_depth": 0},
+        "f1": {"family": "foundation", "curriculum_depth": 1},
+        "f2a": {"family": "foundation", "curriculum_depth": 2},
+        "f2b": {"family": "foundation", "curriculum_depth": 2},
+        "t0": {"family": "trench", "curriculum_depth": 0},
+        "t2a": {"family": "trench", "curriculum_depth": 2},
+        "t2b": {"family": "trench", "curriculum_depth": 2},
+        "t2c": {"family": "trench", "curriculum_depth": 2},
+    }
+    settings = SamplerSettings(
+        rule="continuous_banded_v3",
+        update_interval=150,
+        mastery_threshold=0.80,
+        min_episodes=32,
+        competence_ema=0.30,
+        max_mass=0.15,
+    )
+    with pytest.raises(ValueError, match="lacks trench depth 1"):
+        PooledConditionSampler(names, settings, labels=labels)
+    sampler = PooledConditionSampler(
+        names,
+        settings,
+        labels=labels,
+        allow_sparse_depths=True,
+    )
+    assert len(sampler.probabilities) == len(names)
+    assert all(sampler.probabilities > 0.0)
+    assert sum(sampler.probabilities) == pytest.approx(1.0)
+
+
 def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     root = Path(__file__).resolve().parents[1]
     submit = (
@@ -122,6 +156,10 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "RUN_ROLE=phase2,TARGET_UPDATE=100000" in submit
     assert "--dependency='afterok:$JOB1_ID'" in submit
     assert "--exclude='eu-g6-064'" in submit
+    assert "allow_sparse_depths=True" in submit
+    assert "curriculum_depths_foundation=" in submit
+    assert "curriculum_depths_trench=" in submit
+    assert "sparse_curriculum_depths_allowed=true" in submit
 
     assert "len(jax.devices()) == devices" in sbatch
     assert "lax.conv_general_dilated" in sbatch
@@ -130,6 +168,12 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert 'checkpoint["next_update"] == 75000' in sbatch
     assert 'checkpoint["next_update"] == int(os.environ["TARGET_UPDATE"])' in sbatch
     assert "optimizer_finite" in sbatch
+    assert "allow_sparse_depths=True" in sbatch
+    assert '"curriculum_depths_trench=1,0,11"' in sbatch
+
+    train_mixed = (root / "train_mixed.py").read_text()
+    assert '== "trench_aligned_37_v1"' in train_mixed
+    assert "allow_sparse_depths=" in train_mixed
 
     assert "--config trench_align_generalist_partial_v1" in runner
     assert "--accepted-bank-condition-profile trench_aligned_37_v1" in runner

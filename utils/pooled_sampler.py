@@ -147,6 +147,7 @@ class PooledConditionSampler:
         *,
         maps_per_condition: list[int] | None = None,
         labels: dict[str, dict[str, object]] | None = None,
+        allow_sparse_depths: bool = False,
     ):
         if not names:
             raise ValueError("pooled sampler needs at least one condition")
@@ -168,6 +169,11 @@ class PooledConditionSampler:
         if len(self.maps_per_condition) != self._count:
             raise ValueError("maps_per_condition must match the condition count")
         self.labels = deepcopy(labels or {})
+        self._allow_sparse_depths = bool(allow_sparse_depths)
+        if self._allow_sparse_depths and settings.rule not in CONTINUOUS_RULES:
+            raise ValueError(
+                "allow_sparse_depths applies only to continuous_banded samplers"
+            )
         raw_weights = [
             self.labels.get(name, {}).get("sampling_weight") for name in self.names
         ]
@@ -210,15 +216,17 @@ class PooledConditionSampler:
                 self._depths[index] = int(depth)
             for family in FAMILIES:
                 family_mask = self._families == family
-                for depth in range(3):
-                    if not np.any(family_mask & (self._depths == depth)):
-                        raise ValueError(
-                            f"continuous_banded graph lacks {family} depth {depth}"
-                        )
                 if int(np.sum(family_mask & (self._depths == 0))) != 1:
                     raise ValueError(
                         f"continuous_banded {family} depth 0 must be a singleton"
                     )
+                if not self._allow_sparse_depths:
+                    for depth in range(3):
+                        if not np.any(family_mask & (self._depths == depth)):
+                            raise ValueError(
+                                "continuous_banded graph lacks "
+                                f"{family} depth {depth}"
+                            )
         self._probabilities = (
             self._distribution_for_rule(settings.rule)
             if settings.rule in CONTINUOUS_RULES

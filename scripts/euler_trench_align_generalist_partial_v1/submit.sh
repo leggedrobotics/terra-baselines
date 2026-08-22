@@ -41,6 +41,8 @@ EXPECTED_RELAY_TRIPLETS=85
 EXPECTED_IN_ZONE_TRIPLETS=153
 EXPECTED_TRENCH_AUDIT_SIDECARS=255
 SEED=20260823
+FOUNDATION_CURRICULUM_DEPTH_COUNTS=1,6,18
+TRENCH_CURRICULUM_DEPTH_COUNTS=1,0,11
 
 REMOTE_HOST="${REMOTE_HOST:-euler-$TERRA_EULER_USER}"
 REMOTE_VENV="${TERRA_REMOTE_VENV:-/cluster/project/rsl/lterenzi/terra_curriculum_20260730_c14bd7d_3ce0e84_py312_jax0426}"
@@ -74,7 +76,7 @@ PYTHONPATH="$TERRA_REPO:$REPO" JAX_PLATFORMS=cpu \
 FULL_BANK_ROOT="$FULL_BANK_ROOT" PARTIAL_BANK_ROOT="$PARTIAL_BANK_ROOT" \
 RUNTIME_TERRA_REVISION="$RUNTIME_TERRA_REVISION" PROTOCOL_SHA="$PROTOCOL_SHA" \
 SOURCE_REGISTRY_SHA="$SOURCE_REGISTRY_SHA" PARTIAL_BANK_SHA="$PARTIAL_BANK_SHA" \
-RELEASE_ID="$RELEASE_ID" \
+RELEASE_ID="$RELEASE_ID" SEED="$SEED" \
 EXPECTED_PARTIAL_CONDITIONS="$EXPECTED_PARTIAL_CONDITIONS" \
 EXPECTED_PARTIAL_TRIPLETS="$EXPECTED_PARTIAL_TRIPLETS" \
 EXPECTED_PARTIAL_SIDECARS="$EXPECTED_PARTIAL_SIDECARS" \
@@ -89,6 +91,7 @@ from pathlib import Path
 
 from terra.maps_buffer import partial_reset_bank_sha256
 from utils.accepted_bank import load_accepted_bank, validate_staged_training_bank
+from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
 
 full = Path(os.environ["FULL_BANK_ROOT"])
 partial_root = Path(os.environ["PARTIAL_BANK_ROOT"])
@@ -113,6 +116,47 @@ assert all(
     panel.condition_count == 2
     for panel in bank.capability_floor_evaluation_panels
 )
+assert len(bank.curriculum_depths) == len(bank.levels)
+labels = {
+    level.condition_id: {
+        "family": level.family,
+        "branch_depth": level.branch_depth,
+        "curriculum_depth": bank.curriculum_depths[index],
+    }
+    for index, level in enumerate(bank.levels)
+}
+depth_counts = Counter(
+    (label["family"], label["curriculum_depth"])
+    for label in labels.values()
+)
+assert tuple(depth_counts[("foundation", depth)] for depth in range(3)) == (
+    1,
+    6,
+    18,
+)
+assert tuple(depth_counts[("trench", depth)] for depth in range(3)) == (
+    1,
+    0,
+    11,
+)
+sampler = PooledConditionSampler(
+    [level.condition_id for level in bank.levels],
+    SamplerSettings(
+        rule="continuous_banded_v3",
+        update_interval=150,
+        mastery_threshold=0.80,
+        min_episodes=32,
+        competence_ema=0.30,
+        max_mass=0.15,
+        seed=int(os.environ["SEED"]),
+    ),
+    maps_per_condition=[level.map_count for level in bank.levels],
+    labels=labels,
+    allow_sparse_depths=True,
+)
+assert len(sampler.probabilities) == 37
+assert all(sampler.probabilities > 0.0)
+assert abs(float(sum(sampler.probabilities)) - 1.0) < 1e-12
 assert bank.environment_protocol_sha256 == os.environ["PROTOCOL_SHA"]
 assert bank.source_registry_sha256 == os.environ["SOURCE_REGISTRY_SHA"]
 assert partial_reset_bank_sha256(partial_root) == os.environ["PARTIAL_BANK_SHA"]
@@ -151,6 +195,9 @@ printf '%s\n' \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
     "condition_profile=trench_aligned_37_v1" \
     "conditions=37 foundation=25 trench=12" \
+    "curriculum_depths_foundation=$FOUNDATION_CURRICULUM_DEPTH_COUNTS" \
+    "curriculum_depths_trench=$TRENCH_CURRICULUM_DEPTH_COUNTS" \
+    "sparse_curriculum_depths_allowed=true" \
     "partial_conditions=$EXPECTED_PARTIAL_CONDITIONS partial_triplets=$EXPECTED_PARTIAL_TRIPLETS" \
     "partial_reset_bank_sha256=$PARTIAL_BANK_SHA" \
     "seed=$SEED targets=smoke:1,phase1:75000,phase2:100000"

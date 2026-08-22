@@ -3077,6 +3077,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 sampler_settings,
                 maps_per_condition=[level.map_count for level in bank.levels],
                 labels=labels,
+                allow_sparse_depths=(
+                    getattr(bank, "condition_profile", "full")
+                    == "trench_aligned_37_v1"
+                ),
             )
             print(
                 "📊 Condition sampler: "

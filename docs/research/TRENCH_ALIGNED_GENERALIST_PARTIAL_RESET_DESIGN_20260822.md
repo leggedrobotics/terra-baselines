@@ -1,7 +1,8 @@
 # Draft design — trench-aligned generalist with partial resets
 
-Status: implementation complete through immutable artifact validation;
-four-GPU update-1 smoke pending, 2026-08-23
+Status: immutable artifacts validated; the first four-GPU smoke exposed a
+pre-update sparse-depth integration defect; corrected update-1 smoke pending,
+2026-08-23
 
 ## Decision
 
@@ -33,6 +34,17 @@ the strict gate's metadata and static-feasibility requirements:
   infeasible under the gate; and
 - no `v7-trn-*` conditions, because their frozen bank lacks the required
   finite-section metadata.
+
+The view preserves the canonical curriculum depths rather than relabeling the
+surviving trench conditions: foundation has 1/6/18 conditions at depths
+0/1/2, while trench has 1/0/11. The missing trench depth-1 bin is therefore an
+explicit property of this narrowed profile. Only this named profile enables
+the sampler's sparse-depth path; the generic constructor still rejects a
+continuous graph missing any family-depth bin. `continuous_banded_v3` remains
+global over the conditions that exist, gives every selected condition positive
+support, and retains the frozen depth weights, mastery rule, replay mass, and
+per-condition cap. No probability mass or synthetic condition is invented for
+the absent bin.
 
 The profile is a view over the canonical 47-condition registry, not a new
 release pretending that the excluded directories never existed. The root
@@ -140,6 +152,14 @@ it loaded the 37 hard-coded map levels and gate metadata, then failed before
 update 1 because pooled sampling is supported only through
 `--accepted-bank-root`. It is not a training smoke and cannot authorize a
 production launch.
+
+The first immutable-artifact smoke, job `11528804`, passed archive, profile,
+strict-alignment, CUDA, `pmap`, model-shape, and partial-bank preflights, then
+failed before update 1 because the sampler constructor still required a trench
+depth-1 condition. That failure is also not training evidence. The correction
+preserves canonical depths, opts only `trench_aligned_37_v1` into sparse-depth
+construction, and makes both the local launcher and the Slurm job instantiate
+the exact sampler before training starts.
 
 ## Gates before production
 

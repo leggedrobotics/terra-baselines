@@ -115,6 +115,7 @@ import os
 from pathlib import Path
 from terra.maps_buffer import partial_reset_bank_sha256
 from utils.accepted_bank import load_accepted_bank, validate_staged_training_bank
+from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
 
 bank_root = Path(os.environ["BANK"])
 partial_root = Path(os.environ["PARTIAL_BANK"])
@@ -139,6 +140,47 @@ assert all(
     panel.condition_count == 2
     for panel in bank.capability_floor_evaluation_panels
 )
+assert len(bank.curriculum_depths) == len(bank.levels)
+labels = {
+    level.condition_id: {
+        "family": level.family,
+        "branch_depth": level.branch_depth,
+        "curriculum_depth": bank.curriculum_depths[index],
+    }
+    for index, level in enumerate(bank.levels)
+}
+depth_counts = Counter(
+    (label["family"], label["curriculum_depth"])
+    for label in labels.values()
+)
+assert tuple(depth_counts[("foundation", depth)] for depth in range(3)) == (
+    1,
+    6,
+    18,
+)
+assert tuple(depth_counts[("trench", depth)] for depth in range(3)) == (
+    1,
+    0,
+    11,
+)
+sampler = PooledConditionSampler(
+    [level.condition_id for level in bank.levels],
+    SamplerSettings(
+        rule="continuous_banded_v3",
+        update_interval=150,
+        mastery_threshold=0.80,
+        min_episodes=32,
+        competence_ema=0.30,
+        max_mass=0.15,
+        seed=int(os.environ["SEED"]),
+    ),
+    maps_per_condition=[level.map_count for level in bank.levels],
+    labels=labels,
+    allow_sparse_depths=True,
+)
+assert len(sampler.probabilities) == 37
+assert all(sampler.probabilities > 0.0)
+assert abs(float(sum(sampler.probabilities)) - 1.0) < 1e-12
 assert bank.environment_protocol_sha256 == os.environ["PROTOCOL_SHA"]
 assert bank.source_registry_sha256 == os.environ["SOURCE_REGISTRY_SHA"]
 assert partial_reset_bank_sha256(partial_root) == os.environ["PARTIAL_BANK_SHA"]
@@ -262,6 +304,9 @@ printf '%s\n' \
     "training_conditions=37" \
     "foundation_conditions=25" \
     "trench_conditions=12" \
+    "curriculum_depths_foundation=1,6,18" \
+    "curriculum_depths_trench=1,0,11" \
+    "sparse_curriculum_depths_allowed=true" \
     "partial_supported_conditions=$EXPECTED_PARTIAL_CONDITIONS" \
     "partial_source_triplets=$EXPECTED_PARTIAL_TRIPLETS" \
     "partial_sidecars=$EXPECTED_PARTIAL_SIDECARS" \
