@@ -979,3 +979,66 @@ trench_align_t1_v1:
       max_steps: 450
       rewards_type: DENSE
       apply_trench_rewards: false
+
+# Gate-on generalist capability run. This keeps the current Continuous Banded
+# v3 sampler but restricts it to the 37 conditions that satisfy the finite
+# trench metadata and static strict-gate feasibility contracts. The three net4
+# conditions and seven v7 trench conditions remain fail-closed rather than
+# silently becoming impossible sampler levels.
+trench_align_generalist_v1:
+  description: Gate-on V8 generalist over all 37 preflight-supported conditions
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  trench_alignment_observation: true
+  require_trench_alignment_metadata: true
+  enforce_trench_dig_alignment: true
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: continuous_banded_v3
+    update_interval: 150
+    mastery_threshold: 0.80
+    min_episodes: 32
+    competence_ema: 0.30
+  maps:
+    - {path: train/000__fnd-proc-ring3x, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/001__fnd-proc-side1-road, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/002__fnd-slab-apron-c1p2, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/003__fnd-slab-apron-c1p6, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/004__fnd-slab-apron-c2x, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/005__fnd-slab-apron-c3x, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/006__fnd-slab-apron-d12, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/007__fnd-slab-apron-d16, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/008__fnd-slab-apron-near, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/009__fnd-slab-lg-ring3x, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/010__fnd-slab-ring3x, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/011__fnd-slab-ring3x-obj, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/012__fnd-slab-ring3x-obj1, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/013__fnd-slab-ring3x-road, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/014__fnd-slab-side1, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/015__fnd-slab-side1-obj, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/016__fnd-slab-split, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/017__fnd-strips-ring3x, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/018__trn-net3-side1-road, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/019__trn-net3-side2, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/020__trn-net3-side2-s, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/024__trn-seg2-side2, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/025__trn-seg3-side2, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/026__trn-straight-altsides, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/027__trn-straight-side1, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/028__trn-straight-side1-tight, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/029__trn-straight-side2, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/030__trn-tee-side2, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/031__trn-tee-side2-s, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/032__fnd-slab-allfree, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/033__trn-straight-allfree, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/034__v7-fnd-slab-adjacent, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/035__v7-fnd-irregular-adjacent, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/036__v7-fnd-courtyard-adjacent, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/037__v7-fnd-bearing-walls-adjacent, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/038__v7-fnd-pads-adjacent, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
+    - {path: train/039__v7-fnd-courtyard-pads-adjacent, max_steps: 450, rewards_type: DENSE, apply_trench_rewards: false}
