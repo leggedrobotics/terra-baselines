@@ -98,8 +98,8 @@ per-map receipt and condition summary for quantitative conclusions.
 - `index.html`: browser gallery with geometry, condition, and outcome filters.
 - `gifs/*.gif`: animated trajectories.
 - `posters/*.png`: terminal-state previews used before GIF playback.
-- `summary.json`: benchmark summary, provenance, selected rows, and artifact
-  hashes.
+- `summary.json`: benchmark summary, provenance, selected rows, generator hash,
+  and artifact hashes.
 - `condition_summary.csv`: compact per-condition metrics.
 - `selection.json`: the deterministic representative selection.
 - `gallery_manifest.json`: path, size, and SHA-256 for every gallery file.

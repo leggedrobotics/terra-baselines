@@ -864,6 +864,7 @@ footer {{ padding:20px 0 45px; color:var(--muted); overflow-wrap:anywhere; }}
   <footer>
     <p>Checkpoint SHA-256: <code>{html.escape(provenance['checkpoint_sha256'])}</code></p>
     <p>Benchmark SHA-256: <code>{html.escape(provenance['benchmark_sha256'])}</code></p>
+    <p>Gallery generator SHA-256: <code>{html.escape(provenance['gallery_script_sha256'])}</code></p>
     <p>Evaluation code: <code>{html.escape(provenance['evaluation_baselines_revision'])}</code> · Terra runtime: <code>{html.escape(provenance['evaluation_terra_revision'])}</code></p>
   </footer>
 </main>
@@ -1003,6 +1004,8 @@ def main() -> None:
         "checkpoint_update": int(benchmark["checkpoint_update"]),
         "benchmark_json": str(benchmark_path),
         "benchmark_sha256": sha256_file(benchmark_path),
+        "gallery_script": str(Path(__file__).resolve()),
+        "gallery_script_sha256": sha256_file(Path(__file__).resolve()),
         "bank_root": str(bank_root),
         "bank_dataset_sha256": sha256_file(bank_root / "dataset.json"),
         "panel_family": args.panel_family,
