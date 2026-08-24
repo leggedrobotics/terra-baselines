@@ -2,14 +2,33 @@
 
 Date: 2026-08-21
 
-## Launch status
+## Final training status
 
 Training source is frozen at terra-baselines
 `5d7284f6ca6d3c7a53a3ba2dea669c66d3c0ca14` and Terra
-`c8ab920504e09173760c8beba71589102d54ed21`. Slurm accepted control job
-`11364188` and feedback job `11364189`. At 2026-08-21 00:56 CEST both are
-`PENDING (Priority)`: neither has an allocation, update-1 receipt, W&B history,
-or training result yet.
+`c8ab920504e09173760c8beba71589102d54ed21`. Control job `11364188`
+completed update 50,000 on 2026-08-23 at 20:11 CEST; feedback job `11364189`
+completed update 50,000 on 2026-08-23 at 22:37 CEST. Both exited `0:0`, wrote
+rolling and `FINAL` checkpoints, and have finished W&B runs. There is no live
+job left to cancel.
+
+The immutable final checkpoints are:
+
+- control: `v8_movefb_control_5d7284f6ca6d_s20260821_FINAL.pkl`, SHA-256
+  `5459bd5347dbdf64431cd78df5f61f22b75ee56bc2b15662d9751fb2959a7f84`;
+- feedback: `v8_movefb_feedback_5d7284f6ca6d_s20260821_FINAL.pkl`, SHA-256
+  `8cde5ccd4fd4ef5b1ed716a9c5c3a4c4b43f69d44db66d29ed7db86f2ad7d7df`.
+
+Their source run root remains
+`/cluster/scratch/alesweber/codex_terra_edge_runs/terra_v8_movement_feedback_v1/runs/5d7284f6ca6d3c7a53a3ba2dea669c66d3c0ca14/c8ab920504e09173760c8beba71589102d54ed21/s20260821`.
+The u40 and final checkpoints from both arms are also preserved outside
+scratch under
+`/cluster/project/rsl/alesweber/terra_runtime/archives/v8_movement_feedback_20260821/checkpoints`.
+The u40 SHA-256 values are
+`63a3d55d9b28b07b1acb9c11dfe0db9c22b3824cbacfd0905e00c0231f5ba524`
+for control and
+`e07fb0de0f941368501f801b18645a6fa4fe3aaabc8615a24bc9cd090c10324d`
+for feedback.
 
 ## Question
 
@@ -108,15 +127,46 @@ found in the audited records; call them policy-unseen, not access-unseen. Any
 contrary prior result voids that designation. Promotion, pose, stochastic, and diagnostic
 failure traces remain permanently ineligible for training or curriculum use.
 
+## Completed online readout and promotion boundary
+
+The final 1,000-update aggregate is a health and mechanism diagnostic, not the
+preregistered selection result:
+
+| Arm | Episodes | Full-start success | Terminal soil | No-effect rate | Mean steps |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| control | 75,442 | 0.99019 | 0.99548 | 0.03152 | 88.93 |
+| feedback | 75,602 | 0.99037 | 0.99591 | 0.01450 | 88.10 |
+
+Online success is tied: feedback differs by only +0.018 percentage points.
+The treatment nevertheless has a stable mechanism signal, cutting the online
+no-effect rate by about 54% and shortening episodes by 0.83 steps. Feedback
+took 66 h 22 min versus 64 h 17 min for control, about 3.2% more wall time.
+The same pattern was present in each checked late window from u40 to u50; the
+last single W&B point is therefore not evidence of a collapse.
+
+No completed movement-feedback result was found for the accepted 720-map
+development panel. Consequently:
+
+- the optional observation implementation and repaired common runtime may be
+  promoted to the main code line with feedback disabled by default;
+- both u40 and u50 policies remain checkpointed candidates, not a selected
+  policy; and
+- feedback must not become a training default, nor be called a capability
+  improvement, until the paired development-panel gate above is evaluated.
+
+The next scientific action is the paired u40/u50 development-720 evaluation,
+including hard-64, d16, conversions/regressions, no-effect streaks, and cycle
+statistics. The promotion panel remains secondary continuity evidence.
+
 ## Issue checklist
 
-| Issue | State entering this pilot |
+| Issue | Current state |
 | --- | --- |
-| duplicate soil relaxation | fixed in the common runtime; untrained |
-| under-base excavation and hidden blockers | fixed in the common runtime; frozen-policy transfer was non-monotone, so no benefit is claimed |
-| blocked movement/no-op attractors | confirmed dominant behavior; six-bit feedback is the highest-coverage interface treatment |
-| previous action outcome | implemented as two exhaustive bits in the feedback arm |
-| current movement feasibility | implemented as four exact unmasked bits in the feedback arm |
+| duplicate soil relaxation | fixed and trained in both arms; held-out effect not isolated |
+| under-base excavation and hidden blockers | fixed and trained in both arms; held-out effect not isolated |
+| blocked movement/no-op attractors | online no-effect rate fell about 54% with feedback; fixed recurrence panel pending |
+| previous action outcome | implemented and trained as two exhaustive bits in the feedback arm; default remains off |
+| current movement feasibility | implemented and trained as four exact unmasked bits in the feedback arm; default remains off |
 | five-way `DO` affordance | deferred; real actions have compositional material outcomes |
 | over-capacity partial relift | already fixed; zero incidence in current GRU-u44 failures |
 | accepted-first dump fallback | deferred; observed incidence remains negligible |

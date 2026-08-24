@@ -1,21 +1,20 @@
-# Experiments — current state (updated 2026-08-21 00:56 CEST)
+# Experiments — current state (updated 2026-08-24)
 
-## V8 paired movement-feedback GRU pilot
+## No live V8 movement-feedback jobs
 
-Two independent fresh-scratch jobs were submitted on 2026-08-21. At the
-recorded snapshot both are `PENDING (Priority)` with no allocated node, no
-W&B history, and no training evidence:
+The paired fresh-scratch jobs are complete; there is nothing left to cancel:
 
-| Arm | Slurm | W&B ID | Requested resources |
-| --- | ---: | --- | --- |
-| repaired-runtime control | `11364188` | `v8_movefb_c_5d7284f6ca_s20260821` | 4 x RTX 4090, 8 CPUs, 64 GB, 71:45 |
-| six-bit feedback | `11364189` | `v8_movefb_f_5d7284f6ca_s20260821` | 4 x RTX 4090, 8 CPUs, 64 GB, 71:45 |
+| Arm | Slurm | Terminal update | State | Final checkpoint SHA-256 |
+| --- | ---: | ---: | --- | --- |
+| repaired-runtime control | `11364188` | 50,000 | `COMPLETED 0:0` | `5459bd5347dbdf64431cd78df5f61f22b75ee56bc2b15662d9751fb2959a7f84` |
+| six-bit feedback | `11364189` | 50,000 | `COMPLETED 0:0` | `8cde5ccd4fd4ef5b1ed716a9c5c3a4c4b43f69d44db66d29ed7db86f2ad7d7df` |
 
-There is no dependency between the jobs. They compare equal transition counts,
-not wall time. Each allocation must pass exact GPU/TRES, CUDA convolution,
-NCCL, bank identity, u0 parity, and a finite W&B-disabled update-1 smoke before
-starting its fresh production run. Do not call either arm healthy while it is
-only queued, allocated, compiling, or running the smoke.
+Both passed their startup gates, finished W&B, and wrote rolling plus `FINAL`
+checkpoints. The final online aggregate shows tied success (0.99019 control,
+0.99037 feedback) and a lower feedback no-effect rate (0.01450 versus
+0.03152). This is diagnostic training evidence only: the preregistered
+development-720 panel has not been run, so no policy is selected and feedback
+remains disabled by default.
 
 Frozen training source:
 
@@ -27,7 +26,8 @@ Frozen training source:
 - run root
   `/cluster/scratch/alesweber/codex_terra_edge_runs/terra_v8_movement_feedback_v1/runs/5d7284f6ca6d3c7a53a3ba2dea669c66d3c0ca14/c8ab920504e09173760c8beba71589102d54ed21/s20260821`.
 
-The preregistered question, scope, and u50 decision gate are in
+The completed online readout, exact checkpoint provenance, preregistered
+question, and pending u50 decision gate are in
 [`research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md`](research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md).
 The older sections below are retained as historical lineage and are superseded
 where their live scheduler wording conflicts with this timestamp.
