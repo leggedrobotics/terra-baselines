@@ -168,6 +168,23 @@ Known debt before endpoint measurement: the fixed-bank evaluators do not yet
 set `trench_alignment_observation`; wire it before evaluating pilot
 checkpoints.
 
+## Trench-aligned 37-condition partial-reset generalist recovery
+
+The named `trench_align_generalist_partial_v1` capability recipe uses 25
+foundation and 12 strict-gate trench conditions, with partial resets on by
+default for this recipe only. The frozen full/partial bank identities and
+complete design are recorded in
+`research/TRENCH_ALIGNED_GENERALIST_PARTIAL_RESET_DESIGN_20260822.md`.
+
+Smoke `11529665` completed a real finite update 1, but initial production job
+`11529891` failed before update 1 on `eu-g6-065` with a four-replica bf16
+`CUDNN_STATUS_EXECUTION_FAILED`; it produced no checkpoint or W&B training
+history, and `afterok` correctly cancelled `11529893`. The recovery changes
+only the runtime: exact `XLA_FLAGS=--xla_gpu_autotune_level=0`, a bf16
+backward-filter preflight at the observed shapes, and exclusion of
+`eu-g6-064,eu-g6-065`. A fresh exact-revision update-1 smoke remains the gate
+for replacement u75k/u100k jobs. No behavioral claim exists yet.
+
 ## Current issue checklist
 
 The living status ledger, exact u40 readout, and bounded next actions are in

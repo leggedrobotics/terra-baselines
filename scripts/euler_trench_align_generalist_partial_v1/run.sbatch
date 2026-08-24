@@ -69,6 +69,10 @@ SITE_PACKAGES="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
 export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false
+# The first production allocation failed in bf16 convBackwardFilter autotuning
+# after its exact update-1 smoke succeeded on another 4090 node. Freeze the
+# conservative algorithm path for every smoke and production segment.
+export XLA_FLAGS=--xla_gpu_autotune_level=0
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -92,12 +96,34 @@ def loss(x, kernel):
         x, kernel, (1, 1), "SAME",
         dimension_numbers=("NHWC", "HWIO", "NHWC"),
     )
+    y = y.astype(jnp.float32)
     return lax.psum(jnp.mean(y * y), "devices")
-step = jax.pmap(jax.grad(loss), axis_name="devices", in_axes=(0, None))
+input_grad_step = jax.pmap(
+    jax.grad(loss), axis_name="devices", in_axes=(0, None)
+)
 x = jnp.ones((devices, 1, 16, 16, 4), dtype=jnp.float32)
 kernel = jnp.ones((3, 3, 4, 8), dtype=jnp.float32)
-gradient = step(x, kernel)
-assert gradient.shape == x.shape and bool(jnp.all(jnp.isfinite(gradient)))
+input_gradient = input_grad_step(x, kernel)
+assert input_gradient.shape == x.shape
+assert bool(jnp.all(jnp.isfinite(input_gradient)))
+
+# Exercise the bf16 backward-filter shapes that failed in production, not only
+# a small float32 backward-input path. This runs under the exact XLA_FLAGS used
+# by training and fails before W&B is contacted.
+kernel_grad_step = jax.pmap(
+    jax.grad(loss, argnums=1), axis_name="devices", in_axes=(0, None)
+)
+for spatial_size, channels in ((16, 64), (8, 96)):
+    bf16_x = jnp.ones(
+        (devices, 512, spatial_size, spatial_size, channels),
+        dtype=jnp.bfloat16,
+    )
+    bf16_kernel = jnp.ones(
+        (3, 3, channels, channels), dtype=jnp.bfloat16
+    )
+    kernel_gradient = kernel_grad_step(bf16_x, bf16_kernel)
+    assert kernel_gradient.shape == (devices, 3, 3, channels, channels)
+    assert bool(jnp.all(jnp.isfinite(kernel_gradient)))
 PY
 
 PROTOCOL_TERRA_REVISION="$PROTOCOL_TERRA_REVISION" PROTOCOL_SHA="$PROTOCOL_SHA" \
@@ -334,6 +360,7 @@ printf '%s\n' \
     "num_devices=4" \
     "num_envs_per_device=512" \
     "num_steps=32" \
+    "xla_flags=$XLA_FLAGS" \
     "slurm_job_id=$SLURM_JOB_ID" \
     "wandb_run_id=$WANDB_RUN_ID" > "$RUN_DIR/run_contract.env"
 

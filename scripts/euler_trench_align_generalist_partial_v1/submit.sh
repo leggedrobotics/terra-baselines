@@ -43,6 +43,7 @@ EXPECTED_TRENCH_AUDIT_SIDECARS=255
 SEED=20260823
 FOUNDATION_CURRICULUM_DEPTH_COUNTS=1,6,18
 TRENCH_CURRICULUM_DEPTH_COUNTS=1,0,11
+EXCLUDED_NODES=eu-g6-064,eu-g6-065
 
 REMOTE_HOST="${REMOTE_HOST:-euler-$TERRA_EULER_USER}"
 REMOTE_VENV="${TERRA_REMOTE_VENV:-/cluster/project/rsl/lterenzi/terra_curriculum_20260730_c14bd7d_3ce0e84_py312_jax0426}"
@@ -198,6 +199,7 @@ printf '%s\n' \
     "curriculum_depths_foundation=$FOUNDATION_CURRICULUM_DEPTH_COUNTS" \
     "curriculum_depths_trench=$TRENCH_CURRICULUM_DEPTH_COUNTS" \
     "sparse_curriculum_depths_allowed=true" \
+    "xla_gpu_autotune_level=0 excluded_nodes=$EXCLUDED_NODES" \
     "partial_conditions=$EXPECTED_PARTIAL_CONDITIONS partial_triplets=$EXPECTED_PARTIAL_TRIPLETS" \
     "partial_reset_bank_sha256=$PARTIAL_BANK_SHA" \
     "seed=$SEED targets=smoke:1,phase1:75000,phase2:100000"
@@ -265,7 +267,7 @@ if [ "$SUBMIT" = smoke ]; then
     RUN_DIR="$RUN_PARENT/smoke"
     RUN_NAME="${BASE_RUN_NAME}_smoke"
     remote "test ! -e '$RUN_DIR' && mkdir -p '$RUN_PARENT' && mkdir '$RUN_DIR'"
-    JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.4h' --time='03:45:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='eu-g6-064' --job-name='terra-trench-partial-smoke' --output='$RUN_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,RUN_ROLE=$RUN_ROLE,TARGET_UPDATE=1,RESUME_CHECKPOINT=none,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME'")"
+    JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.4h' --time='03:45:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='$EXCLUDED_NODES' --job-name='terra-trench-partial-smoke' --output='$RUN_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,RUN_ROLE=$RUN_ROLE,TARGET_UPDATE=1,RESUME_CHECKPOINT=none,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME'")"
     JOB_ID="${JOB_RAW%%;*}"
     [[ "$JOB_ID" =~ ^[0-9]+$ ]]
     printf '%s\n' \
@@ -287,12 +289,12 @@ PHASE1_DIR="$RUN_PARENT/phase1_u75000"
 PHASE2_DIR="$RUN_PARENT/phase2_u100000"
 remote "test ! -e '$PHASE1_DIR' && test ! -e '$PHASE2_DIR' && mkdir -p '$RUN_PARENT' && mkdir '$PHASE1_DIR' '$PHASE2_DIR'"
 
-JOB1_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.120h' --time='119:45:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='eu-g6-064' --job-name='terra-trench-partial-u75' --output='$PHASE1_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,RUN_ROLE=phase1,TARGET_UPDATE=75000,RESUME_CHECKPOINT=none,RUN_DIR=$PHASE1_DIR,RUN_NAME=$BASE_RUN_NAME'")"
+JOB1_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.120h' --time='119:45:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='$EXCLUDED_NODES' --job-name='terra-trench-partial-u75' --output='$PHASE1_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,RUN_ROLE=phase1,TARGET_UPDATE=75000,RESUME_CHECKPOINT=none,RUN_DIR=$PHASE1_DIR,RUN_NAME=$BASE_RUN_NAME'")"
 JOB1_ID="${JOB1_RAW%%;*}"
 [[ "$JOB1_ID" =~ ^[0-9]+$ ]]
 
 PHASE1_CHECKPOINT="$PHASE1_DIR/checkpoints/${BASE_RUN_NAME}_FINAL.pkl"
-if ! JOB2_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.120h' --time='119:45:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='eu-g6-064' --dependency='afterok:$JOB1_ID' --kill-on-invalid-dep=yes --job-name='terra-trench-partial-u100' --output='$PHASE2_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,RUN_ROLE=phase2,TARGET_UPDATE=100000,RESUME_CHECKPOINT=$PHASE1_CHECKPOINT,RUN_DIR=$PHASE2_DIR,RUN_NAME=$BASE_RUN_NAME'")"; then
+if ! JOB2_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.120h' --time='119:45:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='$EXCLUDED_NODES' --dependency='afterok:$JOB1_ID' --kill-on-invalid-dep=yes --job-name='terra-trench-partial-u100' --output='$PHASE2_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,RUN_ROLE=phase2,TARGET_UPDATE=100000,RESUME_CHECKPOINT=$PHASE1_CHECKPOINT,RUN_DIR=$PHASE2_DIR,RUN_NAME=$BASE_RUN_NAME'")"; then
     remote "scancel -- '$JOB1_ID'"
     exit 3
 fi

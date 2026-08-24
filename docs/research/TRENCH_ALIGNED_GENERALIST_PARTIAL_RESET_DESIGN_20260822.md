@@ -1,8 +1,8 @@
 # Draft design — trench-aligned generalist with partial resets
 
-Status: immutable artifacts validated; the first four-GPU smoke exposed a
-pre-update sparse-depth integration defect; corrected update-1 smoke pending,
-2026-08-23
+Status: immutable artifacts and update-1 smoke validated; the first production
+allocation exposed a node-sensitive cuDNN autotuning failure before update 1;
+runtime-only recovery candidate pending, 2026-08-24
 
 ## Decision
 
@@ -160,6 +160,22 @@ depth-1 condition. That failure is also not training evidence. The correction
 preserves canonical depths, opts only `trench_aligned_37_v1` into sparse-depth
 construction, and makes both the local launcher and the Slurm job instantiate
 the exact sampler before training starts.
+
+The corrected smoke, job `11529665` on `eu-g6-045`, completed update 1 and
+wrote a finite model/optimizer checkpoint. Its production successor,
+`11529891` on `eu-g6-065`, reached the same model and sampler construction but
+failed before update 1 on all four replicas with
+`CUDNN_STATUS_EXECUTION_FAILED` in bf16 convolution-backward-filter execution.
+It wrote no checkpoint and zero W&B training updates; dependent job `11529893`
+was cancelled by `afterok` as designed. This is runtime evidence, not a policy
+or curriculum result.
+
+The recovery freezes `XLA_FLAGS=--xla_gpu_autotune_level=0`, retains the
+existing `eu-g6-064` exclusion, adds `eu-g6-065`, and exercises both observed
+bf16 backward-filter shapes before W&B starts. These runtime-only changes do
+not alter the seed, maps, partial-reset schedule, sampler, observations,
+rewards, gate, model, or PPO configuration. A new exact-revision update-1 smoke
+is mandatory before replacement production jobs may be submitted.
 
 ## Gates before production
 

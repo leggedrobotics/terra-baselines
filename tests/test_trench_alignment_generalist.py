@@ -155,7 +155,8 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "RUN_ROLE=phase1,TARGET_UPDATE=75000" in submit
     assert "RUN_ROLE=phase2,TARGET_UPDATE=100000" in submit
     assert "--dependency='afterok:$JOB1_ID'" in submit
-    assert "--exclude='eu-g6-064'" in submit
+    assert "EXCLUDED_NODES=eu-g6-064,eu-g6-065" in submit
+    assert "--exclude='$EXCLUDED_NODES'" in submit
     assert "allow_sparse_depths=True" in submit
     assert "curriculum_depths_foundation=" in submit
     assert "curriculum_depths_trench=" in submit
@@ -163,6 +164,11 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
 
     assert "len(jax.devices()) == devices" in sbatch
     assert "lax.conv_general_dilated" in sbatch
+    assert "export XLA_FLAGS=--xla_gpu_autotune_level=0" in sbatch
+    assert "jax.grad(loss, argnums=1)" in sbatch
+    assert "dtype=jnp.bfloat16" in sbatch
+    assert '(devices, 512, spatial_size, spatial_size, channels)' in sbatch
+    assert '"xla_flags=$XLA_FLAGS"' in sbatch
     assert "partial_reset_bank_sha256(partial_root)" in sbatch
     assert 'audit["accepted"] is True' in sbatch
     assert 'checkpoint["next_update"] == 75000' in sbatch
