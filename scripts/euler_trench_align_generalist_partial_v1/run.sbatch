@@ -21,6 +21,7 @@ for REQUIRED in RUN_ROLE TARGET_UPDATE RESUME_CHECKPOINT RUN_DIR RUN_NAME \
     EXPECTED_PARTIAL_TRIPLETS EXPECTED_PARTIAL_SIDECARS \
     EXPECTED_RELAY_TRIPLETS EXPECTED_IN_ZONE_TRIPLETS \
     EXPECTED_TRENCH_AUDIT_SIDECARS \
+    ALGORITHM_DENYLIST_SHA \
     SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
@@ -70,6 +71,9 @@ test "$HOME" = "$TERRA_EULER_HOME_ROOT"
 test "$(cat "$BASELINES_ROOT/REVISION")" = "$BASELINES_REVISION"
 test "$(cat "$RUNTIME_TERRA_ROOT/REVISION")" = "$RUNTIME_TERRA_REVISION"
 test "$PROTOCOL_TERRA_REVISION" = "$RUNTIME_TERRA_REVISION"
+ALGORITHM_DENYLIST="$BASELINES_ROOT/scripts/euler_trench_align_generalist_partial_v1/hlo_algorithm_denylist.pbtxt"
+test -f "$ALGORITHM_DENYLIST"
+test "$(sha256sum "$ALGORITHM_DENYLIST" | awk '{print $1}')" = "$ALGORITHM_DENYLIST_SHA"
 test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_ARCHIVE_SHA"
 test "$(sha256sum "$PARTIAL_ARCHIVE" | awk '{print $1}')" = "$PARTIAL_ARCHIVE_SHA"
 
@@ -96,11 +100,11 @@ SITE_PACKAGES="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
 export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false
-# Level 0 and deterministic legacy selection both reproduced the slow path,
-# while the level-4 frontend fails when executing the bf16 convolution graph.
-# Keep normal autotuning and run the convolution trunk in float32; parameters,
-# attention, PPO geometry, and optimizer updates remain unchanged.
-export XLA_FLAGS=--xla_gpu_autotune_level=4
+# Level 0 and deterministic legacy selection both reproduced the slow path.
+# Keep normal level-4 autotuning and bf16 compute, but disqualify the exact
+# cuDNN engine family that returned wrong results for the B512 PPO shapes.
+export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$ALGORITHM_DENYLIST --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
+export TF_CPP_MIN_LOG_LEVEL=0
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -136,7 +140,7 @@ input_gradient = input_grad_step(x, kernel)
 assert input_gradient.shape == x.shape
 assert bool(jnp.all(jnp.isfinite(input_gradient)))
 
-# Exercise the backward-filter shapes used by the float32 candidate, not only
+# Exercise the bf16 backward-filter shapes used by PPO, not only
 # a small backward-input path. This runs under the exact XLA configuration used
 # by training and fails before W&B is contacted.
 kernel_grad_step = jax.pmap(
@@ -169,14 +173,14 @@ def expected_ones_kernel_gradient(spatial_size, channels):
     return expected
 
 for spatial_size, channels in ((16, 64), (8, 96)):
-    conv_x = jnp.ones(
+    bf16_x = jnp.ones(
         (devices, 512, spatial_size, spatial_size, channels),
-        dtype=jnp.float32,
+        dtype=jnp.bfloat16,
     )
-    conv_kernel = jnp.ones(
-        (3, 3, channels, channels), dtype=jnp.float32
+    bf16_kernel = jnp.ones(
+        (3, 3, channels, channels), dtype=jnp.bfloat16
     )
-    kernel_gradient = kernel_grad_step(conv_x, conv_kernel)
+    kernel_gradient = kernel_grad_step(bf16_x, bf16_kernel)
     assert kernel_gradient.shape == (devices, 3, 3, channels, channels)
     assert bool(jnp.all(jnp.isfinite(kernel_gradient)))
     expected = expected_ones_kernel_gradient(spatial_size, channels)
@@ -185,25 +189,38 @@ for spatial_size, channels in ((16, 64), (8, 96)):
     np.testing.assert_allclose(
         observed,
         expected,
-        rtol=1e-4,
-        atol=1e-4,
+        rtol=2e-2,
+        atol=2e-2,
     )
 
 # The 8x8 flatten-reduction path is the other historically failing shape. For
 # an all-ones 1x1 96->32 convolution, every kernel gradient is exactly
 # 2 * input_channels / output_channels = 6.
-reduce_x = jnp.ones((devices, 512, 8, 8, 96), dtype=jnp.float32)
-reduce_kernel = jnp.ones((1, 1, 96, 32), dtype=jnp.float32)
+reduce_x = jnp.ones((devices, 512, 8, 8, 96), dtype=jnp.bfloat16)
+reduce_kernel = jnp.ones((1, 1, 96, 32), dtype=jnp.bfloat16)
 reduce_gradient = kernel_grad_step(reduce_x, reduce_kernel)
 assert reduce_gradient.shape == (devices, 1, 1, 96, 32)
 assert bool(jnp.all(jnp.isfinite(reduce_gradient)))
 np.testing.assert_allclose(
     np.asarray(reduce_gradient[0], dtype=np.float32) / devices,
     6.0,
-    rtol=1e-4,
-    atol=1e-4,
+    rtol=2e-2,
+    atol=2e-2,
 )
 PY
+
+DENYLIST_OMISSIONS="$((
+    $(grep -cF 'Omitted potentially buggy algorithm eng20' \
+        "$RUN_DIR/slurm_${SLURM_JOB_ID}.out" || true)
+))"
+test "$DENYLIST_OMISSIONS" -ge 3
+printf '%s\n' \
+    "status=PASS" \
+    "algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA" \
+    "engine20_omissions=$DENYLIST_OMISSIONS" \
+    "compute_capability=8.9" \
+    "cudnn_version=8.9.7" \
+    "blas_version=120902" > "$RUN_DIR/algorithm_denylist_validation.env"
 
 PROTOCOL_TERRA_REVISION="$PROTOCOL_TERRA_REVISION" PROTOCOL_SHA="$PROTOCOL_SHA" \
 SOURCE_REGISTRY_SHA="$SOURCE_REGISTRY_SHA" BANK="$BANK" \
@@ -339,7 +356,7 @@ config = Config(
     local_map_normalization_bounds=(-16, 16),
     maps_net_normalization_bounds=(-10, 10), model_core="mlp",
     model_size="medium", num_prev_actions=5, critic_hidden_dims=(512, 256),
-    encoder_compute_dtype="float32", attention_compute_dtype="float32",
+    encoder_compute_dtype="bfloat16", attention_compute_dtype="float32",
     map_encoder="resnet_spatial_8x8_se_sa_xattn",
     resnet_stage_channels=(24, 48, 64, 96),
     resnet_blocks_per_stage=(2, 2, 3, 3),
@@ -398,7 +415,7 @@ else
 fi
 export WANDB_DIR="$RUN_DIR/wandb"
 if [ "$PARENT_WANDB_RUN_ID" != none ]; then
-    export WANDB_NOTES="native continuation of W&B run $PARENT_WANDB_RUN_ID from absolute update $RESUME_UPDATE; compiler repair only"
+    export WANDB_NOTES="native continuation of W&B run $PARENT_WANDB_RUN_ID from absolute update $RESUME_UPDATE; bf16 cuDNN engine-20 recovery candidate"
 fi
 if [ "$WANDB_MODE" = online ]; then
     "$PYTHON" -c 'import netrc; assert netrc.netrc().authenticators("api.wandb.ai")'
@@ -454,7 +471,8 @@ printf '%s\n' \
     "num_envs_per_device=512" \
     "num_steps=32" \
     "xla_gpu_autotune_level=4" \
-    "encoder_compute_dtype=float32" \
+    "xla_gpu_algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA" \
+    "encoder_compute_dtype=bfloat16" \
     "attention_compute_dtype=float32" \
     "slurm_job_id=$SLURM_JOB_ID" \
     "wandb_run_id=$WANDB_RUN_ID" > "$RUN_DIR/run_contract.env"

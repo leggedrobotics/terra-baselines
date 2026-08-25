@@ -66,7 +66,7 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --model_size medium \
     --model_core mlp \
     --map_encoder resnet_spatial_8x8_se_sa_xattn \
-    --encoder_compute_dtype float32 \
+    --encoder_compute_dtype bfloat16 \
     --attention_compute_dtype float32 \
     --critic_hidden_dims 512,256 \
     --resnet_stage_channels 24,48,64,96 \
