@@ -185,7 +185,7 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "RUN_ROLE=resume_smoke" in submit
     assert "--gpus='rtx_4090:1'" in submit
     assert "--time='00:45:00'" in submit
-    assert "--mem='32G'" in submit
+    assert "--mem-per-cpu='8G'" in submit
     assert "EXPECTED_NUM_DEVICES=1" in submit
     assert "--dependency='afterok:$ONE_GPU_JOB_ID'" in submit
     assert "f84a6cdfcb4aba0ca55abf1a658e4d57" in submit

@@ -199,8 +199,11 @@ only a fast correctness gate, not the aggregate-throughput measurement, and
 its checkpoint is discarded. The pinned recovery source is u3,500 checkpoint
 SHA-256 `f84a6cdfcb4aba0ca55abf1a658e4d57d21c6dffff9c4c2f61263733cd4f4790`.
 The rejected Euler chain `11722865/11722918/11722925/11722935` was cancelled
-before allocation. The slow jobs remain live until the replacement passes on
-Euler; no new policy or curriculum claim follows from this compiler repair.
+before allocation. A subsequent `94b3a55c` submission was rejected by Euler's
+CLI before any job or W&B creation because node-level `--mem` is unsupported;
+the corrected launcher uses `--mem-per-cpu`. The slow jobs remain live until
+the replacement passes on Euler; no new policy or curriculum claim follows
+from this compiler repair.
 
 ## Current issue checklist
 
