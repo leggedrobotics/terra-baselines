@@ -11,6 +11,26 @@ traversability-observation versus movement-physics incidence audit, and
 evaluate the stall-age plus Continuous Banded v3 continuation when its final
 checkpoint is available.
 
+## 2026-08-21 decision update
+
+The GRU-u44 failure audit changes the next policy treatment. Base movements
+account for 9,050 of 9,306 ineffective decisions across the 46 failures, while
+the first-cycle counterfactual found a physically effective alternative on all
+44 failures with an exact cycle anchor. The five-way `DO` proposal is also too
+coarse: one action can simultaneously excavate fresh soil and relift staged
+soil. It is therefore deferred.
+
+The next fresh experiment is the two-arm pilot in
+[`V8_MOVEMENT_FEEDBACK_PILOT_20260821.md`](V8_MOVEMENT_FEEDBACK_PILOT_20260821.md).
+Both arms share the repaired one-pass soil mechanics and the under-base
+footprint/visible-blocker fixes. The treatment adds four unmasked current
+movement-feasibility bits and two previous-transition outcome bits; the
+control adds neither. This tests the combined six-bit observation package,
+not its individual components and not the mechanics changes themselves.
+The paired jobs are `11364188` (control) and `11364189` (feedback); both were
+still `PENDING (Priority)` at 2026-08-21 00:56 CEST, so this status is a
+submission record rather than training evidence.
+
 ## Scope boundary
 
 This work does not edit trench generation, trench excavation ordering, or the
@@ -201,7 +221,7 @@ their effects.
 | Relay and cleanup underexposure | **Implemented; fast fresh training pending** | The 37-condition `trench_align_generalist_partial_v1` recipe integrates the bounded u0--u10k partial-start schedule, reset provenance, full-start-only mastery updates, strict trench alignment, and bank-bound native resume. The slow first run reached u4,442 before cancellation; this establishes execution only, not relay benefit. | After deterministic compiler replay passes, start the fresh u0 run and judge only full-start fixed panels plus recurrence/relay strata. Do not credit partial starts as evaluation successes. |
 | Generalist compiler throughput | **Fast four-GPU gate passed once; deterministic replay queued** | Level 0 regressed to 3,124.6 steps/s versus 15,800--16,771 in matched controls. The first bf16 level-4 four-GPU attempt `11735196` crashed before update 1, while identical traced rerun `11738360` completed five finite updates at a 17,454.15-steps/s post-compile median. Revision `58e26fc` pins that successful cache (`698e856c...`) and removes the non-authoritative one-GPU gate. Slow jobs `11626135/11626137` were cancelled after the fast gate passed; u4,000 SHA `1a977ffc...` is retained. | Require pinned-cache replay `11740651` to complete u3,500--u3,505 above 12,000 steps/s, then launch the fresh u0 smoke and production chain. |
 | Accepted-first dump without off-zone fallback | **Unresolved, low observed incidence** | The source-level risk remains, but the selected lifecycle audit observed zero accepted-invalid/off-zone-valid states. | Keep the reason-code diagnostic and add two-pass fallback only after a real trajectory reaches that branch. |
-| Under-base excavation and traversability observation | **Implemented/trained; effect not isolated** | Both completed u50 feedback-pilot arms use the common repaired runtime: dig/relift excludes the active base footprint, blockers remain visible beneath the overlay, and successful excavation relaxes soil once. | Retain the correctness repair. Attribute no capability gain until the fixed panel is run; do not add an action mask. |
+| Traversability observation versus physics | **Implemented/trained; effect not isolated** | Both completed u50 arms use the common repaired runtime: dig/relift excludes the active base footprint, blockers remain visible beneath the overlay, and successful excavation relaxes soil once. | Retain the correctness repair in the promoted runtime. Attribute no capability gain until the fixed panel is run; do not add an action mask. |
 | Hidden `last_dig_mask` and ambiguous `DO` outcome | **Deferred pending decodability** | Hidden state changed counterfactual DO eligibility in 38 visited states but produced zero measured exact full-input aliases. | Do not expose raw history now.  Use a large decodability audit to decide whether a compact five-way DO affordance should subsume it. |
 | Point-geodesic potential ignores serviceability | **Audited/unfixed** | One local counterexample improved H by 7.72 but had no same-base relift heading; this does not prove global inaccessibility. | Keep reward-v2 and measure station, heading, and path serviceability over a larger panel before changing the potential. |
 | Clipped global pile heights | **Deferred** | They did not cause the measured target recurrences: no repeated policy-input hash had a different raw action-map hash. | Revisit only if a separate capacity or long-range planning audit finds height-dependent aliases. |

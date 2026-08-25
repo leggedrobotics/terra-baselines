@@ -37,6 +37,23 @@ Cross-run findings:
 - Episode length: E3 55.2 vs E1 59.2 steps — bigger warm-started net is also faster per
   episode; 300-step horizon (E6) exerts no pressure since episodes are ~55 steps.
 
+## Completed training awaiting fixed selection
+
+The 2026-08-21 paired movement-feedback GRU pilot completed 50,000 updates in
+both arms. Control job `11364188` and six-bit feedback job `11364189` exited
+`0:0`; their final checkpoint SHA-256 values are respectively
+`5459bd5347dbdf64431cd78df5f61f22b75ee56bc2b15662d9751fb2959a7f84`
+and `8cde5ccd4fd4ef5b1ed716a9c5c3a4c4b43f69d44db66d29ed7db86f2ad7d7df`.
+
+The final 1,000-update online aggregate has effectively tied success
+(0.99019 control, 0.99037 feedback), while feedback reduces no-effect rate
+from 0.03152 to 0.01450. This supports retaining the optional observation path
+but is not a promotion verdict. The accepted development-720 evaluation is
+still missing, so neither final policy is selected and feedback stays off by
+default. See
+[`research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md`](research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md)
+for the frozen decision gate and full provenance.
+
 ## Accepted-bank campaigns
 
 The metrics below are deterministic fixed-bank terminal absolute completion,

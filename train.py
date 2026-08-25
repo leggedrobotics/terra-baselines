@@ -22,6 +22,7 @@ from utils.utils_ppo import (
     obs_to_model_input,
     policy,
     policy_with_intermediates,
+    recurrent_policy_sequence,
 )
 import os
 
@@ -324,6 +325,7 @@ def ppo_update_networks(
     teacher_params=None,
     kickstart_kl_coef: float = 0.0,
     kickstart_value_coef: float = 0.0,
+    actor_hidden_init: jax.Array | None = None,
 ):
     clip_eps = config.clip_eps
     vf_coef = config.vf_coef
@@ -345,6 +347,25 @@ def ppo_update_networks(
     # Python-static so the traced loss graph of existing runs is unchanged.
     aux_coef = float(_config_option(config, "aux_coef", 0.0))
     action_logit_masking = bool(_config_option(config, "action_logit_masking", False))
+    actor_core = _config_option(config, "actor_core", "mlp")
+    if actor_core == "gru":
+        if flat_minibatch_shuffle:
+            raise ValueError(
+                "actor_core='gru' requires intact environment sequences; "
+                "flat_minibatch_shuffle must be disabled"
+            )
+        if actor_hidden_init is None:
+            raise ValueError("actor_core='gru' requires rollout actor_hidden_init")
+        if aux_coef > 0.0:
+            raise ValueError("actor_core='gru' pilot does not support aux_coef")
+        if action_logit_masking:
+            raise ValueError(
+                "actor_core='gru' pilot does not support action-logit masking"
+            )
+        if teacher_apply_fn is not None:
+            raise ValueError(
+                "actor_core='gru' pilot does not support kickstart teachers"
+            )
 
     raw_advantages_finite = _finite_fraction(advantages)
     raw_targets_finite = _finite_fraction(targets)
@@ -355,9 +376,12 @@ def ppo_update_networks(
     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
     def _loss_fn(params):
-        # Terra: Reshape
-        # [minibatch_size, seq_len, ...] -> [minibatch_size * seq_len, ...]
-        if flat_minibatch_shuffle:
+        # Terra feed-forward path flattens [env,time]. Recurrent PPO preserves
+        # those axes and replays each rollout from its stored pre-rollout h0.
+        if actor_core == "gru":
+            transitions_obs_reshaped = transitions.obs
+            transitions_prev_actions_flat = transitions.prev_actions
+        elif flat_minibatch_shuffle:
             transitions_obs_reshaped = transitions.obs
             transitions_prev_actions_flat = transitions.prev_actions
         else:
@@ -396,7 +420,16 @@ def ppo_update_networks(
         # D3: the loss must build the same masked distribution the rollout
         # sampled from, or log_prob/entropy would disagree across the ratio.
         loss_action_mask = obs[22] if action_logit_masking else None
-        if aux_coef > 0.0:
+        if actor_core == "gru":
+            value, dist, _ = recurrent_policy_sequence(
+                train_state.apply_fn,
+                params,
+                obs,
+                jax.lax.stop_gradient(actor_hidden_init),
+                transitions.done,
+            )
+            aux_loss = jnp.zeros((), dtype=jnp.float32)
+        elif aux_coef > 0.0:
             # One forward feeds the PPO heads and the aux decoder logits.
             value, dist, intermediates = policy_with_intermediates(
                 train_state.apply_fn, params, obs, action_mask=loss_action_mask
@@ -409,14 +442,19 @@ def ppo_update_networks(
                 train_state.apply_fn, params, obs, action_mask=loss_action_mask
             )
             aux_loss = jnp.zeros((), dtype=jnp.float32)
-        value = value[:, 0]
+        value = value[..., 0]
         student_logits = dist.logits_parameter()
         value_finite = _finite_fraction(value)
         logits_finite = _finite_fraction(student_logits)
         value_abs_max = _nan_safe_abs_max(value)
         logits_abs_max = _nan_safe_abs_max(student_logits)
-        actions_flat = jnp.reshape(transitions.action, (-1, *transitions.action.shape[2:]))
-        log_prob = dist.log_prob(actions_flat)
+        if actor_core == "gru":
+            policy_actions = transitions.action
+        else:
+            policy_actions = jnp.reshape(
+                transitions.action, (-1, *transitions.action.shape[2:])
+            )
+        log_prob = dist.log_prob(policy_actions)
         log_prob_finite = _finite_fraction(log_prob)
 
         if teacher_apply_fn is not None:

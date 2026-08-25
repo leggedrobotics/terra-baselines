@@ -144,6 +144,8 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             for name in (
                 "model_size",
                 "model_core",
+                "actor_core",
+                "actor_gru_hidden_dim",
                 "map_encoder",
                 "encoder_compute_dtype",
                 "attention_compute_dtype",
@@ -182,6 +184,10 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
                 _field(config, "require_trench_alignment_metadata", False)
             ),
         }
+    if bool(_field(config, "movement_feasibility_observation", False)):
+        contract["architecture"]["movement_feasibility_observation"] = True
+    if bool(_field(config, "previous_outcome_observation", False)):
+        contract["architecture"]["previous_outcome_observation"] = True
     partial_reset_digest = _field(config, "partial_reset_bank_sha256")
     if partial_reset_digest is not None:
         raw_partial_receipt = checkpoint.get("partial_reset_curriculum")
