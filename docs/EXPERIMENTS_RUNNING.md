@@ -186,19 +186,21 @@ regression is therefore real; partial resets and the strict trench gate are
 not its cause.
 
 The regression was introduced by the recovery's global
-`--xla_gpu_autotune_level=0`. The replacement keeps level-4 profiling, routes
-convolutions around the failing cuDNN frontend execution-plan path, and pins
-deterministic algorithm selection so pinned XLA cannot promote a faster
-wrong-result legacy candidate. It also fixes native stall-age checkpoint
-resume, checks all three exact bf16 backward-filter shapes against closed-form
-gradients, and requires five resumed updates with a post-compile median of at
-least 12,000 steps/s before production can start. A one-GPU Euler compiler
+`--xla_gpu_autotune_level=0`. A frontend-off deterministic candidate was also
+rejected on an exclusive Supercluster RTX 3060: after two compilation samples,
+its first two steady updates reached only 591.69 and 579.32 steps/s. The current
+replacement restores the default level-4 frontend on the eligible node pool
+while retaining the `eu-g6-064,eu-g6-065` exclusions. It also fixes native
+stall-age checkpoint resume, checks all three exact bf16 backward-filter shapes
+against closed-form gradients, and requires five resumed updates with a
+post-compile median of at least 12,000 steps/s before production can start. A one-GPU Euler compiler
 canary using the same per-device batch and convolution shapes runs first; it is
 only a fast correctness gate, not the aggregate-throughput measurement, and
 its checkpoint is discarded. The pinned recovery source is u3,500 checkpoint
 SHA-256 `f84a6cdfcb4aba0ca55abf1a658e4d57d21c6dffff9c4c2f61263733cd4f4790`.
-The slow jobs remain live until the replacement passes on Euler; no new policy
-or curriculum claim follows from this compiler repair.
+The rejected Euler chain `11722865/11722918/11722925/11722935` was cancelled
+before allocation. The slow jobs remain live until the replacement passes on
+Euler; no new policy or curriculum claim follows from this compiler repair.
 
 ## Current issue checklist
 

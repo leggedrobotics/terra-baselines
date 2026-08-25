@@ -96,12 +96,11 @@ SITE_PACKAGES="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
 export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false
-# Level 0 made this exact recipe about 5x slower. The observed failure is in
-# CudnnExecutionPlanRunner's frontend cudnnBackendExecute path, so retain
-# level-4 profiling while routing convolutions through legacy cuDNN runners.
-# Pinned XLA keeps wrong-result profiles in its candidate list; deterministic
-# selection prevents a faster wrong-result candidate from winning that list.
-export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_enable_cudnn_frontend=false --xla_gpu_deterministic_ops=true"
+# Level 0 and deterministic legacy selection both reproduced the slow path.
+# The default level-4 frontend completed a full PPO update on eu-g6-045, while
+# the observed production failure was on now-excluded eu-g6-065. Exact-shape
+# analytic checks reject a newly bad allocation before W&B or training starts.
+export XLA_FLAGS=--xla_gpu_autotune_level=4
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -138,8 +137,8 @@ assert input_gradient.shape == x.shape
 assert bool(jnp.all(jnp.isfinite(input_gradient)))
 
 # Exercise the bf16 backward-filter shapes that failed in production, not only
-# a small float32 backward-input path. This runs under the exact frontend-off
-# XLA configuration used by training and fails before W&B is contacted.
+# a small float32 backward-input path. This runs under the exact XLA
+# configuration used by training and fails before W&B is contacted.
 kernel_grad_step = jax.pmap(
     jax.grad(loss, argnums=1), axis_name="devices", in_axes=(0, None)
 )
@@ -455,8 +454,6 @@ printf '%s\n' \
     "num_envs_per_device=512" \
     "num_steps=32" \
     "xla_gpu_autotune_level=4" \
-    "xla_gpu_enable_cudnn_frontend=false" \
-    "xla_gpu_deterministic_ops=true" \
     "slurm_job_id=$SLURM_JOB_ID" \
     "wandb_run_id=$WANDB_RUN_ID" > "$RUN_DIR/run_contract.env"
 

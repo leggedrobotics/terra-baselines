@@ -184,14 +184,23 @@ Pinned jaxlib 0.4.26 [uses XLA
 `4e8e23f16bc925b6f27817de098a8e1e81296bb5`](https://github.com/jax-ml/jax/blob/jaxlib-v0.4.26/third_party/xla/workspace.bzl#L17-L31).
 The failing `cuda_dnn.cc:7927` call is
 [`cudnnBackendExecute` in the cuDNN frontend execution-plan runner](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/stream_executor/cuda/cuda_dnn.cc#L7910-L7937).
-The replacement therefore keeps level-4 profiling, sets
-`--xla_gpu_enable_cudnn_frontend=false` to route convolutions through the
-[legacy cuDNN runners](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/stream_executor/cuda/cuda_dnn.cc#L8215-L8304),
-and sets `--xla_gpu_deterministic_ops=true`. That last flag matters because
-this pinned XLA [retains wrong-result profiles in the candidate
-list](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/service/gpu/stream_executor_util.cc#L601-L613)
-and otherwise [sorts the list by measured
-runtime](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/service/gpu/stream_executor_util.cc#L677-L707).
+The first replacement candidate routed convolutions through the
+[legacy cuDNN runners](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/stream_executor/cuda/cuda_dnn.cc#L8215-L8304)
+and enabled deterministic algorithm selection. An exclusive RTX-3060 exact
+u3,500 canary produced compilation samples of 27.30 and 28.13 steps/s, then
+only 591.69 and 579.32 steps/s on the first two steady updates. This is the same
+conservative regime as level 0, so pending Euler chain
+`11722865/11722918/11722925/11722935` was cancelled before allocation.
+
+The selected candidate instead restores the normal level-4 frontend and keeps
+the known-bad `eu-g6-064,eu-g6-065` nodes excluded. This is evidence-backed:
+the default frontend completed a full PPO update in job `11529665` on
+`eu-g6-045`, while the failure was reproduced on `eu-g6-065`. Pinned XLA does
+[retain wrong-result profiles in the candidate
+list](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/service/gpu/stream_executor_util.cc#L601-L613),
+so node exclusion alone is not the gate: the all-ones exact-shape checks below
+must reproduce closed-form gradients on every submitted allocation before W&B
+or PPO starts.
 This is a runtime-only repair: seed, maps, reset schedule, sampler,
 observations, rewards, gate, parameter tree, bf16 compute, and PPO settings
 remain fixed. The launcher also exercises the exact 512 x 16 x 16 x 64 and
