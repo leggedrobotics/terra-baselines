@@ -294,7 +294,7 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "--stall_age_observation" in runner
 
 
-def test_axis_v2_8gpu_path_preserves_batch_and_requires_cache_replay():
+def test_axis_v2_path_has_1gpu_canary_and_preserves_8gpu_batch():
     root = Path(__file__).resolve().parents[1]
     sbatch = (
         root / "scripts/euler_axis_v2_generalist_8gpu/run.sbatch"
@@ -304,23 +304,40 @@ def test_axis_v2_8gpu_path_preserves_batch_and_requires_cache_replay():
         root
         / "scripts/euler_axis_v2_generalist_8gpu/hlo_algorithm_denylist.pbtxt"
     ).read_text()
+    submit = (
+        root / "scripts/euler_axis_v2_generalist_8gpu/submit.sh"
+    ).read_text()
 
+    assert "canary1:1:none:0" in sbatch
     assert "bootstrap:1:none:0" in sbatch
     assert "smoke:5:none:0" in sbatch
     assert "phase1:75000:none:0" in sbatch
     assert "phase2:100000:*:75000" in sbatch
     assert "--xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE" in sbatch
     assert "post_compile_median_steps_per_second" in sbatch
-    assert "test \"${#GPU_NAMES[@]}\" -eq 8" in sbatch
+    assert 'test "${#GPU_NAMES[@]}" -ge "$EXPECTED_DEVICES"' in sbatch
+    assert 'device.device_kind == "NVIDIA GeForce RTX 4090"' in sbatch
+    assert 'NUM_DEVICES="$EXPECTED_DEVICES"' in sbatch
     assert "(devices, 256, spatial, spatial, channels)" in sbatch
-    assert "NUM_DEVICES=8" in runner
-    assert "NUM_ENVS_PER_DEVICE=256" in runner
-    assert 'test "$GLOBAL_ROLLOUT" -eq 65536' in runner
+    assert 'NUM_DEVICES="${NUM_DEVICES:-8}"' in runner
+    assert 'NUM_ENVS_PER_DEVICE="${NUM_ENVS_PER_DEVICE:-256}"' in runner
+    assert "1:256:8192|8:256:65536" in runner
     assert "--config trench_axis_generalist_partial_v2" in runner
     assert "--accepted-bank-condition-profile axis_v2_40_v1" in runner
     assert "bf16[256,16,16,64]" in denylist
     assert "bf16[256,8,8,96]" in denylist
     assert "bf16[512" not in denylist
+    assert "0|stage|canary1|bootstrap|smoke|1" in submit
+    assert "SUBMIT=0: local contracts passed; no SSH" in submit
+    assert "require_complete \"$CANARY_DIR\"" in submit
+    assert "require_complete \"$BOOTSTRAP_DIR\"" in submit
+    assert "require_complete \"$SMOKE_DIR\"" in submit
+    assert "terra-axis-v2-1gpu" in submit
+    assert "--gpus='rtx_4090:$devices'" in submit
+    assert "--gpus='rtx_4090:8'" in submit
+    assert "post_compile_median_steps_per_second" in submit
+    assert "--dependency='afterok:$JOB1_ID'" in submit
+    assert "scancel -- '$JOB1_ID'" in submit
 
 
 def test_runtime_bank_builder_binds_the_imported_clean_terra_checkout(

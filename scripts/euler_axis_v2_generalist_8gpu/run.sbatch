@@ -25,7 +25,15 @@ for REQUIRED in RUN_ROLE TARGET_UPDATE RESUME_CHECKPOINT RESUME_UPDATE RUN_DIR \
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
+EXPECTED_DEVICES=8
 case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT:$RESUME_UPDATE" in
+    canary1:1:none:0)
+        test "$AUTOTUNE_CACHE" = none
+        test "$AUTOTUNE_CACHE_SHA" = none
+        WANDB_MODE=offline
+        WANDB_RESUME=never
+        EXPECTED_DEVICES=1
+        ;;
     bootstrap:1:none:0)
         test "$AUTOTUNE_CACHE" = none
         test "$AUTOTUNE_CACHE_SHA" = none
@@ -51,7 +59,7 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT:$RESUME_UPDATE" in
     *) echo "unsupported run contract" >&2; exit 2 ;;
 esac
 case "$RUN_ROLE:${SLURM_JOB_PARTITION:-}" in
-    bootstrap:gpuhe.4h|smoke:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h) ;;
+    canary1:gpuhe.4h|bootstrap:gpuhe.4h|smoke:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h) ;;
     *) echo "unexpected partition for $RUN_ROLE" >&2; exit 2 ;;
 esac
 
@@ -102,12 +110,12 @@ else
 fi
 
 mapfile -t GPU_NAMES < <(nvidia-smi --query-gpu=name --format=csv,noheader)
-test "${#GPU_NAMES[@]}" -eq 8
+test "${#GPU_NAMES[@]}" -ge "$EXPECTED_DEVICES"
 for GPU_NAME in "${GPU_NAMES[@]}"; do
     test "$GPU_NAME" = "NVIDIA GeForce RTX 4090"
 done
 
-NUM_DEVICES=8 "$PYTHON" - <<'PY'
+NUM_DEVICES="$EXPECTED_DEVICES" "$PYTHON" - <<'PY'
 import os
 import jax
 import jax.numpy as jnp
@@ -115,7 +123,9 @@ import numpy as np
 from jax import lax
 
 devices = int(os.environ["NUM_DEVICES"])
-assert len(jax.devices()) == devices, jax.devices()
+jax_devices = jax.devices()
+assert len(jax_devices) == devices, jax_devices
+assert all(device.device_kind == "NVIDIA GeForce RTX 4090" for device in jax_devices)
 
 def loss(x, kernel):
     y = lax.conv_general_dilated(
@@ -213,7 +223,7 @@ PY
 
 export WANDB_ENTITY WANDB_PROJECT WANDB_MODE WANDB_RESUME
 export WANDB_RUN_ID="axis_v2_generalist_${BASELINES_REVISION:0:10}_s${SEED}"
-if [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = smoke ]; then
+if [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = smoke ]; then
     export WANDB_RUN_ID="${WANDB_RUN_ID}_${RUN_ROLE}_${SLURM_JOB_ID}"
 fi
 export WANDB_DIR="$RUN_DIR/wandb"
@@ -239,9 +249,9 @@ printf '%s\n' \
     "foundation_conditions=25" \
     "trench_conditions=15" \
     "partial_reset_bank_sha256=$PARTIAL_BANK_SHA" \
-    "num_devices=8" \
+    "num_devices=$EXPECTED_DEVICES" \
     "num_envs_per_device=256" \
-    "global_rollout_transitions=65536" \
+    "global_rollout_transitions=$((EXPECTED_DEVICES * 256 * 32))" \
     "xla_gpu_algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA" \
     "xla_gpu_autotune_cache_sha256=$AUTOTUNE_CACHE_SHA" \
     "wandb_run_id=$WANDB_RUN_ID" \
@@ -249,11 +259,12 @@ printf '%s\n' \
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PYTHON_BIN="$PYTHON" MACHINE=euler
 export PROTOCOL_TERRA_REVISION="$RUNTIME_TERRA_REVISION"
-if [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = smoke ]; then
+if [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = smoke ]; then
     export CHECKPOINT_INTERVAL=1 LOG_EVAL_INTERVAL=0
 else
     export CHECKPOINT_INTERVAL=500 LOG_EVAL_INTERVAL=100
 fi
+NUM_DEVICES="$EXPECTED_DEVICES" NUM_ENVS_PER_DEVICE=256 \
 "$BASELINES_ROOT/scripts/run_axis_v2_generalist_8gpu.sh" \
     "$BANK" "$PARTIAL_BANK" "$RUN_NAME" "$TARGET_UPDATE" "$RUN_DIR" \
     "$DISTANCE_ARTIFACT_SHA" "$RESUME_CHECKPOINT"
