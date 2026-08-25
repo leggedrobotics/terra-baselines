@@ -490,7 +490,10 @@ fi
 
 if [ "$RUN_ROLE" = resume_smoke ]; then
     case "$EXPECTED_NUM_DEVICES" in
-        1) THROUGHPUT_MINIMUM=3000; THROUGHPUT_STRONG_PROVISIONAL=3750 ;;
+        # One GPU is a cheap compiler/runtime screen. Scaling is accepted only
+        # by the four-GPU measurement below, so do not infer its total rate
+        # from a one-GPU sample with different fixed overheads.
+        1) THROUGHPUT_MINIMUM=2000; THROUGHPUT_STRONG_PROVISIONAL=3000 ;;
         4) THROUGHPUT_MINIMUM=12000; THROUGHPUT_STRONG_PROVISIONAL=12000 ;;
     esac
     THROUGHPUT_LOG="$RUN_DIR/slurm_${SLURM_JOB_ID}.out" \

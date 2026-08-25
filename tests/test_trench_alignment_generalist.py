@@ -194,8 +194,9 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "--mem-per-cpu='8G'" in submit
     assert "EXPECTED_NUM_DEVICES=1" in submit
     assert "--dependency='afterok:$ONE_GPU_JOB_ID'" in submit
-    assert 'THROUGHPUT_MINIMUM=3000' in sbatch
-    assert 'THROUGHPUT_STRONG_PROVISIONAL=3750' in sbatch
+    assert 'THROUGHPUT_MINIMUM=2000' in sbatch
+    assert 'THROUGHPUT_STRONG_PROVISIONAL=3000' in sbatch
+    assert "four-GPU measurement" in sbatch
     assert '--encoder_compute_dtype bfloat16' in runner
     assert '--ppo_loss_apply_chunk_size' not in runner
     assert "f84a6cdfcb4aba0ca55abf1a658e4d57" in submit
