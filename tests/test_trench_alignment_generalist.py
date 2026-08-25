@@ -7,7 +7,9 @@ import pytest
 from configs.training_configs import get_config
 from scripts import build_trench_aligned_runtime_bank
 from utils.accepted_bank import AcceptedLevel
+from utils.accepted_bank import AXIS_V2_RELEASE_ID
 from utils.accepted_bank import V8_TRENCH_ALIGNED_EXCLUDED_CONDITION_IDS
+from utils.accepted_bank import _v8_continuous_graph
 from utils.accepted_bank import _v8_stage_selection
 from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
 
@@ -39,6 +41,76 @@ def test_partial_recipe_requires_the_named_37_condition_view():
     assert config.require_trench_alignment_metadata is True
     assert config.trench_alignment_observation is True
     assert config.pooled_sampler.rule == "continuous_banded_v3"
+
+
+def test_axis_v2_partial_recipe_requires_the_named_40_condition_view():
+    config = get_config("trench_axis_generalist_partial_v2")
+    assert config.maps == []
+    assert config.accepted_bank_arm == "G-UNIFORM"
+    assert config.accepted_bank_condition_profile == "axis_v2_40_v1"
+    assert config.requires_partial_reset is True
+    assert config.enforce_trench_dig_alignment is True
+    assert config.require_trench_alignment_metadata is True
+    assert config.trench_alignment_observation is True
+    assert config.pooled_sampler.rule == "continuous_banded_v3"
+
+
+def test_axis_v2_view_is_25_foundations_plus_15_trenches_with_net4():
+    graph_path = (
+        Path(__file__).resolve().parents[1]
+        / "configs"
+        / "axis_v2_continuous_banded_graph_v1.json"
+    )
+    graph = json.loads(graph_path.read_text())
+    levels = []
+    by_depth = {}
+    branch_names = ("Anchor", "Nearby core", "Composed")
+    for depth in range(3):
+        by_depth[depth] = []
+        for family in ("foundation", "trench"):
+            for condition_id in graph["depths"][str(depth)][family]:
+                by_depth[depth].append(condition_id)
+                levels.append(
+                    AcceptedLevel(
+                        condition_id=condition_id,
+                        family=family,
+                        branch_depth=branch_names[depth],
+                        maps_path=f"train/{condition_id}",
+                        map_count=96,
+                    )
+                )
+    selected, probabilities = _v8_stage_selection(
+        levels,
+        "full",
+        tuple(by_depth[2]),
+        tuple(by_depth[0]),
+        tuple(by_depth[1]),
+        {
+            "v7_geometry_mass_within_family": {
+                "foundation": {"fixture": 1.0},
+                "trench": {"fixture": 1.0},
+            }
+        },
+        "continuous_banded_v3",
+        "axis_v2_40_v1",
+    )
+    assert probabilities == ()
+    assert len(selected) == 40
+    assert sum(level.family == "foundation" for level in selected) == 25
+    assert sum(level.family == "trench" for level in selected) == 15
+    assert sum("trn-net4" in level.condition_id for level in selected) == 3
+    assert not any("v7-trn" in level.condition_id for level in selected)
+
+    depths, graph_sha256 = _v8_continuous_graph(
+        tuple(levels),
+        tuple(by_depth[0]),
+        tuple(by_depth[1]),
+        tuple(by_depth[2]),
+        AXIS_V2_RELEASE_ID,
+    )
+    assert len(depths) == 40
+    assert [depths.count(depth) for depth in range(3)] == [2, 6, 32]
+    assert len(graph_sha256) == 64
 
 
 def test_trench_aligned_view_is_exactly_25_foundation_plus_12_trench():
@@ -212,7 +284,7 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert 'blas_version: "120902"' in denylist
 
     train_mixed = (root / "train_mixed.py").read_text()
-    assert '== "trench_aligned_37_v1"' in train_mixed
+    assert "in SPARSE_CONDITION_PROFILES" in train_mixed
     assert "allow_sparse_depths=" in train_mixed
 
     assert "--config trench_align_generalist_partial_v1" in runner
@@ -220,6 +292,35 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "--partial-reset-root" in runner
     assert "--reward-v2-reset-context-observation" in runner
     assert "--stall_age_observation" in runner
+
+
+def test_axis_v2_8gpu_path_preserves_batch_and_requires_cache_replay():
+    root = Path(__file__).resolve().parents[1]
+    sbatch = (
+        root / "scripts/euler_axis_v2_generalist_8gpu/run.sbatch"
+    ).read_text()
+    runner = (root / "scripts/run_axis_v2_generalist_8gpu.sh").read_text()
+    denylist = (
+        root
+        / "scripts/euler_axis_v2_generalist_8gpu/hlo_algorithm_denylist.pbtxt"
+    ).read_text()
+
+    assert "bootstrap:1:none:0" in sbatch
+    assert "smoke:5:none:0" in sbatch
+    assert "phase1:75000:none:0" in sbatch
+    assert "phase2:100000:*:75000" in sbatch
+    assert "--xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE" in sbatch
+    assert "post_compile_median_steps_per_second" in sbatch
+    assert "test \"${#GPU_NAMES[@]}\" -eq 8" in sbatch
+    assert "(devices, 256, spatial, spatial, channels)" in sbatch
+    assert "NUM_DEVICES=8" in runner
+    assert "NUM_ENVS_PER_DEVICE=256" in runner
+    assert 'test "$GLOBAL_ROLLOUT" -eq 65536' in runner
+    assert "--config trench_axis_generalist_partial_v2" in runner
+    assert "--accepted-bank-condition-profile axis_v2_40_v1" in runner
+    assert "bf16[256,16,16,64]" in denylist
+    assert "bf16[256,8,8,96]" in denylist
+    assert "bf16[512" not in denylist
 
 
 def test_runtime_bank_builder_binds_the_imported_clean_terra_checkout(

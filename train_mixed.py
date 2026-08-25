@@ -139,6 +139,7 @@ from utils.accepted_bank import (
     load_accepted_bank,
 )
 from utils.accepted_bank import V8_CONDITION_PROFILES
+from utils.accepted_bank import SPARSE_CONDITION_PROFILES
 from utils.pooled_sampler import (
     CONTINUOUS_RULES,
     PooledConditionSampler,
@@ -3166,7 +3167,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 labels=labels,
                 allow_sparse_depths=(
                     getattr(bank, "condition_profile", "full")
-                    == "trench_aligned_37_v1"
+                    in SPARSE_CONDITION_PROFILES
                 ),
             )
             print(
@@ -3278,6 +3279,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 padding_masks,
                 trench_axes,
                 trench_type,
+                trench_axis_owners,
                 foundation_border_axes,
                 foundation_border_type,
                 dumpability_mask_init,
@@ -3292,6 +3294,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 padding_masks,
                 trench_axes,
                 trench_type,
+                trench_axis_owners,
                 foundation_border_axes,
                 foundation_border_type,
                 dumpability_mask_init,
@@ -4384,6 +4387,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         eval_padding_masks,
                         eval_trench_axes,
                         eval_trench_type,
+                        eval_trench_axis_owners,
                         eval_foundation_border_axes,
                         eval_foundation_border_type,
                         eval_dumpability_mask_init,
@@ -4398,6 +4402,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         eval_padding_masks,
                         eval_trench_axes,
                         eval_trench_type,
+                        eval_trench_axis_owners,
                         eval_foundation_border_axes,
                         eval_foundation_border_type,
                         eval_dumpability_mask_init,
@@ -5079,7 +5084,8 @@ if __name__ == "__main__":
         help=(
             "Select a named condition view after validating the immutable V8 "
             "release. trench_aligned_37_v1 keeps 25 foundation and 12 "
-            "strict-gate-compatible trench conditions."
+            "strict-gate-compatible trench conditions; axis_v2_40_v1 keeps "
+            "25 foundation and 15 exact-owner trench conditions."
         ),
     )
     parser.add_argument(

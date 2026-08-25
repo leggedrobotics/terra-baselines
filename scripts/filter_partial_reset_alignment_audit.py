@@ -45,6 +45,12 @@ def filter_bank(
     audit = json.loads(audit_path.read_text())
     if audit.get("partial_reset_bank_sha256") != source_digest:
         raise RuntimeError("alignment audit does not describe the input bank")
+    audit_schema = audit.get("schema")
+    if audit_schema not in {
+        "terra_partial_trench_alignment_audit_v1",
+        "terra_partial_trench_alignment_audit_v2",
+    }:
+        raise RuntimeError(f"unsupported alignment audit schema: {audit_schema!r}")
     failed_rows = [
         row for row in audit.get("rows", []) if not row["alignment_chain_complete"]
     ]
@@ -138,7 +144,7 @@ def filter_bank(
                 rejected_source_count=int(config.get("rejected_source_count", 0))
                 + len(removed_sources),
                 alignment_rejected_source_count=len(removed_sources),
-                alignment_admission_schema="terra_partial_trench_alignment_audit_v1",
+                alignment_admission_schema=audit_schema,
                 alignment_source_bank_sha256=source_digest,
                 selected_pile_mode_counts={
                     mode: sum(row["pile_mode"] == mode for row in rewritten)
@@ -169,7 +175,7 @@ def filter_bank(
             rejected_condition_count=int(index["rejected_condition_count"])
             + dropped_conditions,
             derived_from_partial_reset_bank_sha256=source_digest,
-            alignment_admission_schema="terra_partial_trench_alignment_audit_v1",
+            alignment_admission_schema=audit_schema,
             alignment_rejected_source_triplet_count=len(failed_triplets),
             alignment_rejected_sidecar_count=len(failed_rows),
         )

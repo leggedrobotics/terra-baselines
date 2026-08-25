@@ -20,7 +20,9 @@ TRAIN96_CAPABILITY_FLOOR_IDS = (
     "trn-straight-allfree",
 )
 V8_RELEASE_ID = "terra_v8_v6_constraints_v7_adjacent_train96_v5"
+AXIS_V2_RELEASE_ID = "terra_axis_v2_v6_constraints_v7_foundations_train96_v1"
 V8_REVIEW_ADMISSION_SCHEMA = "terra_v8_review_admission_v1"
+AXIS_V2_REVIEW_ADMISSION_SCHEMA = "terra_axis_v2_review_admission_v1"
 V8_TRAINING_MIXTURE_SCHEMA = "terra_v8_training_mixture_v4"
 V8_TRAINING_MIXTURE_SHA256 = (
     "f2a2a33556d513b46193a8a3996d37e6989534eba9373f46f52d79f956ac128e"
@@ -31,6 +33,11 @@ V8_CONSTRAINT_CONDITION_COUNT = 32
 V8_CORE_CONDITION_COUNT = 13
 V8_MAIN_CONDITION_COUNT = 45
 V8_CAPABILITY_FLOOR_IDS = TRAIN96_CAPABILITY_FLOOR_IDS
+AXIS_V2_CONSTRAINT_CONDITION_COUNT = 32
+AXIS_V2_CORE_CONDITION_COUNT = 6
+AXIS_V2_MAIN_CONDITION_COUNT = 38
+AXIS_V2_TRAIN_CONDITION_COUNT = 40
+AXIS_V2_MAPS_PER_CONDITION = 96
 V8_CURRICULUM_STAGES = ("capability", "nearby", "full")
 V8_SAMPLER_PROFILES = (
     "bank_v4",
@@ -39,7 +46,12 @@ V8_SAMPLER_PROFILES = (
     "continuous_banded_v3",
 )
 V8_CONTINUOUS_PROFILES = ("continuous_banded_v3",)
-V8_CONDITION_PROFILES = ("full", "trench_aligned_37_v1")
+V8_CONDITION_PROFILES = (
+    "full",
+    "trench_aligned_37_v1",
+    "axis_v2_40_v1",
+)
+SPARSE_CONDITION_PROFILES = ("trench_aligned_37_v1", "axis_v2_40_v1")
 V8_TRENCH_ALIGNED_EXCLUDED_CONDITION_IDS = (
     "trn-net4-side1-road",
     "trn-net4-side2",
@@ -57,6 +69,11 @@ V8_CONTINUOUS_GRAPH_PATH = (
     Path(__file__).resolve().parents[1]
     / "configs"
     / "v8_continuous_banded_graph_v1.json"
+)
+AXIS_V2_CONTINUOUS_GRAPH_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "configs"
+    / "axis_v2_continuous_banded_graph_v1.json"
 )
 REVIEW_RELEASE = "map-curriculum-diverse64-visual-review-20260730"
 REVIEW_MANIFEST_SHA256 = (
@@ -545,6 +562,9 @@ def _validate_v8_review_admission(
     root: Path,
     index: dict,
     condition_ids: list[str],
+    *,
+    release_id: str = V8_RELEASE_ID,
+    schema: str = V8_REVIEW_ADMISSION_SCHEMA,
 ) -> str:
     index_path = root / "dataset.json"
     if index.get("review_admission") != "review_admission.json":
@@ -572,8 +592,8 @@ def _validate_v8_review_admission(
     if not isinstance(receipt, dict):
         raise ValueError(f"{receipt_path}: expected a JSON object")
     expected_fields = {
-        "schema": V8_REVIEW_ADMISSION_SCHEMA,
-        "release_id": V8_RELEASE_ID,
+        "schema": schema,
+        "release_id": release_id,
         "decision": "accept",
         "decision_source": "explicit_user_instruction",
     }
@@ -712,6 +732,160 @@ def _validate_v8_release(
     return review_sha256, constraint_ids, capability_ids, core_ids, mixture
 
 
+def _validate_axis_v2_release(
+    root: Path,
+    index: dict,
+    levels: list[AcceptedLevel],
+) -> tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], dict]:
+    """Validate the exact 25-foundation + 15-trench axis-v2 bank."""
+
+    index_path = root / "dataset.json"
+    if index.get("release_id") != AXIS_V2_RELEASE_ID:
+        raise ValueError(
+            f"{index_path}: release_id must be {AXIS_V2_RELEASE_ID!r}"
+        )
+    if index.get("train_maps_per_condition") != AXIS_V2_MAPS_PER_CONDITION:
+        raise ValueError(
+            f"{index_path}: train_maps_per_condition must be "
+            f"{AXIS_V2_MAPS_PER_CONDITION}"
+        )
+
+    constraint_ids = _sorted_unique_strings(
+        index, "v6_constraint_condition_ids", index_path
+    )
+    capability_ids = _unique_strings(
+        index, "v6_capability_floor_condition_ids", index_path
+    )
+    core_ids = _unique_strings(index, "v7_core_condition_ids", index_path)
+    if len(constraint_ids) != AXIS_V2_CONSTRAINT_CONDITION_COUNT:
+        raise ValueError(
+            f"{index_path}: axis-v2 must contain "
+            f"{AXIS_V2_CONSTRAINT_CONDITION_COUNT} V6 conditions"
+        )
+    if capability_ids != V8_CAPABILITY_FLOOR_IDS:
+        raise ValueError(
+            f"{index_path}: axis-v2 capability controls must be "
+            f"{list(V8_CAPABILITY_FLOOR_IDS)!r}"
+        )
+    if len(core_ids) != AXIS_V2_CORE_CONDITION_COUNT or any(
+        not condition_id.startswith("v7-fnd-") for condition_id in core_ids
+    ):
+        raise ValueError(
+            f"{index_path}: axis-v2 must contain exactly six V7 foundation "
+            "core conditions"
+        )
+
+    partitions = (set(constraint_ids), set(capability_ids), set(core_ids))
+    if any(
+        left & right
+        for index_, left in enumerate(partitions)
+        for right in partitions[index_ + 1 :]
+    ):
+        raise ValueError(f"{index_path}: axis-v2 partitions must be disjoint")
+    level_ids = {level.condition_id for level in levels}
+    if level_ids != set().union(*partitions):
+        raise ValueError(
+            f"{index_path}: axis-v2 partitions must cover all train levels"
+        )
+    family_counts = {
+        family: sum(level.family == family for level in levels)
+        for family in FAMILIES
+    }
+    if len(levels) != AXIS_V2_TRAIN_CONDITION_COUNT or family_counts != {
+        "foundation": 25,
+        "trench": 15,
+    }:
+        raise ValueError(
+            f"{index_path}: axis-v2 must contain 25 foundation and 15 trench "
+            f"conditions; got {family_counts}"
+        )
+    main_ids = tuple(sorted(set(constraint_ids) | set(core_ids)))
+    if len(main_ids) != AXIS_V2_MAIN_CONDITION_COUNT:
+        raise ValueError(
+            f"{index_path}: axis-v2 main macro must contain "
+            f"{AXIS_V2_MAIN_CONDITION_COUNT} conditions"
+        )
+    if index.get("included_in_main_macro") != list(main_ids):
+        raise ValueError(
+            f"{index_path}: included_in_main_macro must be the sorted axis-v2 set"
+        )
+
+    review_sha256 = _validate_v8_review_admission(
+        root,
+        index,
+        [level.condition_id for level in levels],
+        release_id=AXIS_V2_RELEASE_ID,
+        schema=AXIS_V2_REVIEW_ADMISSION_SCHEMA,
+    )
+
+    if index.get("audit_receipt") != "audit_receipt.json":
+        raise ValueError(f"{index_path}: audit_receipt must be 'audit_receipt.json'")
+    audit_path = root / "audit_receipt.json"
+    audit_sha256 = _sha256_field(index, "audit_receipt_sha256", index_path)
+    if _sha256_file(audit_path) != audit_sha256:
+        raise ValueError(f"{audit_path}: axis-v2 audit receipt hash mismatch")
+    try:
+        audit = json.loads(audit_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{audit_path}: invalid JSON: {exc}") from exc
+    expected_audit = {
+        "schema": "terra_axis_v2_generalist_bank_audit_v1",
+        "accepted": True,
+        "owner_contract": "generator_owner_bits_v1",
+        "failed_maps": 0,
+        "foundation_conditions": 25,
+        "trench_conditions": 15,
+    }
+    for field, expected in expected_audit.items():
+        if audit.get(field) != expected:
+            raise ValueError(
+                f"{audit_path}: {field} must be {expected!r}, "
+                f"got {audit.get(field)!r}"
+            )
+
+    if index.get("training_mixture") != "training_mixture.json":
+        raise ValueError(
+            f"{index_path}: training_mixture must be 'training_mixture.json'"
+        )
+    mixture_path = root / "training_mixture.json"
+    mixture_sha256 = _sha256_field(index, "training_mixture_sha256", index_path)
+    if _sha256_file(mixture_path) != mixture_sha256:
+        raise ValueError(f"{mixture_path}: axis-v2 training mixture hash mismatch")
+    try:
+        mixture = json.loads(mixture_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{mixture_path}: invalid JSON: {exc}") from exc
+    if not isinstance(mixture, dict) or mixture.get("schema") != (
+        "terra_axis_v2_training_mixture_v1"
+    ):
+        raise ValueError(
+            f"{mixture_path}: schema must be 'terra_axis_v2_training_mixture_v1'"
+        )
+    expected_protocol = {
+        "accepted_dump_contract": "exact_visible_dump_v1",
+        "apply_trench_rewards": False,
+        "full_resets": True,
+        "max_steps_in_episode": 450,
+        "rewards_type": "DENSE",
+    }
+    if mixture.get("fixed_protocol") != expected_protocol:
+        raise ValueError(f"{mixture_path}: axis-v2 fixed protocol changed")
+    stages = mixture.get("stages")
+    if not isinstance(stages, list) or [stage.get("name") for stage in stages] != [
+        "capability_anchors",
+        "nearby_geometry_core",
+        "constraint_branches",
+    ]:
+        raise ValueError(f"{mixture_path}: axis-v2 stage graph changed")
+    if stages[0].get("new_conditions") != list(capability_ids):
+        raise ValueError(f"{mixture_path}: capability stage support changed")
+    if stages[1].get("new_conditions") != list(core_ids):
+        raise ValueError(f"{mixture_path}: nearby stage support changed")
+    if stages[2].get("new_conditions") != list(constraint_ids):
+        raise ValueError(f"{mixture_path}: constraint stage support changed")
+    return review_sha256, constraint_ids, capability_ids, core_ids, mixture
+
+
 def _v8_stage_selection(
     levels: list[AcceptedLevel],
     stage: str,
@@ -802,6 +976,19 @@ def _v8_stage_selection(
                 "trench-aligned profile must select 25 foundation and 12 trench "
                 f"conditions; got {family_counts}"
             )
+    elif condition_profile == "axis_v2_40_v1":
+        family_counts = {
+            family: sum(level.family == family for level in selected)
+            for family in FAMILIES
+        }
+        if len(selected) != AXIS_V2_TRAIN_CONDITION_COUNT or family_counts != {
+            "foundation": 25,
+            "trench": 15,
+        }:
+            raise ValueError(
+                "axis-v2 profile must select 25 foundation and 15 trench "
+                f"conditions; got {family_counts}"
+            )
 
     geometry_mass = mixture.get("v7_geometry_mass_within_family")
     if not isinstance(geometry_mass, dict):
@@ -863,15 +1050,25 @@ def _v8_continuous_graph(
     capability_ids: tuple[str, ...],
     core_ids: tuple[str, ...],
     constraint_ids: tuple[str, ...],
+    release_id: str = V8_RELEASE_ID,
 ) -> tuple[tuple[int, ...], str]:
     """Validate the executable coarse-depth graph against the frozen V8 bank."""
-    graph_path = V8_CONTINUOUS_GRAPH_PATH
+    if release_id == V8_RELEASE_ID:
+        graph_path = V8_CONTINUOUS_GRAPH_PATH
+        graph_schema = "terra_v8_continuous_banded_graph_v1"
+        allow_empty_family_depth = False
+    elif release_id == AXIS_V2_RELEASE_ID:
+        graph_path = AXIS_V2_CONTINUOUS_GRAPH_PATH
+        graph_schema = "terra_axis_v2_continuous_banded_graph_v1"
+        allow_empty_family_depth = True
+    else:
+        raise ValueError(f"unsupported continuous graph release {release_id!r}")
     graph = json.loads(graph_path.read_text())
     if set(graph) != {"schema", "release_id", "siblings_ordered", "depths"}:
         raise ValueError(f"{graph_path}: unexpected graph fields")
-    if graph["schema"] != "terra_v8_continuous_banded_graph_v1":
+    if graph["schema"] != graph_schema:
         raise ValueError(f"{graph_path}: unsupported graph schema")
-    if graph["release_id"] != V8_RELEASE_ID or graph["siblings_ordered"] is not False:
+    if graph["release_id"] != release_id or graph["siblings_ordered"] is not False:
         raise ValueError(f"{graph_path}: release or sibling-order contract changed")
     depths = graph["depths"]
     if not isinstance(depths, dict) or set(depths) != {"0", "1", "2"}:
@@ -890,9 +1087,11 @@ def _v8_continuous_graph(
         observed: set[str] = set()
         for family in FAMILIES:
             condition_ids = family_rows[family]
-            if not isinstance(condition_ids, list) or not condition_ids:
+            if not isinstance(condition_ids, list) or (
+                not condition_ids and not allow_empty_family_depth
+            ):
                 raise ValueError(
-                    f"{graph_path}: depth {depth} {family} must be nonempty"
+                    f"{graph_path}: depth {depth} {family} must be a valid list"
                 )
             for condition_id in condition_ids:
                 if condition_id in depth_by_id:
@@ -922,6 +1121,7 @@ def _train_maps_per_condition(index: dict, source: Path) -> int:
     named_counts = {
         TRAIN96_RELEASE_ID: TRAIN96_MAPS_PER_CONDITION,
         V8_RELEASE_ID: V8_MAPS_PER_CONDITION,
+        AXIS_V2_RELEASE_ID: AXIS_V2_MAPS_PER_CONDITION,
     }
     if release_id not in named_counts:
         raise ValueError(f"{source}: unsupported release_id {release_id!r}")
@@ -1035,6 +1235,8 @@ def validate_staged_training_bank(
         _validate_train96_release(root_path, index, levels)
     elif index.get("release_id") == V8_RELEASE_ID:
         _validate_v8_release(root_path, index, levels)
+    elif index.get("release_id") == AXIS_V2_RELEASE_ID:
+        _validate_axis_v2_release(root_path, index, levels)
     else:
         _validate_review_admission(root_path, index, condition_ids)
     return maps_per_condition
@@ -1308,6 +1510,11 @@ def load_accepted_bank(
     expected_main_ids = None
     expected_capability_ids = None
     if release_id == V8_RELEASE_ID:
+        if condition_profile == "axis_v2_40_v1":
+            raise ValueError(
+                f"condition_profile={condition_profile!r} applies only to "
+                f"{AXIS_V2_RELEASE_ID}"
+            )
         expected_main_ids = tuple(index.get("included_in_main_macro", ()))
         expected_capability_ids = tuple(
             index.get("v6_capability_floor_condition_ids", ())
@@ -1320,9 +1527,20 @@ def load_accepted_bank(
             )
             if evaluation_panel_family == EVALUATION_PANEL_FAMILY_DEFAULT:
                 evaluation_panel_family = V8_TRENCH_ALIGNED_EVALUATION_FAMILY
+    elif release_id == AXIS_V2_RELEASE_ID:
+        if condition_profile != "axis_v2_40_v1":
+            raise ValueError(
+                f"{AXIS_V2_RELEASE_ID} requires "
+                "condition_profile='axis_v2_40_v1'"
+            )
+        expected_main_ids = tuple(index.get("included_in_main_macro", ()))
+        expected_capability_ids = tuple(
+            index.get("v6_capability_floor_condition_ids", ())
+        )
     elif condition_profile != "full":
         raise ValueError(
-            f"condition_profile={condition_profile!r} applies only to {V8_RELEASE_ID}"
+            f"condition_profile={condition_profile!r} does not apply to "
+            f"release {release_id!r}"
         )
     declared_panels = index.get("evaluation_panels")
     if evaluation_panel_family == EVALUATION_PANEL_FAMILY_DEFAULT:
@@ -1357,7 +1575,7 @@ def load_accepted_bank(
         expected_condition_ids=expected_main_ids,
     )
     capability_floor_evaluation_panels = ()
-    if release_id in (TRAIN96_RELEASE_ID, V8_RELEASE_ID):
+    if release_id in (TRAIN96_RELEASE_ID, V8_RELEASE_ID, AXIS_V2_RELEASE_ID):
         capability_floor_evaluation_panels = _validate_evaluation_panels(
             root_path,
             index.get("capability_floor_evaluation_panels"),
@@ -1412,6 +1630,17 @@ def load_accepted_bank(
         constrained_condition_ids = tuple(
             sorted(set(v6_constraint_condition_ids) | set(v7_core_condition_ids))
         )
+    elif release_id == AXIS_V2_RELEASE_ID:
+        (
+            review_admission_sha256,
+            v6_constraint_condition_ids,
+            capability_floor_condition_ids,
+            v7_core_condition_ids,
+            v8_mixture,
+        ) = _validate_axis_v2_release(root_path, index, all_levels)
+        constrained_condition_ids = tuple(
+            sorted(set(v6_constraint_condition_ids) | set(v7_core_condition_ids))
+        )
     else:
         review_admission_sha256 = _validate_review_admission(
             root_path,
@@ -1420,7 +1649,7 @@ def load_accepted_bank(
         )
 
     sampling_probabilities: tuple[float, ...] = ()
-    if release_id == V8_RELEASE_ID:
+    if release_id in (V8_RELEASE_ID, AXIS_V2_RELEASE_ID):
         if allow_diagnostic_control:
             raise ValueError("V8 is a training release, not a diagnostic control")
         if arm != "G-UNIFORM":
@@ -1477,6 +1706,7 @@ def load_accepted_bank(
             capability_floor_condition_ids,
             v7_core_condition_ids,
             v6_constraint_condition_ids,
+            release_id,
         )
         depth_by_id = {
             level.condition_id: all_depths[index]
