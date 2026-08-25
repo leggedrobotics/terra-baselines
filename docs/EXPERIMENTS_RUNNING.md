@@ -176,36 +176,36 @@ default for this recipe only. The frozen full/partial bank identities and
 complete design are recorded in
 `research/TRENCH_ALIGNED_GENERALIST_PARTIAL_RESET_DESIGN_20260822.md`.
 
-Recovery phase 1 job `11626135` is running on `eu-g6-044`; phase 2 job
-`11626137` is pending on its `afterok` dependency. At the 2026-08-25 throughput
-audit it had crossed u3,700 with finite checkpoints but sustained only
-3,124.6 steps/s. Matched 4 x RTX 4090 controls with the same 65,536
-transitions/update sustained 16,771.1 steps/s (C0 `11152229`), 16,503.0
-(T1 `11152230`), and 15,800.5 (GRU control `11364188`). The 5.0--5.4x
-regression is therefore real; partial resets and the strict trench gate are
-not its cause.
+The 2026-08-25 audit measured only 3,124.6 steps/s in the original recovery,
+versus 16,771.1 in C0 `11152229`, 16,503.0 in T1 `11152230`, and 15,800.5 in
+GRU control `11364188`, all with the same 65,536 transitions/update on four
+RTX 4090s. The regression came from the recovery's global
+`--xla_gpu_autotune_level=0`, not from partial resets or the strict trench
+gate. A frontend-off deterministic candidate was also rejected at 591.69 and
+579.32 steady steps/s on an exclusive RTX 3060.
 
-The regression was introduced by the recovery's global
-`--xla_gpu_autotune_level=0`. A frontend-off deterministic candidate was also
-rejected on an exclusive Supercluster RTX 3060: after two compilation samples,
-its first two steady updates reached only 591.69 and 579.32 steps/s. The current
-replacement restores the default level-4 frontend on the eligible node pool
-while retaining the `eu-g6-064,eu-g6-065` exclusions. It also fixes native
-stall-age checkpoint resume, checks all three exact bf16 backward-filter shapes
-against closed-form gradients, and requires five resumed updates with a
-post-compile median of at least 12,000 steps/s before production can start. A
-one-GPU Euler compiler canary using the same per-device batch and convolution
-shapes runs first; it validates the source checkpoint and compiler without PPO
-updates. The pinned recovery source is u3,500 checkpoint
-SHA-256 `f84a6cdfcb4aba0ca55abf1a658e4d57d21c6dffff9c4c2f61263733cd4f4790`.
-The rejected Euler chain `11722865/11722918/11722925/11722935` was cancelled
-before allocation. A subsequent `94b3a55c` submission was rejected by Euler's
-CLI before any job or W&B creation because node-level `--mem` is unsupported;
-the corrected launcher uses `--mem-per-cpu`. The slow jobs remain live until
-the replacement passes on Euler; no new policy or curriculum claim follows
-from this compiler repair. The first `fd475c10` chain was superseded while
-still pending because its one-GPU stage unnecessarily ran five PPO updates;
-the shortened compiler-only stage is the supported path.
+The level-4 bf16 repair first reached 4,944.71 steps/s on one GPU in job
+`11735195`, but the first four-GPU attempt `11735196` failed before update 1
+with `CUDNN_STATUS_EXECUTION_FAILED`. An identical traced rerun `11738360`
+then completed u3,500--u3,505 with finite checkpoints and samples/s
+`155.39, 150.27, 17546.44, 7820.19, 17454.15`; its post-compile median is
+17,454.15 and passes the 12,000 gate. This pair proves that level-4 restores
+matched historical speed but that unconstrained cuDNN plan selection is not
+repeatable enough for production.
+
+Revision `58e26fc969b9b0d42477c7ce8151dc7318be4fd4` therefore uses one direct
+four-GPU path: bf16 level 4, the exact engine-20 denylist, and the successful
+four-GPU autotune cache, SHA-256
+`698e856cae464e5fea93e0b2121fc8de4d9cb691135571ca4b5d56f3259d16a3`.
+The redundant one-GPU gate was removed because it cannot establish four-GPU
+execution or scaling. Pinned-cache replay `11740651` is queued; fresh u0 smoke
+and production remain conditional on it.
+
+After `11738360` passed, slow jobs `11626135/11626137` were cancelled. The
+latest preserved slow-run checkpoint is u4,000, SHA-256
+`1a977ffca984458699c6b9ef3940bd3f3815699c876de6b58704e21f31484e7c`;
+the run stopped at u4,442. The repair changes compiler selection only and is
+not policy or curriculum evidence.
 
 ## Current issue checklist
 

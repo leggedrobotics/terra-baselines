@@ -192,25 +192,30 @@ only 591.69 and 579.32 steps/s on the first two steady updates. This is the same
 conservative regime as level 0, so pending Euler chain
 `11722865/11722918/11722925/11722935` was cancelled before allocation.
 
-The selected candidate instead restores the normal level-4 frontend and keeps
-the known-bad `eu-g6-064,eu-g6-065` nodes excluded. This is evidence-backed:
-the default frontend completed a full PPO update in job `11529665` on
-`eu-g6-045`, while the failure was reproduced on `eu-g6-065`. Pinned XLA does
-[retain wrong-result profiles in the candidate
+The fast candidate restores the normal level-4 bf16 frontend and keeps
+`eu-g6-064,eu-g6-065` excluded. Pinned XLA
+[retains wrong-result profiles in the candidate
 list](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/service/gpu/stream_executor_util.cc#L601-L613),
-so node exclusion alone is not the gate: the all-ones exact-shape checks below
-must reproduce closed-form gradients on every submitted allocation before W&B
-or PPO starts.
-This is a runtime-only repair: seed, maps, reset schedule, sampler,
-observations, rewards, gate, parameter tree, bf16 compute, and PPO settings
-remain fixed. The launcher also exercises the exact 512 x 16 x 16 x 64 and
-512 x 8 x 8 x 96 3x3 backward filters plus the 8 x 8 x 96 -> 32 1x1
-flatten-reduction filter, and compares their all-ones gradients with
-closed-form values before W&B is contacted. Recovery submission first runs
-those compiler and checkpoint checks on one Euler RTX 4090 with the same
-per-device convolution shapes but no PPO updates, then resumes five updates on
-four GPUs. Only the four-GPU job enforces the 12,000-steps/s throughput
-threshold and unlocks production.
+so the exact engine-20 family is denied for the two affected backward filters.
+Job `11735195` then reached a 4,944.71-steps/s steady median on one GPU, but
+four-GPU job `11735196` failed before update 1 with the same cuDNN execution
+error. An identical VLOG-instrumented rerun `11738360` selected a different
+plan set and completed all five updates with a 17,454.15-steps/s post-compile
+median. The failing and passing pair establishes residual autotuner
+nondeterminism; a single successful draw is not a production fix.
+
+Revision `58e26fc969b9b0d42477c7ce8151dc7318be4fd4` therefore replays the passing
+four-GPU cache, SHA-256
+`698e856cae464e5fea93e0b2121fc8de4d9cb691135571ca4b5d56f3259d16a3`,
+stored at
+`/cluster/project/rsl/alesweber/terra_runtime/autotune/terra_trench_align_generalist_partial_v1/rtx4090_cc89_cudnn897_jaxlib0426_45e2dbc_u3501.pbtxt`,
+while retaining level 4 and the narrow denylist for cache misses. This remains
+a runtime-only repair: seed, maps, reset schedule, sampler, observations,
+rewards, gate, parameter tree, bf16 compute, and PPO settings are fixed. The
+same four-GPU allocation checks the exact 512 x 16 x 16 x 64 and
+512 x 8 x 8 x 96 backward filters, validates the checkpoint, and executes five
+real PPO updates. The redundant one-GPU gate was deleted because it cannot
+validate four-GPU execution or scaling.
 
 The recovery source is the immutable native u3,500 checkpoint
 `trench_generalist_partial_a1488abeab2f_s20260823_update_003500.pkl`, SHA-256
@@ -218,8 +223,9 @@ The recovery source is the immutable native u3,500 checkpoint
 with optimizer step 224,000. A native stall-age run has no offline-migration
 receipt, so resume now accepts a checkpoint whose saved training config already
 contains `stall_age_observation=true`; legacy checkpoints still require the
-preparation receipt. The old slow jobs stay live until the exact replacement
-passes the Euler gate.
+preparation receipt. After `11738360` passed, slow jobs `11626135/11626137`
+were cancelled at u4,442. Their latest retained checkpoint is u4,000, SHA-256
+`1a977ffca984458699c6b9ef3940bd3f3815699c876de6b58704e21f31484e7c`.
 
 ## Gates before production
 
@@ -230,24 +236,23 @@ Production submission follows only after all of the following pass:
 2. exact validation of every selected full-start level and every partial
    sidecar;
 3. complete strict-alignment audit of all admitted trench sidecars;
-4. one-GPU Euler compiler/checkpoint validation with no PPO update, followed by
-   four visible RTX 4090 devices, analytic exact-shape bf16 convolution
-   backward checks, and `pmap`/NCCL preflight in the submitted allocation;
+4. four visible RTX 4090 devices, the pinned autotune-cache digest, analytic
+   exact-shape bf16 convolution backward checks, and `pmap`/NCCL preflight in
+   the submitted allocation;
 5. five actual native-resume PPO updates with finite losses, parameters,
    optimizer state, and readable checkpoints;
 6. a post-compile median of at least 12,000 steps/s across updates 3--5; and
 7. a completion receipt with `status=COMPLETE` at absolute target u3,505.
 
-Replacement production resumes u3,500 to an absolute target of 75,000 only
-after the throughput smoke succeeds, followed by an `afterok` native
-continuation to 100,000. The 12,000-steps/s floor leaves the first segment
-inside a 120-hour allocation; the matched expectation is 15,800--16,800
-steps/s. The continuation consumes the phase-1 `FINAL` checkpoint, uses a new
-linked W&B run identity, and validates the absolute update, checkpoint digest,
-partial-bank digest, architecture, and finite model/optimizer state before it
-starts. The u10k partial-reset window is an acquisition aid, not an evaluation
-shortcut; comparisons and checkpoint ranking remain full-start and
-condition-attributed.
+Pinned-cache replay `11740651` must repeat this result before promotion. The
+selected production path then starts fresh at u0 to u75,000, followed by an
+`afterok` native continuation to u100,000. The 12,000-steps/s floor keeps the
+first segment inside a 120-hour allocation; the measured fast expectation is
+15,800--17,500 steps/s. The continuation consumes the phase-1 `FINAL`
+checkpoint and validates the update, cache digest, partial-bank digest,
+architecture, and finite model/optimizer state. The u10k partial-reset window
+is an acquisition aid, not an evaluation shortcut; comparisons and checkpoint
+ranking remain full-start and condition-attributed.
 
 ## Frozen implementation artifacts
 
