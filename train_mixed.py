@@ -1611,10 +1611,6 @@ class MixedAgentTrainConfig:
     # F6: flatten [seq, env] into a single sample axis before per-minibatch
     # permutation. Default False keeps the env-only shuffle (blocked layout).
     flat_minibatch_shuffle: bool = False
-    # Split only the PPO loss network application into fixed microbatches.
-    # Samples, loss reduction, gradient update count, and optimizer clock stay
-    # unchanged. Zero keeps the historical single-application path.
-    ppo_loss_apply_chunk_size: int = 0
     # F7: kickstart distillation. teacher_checkpoint=None disables the feature
     # entirely; everything below is inert while it is None.
     teacher_checkpoint: str | None = None
@@ -1831,22 +1827,6 @@ class MixedAgentTrainConfig:
             )
         if self.num_envs_per_device % self.num_minibatches != 0:
             raise ValueError("num_envs_per_device must be divisible by num_minibatches")
-        self.ppo_loss_apply_chunk_size = int(self.ppo_loss_apply_chunk_size)
-        if self.ppo_loss_apply_chunk_size < 0:
-            raise ValueError("ppo_loss_apply_chunk_size must be nonnegative")
-        if self.ppo_loss_apply_chunk_size > 0:
-            samples_per_minibatch = (
-                self.num_envs_per_device * self.num_steps // self.num_minibatches
-            )
-            if samples_per_minibatch % self.ppo_loss_apply_chunk_size != 0:
-                raise ValueError(
-                    "PPO samples per minibatch must be divisible by "
-                    "ppo_loss_apply_chunk_size"
-                )
-            if self.aux_coef > 0.0:
-                raise ValueError(
-                    "ppo_loss_apply_chunk_size does not support aux_coef > 0"
-                )
         if (
             self.agent_types_override is not None
             and self.action_types_override is not None
@@ -4676,15 +4656,6 @@ if __name__ == "__main__":
             "samples per minibatch, instead of the default env-only shuffle."
         ),
     )
-    parser.add_argument(
-        "--ppo_loss_apply_chunk_size",
-        type=int,
-        default=0,
-        help=(
-            "Microbatch only the PPO loss network application while preserving "
-            "the minibatch loss and one optimizer update. Zero disables it."
-        ),
-    )
     # F7: kickstart distillation.
     parser.add_argument(
         "--teacher_checkpoint",
@@ -5568,7 +5539,6 @@ if __name__ == "__main__":
         critic_hidden_dims=critic_hidden_dims,
         use_value_clip=args.use_value_clip,
         flat_minibatch_shuffle=args.flat_minibatch_shuffle,
-        ppo_loss_apply_chunk_size=args.ppo_loss_apply_chunk_size,
         teacher_checkpoint=args.teacher_checkpoint,
         kickstart_kl_coef=args.kickstart_kl_coef,
         kickstart_kl_anneal_updates=args.kickstart_kl_anneal_updates,

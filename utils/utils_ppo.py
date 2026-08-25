@@ -166,35 +166,8 @@ def policy(
     params,
     obs,
     action_mask=None,
-    apply_chunk_size=0,
 ):
-    apply_chunk_size = int(apply_chunk_size)
-    if apply_chunk_size > 0:
-        batch_size = int(obs[0].shape[0])
-        if batch_size % apply_chunk_size != 0:
-            raise ValueError(
-                "policy batch must be divisible by apply_chunk_size: "
-                f"{batch_size} % {apply_chunk_size}"
-            )
-        num_chunks = batch_size // apply_chunk_size
-        chunked_obs = jax.tree_util.tree_map(
-            lambda value: jnp.reshape(
-                value,
-                (num_chunks, apply_chunk_size, *value.shape[1:]),
-            ),
-            obs,
-        )
-        value, logits_pi = jax.lax.map(
-            lambda one_chunk: apply_fn(params, one_chunk),
-            chunked_obs,
-        )
-        value = jnp.reshape(value, (batch_size, *value.shape[2:]))
-        logits_pi = jnp.reshape(
-            logits_pi,
-            (batch_size, *logits_pi.shape[2:]),
-        )
-    else:
-        value, logits_pi = apply_fn(params, obs)
+    value, logits_pi = apply_fn(params, obs)
     pi = tfp.distributions.Categorical(logits=_masked_logits(logits_pi, action_mask))
     return value, pi
 

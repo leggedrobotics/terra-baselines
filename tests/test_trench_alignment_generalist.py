@@ -166,8 +166,8 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "lax.conv_general_dilated" in sbatch
     assert '--xla_gpu_autotune_level=4' in sbatch
     assert "jax.grad(loss, argnums=1)" in sbatch
-    assert "dtype=jnp.bfloat16" in sbatch
-    assert '(devices, 128, spatial_size, spatial_size, channels)' in sbatch
+    assert "dtype=jnp.float32" in sbatch
+    assert '(devices, 512, spatial_size, spatial_size, channels)' in sbatch
     assert '"xla_gpu_autotune_level=4"' in sbatch
     assert "xla_gpu_enable_cudnn_frontend" not in sbatch
     assert "xla_gpu_deterministic_ops" not in sbatch
@@ -191,7 +191,8 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "--dependency='afterok:$ONE_GPU_JOB_ID'" in submit
     assert 'THROUGHPUT_MINIMUM=3000' in sbatch
     assert 'THROUGHPUT_STRONG_PROVISIONAL=3750' in sbatch
-    assert '--ppo_loss_apply_chunk_size 128' in runner
+    assert '--encoder_compute_dtype float32' in runner
+    assert '--ppo_loss_apply_chunk_size' not in runner
     assert "f84a6cdfcb4aba0ca55abf1a658e4d57" in submit
 
     train_mixed = (root / "train_mixed.py").read_text()

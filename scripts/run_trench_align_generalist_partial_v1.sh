@@ -66,7 +66,7 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --model_size medium \
     --model_core mlp \
     --map_encoder resnet_spatial_8x8_se_sa_xattn \
-    --encoder_compute_dtype bfloat16 \
+    --encoder_compute_dtype float32 \
     --attention_compute_dtype float32 \
     --critic_hidden_dims 512,256 \
     --resnet_stage_channels 24,48,64,96 \
@@ -81,7 +81,6 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --ent_schedule_steps 20000 \
     --no_value_clip \
     --flat_minibatch_shuffle \
-    --ppo_loss_apply_chunk_size 128 \
     --carry_work_observation \
     --stall_age_observation \
     --reward_stage reward_v2 \

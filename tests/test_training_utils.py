@@ -42,63 +42,13 @@ from train_mixed import (
 from utils.helpers import checkpoint_batch_config, replicate_checkpoint_env_config
 from utils.models import get_model_ready
 from utils.pooled_sampler import PooledConditionSampler, SamplerSettings
-from utils.utils_ppo import obs_to_model_input, policy
+from utils.utils_ppo import obs_to_model_input
 
 
 class _PPOConfig(dict):
     """Dict config that supports attribute access for ppo_update_networks."""
 
     __getattr__ = dict.__getitem__
-
-
-def test_policy_loss_microbatch_preserves_outputs_and_parameter_gradient():
-    params = {
-        "trunk": jnp.arange(12, dtype=jnp.float32).reshape(3, 4) / 10.0,
-        "value": jnp.arange(4, dtype=jnp.float32)[:, None] / 7.0,
-        "actor": jnp.arange(20, dtype=jnp.float32).reshape(4, 5) / 11.0,
-    }
-    obs = [jnp.arange(24, dtype=jnp.float32).reshape(8, 3) / 13.0]
-
-    def apply_fn(model_params, model_obs):
-        hidden = jnp.tanh(model_obs[0] @ model_params["trunk"])
-        return hidden @ model_params["value"], hidden @ model_params["actor"]
-
-    def loss(model_params, chunk_size):
-        value, distribution = policy(
-            apply_fn,
-            model_params,
-            obs,
-            apply_chunk_size=chunk_size,
-        )
-        return value.mean() + distribution.logits_parameter().mean()
-
-    value_full, dist_full = policy(apply_fn, params, obs)
-    value_chunked, dist_chunked = policy(
-        apply_fn,
-        params,
-        obs,
-        apply_chunk_size=2,
-    )
-    np.testing.assert_allclose(value_chunked, value_full, rtol=1e-6, atol=1e-6)
-    np.testing.assert_allclose(
-        dist_chunked.logits_parameter(),
-        dist_full.logits_parameter(),
-        rtol=1e-6,
-        atol=1e-6,
-    )
-    full_gradient = jax.grad(loss)(params, 0)
-    chunked_gradient = jax.grad(loss)(params, 2)
-    for full_leaf, chunked_leaf in zip(
-        jtu.tree_leaves(full_gradient),
-        jtu.tree_leaves(chunked_gradient),
-        strict=True,
-    ):
-        np.testing.assert_allclose(
-            chunked_leaf,
-            full_leaf,
-            rtol=1e-6,
-            atol=1e-6,
-        )
 
 
 def test_continuous_sampler_labels_never_receive_fixed_sampling_weights():

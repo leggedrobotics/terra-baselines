@@ -96,10 +96,10 @@ SITE_PACKAGES="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
 export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false
-# Level 0 and deterministic legacy selection both reproduced the slow path;
-# nondeterministic legacy execution still failed. Keep the fast level-4
-# frontend, while the PPO loss runner below uses 128-sample microbatches to
-# avoid the failing 512-sample backward-filter plan.
+# Level 0 and deterministic legacy selection both reproduced the slow path,
+# while the level-4 frontend fails when executing the bf16 convolution graph.
+# Keep normal autotuning and run the convolution trunk in float32; parameters,
+# attention, PPO geometry, and optimizer updates remain unchanged.
 export XLA_FLAGS=--xla_gpu_autotune_level=4
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
@@ -136,9 +136,9 @@ input_gradient = input_grad_step(x, kernel)
 assert input_gradient.shape == x.shape
 assert bool(jnp.all(jnp.isfinite(input_gradient)))
 
-# Exercise the bf16 backward-filter shapes that failed in production, not only
-# a small float32 backward-input path. This runs under the exact XLA
-# configuration used by training and fails before W&B is contacted.
+# Exercise the backward-filter shapes used by the float32 candidate, not only
+# a small backward-input path. This runs under the exact XLA configuration used
+# by training and fails before W&B is contacted.
 kernel_grad_step = jax.pmap(
     jax.grad(loss, argnums=1), axis_name="devices", in_axes=(0, None)
 )
@@ -169,14 +169,14 @@ def expected_ones_kernel_gradient(spatial_size, channels):
     return expected
 
 for spatial_size, channels in ((16, 64), (8, 96)):
-    bf16_x = jnp.ones(
-        (devices, 128, spatial_size, spatial_size, channels),
-        dtype=jnp.bfloat16,
+    conv_x = jnp.ones(
+        (devices, 512, spatial_size, spatial_size, channels),
+        dtype=jnp.float32,
     )
-    bf16_kernel = jnp.ones(
-        (3, 3, channels, channels), dtype=jnp.bfloat16
+    conv_kernel = jnp.ones(
+        (3, 3, channels, channels), dtype=jnp.float32
     )
-    kernel_gradient = kernel_grad_step(bf16_x, bf16_kernel)
+    kernel_gradient = kernel_grad_step(conv_x, conv_kernel)
     assert kernel_gradient.shape == (devices, 3, 3, channels, channels)
     assert bool(jnp.all(jnp.isfinite(kernel_gradient)))
     expected = expected_ones_kernel_gradient(spatial_size, channels)
@@ -185,23 +185,23 @@ for spatial_size, channels in ((16, 64), (8, 96)):
     np.testing.assert_allclose(
         observed,
         expected,
-        rtol=2e-2,
-        atol=2e-2,
+        rtol=1e-4,
+        atol=1e-4,
     )
 
-# The 8x8 flatten-reduction path is the other historically failing bf16
-# backward-filter shape. For an all-ones 1x1 96->32 convolution, every kernel
-# gradient is exactly 2 * input_channels / output_channels = 6.
-reduce_x = jnp.ones((devices, 128, 8, 8, 96), dtype=jnp.bfloat16)
-reduce_kernel = jnp.ones((1, 1, 96, 32), dtype=jnp.bfloat16)
+# The 8x8 flatten-reduction path is the other historically failing shape. For
+# an all-ones 1x1 96->32 convolution, every kernel gradient is exactly
+# 2 * input_channels / output_channels = 6.
+reduce_x = jnp.ones((devices, 512, 8, 8, 96), dtype=jnp.float32)
+reduce_kernel = jnp.ones((1, 1, 96, 32), dtype=jnp.float32)
 reduce_gradient = kernel_grad_step(reduce_x, reduce_kernel)
 assert reduce_gradient.shape == (devices, 1, 1, 96, 32)
 assert bool(jnp.all(jnp.isfinite(reduce_gradient)))
 np.testing.assert_allclose(
     np.asarray(reduce_gradient[0], dtype=np.float32) / devices,
     6.0,
-    rtol=2e-2,
-    atol=2e-2,
+    rtol=1e-4,
+    atol=1e-4,
 )
 PY
 
@@ -339,7 +339,7 @@ config = Config(
     local_map_normalization_bounds=(-16, 16),
     maps_net_normalization_bounds=(-10, 10), model_core="mlp",
     model_size="medium", num_prev_actions=5, critic_hidden_dims=(512, 256),
-    encoder_compute_dtype="bfloat16", attention_compute_dtype="float32",
+    encoder_compute_dtype="float32", attention_compute_dtype="float32",
     map_encoder="resnet_spatial_8x8_se_sa_xattn",
     resnet_stage_channels=(24, 48, 64, 96),
     resnet_blocks_per_stage=(2, 2, 3, 3),
@@ -454,7 +454,8 @@ printf '%s\n' \
     "num_envs_per_device=512" \
     "num_steps=32" \
     "xla_gpu_autotune_level=4" \
-    "ppo_loss_apply_chunk_size=128" \
+    "encoder_compute_dtype=float32" \
+    "attention_compute_dtype=float32" \
     "slurm_job_id=$SLURM_JOB_ID" \
     "wandb_run_id=$WANDB_RUN_ID" > "$RUN_DIR/run_contract.env"
 
