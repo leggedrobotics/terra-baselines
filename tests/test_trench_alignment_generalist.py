@@ -147,6 +147,7 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "EXPECTED_RELAY_TRIPLETS=85" in submit
     assert "EXPECTED_IN_ZONE_TRIPLETS=153" in submit
     assert "EXPECTED_TRENCH_AUDIT_SIDECARS=255" in submit
+    assert "TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT" in submit
     assert "--partition='gpuhe.4h'" in submit
     assert "RUN_ROLE=smoke" in submit
     assert "RUN_ROLE=$RUN_ROLE,TARGET_UPDATE=1" in submit
