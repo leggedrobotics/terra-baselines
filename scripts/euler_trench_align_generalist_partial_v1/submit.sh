@@ -3,8 +3,8 @@
 # SUBMIT=0 is local-only. SUBMIT=stage uploads immutable inputs. SUBMIT=smoke
 # runs one real four-GPU PPO update. SUBMIT=1 is gated on that smoke and submits
 # u0->u75k plus an afterok u75k->u100k native continuation. SUBMIT=recovery
-# resumes the pinned u3500 checkpoint through one- then four-GPU real-update
-# throughput gates before replacement production.
+# resumes the pinned u3500 checkpoint through a five-update four-GPU throughput
+# gate before replacement production.
 set -euo pipefail
 
 SUBMIT="${SUBMIT:-0}"
@@ -35,6 +35,8 @@ SOURCE_REGISTRY_SHA=5bf5b01b53da186f6a5291a4c26df524608cccbf959e3ce098b180c8a6a0
 DISTANCE_SIDECAR_SHA=f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980
 ALGORITHM_DENYLIST="$REPO/scripts/euler_trench_align_generalist_partial_v1/hlo_algorithm_denylist.pbtxt"
 ALGORITHM_DENYLIST_SHA="$(sha256sum "$ALGORITHM_DENYLIST" | awk '{print $1}')"
+AUTOTUNE_CACHE_SHA=698e856cae464e5fea93e0b2121fc8de4d9cb691135571ca4b5d56f3259d16a3
+AUTOTUNE_CACHE=/cluster/project/rsl/alesweber/terra_runtime/autotune/terra_trench_align_generalist_partial_v1/rtx4090_cc89_cudnn897_jaxlib0426_45e2dbc_u3501.pbtxt
 RUNTIME_TERRA_REVISION_PIN=a7204ef568f202f71b2f76943cb8b2f662eb71ff
 RELEASE_ID=terra_v8_v6_constraints_v7_adjacent_train96_v5
 EXPECTED_PARAMETERS=2311869
@@ -203,7 +205,7 @@ printf '%s\n' \
     "curriculum_depths_foundation=$FOUNDATION_CURRICULUM_DEPTH_COUNTS" \
     "curriculum_depths_trench=$TRENCH_CURRICULUM_DEPTH_COUNTS" \
     "sparse_curriculum_depths_allowed=true" \
-    "xla_gpu_autotune_level=4 encoder_compute_dtype=bfloat16 algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA excluded_nodes=$EXCLUDED_NODES" \
+    "xla_gpu_autotune_level=4 encoder_compute_dtype=bfloat16 algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA autotune_cache_sha256=$AUTOTUNE_CACHE_SHA excluded_nodes=$EXCLUDED_NODES" \
     "partial_conditions=$EXPECTED_PARTIAL_CONDITIONS partial_triplets=$EXPECTED_PARTIAL_TRIPLETS" \
     "partial_reset_bank_sha256=$PARTIAL_BANK_SHA" \
     "seed=$SEED targets=smoke:1,phase1:75000,phase2:100000"
@@ -215,6 +217,7 @@ fi
 remote() { ssh -o BatchMode=yes "$REMOTE_HOST" "$@"; }
 test "$(remote 'id -un')" = "$TERRA_EULER_USER"
 remote "test \"\$HOME\" = '$TERRA_EULER_HOME_ROOT' && test -w '$TERRA_EULER_SCRATCH_ROOT' && test -x '$REMOTE_VENV/bin/python'"
+remote "test \"\$(sha256sum '$AUTOTUNE_CACHE' | awk '{print \$1}')\" = '$AUTOTUNE_CACHE_SHA'"
 remote "mkdir -p '$REMOTE_WORK/source' '$REMOTE_WORK/runtime-terra' '$REMOTE_INPUTS' '$REMOTE_RUNS'"
 
 REMOTE_SOURCE="$REMOTE_WORK/source/$BASELINES_REVISION/terra-baselines"
@@ -262,7 +265,7 @@ if [ "$SUBMIT" = stage ]; then
     exit 0
 fi
 
-COMMON_EXPORTS="ALL,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,PROTOCOL_TERRA_REVISION=$RUNTIME_TERRA_REVISION,PROTOCOL_SHA=$PROTOCOL_SHA,SEED=$SEED,VENV=$REMOTE_VENV,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$FULL_BANK_ARCHIVE_SHA,BANK_DATASET_SHA=$FULL_BANK_DATASET_SHA,BANK_DERIVATION_SHA=$FULL_BANK_DERIVATION_SHA,SOURCE_REGISTRY_SHA=$SOURCE_REGISTRY_SHA,DISTANCE_SIDECAR_SHA=$DISTANCE_SIDECAR_SHA,PARTIAL_ARCHIVE=$REMOTE_PARTIAL,PARTIAL_ARCHIVE_SHA=$PARTIAL_BANK_ARCHIVE_SHA,PARTIAL_BANK_SHA=$PARTIAL_BANK_SHA,PARTIAL_ALIGNMENT_AUDIT_SHA=$PARTIAL_ALIGNMENT_AUDIT_SHA,EXPECTED_PARTIAL_CONDITIONS=$EXPECTED_PARTIAL_CONDITIONS,EXPECTED_PARTIAL_TRIPLETS=$EXPECTED_PARTIAL_TRIPLETS,EXPECTED_PARTIAL_SIDECARS=$EXPECTED_PARTIAL_SIDECARS,EXPECTED_RELAY_TRIPLETS=$EXPECTED_RELAY_TRIPLETS,EXPECTED_IN_ZONE_TRIPLETS=$EXPECTED_IN_ZONE_TRIPLETS,EXPECTED_TRENCH_AUDIT_SIDECARS=$EXPECTED_TRENCH_AUDIT_SIDECARS,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,ALGORITHM_DENYLIST_SHA=$ALGORITHM_DENYLIST_SHA"
+COMMON_EXPORTS="ALL,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,PROTOCOL_TERRA_REVISION=$RUNTIME_TERRA_REVISION,PROTOCOL_SHA=$PROTOCOL_SHA,SEED=$SEED,VENV=$REMOTE_VENV,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$FULL_BANK_ARCHIVE_SHA,BANK_DATASET_SHA=$FULL_BANK_DATASET_SHA,BANK_DERIVATION_SHA=$FULL_BANK_DERIVATION_SHA,SOURCE_REGISTRY_SHA=$SOURCE_REGISTRY_SHA,DISTANCE_SIDECAR_SHA=$DISTANCE_SIDECAR_SHA,PARTIAL_ARCHIVE=$REMOTE_PARTIAL,PARTIAL_ARCHIVE_SHA=$PARTIAL_BANK_ARCHIVE_SHA,PARTIAL_BANK_SHA=$PARTIAL_BANK_SHA,PARTIAL_ALIGNMENT_AUDIT_SHA=$PARTIAL_ALIGNMENT_AUDIT_SHA,EXPECTED_PARTIAL_CONDITIONS=$EXPECTED_PARTIAL_CONDITIONS,EXPECTED_PARTIAL_TRIPLETS=$EXPECTED_PARTIAL_TRIPLETS,EXPECTED_PARTIAL_SIDECARS=$EXPECTED_PARTIAL_SIDECARS,EXPECTED_RELAY_TRIPLETS=$EXPECTED_RELAY_TRIPLETS,EXPECTED_IN_ZONE_TRIPLETS=$EXPECTED_IN_ZONE_TRIPLETS,EXPECTED_TRENCH_AUDIT_SIDECARS=$EXPECTED_TRENCH_AUDIT_SIDECARS,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,ALGORITHM_DENYLIST_SHA=$ALGORITHM_DENYLIST_SHA,AUTOTUNE_CACHE=$AUTOTUNE_CACHE,AUTOTUNE_CACHE_SHA=$AUTOTUNE_CACHE_SHA"
 BASE_RUN_NAME="trench_generalist_partial_${BASELINES_REVISION:0:12}_s${SEED}"
 RUN_PARENT="$REMOTE_RUNS/$BASELINES_REVISION/s$SEED"
 
@@ -284,52 +287,41 @@ if [ "$SUBMIT" = recovery ]; then
     test "$RECOVERY_CHECKPOINT_SHA" = "$RECOVERY_CHECKPOINT_SHA_PIN"
 
     RECOVERY_PARENT="$RUN_PARENT/recovery_from_u$RECOVERY_UPDATE_PADDED"
-    RECOVERY_ONE_GPU_DIR="$RECOVERY_PARENT/throughput_1gpu_u$((RECOVERY_UPDATE + 5))"
     RECOVERY_SMOKE_DIR="$RECOVERY_PARENT/throughput_4gpu_u$((RECOVERY_UPDATE + 5))"
     RECOVERY_PHASE1_DIR="$RECOVERY_PARENT/phase1_u75000"
     RECOVERY_PHASE2_DIR="$RECOVERY_PARENT/phase2_u100000"
-    remote "test ! -e '$RECOVERY_PARENT' && mkdir -p '$RUN_PARENT' && mkdir -p '$RECOVERY_ONE_GPU_DIR' '$RECOVERY_SMOKE_DIR' '$RECOVERY_PHASE1_DIR' '$RECOVERY_PHASE2_DIR'"
+    remote "test ! -e '$RECOVERY_PARENT' && mkdir -p '$RUN_PARENT' && mkdir -p '$RECOVERY_SMOKE_DIR' '$RECOVERY_PHASE1_DIR' '$RECOVERY_PHASE2_DIR'"
 
     RECOVERY_COMMON="$COMMON_EXPORTS,RUN_NAME=$PARENT_RUN_NAME,RESUME_UPDATE=$RECOVERY_UPDATE,PARENT_WANDB_RUN_ID=$PARENT_WANDB_RUN_ID"
-    ONE_GPU_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.4h' --time='00:30:00' --gpus='rtx_4090:1' --cpus-per-task='4' --mem-per-cpu='8G' --exclude='$EXCLUDED_NODES' --job-name='terra-trench-throughput-1gpu' --output='$RECOVERY_ONE_GPU_DIR/slurm_%j.out' --export='$RECOVERY_COMMON,EXPECTED_NUM_DEVICES=1,RUN_ROLE=resume_smoke,TARGET_UPDATE=$((RECOVERY_UPDATE + 5)),RESUME_CHECKPOINT=$RECOVERY_CHECKPOINT,RUN_DIR=$RECOVERY_ONE_GPU_DIR'")"
-    ONE_GPU_JOB_ID="${ONE_GPU_RAW%%;*}"
-    [[ "$ONE_GPU_JOB_ID" =~ ^[0-9]+$ ]]
-
-    if ! SMOKE_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.4h' --time='03:45:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='$EXCLUDED_NODES' --dependency='afterok:$ONE_GPU_JOB_ID' --kill-on-invalid-dep=yes --job-name='terra-trench-throughput-4gpu' --output='$RECOVERY_SMOKE_DIR/slurm_%j.out' --export='$RECOVERY_COMMON,EXPECTED_NUM_DEVICES=4,RUN_ROLE=resume_smoke,TARGET_UPDATE=$((RECOVERY_UPDATE + 5)),RESUME_CHECKPOINT=$RECOVERY_CHECKPOINT,RUN_DIR=$RECOVERY_SMOKE_DIR'")"; then
-        remote "scancel -- '$ONE_GPU_JOB_ID'"
-        exit 3
-    fi
+    SMOKE_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.4h' --time='00:30:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='$EXCLUDED_NODES' --job-name='terra-trench-throughput-4gpu' --output='$RECOVERY_SMOKE_DIR/slurm_%j.out' --export='$RECOVERY_COMMON,RUN_ROLE=resume_smoke,TARGET_UPDATE=$((RECOVERY_UPDATE + 5)),RESUME_CHECKPOINT=$RECOVERY_CHECKPOINT,RUN_DIR=$RECOVERY_SMOKE_DIR'")"
     SMOKE_JOB_ID="${SMOKE_RAW%%;*}"
-    [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]] || {
-        remote "scancel -- '$ONE_GPU_JOB_ID'"; exit 3;
-    }
+    [[ "$SMOKE_JOB_ID" =~ ^[0-9]+$ ]]
 
     if ! RECOVERY_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.120h' --time='119:45:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='$EXCLUDED_NODES' --dependency='afterok:$SMOKE_JOB_ID' --kill-on-invalid-dep=yes --job-name='terra-trench-recovery-u75' --output='$RECOVERY_PHASE1_DIR/slurm_%j.out' --export='$RECOVERY_COMMON,RUN_ROLE=recovery,TARGET_UPDATE=75000,RESUME_CHECKPOINT=$RECOVERY_CHECKPOINT,RUN_DIR=$RECOVERY_PHASE1_DIR'")"; then
-        remote "scancel -- '$ONE_GPU_JOB_ID' '$SMOKE_JOB_ID'"
+        remote "scancel -- '$SMOKE_JOB_ID'"
         exit 3
     fi
     RECOVERY_JOB_ID="${RECOVERY_RAW%%;*}"
     [[ "$RECOVERY_JOB_ID" =~ ^[0-9]+$ ]] || {
-        remote "scancel -- '$ONE_GPU_JOB_ID' '$SMOKE_JOB_ID'"; exit 3;
+        remote "scancel -- '$SMOKE_JOB_ID'"; exit 3;
     }
 
     RECOVERY_FINAL="$RECOVERY_PHASE1_DIR/checkpoints/${PARENT_RUN_NAME}_FINAL.pkl"
     RECOVERY_WANDB_RUN_ID="trench_generalist_partial_${BASELINES_REVISION:0:10}_s${SEED}"
     if ! TAIL_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.120h' --time='119:45:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='$EXCLUDED_NODES' --dependency='afterok:$RECOVERY_JOB_ID' --kill-on-invalid-dep=yes --job-name='terra-trench-recovery-u100' --output='$RECOVERY_PHASE2_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,RUN_NAME=$PARENT_RUN_NAME,RESUME_UPDATE=75000,PARENT_WANDB_RUN_ID=$RECOVERY_WANDB_RUN_ID,RUN_ROLE=phase2,TARGET_UPDATE=100000,RESUME_CHECKPOINT=$RECOVERY_FINAL,RUN_DIR=$RECOVERY_PHASE2_DIR'")"; then
-        remote "scancel -- '$ONE_GPU_JOB_ID' '$SMOKE_JOB_ID' '$RECOVERY_JOB_ID'"
+        remote "scancel -- '$SMOKE_JOB_ID' '$RECOVERY_JOB_ID'"
         exit 3
     fi
     TAIL_JOB_ID="${TAIL_RAW%%;*}"
     [[ "$TAIL_JOB_ID" =~ ^[0-9]+$ ]] || {
-        remote "scancel -- '$ONE_GPU_JOB_ID' '$SMOKE_JOB_ID' '$RECOVERY_JOB_ID'"; exit 3;
+        remote "scancel -- '$SMOKE_JOB_ID' '$RECOVERY_JOB_ID'"; exit 3;
     }
 
-        remote "printf '%s\n' 'status=SUBMITTED' 'source_checkpoint=$RECOVERY_CHECKPOINT' 'source_checkpoint_sha256=$RECOVERY_CHECKPOINT_SHA' 'source_update=$RECOVERY_UPDATE' 'source_wandb_run_id=$PARENT_WANDB_RUN_ID' 'throughput_smoke_1gpu_job_id=$ONE_GPU_JOB_ID' 'throughput_smoke_4gpu_job_id=$SMOKE_JOB_ID' 'recovery_job_id=$RECOVERY_JOB_ID' 'tail_job_id=$TAIL_JOB_ID' 'dependencies=throughput_4gpu:afterok:$ONE_GPU_JOB_ID,recovery:afterok:$SMOKE_JOB_ID,tail:afterok:$RECOVERY_JOB_ID' 'terra_baselines_revision=$BASELINES_REVISION' 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' 'xla_gpu_autotune_level=4' 'xla_gpu_algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA' 'encoder_compute_dtype=bfloat16' 'attention_compute_dtype=float32' 'excluded_nodes=$EXCLUDED_NODES' > '$RECOVERY_PARENT/submission.env'"
+        remote "printf '%s\n' 'status=SUBMITTED' 'source_checkpoint=$RECOVERY_CHECKPOINT' 'source_checkpoint_sha256=$RECOVERY_CHECKPOINT_SHA' 'source_update=$RECOVERY_UPDATE' 'source_wandb_run_id=$PARENT_WANDB_RUN_ID' 'throughput_smoke_4gpu_job_id=$SMOKE_JOB_ID' 'recovery_job_id=$RECOVERY_JOB_ID' 'tail_job_id=$TAIL_JOB_ID' 'dependencies=recovery:afterok:$SMOKE_JOB_ID,tail:afterok:$RECOVERY_JOB_ID' 'terra_baselines_revision=$BASELINES_REVISION' 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' 'xla_gpu_autotune_level=4' 'xla_gpu_algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA' 'xla_gpu_autotune_cache_sha256=$AUTOTUNE_CACHE_SHA' 'encoder_compute_dtype=bfloat16' 'attention_compute_dtype=float32' 'excluded_nodes=$EXCLUDED_NODES' > '$RECOVERY_PARENT/submission.env'"
     printf '%s\n' \
         "source_checkpoint=$RECOVERY_CHECKPOINT" \
         "source_checkpoint_sha256=$RECOVERY_CHECKPOINT_SHA" \
-        "throughput_smoke_1gpu_job_id=$ONE_GPU_JOB_ID" \
-        "throughput_smoke_4gpu_job_id=$SMOKE_JOB_ID dependency=afterok:$ONE_GPU_JOB_ID" \
+        "throughput_smoke_4gpu_job_id=$SMOKE_JOB_ID" \
         "recovery_job_id=$RECOVERY_JOB_ID dependency=afterok:$SMOKE_JOB_ID" \
         "tail_job_id=$TAIL_JOB_ID dependency=afterok:$RECOVERY_JOB_ID" \
         "run_parent=$RECOVERY_PARENT"
@@ -341,7 +333,7 @@ if [ "$SUBMIT" = smoke ]; then
     RUN_DIR="$RUN_PARENT/smoke"
     RUN_NAME="${BASE_RUN_NAME}_smoke"
     remote "test ! -e '$RUN_DIR' && mkdir -p '$RUN_PARENT' && mkdir '$RUN_DIR'"
-    JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.4h' --time='03:45:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='$EXCLUDED_NODES' --job-name='terra-trench-partial-smoke' --output='$RUN_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,RUN_ROLE=$RUN_ROLE,TARGET_UPDATE=1,RESUME_CHECKPOINT=none,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME'")"
+    JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.4h' --time='00:30:00' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='$EXCLUDED_NODES' --job-name='terra-trench-partial-smoke' --output='$RUN_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,RUN_ROLE=$RUN_ROLE,TARGET_UPDATE=1,RESUME_CHECKPOINT=none,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME'")"
     JOB_ID="${JOB_RAW%%;*}"
     [[ "$JOB_ID" =~ ^[0-9]+$ ]]
     printf '%s\n' \
@@ -356,7 +348,7 @@ SMOKE_DIR="$RUN_PARENT/smoke"
 SMOKE_NAME="${BASE_RUN_NAME}_smoke"
 remote "test -f '$SMOKE_DIR/completion.env' && grep -qx 'status=COMPLETE' '$SMOKE_DIR/completion.env' && grep -qx 'target_update=1' '$SMOKE_DIR/completion.env'"
 remote "test -f '$SMOKE_DIR/checkpoint_validation.json' && grep -Eq '\"next_update\": 1(,)?$' '$SMOKE_DIR/checkpoint_validation.json' && grep -q '\"model_finite\": true' '$SMOKE_DIR/checkpoint_validation.json' && grep -q '\"optimizer_finite\": true' '$SMOKE_DIR/checkpoint_validation.json'"
-remote "test -f '$SMOKE_DIR/checkpoints/${SMOKE_NAME}_FINAL.pkl' && grep -qx 'terra_baselines_revision=$BASELINES_REVISION' '$SMOKE_DIR/run_contract.env' && grep -qx 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' '$SMOKE_DIR/run_contract.env' && grep -qx 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' '$SMOKE_DIR/run_contract.env'"
+remote "test -f '$SMOKE_DIR/checkpoints/${SMOKE_NAME}_FINAL.pkl' && grep -qx 'terra_baselines_revision=$BASELINES_REVISION' '$SMOKE_DIR/run_contract.env' && grep -qx 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' '$SMOKE_DIR/run_contract.env' && grep -qx 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' '$SMOKE_DIR/run_contract.env' && grep -qx 'xla_gpu_autotune_cache_sha256=$AUTOTUNE_CACHE_SHA' '$SMOKE_DIR/run_contract.env'"
 remote "$REMOTE_VENV/bin/python -c 'import netrc; assert netrc.netrc().authenticators(\"api.wandb.ai\")'"
 
 PHASE1_DIR="$RUN_PARENT/phase1_u75000"
@@ -378,7 +370,7 @@ if [[ ! "$JOB2_ID" =~ ^[0-9]+$ ]]; then
     exit 3
 fi
 
-remote "printf '%s\n' 'phase1_job_id=$JOB1_ID' 'phase2_job_id=$JOB2_ID' 'dependency=afterok:$JOB1_ID' 'phase1_target_update=75000' 'final_target_update=100000' 'terra_baselines_revision=$BASELINES_REVISION' 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' > '$RUN_PARENT/submission.env'"
+remote "printf '%s\n' 'phase1_job_id=$JOB1_ID' 'phase2_job_id=$JOB2_ID' 'dependency=afterok:$JOB1_ID' 'phase1_target_update=75000' 'final_target_update=100000' 'terra_baselines_revision=$BASELINES_REVISION' 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' 'xla_gpu_autotune_level=4' 'xla_gpu_algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA' 'xla_gpu_autotune_cache_sha256=$AUTOTUNE_CACHE_SHA' 'encoder_compute_dtype=bfloat16' > '$RUN_PARENT/submission.env'"
 printf '%s\n' \
     "phase1_job_id=$JOB1_ID" \
     "phase2_job_id=$JOB2_ID" \

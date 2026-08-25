@@ -167,9 +167,8 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "lax.conv_general_dilated" in sbatch
     assert '--xla_gpu_autotune_level=4' in sbatch
     assert "--xla_gpu_algorithm_denylist_path=" in sbatch
+    assert "--xla_gpu_load_autotune_results_from=" in sbatch
     assert "hlo_algorithm_denylist.pbtxt" in sbatch
-    assert "Omitted potentially buggy algorithm eng20" in sbatch
-    assert "engine20_omissions=" in sbatch
     assert "xla_gpu_dump_autotune_results_to=" in sbatch
     assert "jax.grad(loss, argnums=1)" in sbatch
     assert "dtype=jnp.bfloat16" in sbatch
@@ -177,7 +176,7 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert '"xla_gpu_autotune_level=4"' in sbatch
     assert "xla_gpu_enable_cudnn_frontend" not in sbatch
     assert "xla_gpu_deterministic_ops" not in sbatch
-    assert 'EXPECTED_NUM_DEVICES="${EXPECTED_NUM_DEVICES:-4}"' in sbatch
+    assert "EXPECTED_NUM_DEVICES=4" in sbatch
     assert 'test "${#GPU_NAMES[@]}" -eq "$EXPECTED_NUM_DEVICES"' in sbatch
     assert "partial_reset_bank_sha256(partial_root)" in sbatch
     assert 'audit["accepted"] is True' in sbatch
@@ -189,15 +188,14 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "post_compile_median_steps_per_second" in sbatch
     assert 'RUN_ROLE=recovery,TARGET_UPDATE=75000' in submit
     assert "RUN_ROLE=resume_smoke" in submit
-    assert submit.count("RUN_ROLE=resume_smoke") >= 2
-    assert "--gpus='rtx_4090:1'" in submit
+    assert "--gpus='rtx_4090:1'" not in submit
+    assert "ONE_GPU" not in submit
     assert "--time='00:30:00'" in submit
-    assert "--mem-per-cpu='8G'" in submit
-    assert "EXPECTED_NUM_DEVICES=1" in submit
-    assert "--dependency='afterok:$ONE_GPU_JOB_ID'" in submit
-    assert 'THROUGHPUT_MINIMUM=2000' in sbatch
-    assert 'THROUGHPUT_STRONG_PROVISIONAL=3000' in sbatch
-    assert "four-GPU measurement" in sbatch
+    assert "#SBATCH --mem-per-cpu=8G" in sbatch
+    assert 'THROUGHPUT_MINIMUM=12000' in sbatch
+    assert 'THROUGHPUT_STRONG_PROVISIONAL=12000' in sbatch
+    assert "698e856cae464e5fea93e0b2121fc8de" in submit
+    assert "xla_gpu_autotune_cache_sha256" in sbatch
     assert '--encoder_compute_dtype bfloat16' in runner
     assert '--ppo_loss_apply_chunk_size' not in runner
     assert "f84a6cdfcb4aba0ca55abf1a658e4d57" in submit

@@ -21,19 +21,15 @@ for REQUIRED in RUN_ROLE TARGET_UPDATE RESUME_CHECKPOINT RUN_DIR RUN_NAME \
     EXPECTED_PARTIAL_TRIPLETS EXPECTED_PARTIAL_SIDECARS \
     EXPECTED_RELAY_TRIPLETS EXPECTED_IN_ZONE_TRIPLETS \
     EXPECTED_TRENCH_AUDIT_SIDECARS \
-    ALGORITHM_DENYLIST_SHA \
+    ALGORITHM_DENYLIST_SHA AUTOTUNE_CACHE AUTOTUNE_CACHE_SHA \
     SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
 RESUME_UPDATE="${RESUME_UPDATE:-0}"
 PARENT_WANDB_RUN_ID="${PARENT_WANDB_RUN_ID:-none}"
-EXPECTED_NUM_DEVICES="${EXPECTED_NUM_DEVICES:-4}"
+EXPECTED_NUM_DEVICES=4
 [[ "$RESUME_UPDATE" =~ ^[0-9]+$ ]]
-case "$EXPECTED_NUM_DEVICES" in
-    1|4) ;;
-    *) echo "EXPECTED_NUM_DEVICES must be 1 or 4" >&2; exit 2 ;;
-esac
 case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT" in
     smoke:1:none)
         test "$RESUME_UPDATE" -eq 0
@@ -74,6 +70,8 @@ test "$PROTOCOL_TERRA_REVISION" = "$RUNTIME_TERRA_REVISION"
 ALGORITHM_DENYLIST="$BASELINES_ROOT/scripts/euler_trench_align_generalist_partial_v1/hlo_algorithm_denylist.pbtxt"
 test -f "$ALGORITHM_DENYLIST"
 test "$(sha256sum "$ALGORITHM_DENYLIST" | awk '{print $1}')" = "$ALGORITHM_DENYLIST_SHA"
+test -f "$AUTOTUNE_CACHE"
+test "$(sha256sum "$AUTOTUNE_CACHE" | awk '{print $1}')" = "$AUTOTUNE_CACHE_SHA"
 test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_ARCHIVE_SHA"
 test "$(sha256sum "$PARTIAL_ARCHIVE" | awk '{print $1}')" = "$PARTIAL_ARCHIVE_SHA"
 
@@ -101,9 +99,10 @@ export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
 export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false
 # Level 0 and deterministic legacy selection both reproduced the slow path.
-# Keep normal level-4 autotuning and bf16 compute, but disqualify the exact
-# cuDNN engine family that returned wrong results for the B512 PPO shapes.
-export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$ALGORITHM_DENYLIST --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
+# Keep the fast bf16 frontend and replay the exact four-GPU plan selection that
+# completed five native PPO updates. The denylist remains active for cache
+# misses and disqualifies the known-wrong engine family.
+export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$ALGORITHM_DENYLIST --xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
 export TF_CPP_MIN_LOG_LEVEL=0
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
@@ -208,19 +207,6 @@ np.testing.assert_allclose(
     atol=2e-2,
 )
 PY
-
-DENYLIST_OMISSIONS="$((
-    $(grep -cF 'Omitted potentially buggy algorithm eng20' \
-        "$RUN_DIR/slurm_${SLURM_JOB_ID}.out" || true)
-))"
-test "$DENYLIST_OMISSIONS" -ge 3
-printf '%s\n' \
-    "status=PASS" \
-    "algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA" \
-    "engine20_omissions=$DENYLIST_OMISSIONS" \
-    "compute_capability=8.9" \
-    "cudnn_version=8.9.7" \
-    "blas_version=120902" > "$RUN_DIR/algorithm_denylist_validation.env"
 
 PROTOCOL_TERRA_REVISION="$PROTOCOL_TERRA_REVISION" PROTOCOL_SHA="$PROTOCOL_SHA" \
 SOURCE_REGISTRY_SHA="$SOURCE_REGISTRY_SHA" BANK="$BANK" \
@@ -415,7 +401,7 @@ else
 fi
 export WANDB_DIR="$RUN_DIR/wandb"
 if [ "$PARENT_WANDB_RUN_ID" != none ]; then
-    export WANDB_NOTES="native continuation of W&B run $PARENT_WANDB_RUN_ID from absolute update $RESUME_UPDATE; bf16 cuDNN engine-20 recovery candidate"
+    export WANDB_NOTES="native continuation of W&B run $PARENT_WANDB_RUN_ID from absolute update $RESUME_UPDATE; pinned fast bf16 cuDNN plan selection"
 fi
 if [ "$WANDB_MODE" = online ]; then
     "$PYTHON" -c 'import netrc; assert netrc.netrc().authenticators("api.wandb.ai")'
@@ -472,6 +458,7 @@ printf '%s\n' \
     "num_steps=32" \
     "xla_gpu_autotune_level=4" \
     "xla_gpu_algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA" \
+    "xla_gpu_autotune_cache_sha256=$AUTOTUNE_CACHE_SHA" \
     "encoder_compute_dtype=bfloat16" \
     "attention_compute_dtype=float32" \
     "slurm_job_id=$SLURM_JOB_ID" \
@@ -489,13 +476,8 @@ fi
     "$DISTANCE_SIDECAR_SHA" "$RESUME_CHECKPOINT"
 
 if [ "$RUN_ROLE" = resume_smoke ]; then
-    case "$EXPECTED_NUM_DEVICES" in
-        # One GPU is a cheap compiler/runtime screen. Scaling is accepted only
-        # by the four-GPU measurement below, so do not infer its total rate
-        # from a one-GPU sample with different fixed overheads.
-        1) THROUGHPUT_MINIMUM=2000; THROUGHPUT_STRONG_PROVISIONAL=3000 ;;
-        4) THROUGHPUT_MINIMUM=12000; THROUGHPUT_STRONG_PROVISIONAL=12000 ;;
-    esac
+    THROUGHPUT_MINIMUM=12000
+    THROUGHPUT_STRONG_PROVISIONAL=12000
     THROUGHPUT_LOG="$RUN_DIR/slurm_${SLURM_JOB_ID}.out" \
     THROUGHPUT_RECEIPT="$RUN_DIR/throughput_validation.json" \
     THROUGHPUT_MINIMUM="$THROUGHPUT_MINIMUM" \
