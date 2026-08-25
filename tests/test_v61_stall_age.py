@@ -17,7 +17,7 @@ from scripts.prepare_v61_stall_age_continuation import (
 )
 from utils.models import get_model_ready
 from utils.utils_ppo import obs_to_model_input
-from train_mixed import _attach_stall_age_receipt
+from train_mixed import _attach_stall_age_receipt, _stall_age_resume_receipt
 
 
 class Config(dict):
@@ -210,6 +210,27 @@ def test_stall_age_receipt_is_carried_into_continuation_checkpoints():
     assert rolling["stall_age_prepared_continuation"] == receipt
     assert final["stall_age_prepared_continuation"] == receipt
     assert rolling["stall_age_prepared_continuation"] is not receipt
+
+
+def test_native_stall_age_checkpoint_resumes_without_migration_receipt():
+    checkpoint = {
+        "train_config": SimpleNamespace(stall_age_observation=True),
+    }
+    current = SimpleNamespace(stall_age_observation=True)
+    assert _stall_age_resume_receipt(checkpoint, current) is None
+
+
+def test_legacy_stall_age_checkpoint_still_requires_migration_receipt():
+    checkpoint = {
+        "train_config": SimpleNamespace(stall_age_observation=False),
+    }
+    current = SimpleNamespace(stall_age_observation=True)
+    try:
+        _stall_age_resume_receipt(checkpoint, current)
+    except ValueError as error:
+        assert "prepared checkpoint receipt" in str(error)
+    else:
+        raise AssertionError("legacy checkpoint resumed without migration proof")
 
 
 def test_u14_sampler_conversion_keeps_history_and_clears_only_partial_window():

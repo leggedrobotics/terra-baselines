@@ -1094,12 +1094,28 @@ def _validate_r2_resume_checkpoint(
             "R2 resume optimizer clock mismatch: "
             f"step={optimizer_step}, expected={expected_step}"
         )
-    if bool(getattr(config, "stall_age_observation", False)):
-        receipt = checkpoint.get("stall_age_prepared_continuation")
+    _stall_age_resume_receipt(checkpoint, config)
+
+
+def _stall_age_resume_receipt(checkpoint: dict, config) -> dict | None:
+    """Return an optional migration receipt for a native stall-age resume."""
+    if not bool(getattr(config, "stall_age_observation", False)):
+        return None
+
+    receipt = checkpoint.get("stall_age_prepared_continuation")
+    if receipt is not None:
         if not isinstance(receipt, dict) or receipt.get("schema") != (
             "terra_v8_v61_stall_age_v3_prepared_v1"
         ):
-            raise ValueError("stall-age resume requires a prepared checkpoint receipt")
+            raise ValueError("stall-age resume has an invalid preparation receipt")
+        return copy.deepcopy(receipt)
+
+    if bool(_checkpoint_config_value(checkpoint, "stall_age_observation", False)):
+        # A policy trained with stall age from update zero is already native and
+        # has no migration receipt. Only an older checkpoint grown offline needs
+        # the v6.1 preparation proof.
+        return None
+    raise ValueError("stall-age resume requires a prepared checkpoint receipt")
 
 
 def _attach_stall_age_receipt(checkpoint: dict, receipt: dict | None) -> None:
@@ -2768,10 +2784,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 raise KeyError("checkpoint has no 'model' parameters")
             if checkpoint_mode == "resume":
                 _validate_r2_resume_checkpoint(checkpoint, r2_protocol_receipt, config)
-                if config.stall_age_observation:
-                    stall_age_prepared_receipt = copy.deepcopy(
-                        checkpoint["stall_age_prepared_continuation"]
-                    )
+                stall_age_prepared_receipt = _stall_age_resume_receipt(
+                    checkpoint, config
+                )
             _validate_checkpoint_architecture(checkpoint, config)
             if (
                 checkpoint_mode == "resume"

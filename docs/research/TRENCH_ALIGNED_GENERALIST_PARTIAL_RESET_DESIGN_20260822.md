@@ -170,12 +170,46 @@ It wrote no checkpoint and zero W&B training updates; dependent job `11529893`
 was cancelled by `afterok` as designed. This is runtime evidence, not a policy
 or curriculum result.
 
-The recovery freezes `XLA_FLAGS=--xla_gpu_autotune_level=0`, retains the
-existing `eu-g6-064` exclusion, adds `eu-g6-065`, and exercises both observed
-bf16 backward-filter shapes before W&B starts. These runtime-only changes do
-not alter the seed, maps, partial-reset schedule, sampler, observations,
-rewards, gate, model, or PPO configuration. A new exact-revision update-1 smoke
-is mandatory before replacement production jobs may be submitted.
+The first recovery froze `XLA_FLAGS=--xla_gpu_autotune_level=0`, retained the
+existing `eu-g6-064` exclusion, and added `eu-g6-065`. Jobs `11626135` and
+`11626137` then started successfully, but the 2026-08-25 audit measured only
+3,124.6 steps/s in phase 1. The exact same 4 x RTX 4090 transition shape
+sustained 16,771.1 steps/s in C0 `11152229`, 16,503.0 in T1 `11152230`, and
+15,800.5 in GRU control `11364188`. Current first/last-window throughput was
+flat, the GRU control was fast during the same 25% partial-start window, and
+C0/T1 differ by less than 2%; the compiler flag, not partial reset or trench
+alignment, caused the 5.0--5.4x regression.
+
+Pinned jaxlib 0.4.26 [uses XLA
+`4e8e23f16bc925b6f27817de098a8e1e81296bb5`](https://github.com/jax-ml/jax/blob/jaxlib-v0.4.26/third_party/xla/workspace.bzl#L17-L31).
+The failing `cuda_dnn.cc:7927` call is
+[`cudnnBackendExecute` in the cuDNN frontend execution-plan runner](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/stream_executor/cuda/cuda_dnn.cc#L7910-L7937).
+The replacement therefore keeps level-4 profiling, sets
+`--xla_gpu_enable_cudnn_frontend=false` to route convolutions through the
+[legacy cuDNN runners](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/stream_executor/cuda/cuda_dnn.cc#L8215-L8304),
+and sets `--xla_gpu_deterministic_ops=true`. That last flag matters because
+this pinned XLA [retains wrong-result profiles in the candidate
+list](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/service/gpu/stream_executor_util.cc#L601-L613)
+and otherwise [sorts the list by measured
+runtime](https://github.com/openxla/xla/blob/4e8e23f16bc925b6f27817de098a8e1e81296bb5/xla/service/gpu/stream_executor_util.cc#L677-L707).
+This is a runtime-only repair: seed, maps, reset schedule, sampler,
+observations, rewards, gate, parameter tree, bf16 compute, and PPO settings
+remain fixed. The launcher also exercises the exact 512 x 16 x 16 x 64 and
+512 x 8 x 8 x 96 3x3 backward filters plus the 8 x 8 x 96 -> 32 1x1
+flatten-reduction filter, and compares their all-ones gradients with
+closed-form values before W&B is contacted. Recovery submission first resumes
+five updates on one Euler RTX 4090 with the same per-device batch, then runs the
+same five-update canary on four GPUs. Only the four-GPU job enforces the
+12,000-steps/s throughput threshold and unlocks production.
+
+The recovery source is the immutable native u3,500 checkpoint
+`trench_generalist_partial_a1488abeab2f_s20260823_update_003500.pkl`, SHA-256
+`f84a6cdfcb4aba0ca55abf1a658e4d57d21c6dffff9c4c2f61263733cd4f4790`,
+with optimizer step 224,000. A native stall-age run has no offline-migration
+receipt, so resume now accepts a checkpoint whose saved training config already
+contains `stall_age_observation=true`; legacy checkpoints still require the
+preparation receipt. The old slow jobs stay live until the exact replacement
+passes the Euler gate.
 
 ## Gates before production
 
@@ -186,17 +220,20 @@ Production submission follows only after all of the following pass:
 2. exact validation of every selected full-start level and every partial
    sidecar;
 3. complete strict-alignment audit of all admitted trench sidecars;
-4. four visible RTX 4090 devices, convolution backward, and `pmap`/NCCL
+4. one-GPU Euler compiler execution, followed by four visible RTX 4090 devices,
+   analytic exact-shape bf16 convolution backward checks, and `pmap`/NCCL
    preflight in the submitted allocation;
-5. one actual PPO update with finite losses, parameters, optimizer state, and
-   a readable native checkpoint; and
-6. a completion receipt with `status=COMPLETE` and `target_update=1`.
+5. five actual native-resume PPO updates with finite losses, parameters,
+   optimizer state, and readable checkpoints;
+6. a post-compile median of at least 12,000 steps/s across updates 3--5; and
+7. a completion receipt with `status=COMPLETE` at absolute target u3,505.
 
-Production is split at an absolute target of 75,000 updates, followed by an
-`afterok` native continuation to 100,000. At the pilot's observed throughput
-of roughly 720 updates/hour, u75k fits inside a 120-hour allocation while a
-fresh u100k run does not. The continuation consumes the phase-1 `FINAL`
-checkpoint, retains one W&B run identity, and validates the absolute update,
+Replacement production resumes u3,500 to an absolute target of 75,000 only
+after the throughput smoke succeeds, followed by an `afterok` native
+continuation to 100,000. The 12,000-steps/s floor leaves the first segment
+inside a 120-hour allocation; the matched expectation is 15,800--16,800
+steps/s. The continuation consumes the phase-1 `FINAL` checkpoint, uses a new
+linked W&B run identity, and validates the absolute update, checkpoint digest,
 partial-bank digest, architecture, and finite model/optimizer state before it
 starts. The u10k partial-reset window is an acquisition aid, not an evaluation
 shortcut; comparisons and checkpoint ranking remain full-start and

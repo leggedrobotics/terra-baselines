@@ -25,14 +25,43 @@ for REQUIRED in RUN_ROLE TARGET_UPDATE RESUME_CHECKPOINT RUN_DIR RUN_NAME \
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
+RESUME_UPDATE="${RESUME_UPDATE:-0}"
+PARENT_WANDB_RUN_ID="${PARENT_WANDB_RUN_ID:-none}"
+EXPECTED_NUM_DEVICES="${EXPECTED_NUM_DEVICES:-4}"
+[[ "$RESUME_UPDATE" =~ ^[0-9]+$ ]]
+case "$EXPECTED_NUM_DEVICES" in
+    1|4) ;;
+    *) echo "EXPECTED_NUM_DEVICES must be 1 or 4" >&2; exit 2 ;;
+esac
 case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT" in
-    smoke:1:none) WANDB_RESUME=never; WANDB_MODE=offline ;;
-    phase1:75000:none) WANDB_RESUME=never; WANDB_MODE=online ;;
-    phase2:100000:*) WANDB_RESUME=must; WANDB_MODE=online ;;
+    smoke:1:none)
+        test "$RESUME_UPDATE" -eq 0
+        WANDB_RESUME=never; WANDB_MODE=offline
+        ;;
+    phase1:75000:none)
+        test "$RESUME_UPDATE" -eq 0
+        WANDB_RESUME=never; WANDB_MODE=online
+        ;;
+    phase2:100000:*)
+        test "$RESUME_UPDATE" -eq 75000
+        WANDB_RESUME=must; WANDB_MODE=online
+        ;;
+    resume_smoke:*:*)
+        test "$RESUME_CHECKPOINT" != none
+        test "$TARGET_UPDATE" -eq "$((RESUME_UPDATE + 5))"
+        WANDB_RESUME=never; WANDB_MODE=offline
+        ;;
+    recovery:75000:*)
+        test "$RESUME_CHECKPOINT" != none
+        test "$RESUME_UPDATE" -gt 0
+        test "$RESUME_UPDATE" -lt "$TARGET_UPDATE"
+        [[ "$PARENT_WANDB_RUN_ID" =~ ^[A-Za-z0-9_-]+$ ]]
+        WANDB_RESUME=never; WANDB_MODE=online
+        ;;
     *) echo "unsupported role/target/resume contract" >&2; exit 2 ;;
 esac
 case "$RUN_ROLE:${SLURM_JOB_PARTITION:-}" in
-    smoke:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h) ;;
+    smoke:gpuhe.4h|resume_smoke:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h|recovery:gpuhe.120h) ;;
     *) echo "unexpected partition for $RUN_ROLE" >&2; exit 2 ;;
 esac
 
@@ -46,12 +75,10 @@ test "$(sha256sum "$PARTIAL_ARCHIVE" | awk '{print $1}')" = "$PARTIAL_ARCHIVE_SH
 
 mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/wandb"
 test ! -e "$RUN_DIR/completion.env"
-if [ "$RUN_ROLE" = phase2 ]; then
+if [ "$RESUME_CHECKPOINT" != none ]; then
     test -f "$RESUME_CHECKPOINT"
-else
-    test "$RESUME_CHECKPOINT" = none
-    test -z "$(find "$RUN_DIR/checkpoints" -maxdepth 1 -type f -print -quit)"
 fi
+test -z "$(find "$RUN_DIR/checkpoints" -maxdepth 1 -type f -print -quit)"
 
 mkdir -p "$TMPDIR/full" "$TMPDIR/partial"
 tar --zstd -xf "$BANK_ARCHIVE" -C "$TMPDIR/full" bank
@@ -69,24 +96,27 @@ SITE_PACKAGES="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
 export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false
-# The first production allocation failed in bf16 convBackwardFilter autotuning
-# after its exact update-1 smoke succeeded on another 4090 node. Freeze the
-# conservative algorithm path for every smoke and production segment.
-export XLA_FLAGS=--xla_gpu_autotune_level=0
+# Level 0 made this exact recipe about 5x slower. The observed failure is in
+# CudnnExecutionPlanRunner's frontend cudnnBackendExecute path, so retain
+# level-4 profiling while routing convolutions through legacy cuDNN runners.
+# Pinned XLA keeps wrong-result profiles in its candidate list; deterministic
+# selection prevents a faster wrong-result candidate from winning that list.
+export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_enable_cudnn_frontend=false --xla_gpu_deterministic_ops=true"
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export JAX_PLATFORMS=cuda,cpu
 
 mapfile -t GPU_NAMES < <(nvidia-smi --query-gpu=name --format=csv,noheader)
-test "${#GPU_NAMES[@]}" -eq 4
+test "${#GPU_NAMES[@]}" -eq "$EXPECTED_NUM_DEVICES"
 for GPU_NAME in "${GPU_NAMES[@]}"; do
     test "$GPU_NAME" = "NVIDIA GeForce RTX 4090"
 done
-NUM_DEVICES=4 "$PYTHON" - <<'PY'
+NUM_DEVICES="$EXPECTED_NUM_DEVICES" "$PYTHON" - <<'PY'
 import os
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import lax
 
 devices = int(os.environ["NUM_DEVICES"])
@@ -108,11 +138,37 @@ assert input_gradient.shape == x.shape
 assert bool(jnp.all(jnp.isfinite(input_gradient)))
 
 # Exercise the bf16 backward-filter shapes that failed in production, not only
-# a small float32 backward-input path. This runs under the exact XLA_FLAGS used
-# by training and fails before W&B is contacted.
+# a small float32 backward-input path. This runs under the exact frontend-off
+# XLA configuration used by training and fails before W&B is contacted.
 kernel_grad_step = jax.pmap(
     jax.grad(loss, argnums=1), axis_name="devices", in_axes=(0, None)
 )
+def expected_ones_kernel_gradient(spatial_size, channels):
+    """Closed-form gradient for the all-ones SAME convolution below."""
+    valid_rows = np.array(
+        [sum(0 <= row + offset - 1 < spatial_size for offset in range(3))
+         for row in range(spatial_size)],
+        dtype=np.float64,
+    )
+    valid_cols = valid_rows.copy()
+    output = channels * np.outer(valid_rows, valid_cols)
+    expected = np.empty((3, 3), dtype=np.float64)
+    scale = 2.0 / (spatial_size * spatial_size * channels)
+    for kernel_row in range(3):
+        for kernel_col in range(3):
+            rows = [
+                row for row in range(spatial_size)
+                if 0 <= row + kernel_row - 1 < spatial_size
+            ]
+            cols = [
+                col for col in range(spatial_size)
+                if 0 <= col + kernel_col - 1 < spatial_size
+            ]
+            expected[kernel_row, kernel_col] = (
+                scale * output[np.ix_(rows, cols)].sum()
+            )
+    return expected
+
 for spatial_size, channels in ((16, 64), (8, 96)):
     bf16_x = jnp.ones(
         (devices, 512, spatial_size, spatial_size, channels),
@@ -124,6 +180,30 @@ for spatial_size, channels in ((16, 64), (8, 96)):
     kernel_gradient = kernel_grad_step(bf16_x, bf16_kernel)
     assert kernel_gradient.shape == (devices, 3, 3, channels, channels)
     assert bool(jnp.all(jnp.isfinite(kernel_gradient)))
+    expected = expected_ones_kernel_gradient(spatial_size, channels)
+    observed = np.asarray(kernel_gradient[0], dtype=np.float32) / devices
+    observed = observed[:, :, 0, 0]
+    np.testing.assert_allclose(
+        observed,
+        expected,
+        rtol=2e-2,
+        atol=2e-2,
+    )
+
+# The 8x8 flatten-reduction path is the other historically failing bf16
+# backward-filter shape. For an all-ones 1x1 96->32 convolution, every kernel
+# gradient is exactly 2 * input_channels / output_channels = 6.
+reduce_x = jnp.ones((devices, 512, 8, 8, 96), dtype=jnp.bfloat16)
+reduce_kernel = jnp.ones((1, 1, 96, 32), dtype=jnp.bfloat16)
+reduce_gradient = kernel_grad_step(reduce_x, reduce_kernel)
+assert reduce_gradient.shape == (devices, 1, 1, 96, 32)
+assert bool(jnp.all(jnp.isfinite(reduce_gradient)))
+np.testing.assert_allclose(
+    np.asarray(reduce_gradient[0], dtype=np.float32) / devices,
+    6.0,
+    rtol=2e-2,
+    atol=2e-2,
+)
 PY
 
 PROTOCOL_TERRA_REVISION="$PROTOCOL_TERRA_REVISION" PROTOCOL_SHA="$PROTOCOL_SHA" \
@@ -277,8 +357,10 @@ count = sum(int(np.asarray(x).size) for x in jax.tree_util.tree_leaves(params))
 assert count == int(os.environ["EXPECTED_PARAMETERS"]), count
 PY
 
-if [ "$RUN_ROLE" = phase2 ]; then
-    RESUME_CHECKPOINT="$RESUME_CHECKPOINT" PARTIAL_BANK_SHA="$PARTIAL_BANK_SHA" \
+if [ "$RESUME_CHECKPOINT" != none ]; then
+    RESUME_CHECKPOINT_SHA="$(sha256sum "$RESUME_CHECKPOINT" | awk '{print $1}')"
+    RESUME_CHECKPOINT="$RESUME_CHECKPOINT" RESUME_UPDATE="$RESUME_UPDATE" \
+    PARTIAL_BANK_SHA="$PARTIAL_BANK_SHA" \
     EXPECTED_PARAMETERS="$EXPECTED_PARAMETERS" "$PYTHON" - <<'PY'
 import os
 import jax
@@ -287,7 +369,7 @@ from utils.helpers import load_pkl_object, register_checkpoint_config_classes
 
 register_checkpoint_config_classes()
 checkpoint = load_pkl_object(os.environ["RESUME_CHECKPOINT"])
-assert checkpoint["next_update"] == 75000
+assert checkpoint["next_update"] == int(os.environ["RESUME_UPDATE"])
 config = checkpoint["train_config"]
 assert config.partial_reset_bank_sha256 == os.environ["PARTIAL_BANK_SHA"]
 assert config.reward_v2_reset_context_observation is True
@@ -305,11 +387,20 @@ assert all(
     for x in jax.tree_util.tree_leaves(checkpoint["optimizer_state"])
 )
 PY
+else
+    RESUME_CHECKPOINT_SHA=none
 fi
 
 export WANDB_ENTITY WANDB_PROJECT WANDB_RESUME WANDB_MODE
-export WANDB_RUN_ID="trench_generalist_partial_${BASELINES_REVISION:0:10}_s${SEED}"
+if [ "$RUN_ROLE" = resume_smoke ]; then
+    export WANDB_RUN_ID="trench_generalist_partial_recovery_smoke_${SLURM_JOB_ID}"
+else
+    export WANDB_RUN_ID="trench_generalist_partial_${BASELINES_REVISION:0:10}_s${SEED}"
+fi
 export WANDB_DIR="$RUN_DIR/wandb"
+if [ "$PARENT_WANDB_RUN_ID" != none ]; then
+    export WANDB_NOTES="native continuation of W&B run $PARENT_WANDB_RUN_ID from absolute update $RESUME_UPDATE; compiler repair only"
+fi
 if [ "$WANDB_MODE" = online ]; then
     "$PYTHON" -c 'import netrc; assert netrc.netrc().authenticators("api.wandb.ai")'
 fi
@@ -319,9 +410,12 @@ nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
 printf '%s\n' \
     "status=RUNNING" \
     "run_role=$RUN_ROLE" \
+    "parent_wandb_run_id=$PARENT_WANDB_RUN_ID" \
+    "resume_update=$RESUME_UPDATE" \
     "target_update=$TARGET_UPDATE" \
     "final_goal_update=100000" \
     "resume_checkpoint=$RESUME_CHECKPOINT" \
+    "resume_checkpoint_sha256=$RESUME_CHECKPOINT_SHA" \
     "terra_baselines_revision=$BASELINES_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
     "environment_protocol_sha256=$PROTOCOL_SHA" \
@@ -357,16 +451,18 @@ printf '%s\n' \
     "stall_age_observation=true" \
     "sampler=continuous_banded_v3" \
     "model_parameter_count=$EXPECTED_PARAMETERS" \
-    "num_devices=4" \
+    "num_devices=$EXPECTED_NUM_DEVICES" \
     "num_envs_per_device=512" \
     "num_steps=32" \
-    "xla_flags=$XLA_FLAGS" \
+    "xla_gpu_autotune_level=4" \
+    "xla_gpu_enable_cudnn_frontend=false" \
+    "xla_gpu_deterministic_ops=true" \
     "slurm_job_id=$SLURM_JOB_ID" \
     "wandb_run_id=$WANDB_RUN_ID" > "$RUN_DIR/run_contract.env"
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PYTHON_BIN="$PYTHON" MACHINE=euler
-export NUM_DEVICES=4 NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 NUM_MINIBATCHES=32
-if [ "$RUN_ROLE" = smoke ]; then
+export NUM_DEVICES="$EXPECTED_NUM_DEVICES" NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 NUM_MINIBATCHES=32
+if [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = resume_smoke ]; then
     export CHECKPOINT_INTERVAL=1 LOG_EVAL_INTERVAL=0
 else
     export CHECKPOINT_INTERVAL=500 LOG_EVAL_INTERVAL=100
@@ -374,6 +470,39 @@ fi
 "$BASELINES_ROOT/scripts/run_trench_align_generalist_partial_v1.sh" \
     "$BANK" "$PARTIAL_BANK" "$RUN_NAME" "$TARGET_UPDATE" "$RUN_DIR" \
     "$DISTANCE_SIDECAR_SHA" "$RESUME_CHECKPOINT"
+
+if [ "$RUN_ROLE" = resume_smoke ] && [ "$EXPECTED_NUM_DEVICES" -eq 4 ]; then
+    THROUGHPUT_LOG="$RUN_DIR/slurm_${SLURM_JOB_ID}.out" \
+    THROUGHPUT_RECEIPT="$RUN_DIR/throughput_validation.json" "$PYTHON" - <<'PY'
+import json
+import os
+import re
+import statistics
+
+text = open(os.environ["THROUGHPUT_LOG"], errors="replace").read()
+values = [
+    float(value)
+    for value in re.findall(r"Steps/s:\s*([0-9]+(?:\.[0-9]+)?)", text)
+]
+steady = values[2:]
+if len(steady) < 3:
+    raise RuntimeError(f"expected at least three post-compile throughput samples: {values}")
+median = statistics.median(steady)
+receipt = {
+    "schema": "terra_throughput_smoke_v1",
+    "all_steps_per_second": values,
+    "post_compile_steps_per_second": steady,
+    "post_compile_median_steps_per_second": median,
+    "minimum_required_steps_per_second": 12000.0,
+    "passed": median >= 12000.0,
+}
+open(os.environ["THROUGHPUT_RECEIPT"], "w").write(
+    json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+)
+if not receipt["passed"]:
+    raise RuntimeError(f"throughput smoke failed: median={median:.1f} steps/s")
+PY
+fi
 
 FINAL_CHECKPOINT="$RUN_DIR/checkpoints/${RUN_NAME}_FINAL.pkl"
 test -f "$FINAL_CHECKPOINT"

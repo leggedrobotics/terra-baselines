@@ -176,14 +176,29 @@ default for this recipe only. The frozen full/partial bank identities and
 complete design are recorded in
 `research/TRENCH_ALIGNED_GENERALIST_PARTIAL_RESET_DESIGN_20260822.md`.
 
-Smoke `11529665` completed a real finite update 1, but initial production job
-`11529891` failed before update 1 on `eu-g6-065` with a four-replica bf16
-`CUDNN_STATUS_EXECUTION_FAILED`; it produced no checkpoint or W&B training
-history, and `afterok` correctly cancelled `11529893`. The recovery changes
-only the runtime: exact `XLA_FLAGS=--xla_gpu_autotune_level=0`, a bf16
-backward-filter preflight at the observed shapes, and exclusion of
-`eu-g6-064,eu-g6-065`. A fresh exact-revision update-1 smoke remains the gate
-for replacement u75k/u100k jobs. No behavioral claim exists yet.
+Recovery phase 1 job `11626135` is running on `eu-g6-044`; phase 2 job
+`11626137` is pending on its `afterok` dependency. At the 2026-08-25 throughput
+audit it had crossed u3,700 with finite checkpoints but sustained only
+3,124.6 steps/s. Matched 4 x RTX 4090 controls with the same 65,536
+transitions/update sustained 16,771.1 steps/s (C0 `11152229`), 16,503.0
+(T1 `11152230`), and 15,800.5 (GRU control `11364188`). The 5.0--5.4x
+regression is therefore real; partial resets and the strict trench gate are
+not its cause.
+
+The regression was introduced by the recovery's global
+`--xla_gpu_autotune_level=0`. The replacement keeps level-4 profiling, routes
+convolutions around the failing cuDNN frontend execution-plan path, and pins
+deterministic algorithm selection so pinned XLA cannot promote a faster
+wrong-result legacy candidate. It also fixes native stall-age checkpoint
+resume, checks all three exact bf16 backward-filter shapes against closed-form
+gradients, and requires five resumed updates with a post-compile median of at
+least 12,000 steps/s before production can start. A one-GPU Euler compiler
+canary using the same per-device batch and convolution shapes runs first; it is
+only a fast correctness gate, not the aggregate-throughput measurement, and
+its checkpoint is discarded. The pinned recovery source is u3,500 checkpoint
+SHA-256 `f84a6cdfcb4aba0ca55abf1a658e4d57d21c6dffff9c4c2f61263733cd4f4790`.
+The slow jobs remain live until the replacement passes on Euler; no new policy
+or curriculum claim follows from this compiler repair.
 
 ## Current issue checklist
 

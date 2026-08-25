@@ -164,18 +164,33 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
 
     assert "len(jax.devices()) == devices" in sbatch
     assert "lax.conv_general_dilated" in sbatch
-    assert "export XLA_FLAGS=--xla_gpu_autotune_level=0" in sbatch
+    assert (
+        'export XLA_FLAGS="--xla_gpu_autotune_level=4 '
+        '--xla_gpu_enable_cudnn_frontend=false '
+        '--xla_gpu_deterministic_ops=true"' in sbatch
+    )
     assert "jax.grad(loss, argnums=1)" in sbatch
     assert "dtype=jnp.bfloat16" in sbatch
     assert '(devices, 512, spatial_size, spatial_size, channels)' in sbatch
-    assert '"xla_flags=$XLA_FLAGS"' in sbatch
+    assert '"xla_gpu_autotune_level=4"' in sbatch
+    assert '"xla_gpu_enable_cudnn_frontend=false"' in sbatch
+    assert '"xla_gpu_deterministic_ops=true"' in sbatch
+    assert 'EXPECTED_NUM_DEVICES="${EXPECTED_NUM_DEVICES:-4}"' in sbatch
+    assert 'test "${#GPU_NAMES[@]}" -eq "$EXPECTED_NUM_DEVICES"' in sbatch
     assert "partial_reset_bank_sha256(partial_root)" in sbatch
     assert 'audit["accepted"] is True' in sbatch
-    assert 'checkpoint["next_update"] == 75000' in sbatch
+    assert 'checkpoint["next_update"] == int(os.environ["RESUME_UPDATE"])' in sbatch
     assert 'checkpoint["next_update"] == int(os.environ["TARGET_UPDATE"])' in sbatch
     assert "optimizer_finite" in sbatch
     assert "allow_sparse_depths=True" in sbatch
     assert '"curriculum_depths_trench=1,0,11"' in sbatch
+    assert "post_compile_median_steps_per_second" in sbatch
+    assert 'RUN_ROLE=recovery,TARGET_UPDATE=75000' in submit
+    assert "RUN_ROLE=resume_smoke" in submit
+    assert "--gpus='rtx_4090:1'" in submit
+    assert "EXPECTED_NUM_DEVICES=1" in submit
+    assert "--dependency='afterok:$ONE_GPU_JOB_ID'" in submit
+    assert "f84a6cdfcb4aba0ca55abf1a658e4d57" in submit
 
     train_mixed = (root / "train_mixed.py").read_text()
     assert '== "trench_aligned_37_v1"' in train_mixed
