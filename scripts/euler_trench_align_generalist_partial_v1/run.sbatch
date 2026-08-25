@@ -96,11 +96,11 @@ SITE_PACKAGES="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
 export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false
-# Level 0 and deterministic legacy selection both reproduced the slow path.
-# The level-4 frontend later failed in the full compiled PPO graph on both an
-# exclusive RTX 3060 and Euler RTX 4090 despite passing isolated shape checks.
-# Keep normal autotuning, but route convolutions through legacy cuDNN only.
-export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_enable_cudnn_frontend=false"
+# Level 0 and deterministic legacy selection both reproduced the slow path;
+# nondeterministic legacy execution still failed. Keep the fast level-4
+# frontend, while the PPO loss runner below uses 128-sample microbatches to
+# avoid the failing 512-sample backward-filter plan.
+export XLA_FLAGS=--xla_gpu_autotune_level=4
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -170,7 +170,7 @@ def expected_ones_kernel_gradient(spatial_size, channels):
 
 for spatial_size, channels in ((16, 64), (8, 96)):
     bf16_x = jnp.ones(
-        (devices, 512, spatial_size, spatial_size, channels),
+        (devices, 128, spatial_size, spatial_size, channels),
         dtype=jnp.bfloat16,
     )
     bf16_kernel = jnp.ones(
@@ -192,7 +192,7 @@ for spatial_size, channels in ((16, 64), (8, 96)):
 # The 8x8 flatten-reduction path is the other historically failing bf16
 # backward-filter shape. For an all-ones 1x1 96->32 convolution, every kernel
 # gradient is exactly 2 * input_channels / output_channels = 6.
-reduce_x = jnp.ones((devices, 512, 8, 8, 96), dtype=jnp.bfloat16)
+reduce_x = jnp.ones((devices, 128, 8, 8, 96), dtype=jnp.bfloat16)
 reduce_kernel = jnp.ones((1, 1, 96, 32), dtype=jnp.bfloat16)
 reduce_gradient = kernel_grad_step(reduce_x, reduce_kernel)
 assert reduce_gradient.shape == (devices, 1, 1, 96, 32)
@@ -454,7 +454,7 @@ printf '%s\n' \
     "num_envs_per_device=512" \
     "num_steps=32" \
     "xla_gpu_autotune_level=4" \
-    "xla_gpu_enable_cudnn_frontend=false" \
+    "ppo_loss_apply_chunk_size=128" \
     "slurm_job_id=$SLURM_JOB_ID" \
     "wandb_run_id=$WANDB_RUN_ID" > "$RUN_DIR/run_contract.env"
 

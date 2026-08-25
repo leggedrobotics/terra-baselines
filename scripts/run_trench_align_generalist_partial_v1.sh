@@ -81,6 +81,7 @@ exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
     --ent_schedule_steps 20000 \
     --no_value_clip \
     --flat_minibatch_shuffle \
+    --ppo_loss_apply_chunk_size 128 \
     --carry_work_observation \
     --stall_age_observation \
     --reward_stage reward_v2 \

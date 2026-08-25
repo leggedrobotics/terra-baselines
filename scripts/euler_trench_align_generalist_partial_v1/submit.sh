@@ -201,7 +201,7 @@ printf '%s\n' \
     "curriculum_depths_foundation=$FOUNDATION_CURRICULUM_DEPTH_COUNTS" \
     "curriculum_depths_trench=$TRENCH_CURRICULUM_DEPTH_COUNTS" \
     "sparse_curriculum_depths_allowed=true" \
-    "xla_gpu_autotune_level=4 xla_gpu_enable_cudnn_frontend=false excluded_nodes=$EXCLUDED_NODES" \
+    "xla_gpu_autotune_level=4 ppo_loss_apply_chunk_size=128 excluded_nodes=$EXCLUDED_NODES" \
     "partial_conditions=$EXPECTED_PARTIAL_CONDITIONS partial_triplets=$EXPECTED_PARTIAL_TRIPLETS" \
     "partial_reset_bank_sha256=$PARTIAL_BANK_SHA" \
     "seed=$SEED targets=smoke:1,phase1:75000,phase2:100000"
@@ -322,7 +322,7 @@ if [ "$SUBMIT" = recovery ]; then
         remote "scancel -- '$ONE_GPU_JOB_ID' '$SMOKE_JOB_ID' '$RECOVERY_JOB_ID'"; exit 3;
     }
 
-        remote "printf '%s\n' 'status=SUBMITTED' 'source_checkpoint=$RECOVERY_CHECKPOINT' 'source_checkpoint_sha256=$RECOVERY_CHECKPOINT_SHA' 'source_update=$RECOVERY_UPDATE' 'source_wandb_run_id=$PARENT_WANDB_RUN_ID' 'throughput_smoke_1gpu_job_id=$ONE_GPU_JOB_ID' 'throughput_smoke_4gpu_job_id=$SMOKE_JOB_ID' 'recovery_job_id=$RECOVERY_JOB_ID' 'tail_job_id=$TAIL_JOB_ID' 'dependencies=throughput_4gpu:afterok:$ONE_GPU_JOB_ID,recovery:afterok:$SMOKE_JOB_ID,tail:afterok:$RECOVERY_JOB_ID' 'terra_baselines_revision=$BASELINES_REVISION' 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' 'xla_gpu_autotune_level=4' 'xla_gpu_enable_cudnn_frontend=false' 'excluded_nodes=$EXCLUDED_NODES' > '$RECOVERY_PARENT/submission.env'"
+        remote "printf '%s\n' 'status=SUBMITTED' 'source_checkpoint=$RECOVERY_CHECKPOINT' 'source_checkpoint_sha256=$RECOVERY_CHECKPOINT_SHA' 'source_update=$RECOVERY_UPDATE' 'source_wandb_run_id=$PARENT_WANDB_RUN_ID' 'throughput_smoke_1gpu_job_id=$ONE_GPU_JOB_ID' 'throughput_smoke_4gpu_job_id=$SMOKE_JOB_ID' 'recovery_job_id=$RECOVERY_JOB_ID' 'tail_job_id=$TAIL_JOB_ID' 'dependencies=throughput_4gpu:afterok:$ONE_GPU_JOB_ID,recovery:afterok:$SMOKE_JOB_ID,tail:afterok:$RECOVERY_JOB_ID' 'terra_baselines_revision=$BASELINES_REVISION' 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' 'xla_gpu_autotune_level=4' 'ppo_loss_apply_chunk_size=128' 'excluded_nodes=$EXCLUDED_NODES' > '$RECOVERY_PARENT/submission.env'"
     printf '%s\n' \
         "source_checkpoint=$RECOVERY_CHECKPOINT" \
         "source_checkpoint_sha256=$RECOVERY_CHECKPOINT_SHA" \

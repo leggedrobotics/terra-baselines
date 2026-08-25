@@ -345,6 +345,13 @@ def ppo_update_networks(
     # Python-static so the traced loss graph of existing runs is unchanged.
     aux_coef = float(_config_option(config, "aux_coef", 0.0))
     action_logit_masking = bool(_config_option(config, "action_logit_masking", False))
+    ppo_loss_apply_chunk_size = int(
+        _config_option(config, "ppo_loss_apply_chunk_size", 0)
+    )
+    if ppo_loss_apply_chunk_size > 0 and aux_coef > 0.0:
+        raise ValueError(
+            "ppo_loss_apply_chunk_size does not support the auxiliary decoder"
+        )
 
     raw_advantages_finite = _finite_fraction(advantages)
     raw_targets_finite = _finite_fraction(targets)
@@ -406,7 +413,11 @@ def ppo_update_networks(
             )
         else:
             value, dist = policy(
-                train_state.apply_fn, params, obs, action_mask=loss_action_mask
+                train_state.apply_fn,
+                params,
+                obs,
+                action_mask=loss_action_mask,
+                apply_chunk_size=ppo_loss_apply_chunk_size,
             )
             aux_loss = jnp.zeros((), dtype=jnp.float32)
         value = value[:, 0]
