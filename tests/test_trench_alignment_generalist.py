@@ -164,12 +164,12 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
 
     assert "len(jax.devices()) == devices" in sbatch
     assert "lax.conv_general_dilated" in sbatch
-    assert "export XLA_FLAGS=--xla_gpu_autotune_level=4" in sbatch
+    assert '--xla_gpu_autotune_level=4' in sbatch
     assert "jax.grad(loss, argnums=1)" in sbatch
     assert "dtype=jnp.bfloat16" in sbatch
     assert '(devices, 512, spatial_size, spatial_size, channels)' in sbatch
     assert '"xla_gpu_autotune_level=4"' in sbatch
-    assert "xla_gpu_enable_cudnn_frontend" not in sbatch
+    assert '--xla_gpu_enable_cudnn_frontend=false' in sbatch
     assert "xla_gpu_deterministic_ops" not in sbatch
     assert 'EXPECTED_NUM_DEVICES="${EXPECTED_NUM_DEVICES:-4}"' in sbatch
     assert 'test "${#GPU_NAMES[@]}" -eq "$EXPECTED_NUM_DEVICES"' in sbatch
@@ -183,13 +183,14 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "post_compile_median_steps_per_second" in sbatch
     assert 'RUN_ROLE=recovery,TARGET_UPDATE=75000' in submit
     assert "RUN_ROLE=resume_smoke" in submit
-    assert "RUN_ROLE=compiler_smoke" in submit
+    assert submit.count("RUN_ROLE=resume_smoke") >= 2
     assert "--gpus='rtx_4090:1'" in submit
-    assert "--time='00:10:00'" in submit
+    assert "--time='00:30:00'" in submit
     assert "--mem-per-cpu='8G'" in submit
     assert "EXPECTED_NUM_DEVICES=1" in submit
     assert "--dependency='afterok:$ONE_GPU_JOB_ID'" in submit
-    assert "TRENCH_GENERALIST_PARTIAL_COMPILER_SMOKE_COMPLETE" in sbatch
+    assert 'THROUGHPUT_MINIMUM=3000' in sbatch
+    assert 'THROUGHPUT_STRONG_PROVISIONAL=3750' in sbatch
     assert "f84a6cdfcb4aba0ca55abf1a658e4d57" in submit
 
     train_mixed = (root / "train_mixed.py").read_text()

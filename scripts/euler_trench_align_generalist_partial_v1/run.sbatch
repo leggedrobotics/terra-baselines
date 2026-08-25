@@ -51,12 +51,6 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT" in
         test "$TARGET_UPDATE" -eq "$((RESUME_UPDATE + 5))"
         WANDB_RESUME=never; WANDB_MODE=offline
         ;;
-    compiler_smoke:*:*)
-        test "$RESUME_CHECKPOINT" != none
-        test "$TARGET_UPDATE" -eq "$RESUME_UPDATE"
-        test "$EXPECTED_NUM_DEVICES" -eq 1
-        WANDB_RESUME=never; WANDB_MODE=offline
-        ;;
     recovery:75000:*)
         test "$RESUME_CHECKPOINT" != none
         test "$RESUME_UPDATE" -gt 0
@@ -67,7 +61,7 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT" in
     *) echo "unsupported role/target/resume contract" >&2; exit 2 ;;
 esac
 case "$RUN_ROLE:${SLURM_JOB_PARTITION:-}" in
-    smoke:gpuhe.4h|resume_smoke:gpuhe.4h|compiler_smoke:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h|recovery:gpuhe.120h) ;;
+    smoke:gpuhe.4h|resume_smoke:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h|recovery:gpuhe.120h) ;;
     *) echo "unexpected partition for $RUN_ROLE" >&2; exit 2 ;;
 esac
 
@@ -103,10 +97,10 @@ export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
 export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false
 # Level 0 and deterministic legacy selection both reproduced the slow path.
-# The default level-4 frontend completed a full PPO update on eu-g6-045, while
-# the observed production failure was on now-excluded eu-g6-065. Exact-shape
-# analytic checks reject a newly bad allocation before W&B or training starts.
-export XLA_FLAGS=--xla_gpu_autotune_level=4
+# The level-4 frontend later failed in the full compiled PPO graph on both an
+# exclusive RTX 3060 and Euler RTX 4090 despite passing isolated shape checks.
+# Keep normal autotuning, but route convolutions through legacy cuDNN only.
+export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_enable_cudnn_frontend=false"
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -397,7 +391,7 @@ else
 fi
 
 export WANDB_ENTITY WANDB_PROJECT WANDB_RESUME WANDB_MODE
-if [ "$RUN_ROLE" = resume_smoke ] || [ "$RUN_ROLE" = compiler_smoke ]; then
+if [ "$RUN_ROLE" = resume_smoke ]; then
     export WANDB_RUN_ID="trench_generalist_partial_recovery_smoke_${SLURM_JOB_ID}"
 else
     export WANDB_RUN_ID="trench_generalist_partial_${BASELINES_REVISION:0:10}_s${SEED}"
@@ -460,19 +454,9 @@ printf '%s\n' \
     "num_envs_per_device=512" \
     "num_steps=32" \
     "xla_gpu_autotune_level=4" \
+    "xla_gpu_enable_cudnn_frontend=false" \
     "slurm_job_id=$SLURM_JOB_ID" \
     "wandb_run_id=$WANDB_RUN_ID" > "$RUN_DIR/run_contract.env"
-
-if [ "$RUN_ROLE" = compiler_smoke ]; then
-    printf '%s\n' \
-        "status=COMPLETE" \
-        "validated_update=$RESUME_UPDATE" \
-        "validated_checkpoint=$RESUME_CHECKPOINT" \
-        "validated_checkpoint_sha256=$RESUME_CHECKPOINT_SHA" \
-        "num_devices=$EXPECTED_NUM_DEVICES" > "$RUN_DIR/completion.env"
-    echo "TRENCH_GENERALIST_PARTIAL_COMPILER_SMOKE_COMPLETE"
-    exit 0
-fi
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PYTHON_BIN="$PYTHON" MACHINE=euler
 export NUM_DEVICES="$EXPECTED_NUM_DEVICES" NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 NUM_MINIBATCHES=32
@@ -485,9 +469,16 @@ fi
     "$BANK" "$PARTIAL_BANK" "$RUN_NAME" "$TARGET_UPDATE" "$RUN_DIR" \
     "$DISTANCE_SIDECAR_SHA" "$RESUME_CHECKPOINT"
 
-if [ "$RUN_ROLE" = resume_smoke ] && [ "$EXPECTED_NUM_DEVICES" -eq 4 ]; then
+if [ "$RUN_ROLE" = resume_smoke ]; then
+    case "$EXPECTED_NUM_DEVICES" in
+        1) THROUGHPUT_MINIMUM=3000; THROUGHPUT_STRONG_PROVISIONAL=3750 ;;
+        4) THROUGHPUT_MINIMUM=12000; THROUGHPUT_STRONG_PROVISIONAL=12000 ;;
+    esac
     THROUGHPUT_LOG="$RUN_DIR/slurm_${SLURM_JOB_ID}.out" \
-    THROUGHPUT_RECEIPT="$RUN_DIR/throughput_validation.json" "$PYTHON" - <<'PY'
+    THROUGHPUT_RECEIPT="$RUN_DIR/throughput_validation.json" \
+    THROUGHPUT_MINIMUM="$THROUGHPUT_MINIMUM" \
+    THROUGHPUT_STRONG_PROVISIONAL="$THROUGHPUT_STRONG_PROVISIONAL" \
+    THROUGHPUT_NUM_DEVICES="$EXPECTED_NUM_DEVICES" "$PYTHON" - <<'PY'
 import json
 import os
 import re
@@ -502,13 +493,18 @@ steady = values[2:]
 if len(steady) < 3:
     raise RuntimeError(f"expected at least three post-compile throughput samples: {values}")
 median = statistics.median(steady)
+minimum = float(os.environ["THROUGHPUT_MINIMUM"])
+strong_provisional = float(os.environ["THROUGHPUT_STRONG_PROVISIONAL"])
 receipt = {
     "schema": "terra_throughput_smoke_v1",
+    "num_devices": int(os.environ["THROUGHPUT_NUM_DEVICES"]),
     "all_steps_per_second": values,
     "post_compile_steps_per_second": steady,
     "post_compile_median_steps_per_second": median,
-    "minimum_required_steps_per_second": 12000.0,
-    "passed": median >= 12000.0,
+    "minimum_required_steps_per_second": minimum,
+    "strong_provisional_steps_per_second": strong_provisional,
+    "strong_provisional_passed": median >= strong_provisional,
+    "passed": median >= minimum,
 }
 open(os.environ["THROUGHPUT_RECEIPT"], "w").write(
     json.dumps(receipt, indent=2, sort_keys=True) + "\n"
