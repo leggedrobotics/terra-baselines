@@ -51,6 +51,12 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT" in
         test "$TARGET_UPDATE" -eq "$((RESUME_UPDATE + 5))"
         WANDB_RESUME=never; WANDB_MODE=offline
         ;;
+    compiler_smoke:*:*)
+        test "$RESUME_CHECKPOINT" != none
+        test "$TARGET_UPDATE" -eq "$RESUME_UPDATE"
+        test "$EXPECTED_NUM_DEVICES" -eq 1
+        WANDB_RESUME=never; WANDB_MODE=offline
+        ;;
     recovery:75000:*)
         test "$RESUME_CHECKPOINT" != none
         test "$RESUME_UPDATE" -gt 0
@@ -61,7 +67,7 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT" in
     *) echo "unsupported role/target/resume contract" >&2; exit 2 ;;
 esac
 case "$RUN_ROLE:${SLURM_JOB_PARTITION:-}" in
-    smoke:gpuhe.4h|resume_smoke:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h|recovery:gpuhe.120h) ;;
+    smoke:gpuhe.4h|resume_smoke:gpuhe.4h|compiler_smoke:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h|recovery:gpuhe.120h) ;;
     *) echo "unexpected partition for $RUN_ROLE" >&2; exit 2 ;;
 esac
 
@@ -391,7 +397,7 @@ else
 fi
 
 export WANDB_ENTITY WANDB_PROJECT WANDB_RESUME WANDB_MODE
-if [ "$RUN_ROLE" = resume_smoke ]; then
+if [ "$RUN_ROLE" = resume_smoke ] || [ "$RUN_ROLE" = compiler_smoke ]; then
     export WANDB_RUN_ID="trench_generalist_partial_recovery_smoke_${SLURM_JOB_ID}"
 else
     export WANDB_RUN_ID="trench_generalist_partial_${BASELINES_REVISION:0:10}_s${SEED}"
@@ -456,6 +462,17 @@ printf '%s\n' \
     "xla_gpu_autotune_level=4" \
     "slurm_job_id=$SLURM_JOB_ID" \
     "wandb_run_id=$WANDB_RUN_ID" > "$RUN_DIR/run_contract.env"
+
+if [ "$RUN_ROLE" = compiler_smoke ]; then
+    printf '%s\n' \
+        "status=COMPLETE" \
+        "validated_update=$RESUME_UPDATE" \
+        "validated_checkpoint=$RESUME_CHECKPOINT" \
+        "validated_checkpoint_sha256=$RESUME_CHECKPOINT_SHA" \
+        "num_devices=$EXPECTED_NUM_DEVICES" > "$RUN_DIR/completion.env"
+    echo "TRENCH_GENERALIST_PARTIAL_COMPILER_SMOKE_COMPLETE"
+    exit 0
+fi
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PYTHON_BIN="$PYTHON" MACHINE=euler
 export NUM_DEVICES="$EXPECTED_NUM_DEVICES" NUM_ENVS_PER_DEVICE=512 NUM_STEPS=32 NUM_MINIBATCHES=32

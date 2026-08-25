@@ -183,11 +183,13 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "post_compile_median_steps_per_second" in sbatch
     assert 'RUN_ROLE=recovery,TARGET_UPDATE=75000' in submit
     assert "RUN_ROLE=resume_smoke" in submit
+    assert "RUN_ROLE=compiler_smoke" in submit
     assert "--gpus='rtx_4090:1'" in submit
-    assert "--time='00:45:00'" in submit
+    assert "--time='00:10:00'" in submit
     assert "--mem-per-cpu='8G'" in submit
     assert "EXPECTED_NUM_DEVICES=1" in submit
     assert "--dependency='afterok:$ONE_GPU_JOB_ID'" in submit
+    assert "TRENCH_GENERALIST_PARTIAL_COMPILER_SMOKE_COMPLETE" in sbatch
     assert "f84a6cdfcb4aba0ca55abf1a658e4d57" in submit
 
     train_mixed = (root / "train_mixed.py").read_text()

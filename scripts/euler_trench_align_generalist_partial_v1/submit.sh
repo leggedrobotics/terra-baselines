@@ -281,14 +281,14 @@ if [ "$SUBMIT" = recovery ]; then
     test "$RECOVERY_CHECKPOINT_SHA" = "$RECOVERY_CHECKPOINT_SHA_PIN"
 
     RECOVERY_PARENT="$RUN_PARENT/recovery_from_u$RECOVERY_UPDATE_PADDED"
-    RECOVERY_ONE_GPU_DIR="$RECOVERY_PARENT/compiler_1gpu_u$((RECOVERY_UPDATE + 5))"
+    RECOVERY_ONE_GPU_DIR="$RECOVERY_PARENT/compiler_1gpu_u$RECOVERY_UPDATE_PADDED"
     RECOVERY_SMOKE_DIR="$RECOVERY_PARENT/throughput_4gpu_u$((RECOVERY_UPDATE + 5))"
     RECOVERY_PHASE1_DIR="$RECOVERY_PARENT/phase1_u75000"
     RECOVERY_PHASE2_DIR="$RECOVERY_PARENT/phase2_u100000"
     remote "test ! -e '$RECOVERY_PARENT' && mkdir -p '$RUN_PARENT' && mkdir -p '$RECOVERY_ONE_GPU_DIR' '$RECOVERY_SMOKE_DIR' '$RECOVERY_PHASE1_DIR' '$RECOVERY_PHASE2_DIR'"
 
     RECOVERY_COMMON="$COMMON_EXPORTS,RUN_NAME=$PARENT_RUN_NAME,RESUME_UPDATE=$RECOVERY_UPDATE,PARENT_WANDB_RUN_ID=$PARENT_WANDB_RUN_ID"
-    ONE_GPU_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.4h' --time='00:45:00' --gpus='rtx_4090:1' --cpus-per-task='4' --mem-per-cpu='8G' --exclude='$EXCLUDED_NODES' --job-name='terra-trench-compiler-1gpu' --output='$RECOVERY_ONE_GPU_DIR/slurm_%j.out' --export='$RECOVERY_COMMON,EXPECTED_NUM_DEVICES=1,RUN_ROLE=resume_smoke,TARGET_UPDATE=$((RECOVERY_UPDATE + 5)),RESUME_CHECKPOINT=$RECOVERY_CHECKPOINT,RUN_DIR=$RECOVERY_ONE_GPU_DIR'")"
+    ONE_GPU_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_generalist_partial_v1/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.4h' --time='00:10:00' --gpus='rtx_4090:1' --cpus-per-task='4' --mem-per-cpu='8G' --exclude='$EXCLUDED_NODES' --job-name='terra-trench-compiler-1gpu' --output='$RECOVERY_ONE_GPU_DIR/slurm_%j.out' --export='$RECOVERY_COMMON,EXPECTED_NUM_DEVICES=1,RUN_ROLE=compiler_smoke,TARGET_UPDATE=$RECOVERY_UPDATE,RESUME_CHECKPOINT=$RECOVERY_CHECKPOINT,RUN_DIR=$RECOVERY_ONE_GPU_DIR'")"
     ONE_GPU_JOB_ID="${ONE_GPU_RAW%%;*}"
     [[ "$ONE_GPU_JOB_ID" =~ ^[0-9]+$ ]]
 

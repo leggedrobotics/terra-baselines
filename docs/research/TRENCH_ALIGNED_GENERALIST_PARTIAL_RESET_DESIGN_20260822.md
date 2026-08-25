@@ -206,10 +206,11 @@ observations, rewards, gate, parameter tree, bf16 compute, and PPO settings
 remain fixed. The launcher also exercises the exact 512 x 16 x 16 x 64 and
 512 x 8 x 8 x 96 3x3 backward filters plus the 8 x 8 x 96 -> 32 1x1
 flatten-reduction filter, and compares their all-ones gradients with
-closed-form values before W&B is contacted. Recovery submission first resumes
-five updates on one Euler RTX 4090 with the same per-device batch, then runs the
-same five-update canary on four GPUs. Only the four-GPU job enforces the
-12,000-steps/s throughput threshold and unlocks production.
+closed-form values before W&B is contacted. Recovery submission first runs
+those compiler and checkpoint checks on one Euler RTX 4090 with the same
+per-device convolution shapes but no PPO updates, then resumes five updates on
+four GPUs. Only the four-GPU job enforces the 12,000-steps/s throughput
+threshold and unlocks production.
 
 The recovery source is the immutable native u3,500 checkpoint
 `trench_generalist_partial_a1488abeab2f_s20260823_update_003500.pkl`, SHA-256
@@ -229,9 +230,9 @@ Production submission follows only after all of the following pass:
 2. exact validation of every selected full-start level and every partial
    sidecar;
 3. complete strict-alignment audit of all admitted trench sidecars;
-4. one-GPU Euler compiler execution, followed by four visible RTX 4090 devices,
-   analytic exact-shape bf16 convolution backward checks, and `pmap`/NCCL
-   preflight in the submitted allocation;
+4. one-GPU Euler compiler/checkpoint validation with no PPO update, followed by
+   four visible RTX 4090 devices, analytic exact-shape bf16 convolution
+   backward checks, and `pmap`/NCCL preflight in the submitted allocation;
 5. five actual native-resume PPO updates with finite losses, parameters,
    optimizer state, and readable checkpoints;
 6. a post-compile median of at least 12,000 steps/s across updates 3--5; and
