@@ -2065,8 +2065,8 @@ def _preflight_trench_alignment_metadata(env, env_params, curriculum_levels) -> 
     the pilot must load the identical enriched bank, so this runs the same
     fail-closed checks for both:
 
-    1. the canonical loader contract (``require_finite_segments``), which
-       rejects inconsistent counts, stale axis/endpoint pairs, and bad widths;
+    1. the canonical axis-v2 loader contract, which rejects inconsistent
+       counts and non-finite or degenerate axes;
     2. Terra's own array-level reset validator, forced on regardless of arm.
     """
     from terra.maps_buffer import _trench_records_from_metadata
@@ -2095,11 +2095,7 @@ def _preflight_trench_alignment_metadata(env, env_params, curriculum_levels) -> 
         for metadata_path in metadata_paths:
             with open(metadata_path) as handle:
                 metadata = json.load(handle)
-            _trench_records_from_metadata(
-                metadata,
-                max_trench_type,
-                require_finite_segments=True,
-            )
+            _trench_records_from_metadata(metadata, max_trench_type)
         print(
             f"🧭 Finite trench metadata verified: {len(metadata_paths)} maps in "
             f"{level['maps_path']}",

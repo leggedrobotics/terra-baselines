@@ -6,6 +6,7 @@ the flag-on path appends exactly one width-3 entry carrying Terra's
 """
 
 import copy
+import json
 from types import SimpleNamespace
 
 import jax
@@ -21,6 +22,32 @@ from utils.utils_ppo import obs_to_model_input
 
 class Config(dict):
     __getattr__ = dict.__getitem__
+
+
+def test_metadata_preflight_uses_the_axis_v2_loader_signature(
+    tmp_path, monkeypatch
+):
+    from train_mixed import _preflight_trench_alignment_metadata
+
+    metadata_dir = tmp_path / "train/fixture/metadata"
+    metadata_dir.mkdir(parents=True)
+    (metadata_dir / "trench_0.json").write_text(
+        json.dumps({"axes_ABC": [], "trench_axes_count": 0})
+    )
+    monkeypatch.setenv("DATASET_PATH", str(tmp_path))
+
+    validated = []
+    env = SimpleNamespace(
+        _validate_trench_alignment_metadata_requirements=validated.append
+    )
+    env_params = SimpleNamespace(_replace=lambda **kwargs: kwargs)
+    _preflight_trench_alignment_metadata(
+        env,
+        env_params,
+        [{"maps_path": "train/fixture"}],
+    )
+
+    assert validated == [{"enforce_trench_dig_alignment": True}]
 
 
 def config(trench_alignment_observation: bool):
