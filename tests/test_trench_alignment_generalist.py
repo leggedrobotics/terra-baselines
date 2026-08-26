@@ -317,6 +317,9 @@ def test_axis_v2_path_has_1gpu_canary_and_preserves_8gpu_batch():
     assert "phase2:100000:*:75000" in sbatch
     assert "--xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE" in sbatch
     assert "post_compile_median_steps_per_second" in sbatch
+    assert 'AUTOTUNE_RESULTS_SHA="$(sha256sum' in sbatch
+    assert "unset XLA_FLAGS" in sbatch
+    assert '"autotune_results_sha256=$AUTOTUNE_RESULTS_SHA"' in sbatch
     assert 'test "${#GPU_NAMES[@]}" -ge "$EXPECTED_DEVICES"' in sbatch
     assert 'device.device_kind == "NVIDIA GeForce RTX 4090"' in sbatch
     assert 'NUM_DEVICES="$EXPECTED_DEVICES"' in sbatch
@@ -336,6 +339,7 @@ def test_axis_v2_path_has_1gpu_canary_and_preserves_8gpu_batch():
     assert "require_complete \"$CANARY_DIR\"" in submit
     assert "require_complete \"$BOOTSTRAP_DIR\"" in submit
     assert "require_complete \"$SMOKE_DIR\"" in submit
+    assert "autotune_results_sha256=\\$RESULTS_SHA" in submit
     assert "terra-axis-v2-1gpu" in submit
     assert "--gpus='rtx_4090:$devices'" in submit
     assert "--gpus='rtx_4090:8'" in submit

@@ -270,6 +270,10 @@ NUM_DEVICES="$EXPECTED_DEVICES" NUM_ENVS_PER_DEVICE=256 \
     "$DISTANCE_ARTIFACT_SHA" "$RESUME_CHECKPOINT"
 
 test -s "$RUN_DIR/autotune_results.pbtxt"
+AUTOTUNE_RESULTS_SHA="$(sha256sum "$RUN_DIR/autotune_results.pbtxt" | awk '{print $1}')"
+# The checkpoint validator starts a fresh JAX process. Do not let that process
+# dump its empty autotune table over the exact plan set produced by training.
+unset XLA_FLAGS
 FINAL_CHECKPOINT="$RUN_DIR/checkpoints/${RUN_NAME}_FINAL.pkl"
 test -f "$FINAL_CHECKPOINT"
 FINAL_CHECKPOINT="$FINAL_CHECKPOINT" TARGET_UPDATE="$TARGET_UPDATE" \
@@ -345,4 +349,5 @@ printf '%s\n' \
     "status=COMPLETED" \
     "target_update=$TARGET_UPDATE" \
     "checkpoint=$FINAL_CHECKPOINT" \
-    "autotune_results=$RUN_DIR/autotune_results.pbtxt" > "$RUN_DIR/completion.env"
+    "autotune_results=$RUN_DIR/autotune_results.pbtxt" \
+    "autotune_results_sha256=$AUTOTUNE_RESULTS_SHA" > "$RUN_DIR/completion.env"
