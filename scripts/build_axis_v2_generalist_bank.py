@@ -907,9 +907,17 @@ def build_bank(
             raise RuntimeError(f"net4 owner intersections are missing: {net4_multibit}")
 
         write_json(root / "environment_protocol.json", protocol)
+        legacy_mixture = json.loads((legacy / "training_mixture.json").read_text())
+        geometry_masses = legacy_mixture.get("v7_geometry_mass_within_family")
+        if not isinstance(geometry_masses, dict) or any(
+            abs(sum(geometry_masses.get(family, {}).values()) - 1.0) > 1e-12
+            for family in ("foundation", "trench")
+        ):
+            raise RuntimeError("legacy bank has invalid V7 geometry masses")
         mixture = {
             "schema": MIXTURE_SCHEMA,
             "family_balance": {"foundation": 0.5, "trench": 0.5},
+            "v7_geometry_mass_within_family": geometry_masses,
             "fixed_protocol": {
                 "accepted_dump_contract": "exact_visible_dump_v1",
                 "apply_trench_rewards": False,
