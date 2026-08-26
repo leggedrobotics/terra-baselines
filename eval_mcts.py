@@ -1429,12 +1429,10 @@ def main():
     distance_protocol_id = getattr(config, "distance_protocol_id", None)
     if distance_protocol_id is not None:
         env_kwargs["distance_protocol_id"] = distance_protocol_id
-    env_kwargs["movement_feasibility_observation"] = bool(
-        getattr(config, "movement_feasibility_observation", False)
-    )
-    env_kwargs["previous_outcome_observation"] = bool(
-        getattr(config, "previous_outcome_observation", False)
-    )
+    if getattr(config, "movement_feasibility_observation", False):
+        env_kwargs["movement_feasibility_observation"] = True
+    if getattr(config, "previous_outcome_observation", False):
+        env_kwargs["previous_outcome_observation"] = True
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,
         rendering=False,

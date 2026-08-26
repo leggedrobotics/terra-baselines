@@ -2308,12 +2308,10 @@ def make_mixed_agent_states(
                 f"partial reset bank does not exist: {partial_reset_root}"
             )
         env_kwargs["partial_reset_root"] = partial_reset_root
-    env_kwargs["movement_feasibility_observation"] = bool(
-        config.movement_feasibility_observation
-    )
-    env_kwargs["previous_outcome_observation"] = bool(
-        config.previous_outcome_observation
-    )
+    if config.movement_feasibility_observation:
+        env_kwargs["movement_feasibility_observation"] = True
+    if config.previous_outcome_observation:
+        env_kwargs["previous_outcome_observation"] = True
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,
         shuffle_maps=False,
