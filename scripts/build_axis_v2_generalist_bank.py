@@ -260,6 +260,9 @@ def control_fallback_items(candidates: Path) -> tuple[list[dict[str, Any]], str]
             "pair_slot_id": descriptor["pair_slot_id"],
             "lineage": "axis_v2_control_duplicate_repair_v1",
             "control_definition": "all_legal_non_dig_cells",
+            "stratum": "capability_floor_v1",
+            "slot_weight": 1.0,
+            "identity_slot_multiplicity": 1,
             "parent_condition_id": descriptor["source_condition_id"],
             "parent_map_id": descriptor["source_map_id"],
             "parent_scenario_id": descriptor["candidate_scenario_sha256"],
@@ -499,6 +502,18 @@ def copy_item(
             "primary_cell": item["condition"],
         }
     )
+    if transform == CONTROL_FALLBACK_TRANSFORM:
+        required_dig_volume = int(np.count_nonzero(arrays["images"] < 0))
+        accepted_dump_cells = int(np.count_nonzero(arrays["images"] > 0))
+        output_row.update(
+            {
+                "required_dig_volume": required_dig_volume,
+                "accepted_dump_cells": accepted_dump_cells,
+                "single_layer_capacity_ratio": (
+                    accepted_dump_cells / required_dig_volume
+                ),
+            }
+        )
     for field in ("reset_seed", "episode_id", "environment_protocol_sha256"):
         output_row.pop(field, None)
     if reset_seed is not None:
