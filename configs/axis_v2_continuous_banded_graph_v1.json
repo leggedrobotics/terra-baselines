@@ -1,0 +1,60 @@
+{
+  "schema": "terra_axis_v2_continuous_banded_graph_v1",
+  "release_id": "terra_axis_v2_v6_constraints_v7_foundations_train96_v1",
+  "siblings_ordered": false,
+  "depths": {
+    "0": {
+      "foundation": ["fnd-slab-allfree"],
+      "trench": ["trn-straight-allfree"]
+    },
+    "1": {
+      "foundation": [
+        "v7-fnd-slab-adjacent",
+        "v7-fnd-irregular-adjacent",
+        "v7-fnd-courtyard-adjacent",
+        "v7-fnd-bearing-walls-adjacent",
+        "v7-fnd-pads-adjacent",
+        "v7-fnd-courtyard-pads-adjacent"
+      ],
+      "trench": []
+    },
+    "2": {
+      "foundation": [
+        "fnd-proc-ring3x",
+        "fnd-proc-side1-road",
+        "fnd-slab-apron-c1p2",
+        "fnd-slab-apron-c1p6",
+        "fnd-slab-apron-c2x",
+        "fnd-slab-apron-c3x",
+        "fnd-slab-apron-d12",
+        "fnd-slab-apron-d16",
+        "fnd-slab-apron-near",
+        "fnd-slab-lg-ring3x",
+        "fnd-slab-ring3x",
+        "fnd-slab-ring3x-obj",
+        "fnd-slab-ring3x-obj1",
+        "fnd-slab-ring3x-road",
+        "fnd-slab-side1",
+        "fnd-slab-side1-obj",
+        "fnd-slab-split",
+        "fnd-strips-ring3x"
+      ],
+      "trench": [
+        "trn-net3-side1-road",
+        "trn-net3-side2",
+        "trn-net3-side2-s",
+        "trn-net4-side1-road",
+        "trn-net4-side2",
+        "trn-net4-side2-s",
+        "trn-seg2-side2",
+        "trn-seg3-side2",
+        "trn-straight-altsides",
+        "trn-straight-side1",
+        "trn-straight-side1-tight",
+        "trn-straight-side2",
+        "trn-tee-side2",
+        "trn-tee-side2-s"
+      ]
+    }
+  }
+}

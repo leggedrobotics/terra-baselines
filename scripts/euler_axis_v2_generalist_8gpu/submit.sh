@@ -11,6 +11,8 @@ case "$SUBMIT" in
 esac
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RUNTIME_GRAPH_REL=configs/axis_v2_continuous_banded_graph_v1.json
+git -C "$REPO" ls-files --error-unmatch -- "$RUNTIME_GRAPH_REL" >/dev/null
 # shellcheck disable=SC1091
 source "$REPO/cluster/euler_account.sh"
 terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
@@ -176,6 +178,7 @@ if ! remote "test -e '$REMOTE_TERRA'"; then
     remote "printf '%s\n' '$RUNTIME_TERRA_REVISION' > '$TERRA_PARTIAL/terra/REVISION' && mv -T '$TERRA_PARTIAL' '$REMOTE_WORK/runtime-terra/$RUNTIME_TERRA_REVISION'"
 fi
 remote "test \"\$(cat '$REMOTE_SOURCE/REVISION')\" = '$BASELINES_REVISION' && test \"\$(cat '$REMOTE_TERRA/REVISION')\" = '$RUNTIME_TERRA_REVISION'"
+remote "test -f '$REMOTE_SOURCE/$RUNTIME_GRAPH_REL'"
 
 upload() {
     local source="$1" destination="$2" expected_sha="$3"

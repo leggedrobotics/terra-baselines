@@ -331,6 +331,8 @@ def test_axis_v2_path_has_1gpu_canary_and_preserves_8gpu_batch():
     assert "bf16[512" not in denylist
     assert "0|stage|canary1|bootstrap|smoke|1" in submit
     assert "SUBMIT=0: local contracts passed; no SSH" in submit
+    assert "git -C \"$REPO\" ls-files --error-unmatch" in submit
+    assert "test -f '$REMOTE_SOURCE/$RUNTIME_GRAPH_REL'" in submit
     assert "require_complete \"$CANARY_DIR\"" in submit
     assert "require_complete \"$BOOTSTRAP_DIR\"" in submit
     assert "require_complete \"$SMOKE_DIR\"" in submit
