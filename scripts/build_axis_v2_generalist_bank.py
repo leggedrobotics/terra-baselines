@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +60,6 @@ from tools.map_generation.materialize_splits import materialize_splits
 
 from utils.accepted_bank import AXIS_V2_RELEASE_ID
 
-
 ARRAYS = ("images", "occupancy", "dumpability", "actions", "distance")
 PHYSICAL_ARRAYS = ("images", "occupancy", "dumpability", "actions")
 SPLITS = ("development", "promotion", "sealed")
@@ -76,6 +77,11 @@ SCHEMA = "terra_axis_v2_generalist_bank_build_v1"
 AUDIT_SCHEMA = "terra_axis_v2_generalist_bank_audit_v1"
 REVIEW_SCHEMA = "terra_axis_v2_review_admission_v1"
 MIXTURE_SCHEMA = "terra_axis_v2_training_mixture_v1"
+CONTROL_FALLBACK_SCHEMA = "terra_axis_v2_control_fallback_v1"
+CONTROL_FALLBACK_TRANSFORM = "trench_allfree_v1"
+CONTROL_FALLBACK_MANIFEST = "control_fallbacks.jsonl"
+EXPECTED_CONTROL_FALLBACKS = 3
+EXPECTED_SHARED_LEGACY_SOURCES = 153
 
 
 def canonical_json(value: Any) -> str:
@@ -179,10 +185,7 @@ def branch_depths(graph_path: Path) -> tuple[dict[str, str], tuple[str, ...]]:
                     raise RuntimeError(f"{graph_path}: duplicate {condition}")
                 depths[condition] = name
     constraints = tuple(
-        sorted(
-            graph["depths"]["2"]["foundation"]
-            + graph["depths"]["2"]["trench"]
-        )
+        sorted(graph["depths"]["2"]["foundation"] + graph["depths"]["2"]["trench"])
     )
     if len(depths) != 40 or len(constraints) != 32:
         raise RuntimeError(f"{graph_path}: expected 40 total and 32 constraints")
@@ -203,6 +206,187 @@ def source_item(
     }
 
 
+def legacy_source_splits(root: Path, conditions: set[str]) -> dict[str, str]:
+    assignments: dict[str, str] = {}
+    for row in read_jsonl(root / "source_registry.jsonl"):
+        if row["primary_cell"] not in conditions:
+            continue
+        source = row["source_id"]
+        split = row["split"]
+        previous = assignments.setdefault(source, split)
+        if previous != split:
+            raise RuntimeError(
+                f"legacy source already leaks across splits: {source} -> "
+                f"{previous}, {split}"
+            )
+    return assignments
+
+
+def control_fallback_items(candidates: Path) -> tuple[list[dict[str, Any]], str]:
+    path = candidates / CONTROL_FALLBACK_MANIFEST
+    rows = read_jsonl(path)
+    if len(rows) != EXPECTED_CONTROL_FALLBACKS:
+        raise RuntimeError(
+            f"{path}: expected {EXPECTED_CONTROL_FALLBACKS} control fallbacks"
+        )
+    with (candidates / "manifest.csv").open(newline="") as handle:
+        selected_sources = {row["source_group_id"] for row in csv.DictReader(handle)}
+    items = []
+    seen_sources = set()
+    seen_scenarios = set()
+    for descriptor in rows:
+        if descriptor.get("schema") != CONTROL_FALLBACK_SCHEMA:
+            raise RuntimeError(f"{path}: wrong fallback schema")
+        if descriptor.get("transform") != CONTROL_FALLBACK_TRANSFORM:
+            raise RuntimeError(f"{path}: wrong fallback transform")
+        if descriptor.get("source_condition_id") != "trn-straight-side2":
+            raise RuntimeError(f"{path}: fallback source must be straight-side2")
+        if descriptor.get("target_condition_id") != "trn-straight-allfree":
+            raise RuntimeError(f"{path}: fallback target must be straight-allfree")
+        source = descriptor["source_group_id"]
+        scenario = descriptor["transformed_scenario_sha256"]
+        if source in selected_sources:
+            raise RuntimeError(f"{path}: fallback source is already selected")
+        if source in seen_sources or scenario in seen_scenarios:
+            raise RuntimeError(f"{path}: duplicate fallback identity")
+        seen_sources.add(source)
+        seen_scenarios.add(scenario)
+        source_row = {
+            "slot_index": int(descriptor["sample_index"]),
+            "map_id": ("trn-straight-allfree:train:axis-v2-repair:" + scenario[:16]),
+            "scenario_id": descriptor["candidate_scenario_sha256"],
+            "source_id": source,
+            "dig_sha256": descriptor["dig_sha256"],
+            "pair_slot_id": descriptor["pair_slot_id"],
+            "lineage": "axis_v2_control_duplicate_repair_v1",
+            "control_definition": "all_legal_non_dig_cells",
+            "parent_condition_id": descriptor["source_condition_id"],
+            "parent_map_id": descriptor["source_map_id"],
+            "parent_scenario_id": descriptor["candidate_scenario_sha256"],
+            "parent_source_id": source,
+        }
+        item = source_item(
+            candidates / "dataset",
+            source_row,
+            descriptor["target_condition_id"],
+            "trench",
+        )
+        item.update(
+            {
+                "transform": descriptor["transform"],
+                "candidate_scenario_sha256": descriptor["candidate_scenario_sha256"],
+                "canonical_source_scenario_sha256": descriptor[
+                    "canonical_source_scenario_sha256"
+                ],
+                "transformed_scenario_sha256": scenario,
+            }
+        )
+        items.append(item)
+    return items, sha256_file(path)
+
+
+def load_physical_arrays(item: dict[str, Any]) -> dict[str, np.ndarray]:
+    source = item["directory"]
+    source_slot = int(item["row"]["slot_index"])
+    arrays = {
+        name: np.ascontiguousarray(
+            np.squeeze(
+                np.load(source / name / f"img_{source_slot}.npy", allow_pickle=False)
+            )
+        )
+        for name in PHYSICAL_ARRAYS
+    }
+    shapes = {array.shape for array in arrays.values()}
+    if shapes != {(64, 64)}:
+        raise RuntimeError(f"{source}:{source_slot}: unexpected shapes {shapes}")
+    return arrays
+
+
+def apply_item_transform(arrays: dict[str, np.ndarray], transform: str | None) -> None:
+    if transform is None:
+        return
+    if transform != CONTROL_FALLBACK_TRANSFORM:
+        raise RuntimeError(f"unsupported map transform: {transform}")
+    if np.any(arrays["occupancy"]) or not np.all(arrays["dumpability"]):
+        raise RuntimeError("all-free repair source is not physically all-free")
+    dig = arrays["images"] < 0
+    if not np.any(dig):
+        raise RuntimeError("all-free repair source has no trench target")
+    arrays["images"] = np.ascontiguousarray(
+        np.where(dig, -1, 1), dtype=arrays["images"].dtype
+    )
+
+
+def canonical_item_scenario(item: dict[str, Any], tile_size_m: float) -> str:
+    arrays = load_physical_arrays(item)
+    apply_item_transform(arrays, item.get("transform"))
+    arrays["distance"] = np.ascontiguousarray(
+        compute_reward_v2_distance_map(
+            arrays["images"],
+            arrays["occupancy"],
+            tile_size_m=tile_size_m,
+            distance_ref_m=REWARD_V2_DISTANCE_REF_M,
+            distance_bound=REWARD_V2_DISTANCE_BOUND,
+        ),
+        dtype=np.float32,
+    )
+    return reset_array_scenario_sha256(arrays)
+
+
+def repair_allfree_controls(
+    items: list[dict[str, Any]],
+    fallbacks: list[dict[str, Any]],
+    tile_size_m: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    kept = []
+    scenarios: dict[str, dict[str, Any]] = {}
+    dropped = []
+    for item in sorted(items, key=lambda value: value["row"]["map_id"]):
+        scenario = canonical_item_scenario(item, tile_size_m)
+        previous = scenarios.get(scenario)
+        if previous is None:
+            scenarios[scenario] = item
+            kept.append(item)
+            continue
+        if previous["row"]["source_id"] != item["row"]["source_id"]:
+            raise RuntimeError("legacy all-free scenario aliases distinct sources")
+        dropped.append(
+            {
+                "map_id": item["row"]["map_id"],
+                "source_id": item["row"]["source_id"],
+                "canonical_scenario_sha256": scenario,
+            }
+        )
+    if len(dropped) != EXPECTED_CONTROL_FALLBACKS:
+        raise RuntimeError(
+            "legacy all-free repair expected exactly "
+            f"{EXPECTED_CONTROL_FALLBACKS} duplicates, observed {len(dropped)}"
+        )
+    for item in fallbacks:
+        scenario = canonical_item_scenario(item, tile_size_m)
+        if scenario != item["transformed_scenario_sha256"]:
+            raise RuntimeError(
+                f"{item['row']['map_id']}: transformed fallback identity changed"
+            )
+        if scenario in scenarios:
+            raise RuntimeError(f"{item['row']['map_id']}: fallback scenario is not new")
+        if any(
+            kept_item["row"]["source_id"] == item["row"]["source_id"]
+            for kept_item in kept
+        ):
+            raise RuntimeError(f"{item['row']['map_id']}: fallback source is not new")
+        scenarios[scenario] = item
+        kept.append(item)
+    if len(kept) != 96:
+        raise RuntimeError(f"all-free repair produced {len(kept)} maps, expected 96")
+    return kept, {
+        "legacy_duplicate_rows_dropped": len(dropped),
+        "axis_v2_fallback_rows": len(fallbacks),
+        "dropped": dropped,
+        "fallback_map_ids": sorted(item["row"]["map_id"] for item in fallbacks),
+    }
+
+
 def copy_item(
     item: dict[str, Any],
     destination: Path,
@@ -216,24 +400,49 @@ def copy_item(
     source = item["directory"]
     source_row = item["row"]
     source_slot = int(source_row["slot_index"])
-    arrays = {
-        name: np.ascontiguousarray(
+    arrays = load_physical_arrays(item)
+    transform = item.get("transform")
+    if transform is not None:
+        candidate_arrays = dict(arrays)
+        candidate_arrays["distance"] = np.ascontiguousarray(
             np.squeeze(
-                np.load(source / name / f"img_{source_slot}.npy", allow_pickle=False)
+                np.load(
+                    source / "distance" / f"img_{source_slot}.npy",
+                    allow_pickle=False,
+                )
             )
         )
-        for name in PHYSICAL_ARRAYS
-    }
-    shapes = {array.shape for array in arrays.values()}
-    if shapes != {(64, 64)}:
-        raise RuntimeError(f"{source}:{source_slot}: unexpected shapes {shapes}")
+        if (
+            reset_array_scenario_sha256(candidate_arrays)
+            != item["candidate_scenario_sha256"]
+        ):
+            raise RuntimeError(f"{source}:{source_slot}: candidate identity changed")
+        canonical_source = canonical_item_scenario(
+            {**item, "transform": None}, tile_size_m
+        )
+        if canonical_source != item["canonical_source_scenario_sha256"]:
+            raise RuntimeError(f"{source}:{source_slot}: canonical identity changed")
+        apply_item_transform(arrays, transform)
 
     metadata = json.loads(
         (source / "metadata" / f"trench_{source_slot}.json").read_text()
     )
+    if transform == CONTROL_FALLBACK_TRANSFORM:
+        metadata.update(
+            {
+                "control_definition": "all_legal_non_dig_cells",
+                "control_repair": "axis_v2_duplicate_repair_v1",
+                "parent_condition_id": source_row["parent_condition_id"],
+                "parent_map_id": source_row["parent_map_id"],
+                "parent_scenario_id": source_row["parent_scenario_id"],
+                "parent_source_id": source_row["parent_source_id"],
+            }
+        )
     owner_path = source / "trench_axis_owners" / f"img_{source_slot}.npy"
     if owner_path.is_file():
-        owners = np.ascontiguousarray(np.squeeze(np.load(owner_path, allow_pickle=False)))
+        owners = np.ascontiguousarray(
+            np.squeeze(np.load(owner_path, allow_pickle=False))
+        )
     elif item["family"] == "foundation":
         owners = np.zeros((64, 64), dtype=np.uint8)
     elif item["condition"] == "trn-straight-allfree":
@@ -263,14 +472,19 @@ def copy_item(
     )
     arrays["distance"] = np.ascontiguousarray(distance, dtype=np.float32)
     scenario_id = reset_array_scenario_sha256(arrays)
+    if transform is not None and scenario_id != item["transformed_scenario_sha256"]:
+        raise RuntimeError(f"{source}:{source_slot}: transformed identity changed")
 
     for name in (*ARRAYS, "trench_axis_owners", "metadata"):
         (destination / name).mkdir(parents=True, exist_ok=True)
     for name in PHYSICAL_ARRAYS:
-        shutil.copy2(
-            source / name / f"img_{source_slot}.npy",
-            destination / name / f"img_{slot}.npy",
-        )
+        if transform is None:
+            shutil.copy2(
+                source / name / f"img_{source_slot}.npy",
+                destination / name / f"img_{slot}.npy",
+            )
+        else:
+            np.save(destination / name / f"img_{slot}.npy", arrays[name])
     np.save(destination / "distance" / f"img_{slot}.npy", arrays["distance"])
     np.save(destination / "trench_axis_owners" / f"img_{slot}.npy", owners)
     write_json(destination / "metadata" / f"trench_{slot}.json", metadata)
@@ -371,7 +585,9 @@ def dataset_metadata(
             "distance_bound": REWARD_V2_DISTANCE_BOUND,
             "accepted_dump_contract": "exact_visible_dump_v1",
             "scenario_identity_contract": RESET_ARRAY_SCENARIO_IDENTITY_CONTRACT,
-            "source_registry": os.path.relpath(root / "source_registry.jsonl", directory),
+            "source_registry": os.path.relpath(
+                root / "source_registry.jsonl", directory
+            ),
             "source_registry_sha256": registry_sha256,
         },
     )
@@ -393,6 +609,11 @@ def build_bank(
         raise FileExistsError(output)
 
     depths, constraint_ids = branch_depths(graph_path)
+    legacy_needed = set(CAPABILITY_IDS) | set(CORE_IDS)
+    fixed_source_splits = legacy_source_splits(legacy, legacy_needed)
+    fallback_items, fallback_manifest_sha256 = control_fallback_items(candidates)
+    if any(item["row"]["source_id"] in fixed_source_splits for item in fallback_items):
+        raise RuntimeError("control fallback reuses a retained legacy source")
     builder_revision = clean_git_revision(Path(__file__).resolve().parents[1])
     protocol = frozen_environment_protocol(terra_revision)
     protocol_sha256 = protocol["environment_protocol_sha256"]
@@ -406,12 +627,19 @@ def build_bank(
         split_root = temporary / "split"
         loader_root = temporary / "loader32"
         root = temporary / "bank"
-        materialize_splits(
+        split_summary = materialize_splits(
             candidates / "manifest.csv",
             candidates / "dataset",
             split_root,
             SPLIT_COUNTS,
+            fixed_source_splits,
         )
+        fixed_summary = split_summary.get("fixed_source_assignments", {})
+        if fixed_summary.get("matched_sources") != EXPECTED_SHARED_LEGACY_SOURCES:
+            raise RuntimeError(
+                "axis-v2 candidate bank must preserve exactly "
+                f"{EXPECTED_SHARED_LEGACY_SOURCES} retained legacy sources"
+            )
         materialize_loader_bank(
             split_root,
             loader_root,
@@ -422,10 +650,13 @@ def build_bank(
         new_levels, new_index = source_levels(loader_root)
         legacy_levels, legacy_index = source_levels(legacy)
         if set(new_levels) != set(constraint_ids):
-            raise RuntimeError("materialized V6 support does not match the axis-v2 graph")
-        legacy_needed = set(CAPABILITY_IDS) | set(CORE_IDS)
+            raise RuntimeError(
+                "materialized V6 support does not match the axis-v2 graph"
+            )
         if not legacy_needed <= set(legacy_levels):
-            raise RuntimeError("legacy bank is missing axis-v2 anchor/foundation support")
+            raise RuntimeError(
+                "legacy bank is missing axis-v2 anchor/foundation support"
+            )
         if float(legacy_index["tile_size_m"]) != tile_size_m:
             raise RuntimeError("legacy and axis-v2 tile sizes differ")
 
@@ -434,6 +665,7 @@ def build_bank(
         all_rows: dict[str, list[dict[str, Any]]] = {}
         identities: list[dict[str, Any]] = []
         training_descriptors = []
+        control_repair = None
         for level_index, condition in enumerate(all_conditions):
             if condition in new_levels:
                 source_bank, descriptor = loader_root, new_levels[condition]
@@ -447,6 +679,10 @@ def build_bank(
             ]
             if len(items) != 96:
                 raise RuntimeError(f"{condition}: expected 96 training maps")
+            if condition == "trn-straight-allfree":
+                items, control_repair = repair_allfree_controls(
+                    items, fallback_items, tile_size_m
+                )
             relative = f"train/{level_index:03d}__{condition}"
             rows, item_identities = materialize_dataset(
                 root,
@@ -545,13 +781,25 @@ def build_bank(
         scenario_ids = [
             row["scenario_id"] for rows in all_rows.values() for row in rows
         ]
-        if len(map_ids) != len(set(map_ids)) or len(scenario_ids) != len(
-            set(scenario_ids)
-        ):
-            raise RuntimeError("combined bank has duplicate map or scenario identity")
+        duplicate_map_ids = sorted(
+            map_id for map_id, count in Counter(map_ids).items() if count > 1
+        )
+        duplicate_scenario_ids = sorted(
+            scenario_id
+            for scenario_id, count in Counter(scenario_ids).items()
+            if count > 1
+        )
+        if duplicate_map_ids or duplicate_scenario_ids:
+            raise RuntimeError(
+                "combined bank has duplicate identities: "
+                f"map_ids={duplicate_map_ids[:3]}, "
+                f"scenario_ids={duplicate_scenario_ids[:3]}"
+            )
         source_splits: dict[str, set[str]] = {}
         for identity in identities:
-            source_splits.setdefault(identity["source_id"], set()).add(identity["split"])
+            source_splits.setdefault(identity["source_id"], set()).add(
+                identity["split"]
+            )
         leaked_sources = {
             source: sorted(splits)
             for source, splits in source_splits.items()
@@ -559,7 +807,11 @@ def build_bank(
         }
         if leaked_sources:
             first = sorted(leaked_sources)[0]
-            raise RuntimeError(f"source leakage across splits: {first} -> {leaked_sources[first]}")
+            raise RuntimeError(
+                f"source leakage across splits: {first} -> {leaked_sources[first]}"
+            )
+        if control_repair is None:
+            raise RuntimeError("all-free control repair did not run")
 
         registry = [
             {
@@ -634,7 +886,9 @@ def build_bank(
             for condition in sorted(trench_conditions)
             if "trn-net4" in condition
         }
-        if len(net4_multibit) != 3 or any(count <= 0 for count in net4_multibit.values()):
+        if len(net4_multibit) != 3 or any(
+            count <= 0 for count in net4_multibit.values()
+        ):
             raise RuntimeError(f"net4 owner intersections are missing: {net4_multibit}")
 
         write_json(root / "environment_protocol.json", protocol)
@@ -693,9 +947,12 @@ def build_bank(
             "note": (
                 "Physical V6 generators and legacy foundation/control sources retain their "
                 "accepted review provenance. Axis owner bits, canonical distance arrays, "
-                "identity rebinding, and representative local feasibility are regenerated "
-                "and audited for this release."
+                "identity rebinding, three duplicate legacy all-free controls, and "
+                "representative local feasibility are regenerated and audited for this "
+                "release."
             ),
+            "control_fallback_manifest_sha256": fallback_manifest_sha256,
+            "control_repair": control_repair,
         }
         write_json(root / "review_admission.json", review)
 
@@ -714,6 +971,8 @@ def build_bank(
             "representative_a1_failures": 0,
             "representative_a2_failures": 0,
             "representative_results": feasibility,
+            "control_fallback_manifest_sha256": fallback_manifest_sha256,
+            "control_repair": control_repair,
             "claim_limit": (
                 "A0 and canonical distance are exhaustive. A1/A2 are one regenerated "
                 "training map per trench condition and do not prove navigation, spoil "
@@ -772,6 +1031,12 @@ def build_bank(
             "maps": len(identities),
             "main_evaluation_conditions": len(main_conditions),
             "representative_local_feasibility_maps": len(feasibility),
+            "fixed_legacy_source_assignments": fixed_summary,
+            "control_fallback_manifest_sha256": fallback_manifest_sha256,
+            "legacy_control_duplicate_rows_dropped": control_repair[
+                "legacy_duplicate_rows_dropped"
+            ],
+            "axis_v2_control_fallback_rows": control_repair["axis_v2_fallback_rows"],
         }
         write_json(root / "build_receipt.json", receipt)
         root.rename(output)

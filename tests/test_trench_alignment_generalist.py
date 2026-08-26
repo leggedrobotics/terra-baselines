@@ -2,8 +2,10 @@ import json
 from pathlib import Path
 import subprocess
 
+import numpy as np
 import pytest
 
+from scripts import build_axis_v2_generalist_bank
 from configs.training_configs import get_config
 from scripts import build_trench_aligned_runtime_bank
 from utils.accepted_bank import AcceptedLevel
@@ -338,6 +340,41 @@ def test_axis_v2_path_has_1gpu_canary_and_preserves_8gpu_batch():
     assert "post_compile_median_steps_per_second" in submit
     assert "--dependency='afterok:$JOB1_ID'" in submit
     assert "scancel -- '$JOB1_ID'" in submit
+
+
+def test_axis_v2_allfree_repair_changes_only_the_target_contract():
+    arrays = {
+        "images": np.array([[-1, 0], [1, 0]], dtype=np.int8),
+        "occupancy": np.zeros((2, 2), dtype=bool),
+        "dumpability": np.ones((2, 2), dtype=bool),
+        "actions": np.array([[0, 1], [2, 3]], dtype=np.int8),
+    }
+    actions = arrays["actions"].copy()
+
+    build_axis_v2_generalist_bank.apply_item_transform(
+        arrays,
+        build_axis_v2_generalist_bank.CONTROL_FALLBACK_TRANSFORM,
+    )
+
+    np.testing.assert_array_equal(
+        arrays["images"], np.array([[-1, 1], [1, 1]], dtype=np.int8)
+    )
+    np.testing.assert_array_equal(arrays["actions"], actions)
+
+
+def test_axis_v2_allfree_repair_rejects_blocked_sources():
+    arrays = {
+        "images": np.array([[-1, 0], [0, 0]], dtype=np.int8),
+        "occupancy": np.array([[False, True], [False, False]]),
+        "dumpability": np.ones((2, 2), dtype=bool),
+        "actions": np.zeros((2, 2), dtype=np.int8),
+    }
+
+    with pytest.raises(RuntimeError, match="not physically all-free"):
+        build_axis_v2_generalist_bank.apply_item_transform(
+            arrays,
+            build_axis_v2_generalist_bank.CONTROL_FALLBACK_TRANSFORM,
+        )
 
 
 def test_runtime_bank_builder_binds_the_imported_clean_terra_checkout(
