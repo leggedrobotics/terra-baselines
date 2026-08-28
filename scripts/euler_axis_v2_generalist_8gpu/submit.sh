@@ -50,7 +50,7 @@ WANDB_PROJECT="${TERRA_WANDB_PROJECT:-mixed-agents}"
 LOCAL_PYTHON=/home/lorenzo/moleworks/.venv-terra-uv/bin/python
 EXPECTED_PARAMETERS=2311869
 SEED=20260825
-EXCLUDED_NODES=eu-g6-064,eu-g6-065
+EXCLUDED_NODES=eu-g6-057,eu-g6-064,eu-g6-065
 RELEASE_ID=terra_axis_v2_v6_constraints_v7_foundations_train96_v1
 
 test -z "$(git -C "$REPO" status --porcelain)" || {

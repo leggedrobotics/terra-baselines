@@ -347,6 +347,7 @@ def test_axis_v2_path_preserves_global_batch_for_4gpu_fallback():
     assert denylist.count("entries {") == 4
     assert "bootstrap4safe|smoke4safe|fallback4safe" in submit
     assert "SUBMIT=0: local contracts passed; no SSH" in submit
+    assert "EXCLUDED_NODES=eu-g6-057,eu-g6-064,eu-g6-065" in submit
     assert "git -C \"$REPO\" ls-files --error-unmatch" in submit
     assert "test -f '$REMOTE_SOURCE/$RUNTIME_GRAPH_REL'" in submit
     assert "require_complete \"$CANARY_DIR\"" in submit
