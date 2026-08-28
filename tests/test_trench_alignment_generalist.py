@@ -296,7 +296,7 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "--stall_age_observation" in runner
 
 
-def test_axis_v2_path_has_1gpu_canary_and_preserves_8gpu_batch():
+def test_axis_v2_path_preserves_global_batch_for_4gpu_fallback():
     root = Path(__file__).resolve().parents[1]
     sbatch = (
         root / "scripts/euler_axis_v2_generalist_8gpu/run.sbatch"
@@ -312,9 +312,13 @@ def test_axis_v2_path_has_1gpu_canary_and_preserves_8gpu_batch():
 
     assert "canary1:1:none:0" in sbatch
     assert "bootstrap:1:none:0" in sbatch
+    assert "bootstrap4:1:none:0" in sbatch
     assert "smoke:5:none:0" in sbatch
+    assert "smoke4:5:none:0" in sbatch
     assert "phase1:75000:none:0" in sbatch
     assert "phase2:100000:*:75000" in sbatch
+    assert "phase1_4gpu:75000:none:0" in sbatch
+    assert "phase2_4gpu:100000:*:75000" in sbatch
     assert "--xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE" in sbatch
     assert "post_compile_median_steps_per_second" in sbatch
     assert 'AUTOTUNE_RESULTS_SHA="$(sha256sum' in sbatch
@@ -323,29 +327,35 @@ def test_axis_v2_path_has_1gpu_canary_and_preserves_8gpu_batch():
     assert 'test "${#GPU_NAMES[@]}" -ge "$EXPECTED_DEVICES"' in sbatch
     assert 'device.device_kind == "NVIDIA GeForce RTX 4090"' in sbatch
     assert 'NUM_DEVICES="$EXPECTED_DEVICES"' in sbatch
-    assert "(devices, 256, spatial, spatial, channels)" in sbatch
+    assert "(devices, envs_per_device, spatial, spatial, channels)" in sbatch
     assert 'NUM_DEVICES="${NUM_DEVICES:-8}"' in runner
     assert 'NUM_ENVS_PER_DEVICE="${NUM_ENVS_PER_DEVICE:-256}"' in runner
-    assert "1:256:8192|8:256:65536" in runner
+    assert "1:256:8192|4:512:65536|8:256:65536" in runner
     assert "--config trench_axis_generalist_partial_v2" in runner
     assert "--accepted-bank-condition-profile axis_v2_40_v1" in runner
     assert "bf16[256,16,16,64]" in denylist
     assert "bf16[256,8,8,96]" in denylist
-    assert "bf16[512" not in denylist
-    assert "0|stage|canary1|bootstrap|smoke|1" in submit
+    assert "bf16[512,16,16,64]" in denylist
+    assert "bf16[512,8,8,96]" in denylist
+    assert denylist.count("entries {") == 4
+    assert "0|stage|canary1|bootstrap|smoke|bootstrap4|smoke4|fallback4|1" in submit
     assert "SUBMIT=0: local contracts passed; no SSH" in submit
     assert "git -C \"$REPO\" ls-files --error-unmatch" in submit
     assert "test -f '$REMOTE_SOURCE/$RUNTIME_GRAPH_REL'" in submit
     assert "require_complete \"$CANARY_DIR\"" in submit
     assert "require_complete \"$BOOTSTRAP_DIR\"" in submit
     assert "require_complete \"$SMOKE_DIR\"" in submit
+    assert "require_complete \"$BOOTSTRAP4_DIR\"" in submit
+    assert "require_complete \"$SMOKE4_DIR\"" in submit
     assert "autotune_results_sha256=\\$RESULTS_SHA" in submit
     assert "terra-axis-v2-1gpu" in submit
     assert "--gpus='rtx_4090:$devices'" in submit
-    assert "--gpus='rtx_4090:8'" in submit
+    assert "submit_production_chain 4 8 phase1_4gpu phase2_4gpu" in submit
+    assert "submit_production_chain 8 16 phase1 phase2" in submit
+    assert "BANK_BUILDER_BASELINES_REVISION=$BASELINES_REVISION_PIN" in submit
     assert "post_compile_median_steps_per_second" in submit
-    assert "--dependency='afterok:$JOB1_ID'" in submit
-    assert "scancel -- '$JOB1_ID'" in submit
+    assert "--dependency='afterok:$job1_id'" in submit
+    assert "scancel -- '$job1_id'" in submit
 
 
 def test_axis_v2_allfree_repair_changes_only_the_target_contract():

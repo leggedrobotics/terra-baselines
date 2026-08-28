@@ -6,8 +6,8 @@ set -euo pipefail
 
 SUBMIT="${SUBMIT:-0}"
 case "$SUBMIT" in
-    0|stage|canary1|bootstrap|smoke|1) ;;
-    *) echo "SUBMIT must be 0, stage, canary1, bootstrap, smoke, or 1" >&2; exit 2 ;;
+    0|stage|canary1|bootstrap|smoke|bootstrap4|smoke4|fallback4|1) ;;
+    *) echo "SUBMIT must be 0, stage, canary1, bootstrap, smoke, bootstrap4, smoke4, fallback4, or 1" >&2; exit 2 ;;
 esac
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -31,6 +31,7 @@ for REQUIRED in FULL_BANK_ROOT PARTIAL_BANK_ROOT FULL_BANK_ARCHIVE \
     FULL_BANK_AUDIT_SHA PARTIAL_BANK_ARCHIVE PARTIAL_BANK_ARCHIVE_SHA \
     PARTIAL_BANK_SHA PARTIAL_ALIGNMENT_AUDIT_SHA PROTOCOL_SHA \
     SOURCE_REGISTRY_SHA DISTANCE_ARTIFACT_SHA RUNTIME_TERRA_REVISION_PIN \
+    BASELINES_REVISION_PIN \
     EXPECTED_PARTIAL_CONDITIONS EXPECTED_PARTIAL_TRIPLETS \
     EXPECTED_PARTIAL_SIDECARS EXPECTED_TRENCH_AUDIT_SIDECARS; do
     test -n "${!REQUIRED:-}" || { echo "release manifest missing $REQUIRED" >&2; exit 2; }
@@ -72,6 +73,7 @@ test "$(sha256sum "$PARTIAL_BANK_ROOT/trench_alignment_audit.json" | awk '{print
 PYTHONPATH="$TERRA_REPO:$REPO" JAX_PLATFORMS=cpu PYTHONDONTWRITEBYTECODE=1 \
 FULL_BANK_ROOT="$FULL_BANK_ROOT" PARTIAL_BANK_ROOT="$PARTIAL_BANK_ROOT" \
 BASELINES_REVISION="$BASELINES_REVISION" RUNTIME_TERRA_REVISION="$RUNTIME_TERRA_REVISION" \
+BANK_BUILDER_BASELINES_REVISION="$BASELINES_REVISION_PIN" \
 PROTOCOL_SHA="$PROTOCOL_SHA" SOURCE_REGISTRY_SHA="$SOURCE_REGISTRY_SHA" \
 DISTANCE_ARTIFACT_SHA="$DISTANCE_ARTIFACT_SHA" PARTIAL_BANK_SHA="$PARTIAL_BANK_SHA" \
 EXPECTED_PARTIAL_CONDITIONS="$EXPECTED_PARTIAL_CONDITIONS" \
@@ -115,7 +117,7 @@ assert bank.source_registry_sha256 == os.environ["SOURCE_REGISTRY_SHA"]
 index = json.loads((full / "dataset.json").read_text())
 assert index["canonical_distance_artifact_sha256"] == os.environ["DISTANCE_ARTIFACT_SHA"]
 build = json.loads((full / "build_receipt.json").read_text())
-assert build["builder_baselines_revision"] == os.environ["BASELINES_REVISION"]
+assert build["builder_baselines_revision"] == os.environ["BANK_BUILDER_BASELINES_REVISION"]
 assert build["terra_revision"] == os.environ["RUNTIME_TERRA_REVISION"]
 
 assert partial_reset_bank_sha256(partial_root) == os.environ["PARTIAL_BANK_SHA"]
@@ -150,7 +152,7 @@ printf '%s\n' \
     "conditions=40 foundation=25 trench=15" \
     "partial_conditions=$EXPECTED_PARTIAL_CONDITIONS partial_triplets=$EXPECTED_PARTIAL_TRIPLETS" \
     "partial_reset_bank_sha256=$PARTIAL_BANK_SHA" \
-    "ladder=canary1:1gpu-u1,bootstrap:8gpu-u1,smoke:8gpu-u5,phase1:8gpu-u75000,phase2:8gpu-u100000"
+    "ladder=canary1:1gpu-u1,bootstrap:8gpu-u1,smoke:8gpu-u5,phase1:8gpu-u75000,phase2:8gpu-u100000,bootstrap4:4gpu512-u1,smoke4:4gpu512-u5,fallback4:4gpu512-u75000+u100000"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: local contracts passed; no SSH, upload, W&B, or Slurm mutation"
     exit 0
@@ -207,13 +209,17 @@ if [ "$SUBMIT" = stage ]; then
     exit 0
 fi
 
-COMMON_EXPORTS="ALL,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,PROTOCOL_SHA=$PROTOCOL_SHA,SEED=$SEED,VENV=$REMOTE_VENV,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$FULL_BANK_ARCHIVE_SHA,BANK_DATASET_SHA=$FULL_BANK_DATASET_SHA,BANK_BUILD_SHA=$FULL_BANK_BUILD_SHA,BANK_AUDIT_SHA=$FULL_BANK_AUDIT_SHA,SOURCE_REGISTRY_SHA=$SOURCE_REGISTRY_SHA,DISTANCE_ARTIFACT_SHA=$DISTANCE_ARTIFACT_SHA,PARTIAL_ARCHIVE=$REMOTE_PARTIAL,PARTIAL_ARCHIVE_SHA=$PARTIAL_BANK_ARCHIVE_SHA,PARTIAL_BANK_SHA=$PARTIAL_BANK_SHA,PARTIAL_ALIGNMENT_AUDIT_SHA=$PARTIAL_ALIGNMENT_AUDIT_SHA,EXPECTED_PARTIAL_CONDITIONS=$EXPECTED_PARTIAL_CONDITIONS,EXPECTED_PARTIAL_TRIPLETS=$EXPECTED_PARTIAL_TRIPLETS,EXPECTED_PARTIAL_SIDECARS=$EXPECTED_PARTIAL_SIDECARS,EXPECTED_TRENCH_AUDIT_SIDECARS=$EXPECTED_TRENCH_AUDIT_SIDECARS,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,ALGORITHM_DENYLIST_SHA=$ALGORITHM_DENYLIST_SHA"
+COMMON_EXPORTS="ALL,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,BANK_BUILDER_BASELINES_REVISION=$BASELINES_REVISION_PIN,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,PROTOCOL_SHA=$PROTOCOL_SHA,SEED=$SEED,VENV=$REMOTE_VENV,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$FULL_BANK_ARCHIVE_SHA,BANK_DATASET_SHA=$FULL_BANK_DATASET_SHA,BANK_BUILD_SHA=$FULL_BANK_BUILD_SHA,BANK_AUDIT_SHA=$FULL_BANK_AUDIT_SHA,SOURCE_REGISTRY_SHA=$SOURCE_REGISTRY_SHA,DISTANCE_ARTIFACT_SHA=$DISTANCE_ARTIFACT_SHA,PARTIAL_ARCHIVE=$REMOTE_PARTIAL,PARTIAL_ARCHIVE_SHA=$PARTIAL_BANK_ARCHIVE_SHA,PARTIAL_BANK_SHA=$PARTIAL_BANK_SHA,PARTIAL_ALIGNMENT_AUDIT_SHA=$PARTIAL_ALIGNMENT_AUDIT_SHA,EXPECTED_PARTIAL_CONDITIONS=$EXPECTED_PARTIAL_CONDITIONS,EXPECTED_PARTIAL_TRIPLETS=$EXPECTED_PARTIAL_TRIPLETS,EXPECTED_PARTIAL_SIDECARS=$EXPECTED_PARTIAL_SIDECARS,EXPECTED_TRENCH_AUDIT_SIDECARS=$EXPECTED_TRENCH_AUDIT_SIDECARS,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,ALGORITHM_DENYLIST_SHA=$ALGORITHM_DENYLIST_SHA"
 BASE_RUN_NAME="axis_v2_generalist_${BASELINES_REVISION:0:12}_s${SEED}"
 RUN_PARENT="$REMOTE_RUNS/$BASELINES_REVISION/s$SEED"
 
 require_complete() {
     local run_dir="$1" run_name="$2" target="$3" devices="$4"
-    remote "test -f '$run_dir/completion.env' && grep -qx 'status=COMPLETED' '$run_dir/completion.env' && grep -qx 'target_update=$target' '$run_dir/completion.env' && RESULTS_SHA=\$(sha256sum '$run_dir/autotune_results.pbtxt' | awk '{print \$1}') && grep -qx \"autotune_results_sha256=\$RESULTS_SHA\" '$run_dir/completion.env' && test -f '$run_dir/checkpoints/${run_name}_FINAL.pkl' && test -f '$run_dir/checkpoint_validation.json' && grep -Eq '\"next_update\": $target(,)?$' '$run_dir/checkpoint_validation.json' && grep -q '\"model_finite\": true' '$run_dir/checkpoint_validation.json' && grep -q '\"optimizer_finite\": true' '$run_dir/checkpoint_validation.json' && grep -qx 'terra_baselines_revision=$BASELINES_REVISION' '$run_dir/run_contract.env' && grep -qx 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' '$run_dir/run_contract.env' && grep -qx 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' '$run_dir/run_contract.env' && grep -qx 'num_devices=$devices' '$run_dir/run_contract.env' && JOB_ID=\$(awk -F= '\$1 == \"slurm_job_id\" {print \$2}' '$run_dir/run_contract.env') && test \"\$(sacct -X -n -j \"\$JOB_ID\" --format=State | awk 'NF {print \$1; exit}')\" = COMPLETED"
+    local envs_per_device=256
+    local global_rollout=65536
+    if [ "$devices" -eq 1 ]; then global_rollout=8192; fi
+    if [ "$devices" -eq 4 ]; then envs_per_device=512; fi
+    remote "test -f '$run_dir/completion.env' && grep -qx 'status=COMPLETED' '$run_dir/completion.env' && grep -qx 'target_update=$target' '$run_dir/completion.env' && RESULTS_SHA=\$(sha256sum '$run_dir/autotune_results.pbtxt' | awk '{print \$1}') && grep -qx \"autotune_results_sha256=\$RESULTS_SHA\" '$run_dir/completion.env' && test -f '$run_dir/checkpoints/${run_name}_FINAL.pkl' && test -f '$run_dir/checkpoint_validation.json' && grep -Eq '\"next_update\": $target(,)?$' '$run_dir/checkpoint_validation.json' && grep -q '\"model_finite\": true' '$run_dir/checkpoint_validation.json' && grep -q '\"optimizer_finite\": true' '$run_dir/checkpoint_validation.json' && grep -qx 'terra_baselines_revision=$BASELINES_REVISION' '$run_dir/run_contract.env' && grep -qx 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' '$run_dir/run_contract.env' && grep -qx 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' '$run_dir/run_contract.env' && grep -qx 'num_devices=$devices' '$run_dir/run_contract.env' && grep -qx 'num_envs_per_device=$envs_per_device' '$run_dir/run_contract.env' && grep -qx 'global_rollout_transitions=$global_rollout' '$run_dir/run_contract.env' && JOB_ID=\$(awk -F= '\$1 == \"slurm_job_id\" {print \$2}' '$run_dir/run_contract.env') && test \"\$(sacct -X -n -j \"\$JOB_ID\" --format=State | awk 'NF {print \$1; exit}')\" = COMPLETED"
 }
 
 submit_finite() {
@@ -221,6 +227,7 @@ submit_finite() {
     local cache="$6" cache_sha="$7" job_name="$8"
     local cpus=16
     if [ "$devices" -eq 1 ]; then cpus=4; fi
+    if [ "$devices" -eq 4 ]; then cpus=8; fi
     remote "test ! -e '$run_dir' && mkdir -p '$RUN_PARENT' && mkdir '$run_dir'"
     local raw job_id
     raw="$(remote "cat '$REMOTE_SOURCE/scripts/euler_axis_v2_generalist_8gpu/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.4h' --time='01:30:00' --gpus='rtx_4090:$devices' --cpus-per-task='$cpus' --exclude='$EXCLUDED_NODES' --job-name='$job_name' --output='$run_dir/slurm_%j.out' --export='$COMMON_EXPORTS,AUTOTUNE_CACHE=$cache,AUTOTUNE_CACHE_SHA=$cache_sha,RUN_ROLE=$role,TARGET_UPDATE=$target,RESUME_CHECKPOINT=none,RESUME_UPDATE=0,RUN_DIR=$run_dir,RUN_NAME=$run_name'")"
@@ -230,12 +237,67 @@ submit_finite() {
     printf '%s\n' "role=$role" "job_id=$job_id" "devices=$devices" "run_dir=$run_dir"
 }
 
+submit_production_chain() {
+    local devices="$1" cpus="$2" phase1_role="$3" phase2_role="$4"
+    local cache="$5" cache_sha="$6" phase1_dir="$7" phase2_dir="$8"
+    local run_name="$9" submission_file="${10}" job_suffix="${11}"
+    remote "test ! -e '$phase1_dir' && test ! -e '$phase2_dir' && mkdir -p '$RUN_PARENT' && mkdir '$phase1_dir' '$phase2_dir'"
+    local job1_raw job1_id job2_raw job2_id phase1_checkpoint
+    job1_raw="$(remote "cat '$REMOTE_SOURCE/scripts/euler_axis_v2_generalist_8gpu/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.120h' --time='119:45:00' --gpus='rtx_4090:$devices' --cpus-per-task='$cpus' --exclude='$EXCLUDED_NODES' --job-name='terra-axis-v2-${job_suffix}-u75' --output='$phase1_dir/slurm_%j.out' --export='$COMMON_EXPORTS,AUTOTUNE_CACHE=$cache,AUTOTUNE_CACHE_SHA=$cache_sha,RUN_ROLE=$phase1_role,TARGET_UPDATE=75000,RESUME_CHECKPOINT=none,RESUME_UPDATE=0,RUN_DIR=$phase1_dir,RUN_NAME=$run_name'")"
+    job1_id="${job1_raw%%;*}"
+    [[ "$job1_id" =~ ^[0-9]+$ ]]
+    phase1_checkpoint="$phase1_dir/checkpoints/${run_name}_FINAL.pkl"
+    if ! job2_raw="$(remote "cat '$REMOTE_SOURCE/scripts/euler_axis_v2_generalist_8gpu/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.120h' --time='119:45:00' --gpus='rtx_4090:$devices' --cpus-per-task='$cpus' --exclude='$EXCLUDED_NODES' --dependency='afterok:$job1_id' --kill-on-invalid-dep=yes --job-name='terra-axis-v2-${job_suffix}-u100' --output='$phase2_dir/slurm_%j.out' --export='$COMMON_EXPORTS,AUTOTUNE_CACHE=$cache,AUTOTUNE_CACHE_SHA=$cache_sha,RUN_ROLE=$phase2_role,TARGET_UPDATE=100000,RESUME_CHECKPOINT=$phase1_checkpoint,RESUME_UPDATE=75000,RUN_DIR=$phase2_dir,RUN_NAME=$run_name'")"; then
+        remote "scancel -- '$job1_id'"
+        exit 3
+    fi
+    job2_id="${job2_raw%%;*}"
+    if [[ ! "$job2_id" =~ ^[0-9]+$ ]]; then
+        remote "scancel -- '$job1_id'"
+        exit 3
+    fi
+    remote "printf '%s\n' 'status=SUBMITTED' 'phase1_job_id=$job1_id' 'phase2_job_id=$job2_id' 'dependency=afterok:$job1_id' 'devices=$devices' 'phase1_target_update=75000' 'final_target_update=100000' 'terra_baselines_revision=$BASELINES_REVISION' 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' 'autotune_cache_sha256=$cache_sha' > '$submission_file'"
+    printf '%s\n' \
+        "phase1_job_id=$job1_id" \
+        "phase2_job_id=$job2_id dependency=afterok:$job1_id" \
+        "devices=$devices" \
+        "phase1_run_dir=$phase1_dir" \
+        "phase2_run_dir=$phase2_dir"
+}
+
 CANARY_DIR="$RUN_PARENT/canary1_u1"
 CANARY_NAME="${BASE_RUN_NAME}_canary1"
 BOOTSTRAP_DIR="$RUN_PARENT/bootstrap_8gpu_u1"
 BOOTSTRAP_NAME="${BASE_RUN_NAME}_bootstrap"
 SMOKE_DIR="$RUN_PARENT/smoke_8gpu_u5"
 SMOKE_NAME="${BASE_RUN_NAME}_smoke"
+BOOTSTRAP4_DIR="$RUN_PARENT/bootstrap_4gpu512_u1"
+BOOTSTRAP4_NAME="${BASE_RUN_NAME}_bootstrap4"
+SMOKE4_DIR="$RUN_PARENT/smoke_4gpu512_u5"
+SMOKE4_NAME="${BASE_RUN_NAME}_smoke4"
+
+if [ "$SUBMIT" = bootstrap4 ]; then
+    submit_finite bootstrap4 1 4 "$BOOTSTRAP4_DIR" "$BOOTSTRAP4_NAME" none none terra-axis-v2-bootstrap4
+    exit 0
+fi
+if [ "$SUBMIT" = smoke4 ] || [ "$SUBMIT" = fallback4 ]; then
+    require_complete "$BOOTSTRAP4_DIR" "$BOOTSTRAP4_NAME" 1 4
+    BOOTSTRAP4_CACHE="$BOOTSTRAP4_DIR/autotune_results.pbtxt"
+    BOOTSTRAP4_CACHE_SHA="$(remote "sha256sum '$BOOTSTRAP4_CACHE' | awk '{print \$1}'")"
+    if [ "$SUBMIT" = smoke4 ]; then
+        submit_finite smoke4 5 4 "$SMOKE4_DIR" "$SMOKE4_NAME" "$BOOTSTRAP4_CACHE" "$BOOTSTRAP4_CACHE_SHA" terra-axis-v2-smoke4
+        exit 0
+    fi
+    require_complete "$SMOKE4_DIR" "$SMOKE4_NAME" 5 4
+    remote "test -f '$SMOKE4_DIR/throughput_validation.json' && '$REMOTE_VENV/bin/python' -c 'import json; r=json.load(open(\"$SMOKE4_DIR/throughput_validation.json\")); assert r[\"passed\"] is True; assert r[\"post_compile_median_steps_per_second\"] >= 12000'"
+    remote "$REMOTE_VENV/bin/python -c 'import netrc; assert netrc.netrc().authenticators(\"api.wandb.ai\")'"
+    SMOKE4_CACHE="$SMOKE4_DIR/autotune_results.pbtxt"
+    SMOKE4_CACHE_SHA="$(remote "sha256sum '$SMOKE4_CACHE' | awk '{print \$1}'")"
+    submit_production_chain 4 8 phase1_4gpu phase2_4gpu "$SMOKE4_CACHE" "$SMOKE4_CACHE_SHA" \
+        "$RUN_PARENT/fallback4_phase1_u75000" "$RUN_PARENT/fallback4_phase2_u100000" \
+        "${BASE_RUN_NAME}_4gpu" "$RUN_PARENT/submission_4gpu.env" 4gpu
+    exit 0
+fi
 
 if [ "$SUBMIT" = canary1 ]; then
     submit_finite canary1 1 1 "$CANARY_DIR" "$CANARY_NAME" none none terra-axis-v2-1gpu
@@ -263,24 +325,5 @@ SMOKE_CACHE_SHA="$(remote "sha256sum '$SMOKE_CACHE' | awk '{print \$1}'")"
 
 PHASE1_DIR="$RUN_PARENT/phase1_u75000"
 PHASE2_DIR="$RUN_PARENT/phase2_u100000"
-remote "test ! -e '$PHASE1_DIR' && test ! -e '$PHASE2_DIR' && mkdir -p '$RUN_PARENT' && mkdir '$PHASE1_DIR' '$PHASE2_DIR'"
-JOB1_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_axis_v2_generalist_8gpu/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.120h' --time='119:45:00' --gpus='rtx_4090:8' --cpus-per-task='16' --exclude='$EXCLUDED_NODES' --job-name='terra-axis-v2-u75' --output='$PHASE1_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,AUTOTUNE_CACHE=$SMOKE_CACHE,AUTOTUNE_CACHE_SHA=$SMOKE_CACHE_SHA,RUN_ROLE=phase1,TARGET_UPDATE=75000,RESUME_CHECKPOINT=none,RESUME_UPDATE=0,RUN_DIR=$PHASE1_DIR,RUN_NAME=$BASE_RUN_NAME'")"
-JOB1_ID="${JOB1_RAW%%;*}"
-[[ "$JOB1_ID" =~ ^[0-9]+$ ]]
-PHASE1_CHECKPOINT="$PHASE1_DIR/checkpoints/${BASE_RUN_NAME}_FINAL.pkl"
-if ! JOB2_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_axis_v2_generalist_8gpu/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='gpuhe.120h' --time='119:45:00' --gpus='rtx_4090:8' --cpus-per-task='16' --exclude='$EXCLUDED_NODES' --dependency='afterok:$JOB1_ID' --kill-on-invalid-dep=yes --job-name='terra-axis-v2-u100' --output='$PHASE2_DIR/slurm_%j.out' --export='$COMMON_EXPORTS,AUTOTUNE_CACHE=$SMOKE_CACHE,AUTOTUNE_CACHE_SHA=$SMOKE_CACHE_SHA,RUN_ROLE=phase2,TARGET_UPDATE=100000,RESUME_CHECKPOINT=$PHASE1_CHECKPOINT,RESUME_UPDATE=75000,RUN_DIR=$PHASE2_DIR,RUN_NAME=$BASE_RUN_NAME'")"; then
-    remote "scancel -- '$JOB1_ID'"
-    exit 3
-fi
-JOB2_ID="${JOB2_RAW%%;*}"
-if [[ ! "$JOB2_ID" =~ ^[0-9]+$ ]]; then
-    remote "scancel -- '$JOB1_ID'"
-    exit 3
-fi
-remote "printf '%s\n' 'status=SUBMITTED' 'phase1_job_id=$JOB1_ID' 'phase2_job_id=$JOB2_ID' 'dependency=afterok:$JOB1_ID' 'devices=8' 'phase1_target_update=75000' 'final_target_update=100000' 'terra_baselines_revision=$BASELINES_REVISION' 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' 'autotune_cache_sha256=$SMOKE_CACHE_SHA' > '$RUN_PARENT/submission.env'"
-printf '%s\n' \
-    "phase1_job_id=$JOB1_ID" \
-    "phase2_job_id=$JOB2_ID dependency=afterok:$JOB1_ID" \
-    "devices=8" \
-    "phase1_run_dir=$PHASE1_DIR" \
-    "phase2_run_dir=$PHASE2_DIR"
+submit_production_chain 8 16 phase1 phase2 "$SMOKE_CACHE" "$SMOKE_CACHE_SHA" \
+    "$PHASE1_DIR" "$PHASE2_DIR" "$BASE_RUN_NAME" "$RUN_PARENT/submission.env" 8gpu

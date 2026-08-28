@@ -17,3 +17,20 @@ entries {
   algos { id: 20 }
   algos { id: 20 tensor_ops: true }
 }
+# Same per-replica convolutions for the 4 GPU x 512 environment fallback.
+entries {
+  hlo: "(bf16[64,3,3,64]{3,2,1,0}, u8[0]{0}) custom-call(bf16[512,16,16,64]{3,2,1,0}, bf16[512,16,16,64]{3,2,1,0}), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target=\"__cudnn$convBackwardFilter\", backend_config={\"operation_queue_id\":\"0\",\"wait_on_operation_queues\":[],\"cudnn_conv_backend_config\":{\"conv_result_scale\":1,\"activation_mode\":\"kNone\",\"side_input_scale\":0,\"leakyrelu_alpha\":0},\"force_earliest_schedule\":false}"
+  cc { major: 8 minor: 9 }
+  cudnn_version { major: 8 minor: 9 patch: 7 }
+  blas_version: "120902"
+  algos { id: 20 }
+  algos { id: 20 tensor_ops: true }
+}
+entries {
+  hlo: "(bf16[96,3,3,96]{3,2,1,0}, u8[0]{0}) custom-call(bf16[512,8,8,96]{3,2,1,0}, bf16[512,8,8,96]{3,2,1,0}), window={size=3x3 pad=1_1x1_1}, dim_labels=b01f_o01i->b01f, custom_call_target=\"__cudnn$convBackwardFilter\", backend_config={\"operation_queue_id\":\"0\",\"wait_on_operation_queues\":[],\"cudnn_conv_backend_config\":{\"conv_result_scale\":1,\"activation_mode\":\"kNone\",\"side_input_scale\":0,\"leakyrelu_alpha\":0},\"force_earliest_schedule\":false}"
+  cc { major: 8 minor: 9 }
+  cudnn_version { major: 8 minor: 9 patch: 7 }
+  blas_version: "120902"
+  algos { id: 20 }
+  algos { id: 20 tensor_ops: true }
+}

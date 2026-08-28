@@ -21,11 +21,12 @@ for REQUIRED in RUN_ROLE TARGET_UPDATE RESUME_CHECKPOINT RESUME_UPDATE RUN_DIR \
     EXPECTED_PARTIAL_CONDITIONS EXPECTED_PARTIAL_TRIPLETS \
     EXPECTED_PARTIAL_SIDECARS EXPECTED_TRENCH_AUDIT_SIDECARS \
     EXPECTED_PARAMETERS ALGORITHM_DENYLIST_SHA AUTOTUNE_CACHE \
-    AUTOTUNE_CACHE_SHA SLURM_JOB_ID TMPDIR; do
+    AUTOTUNE_CACHE_SHA BANK_BUILDER_BASELINES_REVISION SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
 EXPECTED_DEVICES=8
+EXPECTED_ENVS_PER_DEVICE=256
 case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT:$RESUME_UPDATE" in
     canary1:1:none:0)
         test "$AUTOTUNE_CACHE" = none
@@ -40,10 +41,25 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT:$RESUME_UPDATE" in
         WANDB_MODE=offline
         WANDB_RESUME=never
         ;;
+    bootstrap4:1:none:0)
+        test "$AUTOTUNE_CACHE" = none
+        test "$AUTOTUNE_CACHE_SHA" = none
+        WANDB_MODE=offline
+        WANDB_RESUME=never
+        EXPECTED_DEVICES=4
+        EXPECTED_ENVS_PER_DEVICE=512
+        ;;
     smoke:5:none:0)
         test "$AUTOTUNE_CACHE" != none
         WANDB_MODE=offline
         WANDB_RESUME=never
+        ;;
+    smoke4:5:none:0)
+        test "$AUTOTUNE_CACHE" != none
+        WANDB_MODE=offline
+        WANDB_RESUME=never
+        EXPECTED_DEVICES=4
+        EXPECTED_ENVS_PER_DEVICE=512
         ;;
     phase1:75000:none:0)
         test "$AUTOTUNE_CACHE" != none
@@ -56,10 +72,25 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT:$RESUME_UPDATE" in
         WANDB_MODE=online
         WANDB_RESUME=must
         ;;
+    phase1_4gpu:75000:none:0)
+        test "$AUTOTUNE_CACHE" != none
+        WANDB_MODE=online
+        WANDB_RESUME=never
+        EXPECTED_DEVICES=4
+        EXPECTED_ENVS_PER_DEVICE=512
+        ;;
+    phase2_4gpu:100000:*:75000)
+        test "$RESUME_CHECKPOINT" != none
+        test "$AUTOTUNE_CACHE" != none
+        WANDB_MODE=online
+        WANDB_RESUME=must
+        EXPECTED_DEVICES=4
+        EXPECTED_ENVS_PER_DEVICE=512
+        ;;
     *) echo "unsupported run contract" >&2; exit 2 ;;
 esac
 case "$RUN_ROLE:${SLURM_JOB_PARTITION:-}" in
-    canary1:gpuhe.4h|bootstrap:gpuhe.4h|smoke:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h) ;;
+    canary1:gpuhe.4h|bootstrap:gpuhe.4h|bootstrap4:gpuhe.4h|smoke:gpuhe.4h|smoke4:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h|phase1_4gpu:gpuhe.120h|phase2_4gpu:gpuhe.120h) ;;
     *) echo "unexpected partition for $RUN_ROLE" >&2; exit 2 ;;
 esac
 
@@ -115,7 +146,7 @@ for GPU_NAME in "${GPU_NAMES[@]}"; do
     test "$GPU_NAME" = "NVIDIA GeForce RTX 4090"
 done
 
-NUM_DEVICES="$EXPECTED_DEVICES" "$PYTHON" - <<'PY'
+NUM_DEVICES="$EXPECTED_DEVICES" NUM_ENVS_PER_DEVICE="$EXPECTED_ENVS_PER_DEVICE" "$PYTHON" - <<'PY'
 import os
 import jax
 import jax.numpy as jnp
@@ -123,6 +154,7 @@ import numpy as np
 from jax import lax
 
 devices = int(os.environ["NUM_DEVICES"])
+envs_per_device = int(os.environ["NUM_ENVS_PER_DEVICE"])
 jax_devices = jax.devices()
 assert len(jax_devices) == devices, jax_devices
 assert all(device.device_kind == "NVIDIA GeForce RTX 4090" for device in jax_devices)
@@ -136,13 +168,13 @@ def loss(x, kernel):
 
 kernel_grad = jax.pmap(jax.grad(loss, argnums=1), axis_name="devices", in_axes=(0, None))
 for spatial, channels in ((16, 64), (8, 96)):
-    x = jnp.ones((devices, 256, spatial, spatial, channels), dtype=jnp.bfloat16)
+    x = jnp.ones((devices, envs_per_device, spatial, spatial, channels), dtype=jnp.bfloat16)
     kernel = jnp.ones((3, 3, channels, channels), dtype=jnp.bfloat16)
     gradient = kernel_grad(x, kernel)
     assert gradient.shape == (devices, 3, 3, channels, channels)
     assert bool(jnp.all(jnp.isfinite(gradient)))
 
-x = jnp.ones((devices, 256, 8, 8, 96), dtype=jnp.bfloat16)
+x = jnp.ones((devices, envs_per_device, 8, 8, 96), dtype=jnp.bfloat16)
 kernel = jnp.ones((1, 1, 96, 32), dtype=jnp.bfloat16)
 gradient = kernel_grad(x, kernel)
 assert gradient.shape == (devices, 1, 1, 96, 32)
@@ -223,7 +255,9 @@ PY
 
 export WANDB_ENTITY WANDB_PROJECT WANDB_MODE WANDB_RESUME
 export WANDB_RUN_ID="axis_v2_generalist_${BASELINES_REVISION:0:10}_s${SEED}"
-if [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = smoke ]; then
+if [ "$RUN_ROLE" = phase1_4gpu ] || [ "$RUN_ROLE" = phase2_4gpu ]; then
+    export WANDB_RUN_ID="${WANDB_RUN_ID}_4gpu"
+elif [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = bootstrap4 ] || [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = smoke4 ]; then
     export WANDB_RUN_ID="${WANDB_RUN_ID}_${RUN_ROLE}_${SLURM_JOB_ID}"
 fi
 export WANDB_DIR="$RUN_DIR/wandb"
@@ -240,6 +274,7 @@ printf '%s\n' \
     "resume_update=$RESUME_UPDATE" \
     "resume_checkpoint=$RESUME_CHECKPOINT" \
     "terra_baselines_revision=$BASELINES_REVISION" \
+    "bank_builder_baselines_revision=$BANK_BUILDER_BASELINES_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
     "environment_protocol_sha256=$PROTOCOL_SHA" \
     "source_registry_sha256=$SOURCE_REGISTRY_SHA" \
@@ -250,8 +285,8 @@ printf '%s\n' \
     "trench_conditions=15" \
     "partial_reset_bank_sha256=$PARTIAL_BANK_SHA" \
     "num_devices=$EXPECTED_DEVICES" \
-    "num_envs_per_device=256" \
-    "global_rollout_transitions=$((EXPECTED_DEVICES * 256 * 32))" \
+    "num_envs_per_device=$EXPECTED_ENVS_PER_DEVICE" \
+    "global_rollout_transitions=$((EXPECTED_DEVICES * EXPECTED_ENVS_PER_DEVICE * 32))" \
     "xla_gpu_algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA" \
     "xla_gpu_autotune_cache_sha256=$AUTOTUNE_CACHE_SHA" \
     "wandb_run_id=$WANDB_RUN_ID" \
@@ -259,12 +294,12 @@ printf '%s\n' \
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PYTHON_BIN="$PYTHON" MACHINE=euler
 export PROTOCOL_TERRA_REVISION="$RUNTIME_TERRA_REVISION"
-if [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = smoke ]; then
+if [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = bootstrap4 ] || [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = smoke4 ]; then
     export CHECKPOINT_INTERVAL=1 LOG_EVAL_INTERVAL=0
 else
     export CHECKPOINT_INTERVAL=500 LOG_EVAL_INTERVAL=100
 fi
-NUM_DEVICES="$EXPECTED_DEVICES" NUM_ENVS_PER_DEVICE=256 \
+NUM_DEVICES="$EXPECTED_DEVICES" NUM_ENVS_PER_DEVICE="$EXPECTED_ENVS_PER_DEVICE" \
 "$BASELINES_ROOT/scripts/run_axis_v2_generalist_8gpu.sh" \
     "$BANK" "$PARTIAL_BANK" "$RUN_NAME" "$TARGET_UPDATE" "$RUN_DIR" \
     "$DISTANCE_ARTIFACT_SHA" "$RESUME_CHECKPOINT"
@@ -313,9 +348,10 @@ open(os.path.join(os.path.dirname(os.environ["FINAL_CHECKPOINT"]), "..", "checkp
 )
 PY
 
-if [ "$RUN_ROLE" = smoke ]; then
+if [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = smoke4 ]; then
     THROUGHPUT_LOG="$RUN_DIR/slurm_${SLURM_JOB_ID}.out" \
-    THROUGHPUT_RECEIPT="$RUN_DIR/throughput_validation.json" "$PYTHON" - <<'PY'
+    THROUGHPUT_RECEIPT="$RUN_DIR/throughput_validation.json" \
+    NUM_DEVICES="$EXPECTED_DEVICES" NUM_ENVS_PER_DEVICE="$EXPECTED_ENVS_PER_DEVICE" "$PYTHON" - <<'PY'
 import json
 import os
 import re
@@ -328,9 +364,9 @@ if len(steady) < 3:
     raise RuntimeError(f"expected three post-compile samples, got {values}")
 median = statistics.median(steady)
 receipt = {
-    "schema": "terra_axis_v2_8gpu_throughput_smoke_v1",
-    "num_devices": 8,
-    "num_envs_per_device": 256,
+    "schema": "terra_axis_v2_throughput_smoke_v2",
+    "num_devices": int(os.environ["NUM_DEVICES"]),
+    "num_envs_per_device": int(os.environ["NUM_ENVS_PER_DEVICE"]),
     "all_steps_per_second": values,
     "post_compile_steps_per_second": steady,
     "post_compile_median_steps_per_second": median,
