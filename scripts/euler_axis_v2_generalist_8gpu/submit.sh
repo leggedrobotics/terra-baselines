@@ -6,7 +6,7 @@ set -euo pipefail
 
 SUBMIT="${SUBMIT:-0}"
 case "$SUBMIT" in
-    0|stage|canary1|bootstrap|smoke|bootstrap4|smoke4|fallback4|bootstrap4safe|smoke4safe|fallback4safe|1) ;;
+    0|stage|canary1|bootstrap|smoke|bootstrap4|smoke4|fallback4|bootstrap4replay|smoke4replay|fallback4replay|1) ;;
     *) echo "unsupported SUBMIT mode: $SUBMIT" >&2; exit 2 ;;
 esac
 
@@ -52,6 +52,8 @@ EXPECTED_PARAMETERS=2311869
 SEED=20260825
 EXCLUDED_NODES=eu-g6-057,eu-g6-064,eu-g6-065
 RELEASE_ID=terra_axis_v2_v6_constraints_v7_foundations_train96_v1
+REPLAY_AUTOTUNE_CACHE_SHA=698e856cae464e5fea93e0b2121fc8de4d9cb691135571ca4b5d56f3259d16a3
+REPLAY_AUTOTUNE_CACHE="${AXIS_V2_REPLAY_AUTOTUNE_CACHE:-$TERRA_EULER_PROJECT_ROOT/terra_runtime/autotune/terra_trench_align_generalist_partial_v1/rtx4090_cc89_cudnn897_jaxlib0426_45e2dbc_u3501.pbtxt}"
 
 test -z "$(git -C "$REPO" status --porcelain)" || {
     echo "terra-baselines must be committed and clean" >&2; exit 3;
@@ -152,7 +154,8 @@ printf '%s\n' \
     "conditions=40 foundation=25 trench=15" \
     "partial_conditions=$EXPECTED_PARTIAL_CONDITIONS partial_triplets=$EXPECTED_PARTIAL_TRIPLETS" \
     "partial_reset_bank_sha256=$PARTIAL_BANK_SHA" \
-    "ladder=canary1:1gpu-u1,bootstrap:8gpu-u1,smoke:8gpu-u5,phase1:8gpu-u75000,phase2:8gpu-u100000,bootstrap4:4gpu512-u1,smoke4:4gpu512-u5,fallback4:4gpu512-u75000+u100000,bootstrap4safe:4gpu512-u1-level0,smoke4safe:4gpu512-u5-level0,fallback4safe:4gpu512-u75000+u100000-level0"
+    "replay_autotune_cache_sha256=$REPLAY_AUTOTUNE_CACHE_SHA" \
+    "ladder=canary1:1gpu-u1,bootstrap:8gpu-u1,smoke:8gpu-u5,phase1:8gpu-u75000,phase2:8gpu-u100000,bootstrap4:4gpu512-u1,smoke4:4gpu512-u5,fallback4:4gpu512-u75000+u100000,bootstrap4replay:4gpu512-u1-cached,smoke4replay:4gpu512-u5-cached,fallback4replay:4gpu512-u75000+u100000-cached"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: local contracts passed; no SSH, upload, W&B, or Slurm mutation"
     exit 0
@@ -161,6 +164,11 @@ fi
 remote() { ssh -o BatchMode=yes "$REMOTE_HOST" "$@"; }
 test "$(remote 'id -un')" = "$TERRA_EULER_USER"
 remote "test \"\$HOME\" = '$TERRA_EULER_HOME_ROOT' && test -w '$TERRA_EULER_SCRATCH_ROOT' && test -x '$REMOTE_VENV/bin/python'"
+case "$SUBMIT" in
+    bootstrap4replay|smoke4replay|fallback4replay)
+        remote "test \"\$(sha256sum '$REPLAY_AUTOTUNE_CACHE' | awk '{print \$1}')\" = '$REPLAY_AUTOTUNE_CACHE_SHA'"
+        ;;
+esac
 remote "mkdir -p '$REMOTE_WORK/source' '$REMOTE_WORK/runtime-terra' '$REMOTE_INPUTS' '$REMOTE_RUNS'"
 
 REMOTE_SOURCE="$REMOTE_WORK/source/$BASELINES_REVISION/terra-baselines"
@@ -215,24 +223,11 @@ RUN_PARENT="$REMOTE_RUNS/$BASELINES_REVISION/s$SEED"
 
 require_complete() {
     local run_dir="$1" run_name="$2" target="$3" devices="$4"
-    local autotune_mode="${5:-cached}"
     local envs_per_device=256
     local global_rollout=65536
-    local autotune_level=4
     if [ "$devices" -eq 1 ]; then global_rollout=8192; fi
     if [ "$devices" -eq 4 ]; then envs_per_device=512; fi
-    if [ "$autotune_mode" = disabled ]; then
-        autotune_level=0
-    elif [ "$autotune_mode" != cached ]; then
-        echo "unsupported autotune completion mode: $autotune_mode" >&2
-        exit 2
-    fi
-    remote "test -f '$run_dir/completion.env' && grep -qx 'status=COMPLETED' '$run_dir/completion.env' && grep -qx 'target_update=$target' '$run_dir/completion.env' && test -f '$run_dir/checkpoints/${run_name}_FINAL.pkl' && test -f '$run_dir/checkpoint_validation.json' && grep -Eq '\"next_update\": $target(,)?$' '$run_dir/checkpoint_validation.json' && grep -q '\"model_finite\": true' '$run_dir/checkpoint_validation.json' && grep -q '\"optimizer_finite\": true' '$run_dir/checkpoint_validation.json' && grep -qx 'terra_baselines_revision=$BASELINES_REVISION' '$run_dir/run_contract.env' && grep -qx 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' '$run_dir/run_contract.env' && grep -qx 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' '$run_dir/run_contract.env' && grep -qx 'num_devices=$devices' '$run_dir/run_contract.env' && grep -qx 'num_envs_per_device=$envs_per_device' '$run_dir/run_contract.env' && grep -qx 'global_rollout_transitions=$global_rollout' '$run_dir/run_contract.env' && grep -qx 'xla_gpu_autotune_level=$autotune_level' '$run_dir/run_contract.env' && JOB_ID=\$(awk -F= '\$1 == \"slurm_job_id\" {print \$2}' '$run_dir/run_contract.env') && test \"\$(sacct -X -n -j \"\$JOB_ID\" --format=State | awk 'NF {print \$1; exit}')\" = COMPLETED"
-    if [ "$autotune_mode" = disabled ]; then
-        remote "grep -qx 'autotune_results=none' '$run_dir/completion.env' && grep -qx 'autotune_results_sha256=none' '$run_dir/completion.env' && test ! -e '$run_dir/autotune_results.pbtxt'"
-    else
-        remote "RESULTS_SHA=\$(sha256sum '$run_dir/autotune_results.pbtxt' | awk '{print \$1}') && grep -qx \"autotune_results_sha256=\$RESULTS_SHA\" '$run_dir/completion.env'"
-    fi
+    remote "test -f '$run_dir/completion.env' && grep -qx 'status=COMPLETED' '$run_dir/completion.env' && grep -qx 'target_update=$target' '$run_dir/completion.env' && test -f '$run_dir/checkpoints/${run_name}_FINAL.pkl' && test -f '$run_dir/checkpoint_validation.json' && grep -Eq '\"next_update\": $target(,)?$' '$run_dir/checkpoint_validation.json' && grep -q '\"model_finite\": true' '$run_dir/checkpoint_validation.json' && grep -q '\"optimizer_finite\": true' '$run_dir/checkpoint_validation.json' && grep -qx 'terra_baselines_revision=$BASELINES_REVISION' '$run_dir/run_contract.env' && grep -qx 'runtime_terra_revision=$RUNTIME_TERRA_REVISION' '$run_dir/run_contract.env' && grep -qx 'partial_reset_bank_sha256=$PARTIAL_BANK_SHA' '$run_dir/run_contract.env' && grep -qx 'num_devices=$devices' '$run_dir/run_contract.env' && grep -qx 'num_envs_per_device=$envs_per_device' '$run_dir/run_contract.env' && grep -qx 'global_rollout_transitions=$global_rollout' '$run_dir/run_contract.env' && grep -qx 'xla_gpu_autotune_level=4' '$run_dir/run_contract.env' && RESULTS_SHA=\$(sha256sum '$run_dir/autotune_results.pbtxt' | awk '{print \$1}') && grep -qx \"autotune_results_sha256=\$RESULTS_SHA\" '$run_dir/completion.env' && JOB_ID=\$(awk -F= '\$1 == \"slurm_job_id\" {print \$2}' '$run_dir/run_contract.env') && test \"\$(sacct -X -n -j \"\$JOB_ID\" --format=State | awk 'NF {print \$1; exit}')\" = COMPLETED"
 }
 
 submit_finite() {
@@ -288,10 +283,10 @@ BOOTSTRAP4_DIR="$RUN_PARENT/bootstrap_4gpu512_u1"
 BOOTSTRAP4_NAME="${BASE_RUN_NAME}_bootstrap4"
 SMOKE4_DIR="$RUN_PARENT/smoke_4gpu512_u5"
 SMOKE4_NAME="${BASE_RUN_NAME}_smoke4"
-BOOTSTRAP4SAFE_DIR="$RUN_PARENT/bootstrap_4gpu512_level0_u1"
-BOOTSTRAP4SAFE_NAME="${BASE_RUN_NAME}_bootstrap4safe"
-SMOKE4SAFE_DIR="$RUN_PARENT/smoke_4gpu512_level0_u5"
-SMOKE4SAFE_NAME="${BASE_RUN_NAME}_smoke4safe"
+BOOTSTRAP4REPLAY_DIR="$RUN_PARENT/bootstrap_4gpu512_replay_u1"
+BOOTSTRAP4REPLAY_NAME="${BASE_RUN_NAME}_bootstrap4replay"
+SMOKE4REPLAY_DIR="$RUN_PARENT/smoke_4gpu512_replay_u5"
+SMOKE4REPLAY_NAME="${BASE_RUN_NAME}_smoke4replay"
 
 if [ "$SUBMIT" = bootstrap4 ]; then
     submit_finite bootstrap4 1 4 "$BOOTSTRAP4_DIR" "$BOOTSTRAP4_NAME" none none terra-axis-v2-bootstrap4
@@ -316,22 +311,26 @@ if [ "$SUBMIT" = smoke4 ] || [ "$SUBMIT" = fallback4 ]; then
     exit 0
 fi
 
-if [ "$SUBMIT" = bootstrap4safe ]; then
-    submit_finite bootstrap4safe 1 4 "$BOOTSTRAP4SAFE_DIR" "$BOOTSTRAP4SAFE_NAME" none none terra-axis-v2-bootstrap4safe
+if [ "$SUBMIT" = bootstrap4replay ]; then
+    submit_finite bootstrap4replay 1 4 "$BOOTSTRAP4REPLAY_DIR" "$BOOTSTRAP4REPLAY_NAME" "$REPLAY_AUTOTUNE_CACHE" "$REPLAY_AUTOTUNE_CACHE_SHA" terra-axis-v2-bootstrap4replay
     exit 0
 fi
-if [ "$SUBMIT" = smoke4safe ] || [ "$SUBMIT" = fallback4safe ]; then
-    require_complete "$BOOTSTRAP4SAFE_DIR" "$BOOTSTRAP4SAFE_NAME" 1 4 disabled
-    if [ "$SUBMIT" = smoke4safe ]; then
-        submit_finite smoke4safe 5 4 "$SMOKE4SAFE_DIR" "$SMOKE4SAFE_NAME" none none terra-axis-v2-smoke4safe
+if [ "$SUBMIT" = smoke4replay ] || [ "$SUBMIT" = fallback4replay ]; then
+    require_complete "$BOOTSTRAP4REPLAY_DIR" "$BOOTSTRAP4REPLAY_NAME" 1 4
+    BOOTSTRAP4REPLAY_CACHE="$BOOTSTRAP4REPLAY_DIR/autotune_results.pbtxt"
+    BOOTSTRAP4REPLAY_CACHE_SHA="$(remote "sha256sum '$BOOTSTRAP4REPLAY_CACHE' | awk '{print \$1}'")"
+    if [ "$SUBMIT" = smoke4replay ]; then
+        submit_finite smoke4replay 5 4 "$SMOKE4REPLAY_DIR" "$SMOKE4REPLAY_NAME" "$BOOTSTRAP4REPLAY_CACHE" "$BOOTSTRAP4REPLAY_CACHE_SHA" terra-axis-v2-smoke4replay
         exit 0
     fi
-    require_complete "$SMOKE4SAFE_DIR" "$SMOKE4SAFE_NAME" 5 4 disabled
-    remote "test -f '$SMOKE4SAFE_DIR/throughput_validation.json' && '$REMOTE_VENV/bin/python' -c 'import json; r=json.load(open(\"$SMOKE4SAFE_DIR/throughput_validation.json\")); assert r[\"passed\"] is True; assert r[\"post_compile_median_steps_per_second\"] >= 12000'"
+    require_complete "$SMOKE4REPLAY_DIR" "$SMOKE4REPLAY_NAME" 5 4
+    remote "test -f '$SMOKE4REPLAY_DIR/throughput_validation.json' && '$REMOTE_VENV/bin/python' -c 'import json; r=json.load(open(\"$SMOKE4REPLAY_DIR/throughput_validation.json\")); assert r[\"passed\"] is True; assert r[\"post_compile_median_steps_per_second\"] >= 12000'"
     remote "$REMOTE_VENV/bin/python -c 'import netrc; assert netrc.netrc().authenticators(\"api.wandb.ai\")'"
-    submit_production_chain 4 8 phase1_4gpu_safe phase2_4gpu_safe none none \
-        "$RUN_PARENT/fallback4safe_phase1_u75000" "$RUN_PARENT/fallback4safe_phase2_u100000" \
-        "${BASE_RUN_NAME}_4gpu_safe" "$RUN_PARENT/submission_4gpu_safe.env" 4gpu-safe
+    SMOKE4REPLAY_CACHE="$SMOKE4REPLAY_DIR/autotune_results.pbtxt"
+    SMOKE4REPLAY_CACHE_SHA="$(remote "sha256sum '$SMOKE4REPLAY_CACHE' | awk '{print \$1}'")"
+    submit_production_chain 4 8 phase1_4gpu_replay phase2_4gpu_replay "$SMOKE4REPLAY_CACHE" "$SMOKE4REPLAY_CACHE_SHA" \
+        "$RUN_PARENT/fallback4replay_phase1_u75000" "$RUN_PARENT/fallback4replay_phase2_u100000" \
+        "${BASE_RUN_NAME}_4gpu_replay" "$RUN_PARENT/submission_4gpu_replay.env" 4gpu-replay
     exit 0
 fi
 

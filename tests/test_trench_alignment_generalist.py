@@ -313,18 +313,17 @@ def test_axis_v2_path_preserves_global_batch_for_4gpu_fallback():
     assert "canary1:1:none:0" in sbatch
     assert "bootstrap:1:none:0" in sbatch
     assert "bootstrap4:1:none:0" in sbatch
-    assert "bootstrap4safe:1:none:0" in sbatch
+    assert "bootstrap4replay:1:none:0" in sbatch
     assert "smoke:5:none:0" in sbatch
     assert "smoke4:5:none:0" in sbatch
-    assert "smoke4safe:5:none:0" in sbatch
+    assert "smoke4replay:5:none:0" in sbatch
     assert "phase1:75000:none:0" in sbatch
     assert "phase2:100000:*:75000" in sbatch
     assert "phase1_4gpu:75000:none:0" in sbatch
     assert "phase2_4gpu:100000:*:75000" in sbatch
-    assert "phase1_4gpu_safe:75000:none:0" in sbatch
-    assert "phase2_4gpu_safe:100000:*:75000" in sbatch
-    assert 'AUTOTUNE_LEVEL=0' in sbatch
-    assert "--xla_gpu_autotune_level=0" in sbatch
+    assert "phase1_4gpu_replay:75000:none:0" in sbatch
+    assert "phase2_4gpu_replay:100000:*:75000" in sbatch
+    assert "--xla_gpu_autotune_level=0" not in sbatch
     assert '"xla_gpu_autotune_level=$AUTOTUNE_LEVEL"' in sbatch
     assert "--xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE" in sbatch
     assert "post_compile_median_steps_per_second" in sbatch
@@ -345,7 +344,9 @@ def test_axis_v2_path_preserves_global_batch_for_4gpu_fallback():
     assert "bf16[512,16,16,64]" in denylist
     assert "bf16[512,8,8,96]" in denylist
     assert denylist.count("entries {") == 4
-    assert "bootstrap4safe|smoke4safe|fallback4safe" in submit
+    assert "bootstrap4replay|smoke4replay|fallback4replay" in submit
+    assert "698e856cae464e5fea93e0b2121fc8de" in submit
+    assert "$TERRA_EULER_PROJECT_ROOT/terra_runtime/autotune" in submit
     assert "SUBMIT=0: local contracts passed; no SSH" in submit
     assert "EXCLUDED_NODES=eu-g6-057,eu-g6-064,eu-g6-065" in submit
     assert "git -C \"$REPO\" ls-files --error-unmatch" in submit
@@ -355,15 +356,13 @@ def test_axis_v2_path_preserves_global_batch_for_4gpu_fallback():
     assert "require_complete \"$SMOKE_DIR\"" in submit
     assert "require_complete \"$BOOTSTRAP4_DIR\"" in submit
     assert "require_complete \"$SMOKE4_DIR\"" in submit
-    assert "require_complete \"$BOOTSTRAP4SAFE_DIR\"" in submit
-    assert "require_complete \"$SMOKE4SAFE_DIR\"" in submit
-    assert "autotune_results=none" in submit
-    assert "xla_gpu_autotune_level=$autotune_level" in submit
+    assert "require_complete \"$BOOTSTRAP4REPLAY_DIR\"" in submit
+    assert "require_complete \"$SMOKE4REPLAY_DIR\"" in submit
     assert "autotune_results_sha256=\\$RESULTS_SHA" in submit
     assert "terra-axis-v2-1gpu" in submit
     assert "--gpus='rtx_4090:$devices'" in submit
     assert "submit_production_chain 4 8 phase1_4gpu phase2_4gpu" in submit
-    assert "submit_production_chain 4 8 phase1_4gpu_safe phase2_4gpu_safe none none" in submit
+    assert "submit_production_chain 4 8 phase1_4gpu_replay phase2_4gpu_replay" in submit
     assert "submit_production_chain 8 16 phase1 phase2" in submit
     assert "BANK_BUILDER_BASELINES_REVISION=$BASELINES_REVISION_PIN" in submit
     assert "post_compile_median_steps_per_second" in submit

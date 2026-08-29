@@ -50,14 +50,13 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT:$RESUME_UPDATE" in
         EXPECTED_DEVICES=4
         EXPECTED_ENVS_PER_DEVICE=512
         ;;
-    bootstrap4safe:1:none:0)
-        test "$AUTOTUNE_CACHE" = none
-        test "$AUTOTUNE_CACHE_SHA" = none
+    bootstrap4replay:1:none:0)
+        test "$AUTOTUNE_CACHE" != none
+        test "$AUTOTUNE_CACHE_SHA" != none
         WANDB_MODE=offline
         WANDB_RESUME=never
         EXPECTED_DEVICES=4
         EXPECTED_ENVS_PER_DEVICE=512
-        AUTOTUNE_LEVEL=0
         ;;
     smoke:5:none:0)
         test "$AUTOTUNE_CACHE" != none
@@ -71,14 +70,13 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT:$RESUME_UPDATE" in
         EXPECTED_DEVICES=4
         EXPECTED_ENVS_PER_DEVICE=512
         ;;
-    smoke4safe:5:none:0)
-        test "$AUTOTUNE_CACHE" = none
-        test "$AUTOTUNE_CACHE_SHA" = none
+    smoke4replay:5:none:0)
+        test "$AUTOTUNE_CACHE" != none
+        test "$AUTOTUNE_CACHE_SHA" != none
         WANDB_MODE=offline
         WANDB_RESUME=never
         EXPECTED_DEVICES=4
         EXPECTED_ENVS_PER_DEVICE=512
-        AUTOTUNE_LEVEL=0
         ;;
     phase1:75000:none:0)
         test "$AUTOTUNE_CACHE" != none
@@ -106,29 +104,27 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT:$RESUME_UPDATE" in
         EXPECTED_DEVICES=4
         EXPECTED_ENVS_PER_DEVICE=512
         ;;
-    phase1_4gpu_safe:75000:none:0)
-        test "$AUTOTUNE_CACHE" = none
-        test "$AUTOTUNE_CACHE_SHA" = none
+    phase1_4gpu_replay:75000:none:0)
+        test "$AUTOTUNE_CACHE" != none
+        test "$AUTOTUNE_CACHE_SHA" != none
         WANDB_MODE=online
         WANDB_RESUME=never
         EXPECTED_DEVICES=4
         EXPECTED_ENVS_PER_DEVICE=512
-        AUTOTUNE_LEVEL=0
         ;;
-    phase2_4gpu_safe:100000:*:75000)
+    phase2_4gpu_replay:100000:*:75000)
         test "$RESUME_CHECKPOINT" != none
-        test "$AUTOTUNE_CACHE" = none
-        test "$AUTOTUNE_CACHE_SHA" = none
+        test "$AUTOTUNE_CACHE" != none
+        test "$AUTOTUNE_CACHE_SHA" != none
         WANDB_MODE=online
         WANDB_RESUME=must
         EXPECTED_DEVICES=4
         EXPECTED_ENVS_PER_DEVICE=512
-        AUTOTUNE_LEVEL=0
         ;;
     *) echo "unsupported run contract" >&2; exit 2 ;;
 esac
 case "$RUN_ROLE:${SLURM_JOB_PARTITION:-}" in
-    canary1:gpuhe.4h|bootstrap:gpuhe.4h|bootstrap4:gpuhe.4h|bootstrap4safe:gpuhe.4h|smoke:gpuhe.4h|smoke4:gpuhe.4h|smoke4safe:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h|phase1_4gpu:gpuhe.120h|phase2_4gpu:gpuhe.120h|phase1_4gpu_safe:gpuhe.120h|phase2_4gpu_safe:gpuhe.120h) ;;
+    canary1:gpuhe.4h|bootstrap:gpuhe.4h|bootstrap4:gpuhe.4h|bootstrap4replay:gpuhe.4h|smoke:gpuhe.4h|smoke4:gpuhe.4h|smoke4replay:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h|phase1_4gpu:gpuhe.120h|phase2_4gpu:gpuhe.120h|phase1_4gpu_replay:gpuhe.120h|phase2_4gpu_replay:gpuhe.120h) ;;
     *) echo "unexpected partition for $RUN_ROLE" >&2; exit 2 ;;
 esac
 
@@ -172,9 +168,10 @@ export TF_CPP_MIN_LOG_LEVEL=0 JAX_PLATFORMS=cuda,cpu
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-if [ "$AUTOTUNE_LEVEL" -eq 0 ]; then
-    export XLA_FLAGS="--xla_gpu_autotune_level=0 --xla_gpu_algorithm_denylist_path=$DENYLIST"
-elif [ "$AUTOTUNE_CACHE" = none ]; then
+# Level 0 returns an incorrect bf16 backward-filter result in this pinned
+# runtime. Replay roles instead load the four-GPU level-4 plan set that passed
+# five native PPO updates; the denylist remains active for any cache miss.
+if [ "$AUTOTUNE_CACHE" = none ]; then
     export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$DENYLIST --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
 else
     export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$DENYLIST --xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
@@ -297,9 +294,9 @@ export WANDB_ENTITY WANDB_PROJECT WANDB_MODE WANDB_RESUME
 export WANDB_RUN_ID="axis_v2_generalist_${BASELINES_REVISION:0:10}_s${SEED}"
 if [ "$RUN_ROLE" = phase1_4gpu ] || [ "$RUN_ROLE" = phase2_4gpu ]; then
     export WANDB_RUN_ID="${WANDB_RUN_ID}_4gpu"
-elif [ "$RUN_ROLE" = phase1_4gpu_safe ] || [ "$RUN_ROLE" = phase2_4gpu_safe ]; then
-    export WANDB_RUN_ID="${WANDB_RUN_ID}_4gpu_safe"
-elif [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = bootstrap4 ] || [ "$RUN_ROLE" = bootstrap4safe ] || [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = smoke4 ] || [ "$RUN_ROLE" = smoke4safe ]; then
+elif [ "$RUN_ROLE" = phase1_4gpu_replay ] || [ "$RUN_ROLE" = phase2_4gpu_replay ]; then
+    export WANDB_RUN_ID="${WANDB_RUN_ID}_4gpu_replay"
+elif [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = bootstrap4 ] || [ "$RUN_ROLE" = bootstrap4replay ] || [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = smoke4 ] || [ "$RUN_ROLE" = smoke4replay ]; then
     export WANDB_RUN_ID="${WANDB_RUN_ID}_${RUN_ROLE}_${SLURM_JOB_ID}"
 fi
 export WANDB_DIR="$RUN_DIR/wandb"
@@ -337,7 +334,7 @@ printf '%s\n' \
 
 export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PYTHON_BIN="$PYTHON" MACHINE=euler
 export PROTOCOL_TERRA_REVISION="$RUNTIME_TERRA_REVISION"
-if [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = bootstrap4 ] || [ "$RUN_ROLE" = bootstrap4safe ] || [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = smoke4 ] || [ "$RUN_ROLE" = smoke4safe ]; then
+if [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = bootstrap4 ] || [ "$RUN_ROLE" = bootstrap4replay ] || [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = smoke4 ] || [ "$RUN_ROLE" = smoke4replay ]; then
     export CHECKPOINT_INTERVAL=1 LOG_EVAL_INTERVAL=0
 else
     export CHECKPOINT_INTERVAL=500 LOG_EVAL_INTERVAL=100
@@ -348,13 +345,8 @@ NUM_DEVICES="$EXPECTED_DEVICES" NUM_ENVS_PER_DEVICE="$EXPECTED_ENVS_PER_DEVICE" 
     "$DISTANCE_ARTIFACT_SHA" "$RESUME_CHECKPOINT"
 
 AUTOTUNE_RESULTS="$RUN_DIR/autotune_results.pbtxt"
-AUTOTUNE_RESULTS_SHA=none
-if [ "$AUTOTUNE_LEVEL" -ne 0 ]; then
-    test -s "$AUTOTUNE_RESULTS"
-    AUTOTUNE_RESULTS_SHA="$(sha256sum "$AUTOTUNE_RESULTS" | awk '{print $1}')"
-else
-    AUTOTUNE_RESULTS=none
-fi
+test -s "$AUTOTUNE_RESULTS"
+AUTOTUNE_RESULTS_SHA="$(sha256sum "$AUTOTUNE_RESULTS" | awk '{print $1}')"
 # The checkpoint validator starts a fresh JAX process. Do not let that process
 # dump its empty autotune table over the exact plan set produced by training.
 unset XLA_FLAGS
@@ -397,7 +389,7 @@ open(os.path.join(os.path.dirname(os.environ["FINAL_CHECKPOINT"]), "..", "checkp
 )
 PY
 
-if [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = smoke4 ] || [ "$RUN_ROLE" = smoke4safe ]; then
+if [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = smoke4 ] || [ "$RUN_ROLE" = smoke4replay ]; then
     THROUGHPUT_LOG="$RUN_DIR/slurm_${SLURM_JOB_ID}.out" \
     THROUGHPUT_RECEIPT="$RUN_DIR/throughput_validation.json" \
     NUM_DEVICES="$EXPECTED_DEVICES" NUM_ENVS_PER_DEVICE="$EXPECTED_ENVS_PER_DEVICE" "$PYTHON" - <<'PY'
