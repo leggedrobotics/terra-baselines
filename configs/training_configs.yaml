@@ -1097,3 +1097,30 @@ trench_axis_generalist_partial_v2:
     min_episodes: 32
     competence_ema: 0.30
     max_mass: 0.15
+
+# Matched axis-v2 trench expert. It uses the same strict dig-alignment rule,
+# model, continuous curriculum, and partial-reset bank as the generalist, but
+# its accepted-bank arm selects only the 15 trench conditions.
+trench_axis_expert_partial_v1:
+  description: Axis-v2 15-condition trench expert with relay-first partial resets
+  accepted_bank_arm: T-SPECIALIST
+  accepted_bank_condition_profile: axis_v2_40_v1
+  requires_partial_reset: true
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  trench_alignment_observation: true
+  require_trench_alignment_metadata: true
+  enforce_trench_dig_alignment: true
+  curriculum:
+    increase_level_threshold: 1000000000
+    decrease_level_threshold: 1000000000
+    last_level_type: none
+  pooled_sampler:
+    enabled: true
+    rule: continuous_banded_v3
+    update_interval: 150
+    mastery_threshold: 0.80
+    min_episodes: 32
+    competence_ema: 0.30
+    max_mass: 0.15

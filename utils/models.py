@@ -1382,6 +1382,78 @@ class MapsNet(nn.Module):
                     "embedding, but MapsNet.__call__ was given "
                     "agent_embedding=None."
                 )
+
+        # cuDNN 8.9.7 on Ada selects numerically inconsistent bf16
+        # backward-filter engines for this ResNet at batches above 64 and can
+        # then fail the compiled PPO executable with CUDNN_STATUS_EXECUTION_FAILED.
+        # The encoder is sample-independent, so map it over fixed 64-sample
+        # chunks while leaving the PPO loss (including advantage normalization)
+        # on its original full minibatch.  Padding is discarded before the loss
+        # and therefore contributes neither outputs nor parameter gradients.
+        spatial_encoders = (
+            "resnet_spatial_8x8",
+            "resnet_spatial_8x8_se",
+            "resnet_spatial_8x8_se_xattn",
+            "resnet_spatial_8x8_se_sa_xattn",
+        )
+        safe_bf16_batch = 64
+        use_safe_chunks = (
+            encoder_type in spatial_encoders
+            and self.encoder_compute_dtype == jnp.bfloat16
+            and x.shape[0] > safe_bf16_batch
+        )
+        if use_safe_chunks:
+            batch_size = x.shape[0]
+            padded_batch_size = (
+                (batch_size + safe_bf16_batch - 1) // safe_bf16_batch
+            ) * safe_bf16_batch
+            pad_size = padded_batch_size - batch_size
+            x_padded = jnp.pad(
+                x,
+                ((0, pad_size), (0, 0), (0, 0), (0, 0)),
+            )
+            x_chunks = x_padded.reshape(
+                (-1, safe_bf16_batch) + x.shape[1:]
+            )
+            if is_spatial_xattn:
+                embedding_padded = jnp.pad(
+                    agent_embedding,
+                    ((0, pad_size), (0, 0)),
+                )
+                embedding_chunks = embedding_padded.reshape(
+                    (-1, safe_bf16_batch) + agent_embedding.shape[1:]
+                )
+                def encode_chunk(cnn, carry, inputs):
+                    return carry, cnn(inputs[0], inputs[1])
+
+                scan_chunks = nn.scan(
+                    encode_chunk,
+                    variable_broadcast="params",
+                    split_rngs={"params": False},
+                    in_axes=0,
+                    out_axes=0,
+                )
+                _, encoded_chunks = scan_chunks(
+                    self.cnn,
+                    (),
+                    (x_chunks, embedding_chunks),
+                )
+            else:
+                def encode_chunk(cnn, carry, inputs):
+                    return carry, cnn(inputs)
+
+                scan_chunks = nn.scan(
+                    encode_chunk,
+                    variable_broadcast="params",
+                    split_rngs={"params": False},
+                    in_axes=0,
+                    out_axes=0,
+                )
+                _, encoded_chunks = scan_chunks(self.cnn, (), x_chunks)
+            x = encoded_chunks.reshape(
+                (-1,) + encoded_chunks.shape[2:]
+            )[:batch_size]
+        elif is_spatial_xattn:
             x = self.cnn(x, agent_embedding)
         else:
             x = self.cnn(x)

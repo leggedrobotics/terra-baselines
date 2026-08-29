@@ -11,7 +11,7 @@
 set -euo pipefail
 umask 027
 
-for REQUIRED in RUN_ROLE TARGET_UPDATE RESUME_CHECKPOINT RESUME_UPDATE RUN_DIR \
+for REQUIRED in POLICY_SCOPE RUN_ROLE TARGET_UPDATE RESUME_CHECKPOINT RESUME_UPDATE RUN_DIR \
     RUN_NAME BASELINES_ROOT BASELINES_REVISION RUNTIME_TERRA_ROOT \
     RUNTIME_TERRA_REVISION PROTOCOL_SHA SEED VENV TERRA_EULER_USER \
     TERRA_EULER_HOME_ROOT WANDB_ENTITY WANDB_PROJECT BANK_ARCHIVE \
@@ -123,6 +123,27 @@ case "$RUN_ROLE:$TARGET_UPDATE:$RESUME_CHECKPOINT:$RESUME_UPDATE" in
         ;;
     *) echo "unsupported run contract" >&2; exit 2 ;;
 esac
+case "$POLICY_SCOPE" in
+    generalist)
+        TRAIN_CONFIG=trench_axis_generalist_partial_v2
+        ACCEPTED_BANK_ARM=G-UNIFORM
+        WANDB_NAME_PREFIX=axis_v2_generalist
+        EXPECTED_CONDITIONS=40
+        EXPECTED_FOUNDATIONS=25
+        EXPECTED_TRENCHES=15
+        EXPECTED_DEPTHS=2,6,32
+        ;;
+    trench_expert)
+        TRAIN_CONFIG=trench_axis_expert_partial_v1
+        ACCEPTED_BANK_ARM=T-SPECIALIST
+        WANDB_NAME_PREFIX=axis_v2_trench_expert
+        EXPECTED_CONDITIONS=15
+        EXPECTED_FOUNDATIONS=0
+        EXPECTED_TRENCHES=15
+        EXPECTED_DEPTHS=1,0,14
+        ;;
+    *) echo "unsupported policy scope: $POLICY_SCOPE" >&2; exit 2 ;;
+esac
 case "$RUN_ROLE:${SLURM_JOB_PARTITION:-}" in
     canary1:gpuhe.4h|bootstrap:gpuhe.4h|bootstrap4:gpuhe.4h|bootstrap4replay:gpuhe.4h|smoke:gpuhe.4h|smoke4:gpuhe.4h|smoke4replay:gpuhe.4h|phase1:gpuhe.120h|phase2:gpuhe.120h|phase1_4gpu:gpuhe.120h|phase2_4gpu:gpuhe.120h|phase1_4gpu_replay:gpuhe.120h|phase2_4gpu_replay:gpuhe.120h) ;;
     *) echo "unexpected partition for $RUN_ROLE" >&2; exit 2 ;;
@@ -183,50 +204,18 @@ for GPU_NAME in "${GPU_NAMES[@]}"; do
     test "$GPU_NAME" = "NVIDIA GeForce RTX 4090"
 done
 
-NUM_DEVICES="$EXPECTED_DEVICES" NUM_ENVS_PER_DEVICE="$EXPECTED_ENVS_PER_DEVICE" "$PYTHON" - <<'PY'
-import os
-import jax
-import jax.numpy as jnp
-import numpy as np
-from jax import lax
-
-devices = int(os.environ["NUM_DEVICES"])
-envs_per_device = int(os.environ["NUM_ENVS_PER_DEVICE"])
-jax_devices = jax.devices()
-assert len(jax_devices) == devices, jax_devices
-assert all(device.device_kind == "NVIDIA GeForce RTX 4090" for device in jax_devices)
-
-def loss(x, kernel):
-    y = lax.conv_general_dilated(
-        x, kernel, (1, 1), "SAME",
-        dimension_numbers=("NHWC", "HWIO", "NHWC"),
-    ).astype(jnp.float32)
-    return lax.psum(jnp.mean(y * y), "devices")
-
-kernel_grad = jax.pmap(jax.grad(loss, argnums=1), axis_name="devices", in_axes=(0, None))
-for spatial, channels in ((16, 64), (8, 96)):
-    x = jnp.ones((devices, envs_per_device, spatial, spatial, channels), dtype=jnp.bfloat16)
-    kernel = jnp.ones((3, 3, channels, channels), dtype=jnp.bfloat16)
-    gradient = kernel_grad(x, kernel)
-    assert gradient.shape == (devices, 3, 3, channels, channels)
-    assert bool(jnp.all(jnp.isfinite(gradient)))
-
-x = jnp.ones((devices, envs_per_device, 8, 8, 96), dtype=jnp.bfloat16)
-kernel = jnp.ones((1, 1, 96, 32), dtype=jnp.bfloat16)
-gradient = kernel_grad(x, kernel)
-assert gradient.shape == (devices, 1, 1, 96, 32)
-assert bool(jnp.all(jnp.isfinite(gradient)))
-np.testing.assert_allclose(
-    np.asarray(gradient[0], dtype=np.float32) / devices,
-    6.0,
-    rtol=2e-2,
-    atol=2e-2,
-)
-PY
+"$PYTHON" "$BASELINES_ROOT/scripts/check_axis_v2_cuda_runtime.py" \
+    --num-devices "$EXPECTED_DEVICES" \
+    --envs-per-device "$EXPECTED_ENVS_PER_DEVICE" \
+    --receipt "$RUN_DIR/cuda_runtime_validation.json"
+CUDA_RUNTIME_VALIDATION_SHA="$(sha256sum "$RUN_DIR/cuda_runtime_validation.json" | awk '{print $1}')"
 
 PROTOCOL_TERRA_REVISION="$RUNTIME_TERRA_REVISION" PROTOCOL_SHA="$PROTOCOL_SHA" \
 SOURCE_REGISTRY_SHA="$SOURCE_REGISTRY_SHA" DISTANCE_ARTIFACT_SHA="$DISTANCE_ARTIFACT_SHA" \
 BANK="$BANK" PARTIAL_BANK="$PARTIAL_BANK" PARTIAL_BANK_SHA="$PARTIAL_BANK_SHA" \
+ACCEPTED_BANK_ARM="$ACCEPTED_BANK_ARM" EXPECTED_CONDITIONS="$EXPECTED_CONDITIONS" \
+EXPECTED_FOUNDATIONS="$EXPECTED_FOUNDATIONS" EXPECTED_TRENCHES="$EXPECTED_TRENCHES" \
+EXPECTED_DEPTHS="$EXPECTED_DEPTHS" \
 EXPECTED_PARTIAL_CONDITIONS="$EXPECTED_PARTIAL_CONDITIONS" \
 EXPECTED_PARTIAL_TRIPLETS="$EXPECTED_PARTIAL_TRIPLETS" \
 EXPECTED_PARTIAL_SIDECARS="$EXPECTED_PARTIAL_SIDECARS" \
@@ -247,20 +236,24 @@ assert validate_staged_training_bank(
 ) == 96
 bank = load_accepted_bank(
     root,
-    "G-UNIFORM",
+    os.environ["ACCEPTED_BANK_ARM"],
     os.environ["PROTOCOL_TERRA_REVISION"],
     curriculum_stage="full",
     sampler_profile="continuous_banded_v3",
     condition_profile="axis_v2_40_v1",
 )
-assert len(bank.levels) == 40
-assert sum(level.family == "foundation" for level in bank.levels) == 25
-assert sum(level.family == "trench" for level in bank.levels) == 15
+assert len(bank.levels) == int(os.environ["EXPECTED_CONDITIONS"])
+assert sum(level.family == "foundation" for level in bank.levels) == int(
+    os.environ["EXPECTED_FOUNDATIONS"]
+)
+assert sum(level.family == "trench" for level in bank.levels) == int(
+    os.environ["EXPECTED_TRENCHES"]
+)
 assert all(panel.condition_count == 38 for panel in bank.evaluation_panels)
 assert all(panel.condition_count == 2 for panel in bank.capability_floor_evaluation_panels)
-assert tuple(bank.curriculum_depths).count(0) == 2
-assert tuple(bank.curriculum_depths).count(1) == 6
-assert tuple(bank.curriculum_depths).count(2) == 32
+assert tuple(tuple(bank.curriculum_depths).count(depth) for depth in range(3)) == tuple(
+    int(value) for value in os.environ["EXPECTED_DEPTHS"].split(",")
+)
 assert bank.environment_protocol_sha256 == os.environ["PROTOCOL_SHA"]
 assert bank.source_registry_sha256 == os.environ["SOURCE_REGISTRY_SHA"]
 index = json.loads((root / "dataset.json").read_text())
@@ -291,7 +284,7 @@ assert audit["audited_sidecars"] == int(os.environ["EXPECTED_TRENCH_AUDIT_SIDECA
 PY
 
 export WANDB_ENTITY WANDB_PROJECT WANDB_MODE WANDB_RESUME
-export WANDB_RUN_ID="axis_v2_generalist_${BASELINES_REVISION:0:10}_s${SEED}"
+export WANDB_RUN_ID="${WANDB_NAME_PREFIX}_${BASELINES_REVISION:0:10}_s${SEED}"
 if [ "$RUN_ROLE" = phase1_4gpu ] || [ "$RUN_ROLE" = phase2_4gpu ]; then
     export WANDB_RUN_ID="${WANDB_RUN_ID}_4gpu"
 elif [ "$RUN_ROLE" = phase1_4gpu_replay ] || [ "$RUN_ROLE" = phase2_4gpu_replay ]; then
@@ -308,6 +301,9 @@ nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
 
 printf '%s\n' \
     "status=RUNNING" \
+    "policy_scope=$POLICY_SCOPE" \
+    "train_config=$TRAIN_CONFIG" \
+    "accepted_bank_arm=$ACCEPTED_BANK_ARM" \
     "run_role=$RUN_ROLE" \
     "target_update=$TARGET_UPDATE" \
     "resume_update=$RESUME_UPDATE" \
@@ -319,9 +315,9 @@ printf '%s\n' \
     "source_registry_sha256=$SOURCE_REGISTRY_SHA" \
     "distance_artifact_sha256=$DISTANCE_ARTIFACT_SHA" \
     "condition_profile=axis_v2_40_v1" \
-    "training_conditions=40" \
-    "foundation_conditions=25" \
-    "trench_conditions=15" \
+    "training_conditions=$EXPECTED_CONDITIONS" \
+    "foundation_conditions=$EXPECTED_FOUNDATIONS" \
+    "trench_conditions=$EXPECTED_TRENCHES" \
     "partial_reset_bank_sha256=$PARTIAL_BANK_SHA" \
     "num_devices=$EXPECTED_DEVICES" \
     "num_envs_per_device=$EXPECTED_ENVS_PER_DEVICE" \
@@ -329,10 +325,11 @@ printf '%s\n' \
     "xla_gpu_autotune_level=$AUTOTUNE_LEVEL" \
     "xla_gpu_algorithm_denylist_sha256=$ALGORITHM_DENYLIST_SHA" \
     "xla_gpu_autotune_cache_sha256=$AUTOTUNE_CACHE_SHA" \
+    "cuda_runtime_validation_sha256=$CUDA_RUNTIME_VALIDATION_SHA" \
     "wandb_run_id=$WANDB_RUN_ID" \
     "slurm_job_id=$SLURM_JOB_ID" > "$RUN_DIR/run_contract.env"
 
-export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PYTHON_BIN="$PYTHON" MACHINE=euler
+export TERRA_ROOT="$RUNTIME_TERRA_ROOT" PYTHON_BIN="$PYTHON" MACHINE=euler TRAIN_CONFIG
 export PROTOCOL_TERRA_REVISION="$RUNTIME_TERRA_REVISION"
 if [ "$RUN_ROLE" = canary1 ] || [ "$RUN_ROLE" = bootstrap ] || [ "$RUN_ROLE" = bootstrap4 ] || [ "$RUN_ROLE" = bootstrap4replay ] || [ "$RUN_ROLE" = smoke ] || [ "$RUN_ROLE" = smoke4 ] || [ "$RUN_ROLE" = smoke4replay ]; then
     export CHECKPOINT_INTERVAL=1 LOG_EVAL_INTERVAL=0
@@ -354,6 +351,7 @@ FINAL_CHECKPOINT="$RUN_DIR/checkpoints/${RUN_NAME}_FINAL.pkl"
 test -f "$FINAL_CHECKPOINT"
 FINAL_CHECKPOINT="$FINAL_CHECKPOINT" TARGET_UPDATE="$TARGET_UPDATE" \
 EXPECTED_PARAMETERS="$EXPECTED_PARAMETERS" PARTIAL_BANK_SHA="$PARTIAL_BANK_SHA" \
+ACCEPTED_BANK_ARM="$ACCEPTED_BANK_ARM" EXPECTED_CONDITIONS="$EXPECTED_CONDITIONS" \
 "$PYTHON" - <<'PY'
 import json
 import os
@@ -371,6 +369,8 @@ assert all(np.all(np.isfinite(np.asarray(x))) for x in model)
 assert all(np.all(np.isfinite(np.asarray(x))) for x in optimizer)
 config = checkpoint["train_config"]
 assert config.accepted_bank.condition_profile == "axis_v2_40_v1"
+assert config.accepted_bank.arm == os.environ["ACCEPTED_BANK_ARM"]
+assert len(config.accepted_bank.levels) == int(os.environ["EXPECTED_CONDITIONS"])
 assert config.partial_reset_bank_sha256 == os.environ["PARTIAL_BANK_SHA"]
 assert config.enforce_trench_dig_alignment is True
 assert config.trench_alignment_observation is True
@@ -426,5 +426,6 @@ printf '%s\n' \
     "status=COMPLETED" \
     "target_update=$TARGET_UPDATE" \
     "checkpoint=$FINAL_CHECKPOINT" \
+    "cuda_runtime_validation_sha256=$CUDA_RUNTIME_VALIDATION_SHA" \
     "autotune_results=$AUTOTUNE_RESULTS" \
     "autotune_results_sha256=$AUTOTUNE_RESULTS_SHA" > "$RUN_DIR/completion.env"

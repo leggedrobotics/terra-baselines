@@ -216,6 +216,8 @@ class PooledConditionSampler:
                 self._depths[index] = int(depth)
             for family in FAMILIES:
                 family_mask = self._families == family
+                if not family_mask.any() and self._allow_sparse_depths:
+                    continue
                 if int(np.sum(family_mask & (self._depths == 0))) != 1:
                     raise ValueError(
                         f"continuous_banded {family} depth 0 must be a singleton"

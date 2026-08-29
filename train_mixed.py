@@ -328,6 +328,20 @@ class Transition(struct.PyTreeNode):
     prev_reward: jax.Array
 
 
+class PPOTransition(struct.PyTreeNode):
+    """Only the rollout fields consumed by the PPO loss executable."""
+
+    done: jax.Array
+    task_done: jax.Array
+    action: jax.Array
+    value: jax.Array
+    reward: jax.Array
+    log_prob: jax.Array
+    obs: jax.Array
+    prev_actions: jax.Array
+    prev_reward: jax.Array
+
+
 _REQUIRED_FINITE_LOSS_KEYS = (
     "total_loss",
     "value_loss",
@@ -3337,14 +3351,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             )
 
             # TRAIN LOOP
+            # Rollout owns the large Terra state and may safely recycle it now
+            # that bf16 backward-filter work runs in the separate PPO call.
             @partial(jax.pmap, axis_name="devices", donate_argnums=(0,))
-            def _update_step(
-                runner_state,
-                ent_coef_current,
-                kickstart_kl_coef_current,
-                kickstart_value_coef_current,
-                flush_episode_aggregate,
-            ):
+            def _rollout_step(runner_state, flush_episode_aggregate):
                 # COLLECT TRAJECTORIES
                 rollout_actor_h0 = jax.lax.stop_gradient(runner_state[-1])
 
@@ -3678,153 +3688,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 advantages, targets = calculate_gae(
                     transitions, last_val, config.gamma, config.gae_lambda
                 )
-
-                # UPDATE NETWORK
-                def _update_epoch(update_state, _):
-                    def _update_minbatch_feedforward(train_state, batch_info):
-                        transitions, advantages, targets = batch_info
-                        new_train_state, update_info = ppo_update_networks(
-                            train_state=train_state,
-                            transitions=transitions,
-                            advantages=advantages,
-                            targets=targets,
-                            config=config,
-                            ent_coef_override=ent_coef_current,
-                            teacher_apply_fn=teacher_apply_fn,
-                            teacher_params=teacher_params,
-                            kickstart_kl_coef=kickstart_kl_coef_current,
-                            kickstart_value_coef=kickstart_value_coef_current,
-                        )
-                        return new_train_state, update_info
-
-                    def _update_minbatch_recurrent(train_state, batch_info):
-                        transitions, advantages, targets, actor_h0 = batch_info
-                        new_train_state, update_info = ppo_update_networks(
-                            train_state=train_state,
-                            transitions=transitions,
-                            advantages=advantages,
-                            targets=targets,
-                            config=config,
-                            ent_coef_override=ent_coef_current,
-                            actor_hidden_init=actor_h0,
-                        )
-                        return new_train_state, update_info
-
-                    rng, train_state, transitions, advantages, targets = update_state
-
-                    # MINIBATCHES PREPARATION
-                    rng, _rng = jax.random.split(rng)
-                    if is_recurrent_actor(config):
-                        permutation = jax.random.permutation(
-                            _rng, config.num_envs_per_device
-                        )
-                        sequence_batch = jtu.tree_map(
-                            lambda x: x.swapaxes(0, 1),
-                            (transitions, advantages, targets),
-                        )
-                        shuffled_sequences = jtu.tree_map(
-                            lambda x: jnp.take(x, permutation, axis=0),
-                            sequence_batch,
-                        )
-                        shuffled_h0 = jnp.take(
-                            rollout_actor_h0, permutation, axis=0
-                        )
-                        sequence_minibatches = jtu.tree_map(
-                            lambda x: jnp.reshape(
-                                x,
-                                (config.num_minibatches, -1) + x.shape[1:],
-                            ),
-                            shuffled_sequences,
-                        )
-                        hidden_minibatches = jnp.reshape(
-                            shuffled_h0,
-                            (
-                                config.num_minibatches,
-                                -1,
-                                shuffled_h0.shape[-1],
-                            ),
-                        )
-                        minibatches = (*sequence_minibatches, hidden_minibatches)
-                    elif getattr(config, "flat_minibatch_shuffle", False):
-                        # F6: collapse [seq_len, batch_size] into a single sample
-                        # axis, permute over ALL samples, then reshape into
-                        # minibatches. GAE was computed above and is unaffected;
-                        # ppo_update_networks skips the [mb, seq] reshape for the
-                        # resulting flat layout.
-                        # [seq_len, batch_size, ...]
-                        batch = (transitions, advantages, targets)
-                        n_samples = config.num_steps * config.num_envs_per_device
-                        flat_batch = jtu.tree_map(
-                            lambda x: jnp.reshape(x, (n_samples,) + x.shape[2:]),
-                            batch,
-                        )
-                        permutation = jax.random.permutation(_rng, n_samples)
-                        shuffled_batch = jtu.tree_map(
-                            lambda x: jnp.take(x, permutation, axis=0), flat_batch
-                        )
-                        # [num_minibatches, minibatch_size, ...] (no seq axis)
-                        minibatches = jtu.tree_map(
-                            lambda x: jnp.reshape(
-                                x, (config.num_minibatches, -1) + x.shape[1:]
-                            ),
-                            shuffled_batch,
-                        )
-                    else:
-                        permutation = jax.random.permutation(
-                            _rng, config.num_envs_per_device
-                        )
-                        # [seq_len, batch_size, ...]
-                        batch = (transitions, advantages, targets)
-                        # [batch_size, seq_len, ...], as our model assumes
-                        batch = jtu.tree_map(lambda x: x.swapaxes(0, 1), batch)
-
-                        shuffled_batch = jtu.tree_map(
-                            lambda x: jnp.take(x, permutation, axis=0), batch
-                        )
-                        # [num_minibatches, minibatch_size, seq_len, ...]
-                        minibatches = jtu.tree_map(
-                            lambda x: jnp.reshape(
-                                x, (config.num_minibatches, -1) + x.shape[1:]
-                            ),
-                            shuffled_batch,
-                        )
-                    update_minibatch = (
-                        _update_minbatch_recurrent
-                        if is_recurrent_actor(config)
-                        else _update_minbatch_feedforward
-                    )
-                    train_state, update_info = jax.lax.scan(
-                        update_minibatch, train_state, minibatches
-                    )
-
-                    update_state = (rng, train_state, transitions, advantages, targets)
-                    return update_state, update_info
-
-                # [seq_len, batch_size, num_layers, hidden_dim]
-                update_state = (rng, train_state, transitions, advantages, targets)
-                update_state, loss_info = jax.lax.scan(
-                    _update_epoch, update_state, None, config.update_epochs
+                ppo_transitions = PPOTransition(
+                    done=transitions.done,
+                    task_done=transitions.task_done,
+                    action=transitions.action,
+                    value=transitions.value,
+                    reward=transitions.reward,
+                    log_prob=transitions.log_prob,
+                    obs=transitions.obs,
+                    prev_actions=transitions.prev_actions,
+                    prev_reward=transitions.prev_reward,
                 )
-
-                # averaging over minibatches then over epochs
-                loss_info = jtu.tree_map(lambda x: x.mean(-1).mean(-1), loss_info)
-
-                # Explained variance between value predictions and returns
-                # Use transitions and targets from current update_state (first device in pmap)
-                _, _, transitions_ev, _, targets_ev = update_state
-                vpred = transitions_ev.value
-                vtrue = targets_ev
-                vpred_flat = vpred.reshape(-1)
-                vtrue_flat = vtrue.reshape(-1)
-                var_y = jnp.var(vtrue_flat)
-                explained_var = 1 - jnp.var(vtrue_flat - vpred_flat) / (var_y + 1e-8)
-                # Attach to loss_info for logging
-                loss_info = dict(loss_info)
-                loss_info["explained_variance"] = explained_var
-
-                rng, train_state = update_state[:2]
-                # EVALUATE AGENT
-                rng, _rng = jax.random.split(rng)
 
                 aggregate_snapshot = reduce_episode_aggregate(
                     pending_aggregate,
@@ -3848,7 +3722,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 )
                 return (
                     runner_state,
-                    loss_info,
+                    ppo_transitions,
+                    advantages,
+                    targets,
+                    rollout_actor_h0,
                     aggregate_snapshot,
                     transition_integrity,
                     reset_exposure_count,
@@ -3863,6 +3740,178 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     partial_task_done_count,
                     stall_age_stats,
                 )
+
+            # Keep Terra rollout/state transitions and cuDNN backward-filter
+            # execution in distinct XLA executables.  Their shared monolithic
+            # buffer plan is unstable on the pinned Ada/cuDNN 8.9.7 runtime.
+            @partial(jax.pmap, axis_name="devices")
+            def _ppo_step(
+                rng,
+                train_state,
+                transitions,
+                advantages,
+                targets,
+                rollout_actor_h0,
+                ent_coef_current,
+                kickstart_kl_coef_current,
+                kickstart_value_coef_current,
+            ):
+                def _update_epoch(update_state, _):
+                    def _update_minbatch_feedforward(train_state, batch_info):
+                        transitions, advantages, targets = batch_info
+                        return ppo_update_networks(
+                            train_state=train_state,
+                            transitions=transitions,
+                            advantages=advantages,
+                            targets=targets,
+                            config=config,
+                            ent_coef_override=ent_coef_current,
+                            teacher_apply_fn=teacher_apply_fn,
+                            teacher_params=teacher_params,
+                            kickstart_kl_coef=kickstart_kl_coef_current,
+                            kickstart_value_coef=kickstart_value_coef_current,
+                        )
+
+                    def _update_minbatch_recurrent(train_state, batch_info):
+                        transitions, advantages, targets, actor_h0 = batch_info
+                        return ppo_update_networks(
+                            train_state=train_state,
+                            transitions=transitions,
+                            advantages=advantages,
+                            targets=targets,
+                            config=config,
+                            ent_coef_override=ent_coef_current,
+                            actor_hidden_init=actor_h0,
+                        )
+
+                    rng, train_state, transitions, advantages, targets = update_state
+                    rng, permutation_rng = jax.random.split(rng)
+                    if is_recurrent_actor(config):
+                        permutation = jax.random.permutation(
+                            permutation_rng,
+                            config.num_envs_per_device,
+                        )
+                        sequence_batch = jtu.tree_map(
+                            lambda x: x.swapaxes(0, 1),
+                            (transitions, advantages, targets),
+                        )
+                        shuffled_sequences = jtu.tree_map(
+                            lambda x: jnp.take(x, permutation, axis=0),
+                            sequence_batch,
+                        )
+                        shuffled_h0 = jnp.take(
+                            rollout_actor_h0,
+                            permutation,
+                            axis=0,
+                        )
+                        sequence_minibatches = jtu.tree_map(
+                            lambda x: jnp.reshape(
+                                x,
+                                (config.num_minibatches, -1) + x.shape[1:],
+                            ),
+                            shuffled_sequences,
+                        )
+                        hidden_minibatches = jnp.reshape(
+                            shuffled_h0,
+                            (
+                                config.num_minibatches,
+                                -1,
+                                shuffled_h0.shape[-1],
+                            ),
+                        )
+                        minibatches = (*sequence_minibatches, hidden_minibatches)
+                    elif getattr(config, "flat_minibatch_shuffle", False):
+                        batch = (transitions, advantages, targets)
+                        n_samples = config.num_steps * config.num_envs_per_device
+                        flat_batch = jtu.tree_map(
+                            lambda x: jnp.reshape(
+                                x,
+                                (n_samples,) + x.shape[2:],
+                            ),
+                            batch,
+                        )
+                        permutation = jax.random.permutation(
+                            permutation_rng,
+                            n_samples,
+                        )
+                        shuffled_batch = jtu.tree_map(
+                            lambda x: jnp.take(x, permutation, axis=0),
+                            flat_batch,
+                        )
+                        minibatches = jtu.tree_map(
+                            lambda x: jnp.reshape(
+                                x,
+                                (config.num_minibatches, -1) + x.shape[1:],
+                            ),
+                            shuffled_batch,
+                        )
+                    else:
+                        permutation = jax.random.permutation(
+                            permutation_rng,
+                            config.num_envs_per_device,
+                        )
+                        batch = jtu.tree_map(
+                            lambda x: x.swapaxes(0, 1),
+                            (transitions, advantages, targets),
+                        )
+                        shuffled_batch = jtu.tree_map(
+                            lambda x: jnp.take(x, permutation, axis=0),
+                            batch,
+                        )
+                        minibatches = jtu.tree_map(
+                            lambda x: jnp.reshape(
+                                x,
+                                (config.num_minibatches, -1) + x.shape[1:],
+                            ),
+                            shuffled_batch,
+                        )
+
+                    update_minibatch = (
+                        _update_minbatch_recurrent
+                        if is_recurrent_actor(config)
+                        else _update_minbatch_feedforward
+                    )
+                    train_state, update_info = jax.lax.scan(
+                        update_minibatch,
+                        train_state,
+                        minibatches,
+                    )
+                    return (
+                        rng,
+                        train_state,
+                        transitions,
+                        advantages,
+                        targets,
+                    ), update_info
+
+                update_state = (
+                    rng,
+                    train_state,
+                    transitions,
+                    advantages,
+                    targets,
+                )
+                update_state, loss_info = jax.lax.scan(
+                    _update_epoch,
+                    update_state,
+                    None,
+                    config.update_epochs,
+                )
+                loss_info = jtu.tree_map(
+                    lambda x: x.mean(-1).mean(-1),
+                    loss_info,
+                )
+                _, _, transitions_ev, _, targets_ev = update_state
+                vpred_flat = transitions_ev.value.reshape(-1)
+                vtrue_flat = targets_ev.reshape(-1)
+                var_y = jnp.var(vtrue_flat)
+                loss_info = dict(loss_info)
+                loss_info["explained_variance"] = 1 - jnp.var(
+                    vtrue_flat - vpred_flat
+                ) / (var_y + 1e-8)
+                rng, train_state = update_state[:2]
+                rng, _ = jax.random.split(rng)
+                return rng, train_state, loss_info
 
             # Setup runner state for multiple devices
             rng, rng_rollout = jax.random.split(rng)
@@ -4023,7 +4072,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 start_time = time.time()
                 (
                     runner_state,
-                    loss_info,
+                    transitions,
+                    advantages,
+                    targets,
+                    rollout_actor_h0,
                     episode_aggregate_snapshot,
                     transition_integrity,
                     reset_exposure_count,
@@ -4038,13 +4090,28 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     partial_task_done_count,
                     stall_age_stats,
                 ) = jax.block_until_ready(
-                    _update_step(
+                    _rollout_step(
                         runner_state,
+                        flush_episode_broadcast,
+                    )
+                )
+                ppo_rng, ppo_train_state, loss_info = jax.block_until_ready(
+                    _ppo_step(
+                        runner_state[0],
+                        runner_state[1],
+                        transitions,
+                        advantages,
+                        targets,
+                        rollout_actor_h0,
                         ent_broadcast,
                         kickstart_kl_broadcast,
                         kickstart_value_broadcast,
-                        flush_episode_broadcast,
                     )
+                )
+                runner_state = (
+                    ppo_rng,
+                    ppo_train_state,
+                    *runner_state[2:],
                 )
                 transition_integrity_single = unreplicate(transition_integrity)
                 stall_age_stats_single = unreplicate(stall_age_stats)

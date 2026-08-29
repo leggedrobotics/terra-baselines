@@ -1652,8 +1652,25 @@ def load_accepted_bank(
     if release_id in (V8_RELEASE_ID, AXIS_V2_RELEASE_ID):
         if allow_diagnostic_control:
             raise ValueError("V8 is a training release, not a diagnostic control")
-        if arm != "G-UNIFORM":
-            raise ValueError("the first V8 curriculum supports only G-UNIFORM")
+        allowed_arms = (
+            ("G-UNIFORM", "T-SPECIALIST")
+            if release_id == AXIS_V2_RELEASE_ID
+            else ("G-UNIFORM",)
+        )
+        if arm not in allowed_arms:
+            raise ValueError(
+                f"release {release_id!r} supports only accepted-bank arms "
+                f"{allowed_arms!r}"
+            )
+        if arm == "T-SPECIALIST" and (
+            condition_profile != "axis_v2_40_v1"
+            or curriculum_stage != "full"
+            or sampler_profile != "continuous_banded_v3"
+        ):
+            raise ValueError(
+                "axis-v2 T-SPECIALIST requires the full axis_v2_40_v1 "
+                "continuous_banded_v3 contract"
+            )
         if curriculum_stage is None:
             raise ValueError(f"{index_path}: V8 requires an explicit curriculum_stage")
         if sampler_profile is None:
@@ -1668,6 +1685,12 @@ def load_accepted_bank(
             sampler_profile,
             condition_profile,
         )
+        if arm == "T-SPECIALIST":
+            if sampling_probabilities:
+                raise ValueError(
+                    "axis-v2 T-SPECIALIST requires host-owned continuous sampling"
+                )
+            selected = tuple(level for level in selected if level.family == "trench")
     else:
         if curriculum_stage is not None:
             raise ValueError(

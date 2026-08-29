@@ -34,6 +34,11 @@ esac
 TOTAL_TIMESTEPS=$((GLOBAL_ROLLOUT * TARGET_UPDATE))
 CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-500}"
 LOG_EVAL_INTERVAL="${LOG_EVAL_INTERVAL:-100}"
+TRAIN_CONFIG="${TRAIN_CONFIG:-trench_axis_generalist_partial_v2}"
+case "$TRAIN_CONFIG" in
+    trench_axis_generalist_partial_v2|trench_axis_expert_partial_v1) ;;
+    *) echo "unsupported axis-v2 training config: $TRAIN_CONFIG" >&2; exit 2 ;;
+esac
 
 RESUME_ARGS=()
 if [ "$RESUME_CHECKPOINT" != none ]; then
@@ -49,7 +54,7 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export WANDB_DIR="${WANDB_DIR:-$RUN_ROOT/wandb}"
 
 exec "$PYTHON_BIN" -u "$REPO/train_mixed.py" \
-    --config trench_axis_generalist_partial_v2 \
+    --config "$TRAIN_CONFIG" \
     --machine "${MACHINE:-euler}" \
     --accepted-bank-root "$BANK_ROOT" \
     --accepted-bank-scope full \

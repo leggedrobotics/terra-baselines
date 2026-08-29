@@ -49,6 +49,34 @@ def _set_mastery(sampler, mastered_names):
     return dict(zip(sampler.names, sampler.probabilities))
 
 
+def test_v3_sparse_single_family_supports_axis_v2_trench_expert():
+    names = ["trench-anchor", *[f"trench-constraint-{index}" for index in range(14)]]
+    labels = {
+        name: {
+            "family": "trench",
+            "curriculum_depth": 0 if name == "trench-anchor" else 2,
+        }
+        for name in names
+    }
+    sampler = PooledConditionSampler(
+        names,
+        SamplerSettings(
+            rule="continuous_banded_v3",
+            update_interval=150,
+            mastery_threshold=0.80,
+            min_episodes=32,
+            competence_ema=0.30,
+            max_mass=0.15,
+        ),
+        maps_per_condition=[96] * len(names),
+        labels=labels,
+        allow_sparse_depths=True,
+    )
+    assert sampler.probabilities.sum() == pytest.approx(1.0)
+    assert sampler.probabilities[0] == pytest.approx(0.15)
+    assert np.all(sampler.probabilities > 0.0)
+
+
 def test_v3_reallocates_the_measured_u14_mastered_family_state():
     sampler = _sampler()
     foundation = [name for name in sampler.names if name.startswith("foundation")]

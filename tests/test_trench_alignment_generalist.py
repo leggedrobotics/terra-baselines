@@ -57,6 +57,18 @@ def test_axis_v2_partial_recipe_requires_the_named_40_condition_view():
     assert config.pooled_sampler.rule == "continuous_banded_v3"
 
 
+def test_axis_v2_trench_expert_uses_the_same_rule_and_partial_curriculum():
+    config = get_config("trench_axis_expert_partial_v1")
+    assert config.maps == []
+    assert config.accepted_bank_arm == "T-SPECIALIST"
+    assert config.accepted_bank_condition_profile == "axis_v2_40_v1"
+    assert config.requires_partial_reset is True
+    assert config.enforce_trench_dig_alignment is True
+    assert config.require_trench_alignment_metadata is True
+    assert config.trench_alignment_observation is True
+    assert config.pooled_sampler.rule == "continuous_banded_v3"
+
+
 def test_axis_v2_view_is_25_foundations_plus_15_trenches_with_net4():
     graph_path = (
         Path(__file__).resolve().parents[1]
@@ -237,16 +249,17 @@ def test_partial_generalist_launcher_is_smoke_gated_and_resume_bounded():
     assert "curriculum_depths_trench=" in submit
     assert "sparse_curriculum_depths_allowed=true" in submit
 
-    assert "len(jax.devices()) == devices" in sbatch
-    assert "lax.conv_general_dilated" in sbatch
+    cuda_check = (root / "scripts/check_axis_v2_cuda_runtime.py").read_text()
+    assert "lax.conv_general_dilated" in cuda_check
     assert '--xla_gpu_autotune_level=4' in sbatch
     assert "--xla_gpu_algorithm_denylist_path=" in sbatch
     assert "--xla_gpu_load_autotune_results_from=" in sbatch
     assert "hlo_algorithm_denylist.pbtxt" in sbatch
     assert "xla_gpu_dump_autotune_results_to=" in sbatch
-    assert "jax.grad(loss, argnums=1)" in sbatch
-    assert "dtype=jnp.bfloat16" in sbatch
-    assert '(devices, 512, spatial_size, spatial_size, channels)' in sbatch
+    assert "jax.grad(loss, argnums=1)" in cuda_check
+    assert "dtype=jnp.bfloat16" in cuda_check
+    assert "expected_ones_kernel_gradient" in cuda_check
+    assert "np.testing.assert_allclose" in cuda_check
     assert '"xla_gpu_autotune_level=4"' in sbatch
     assert "xla_gpu_enable_cudnn_frontend" not in sbatch
     assert "xla_gpu_deterministic_ops" not in sbatch
@@ -302,6 +315,8 @@ def test_axis_v2_path_preserves_global_batch_for_4gpu_fallback():
         root / "scripts/euler_axis_v2_generalist_8gpu/run.sbatch"
     ).read_text()
     runner = (root / "scripts/run_axis_v2_generalist_8gpu.sh").read_text()
+    train_mixed = (root / "train_mixed.py").read_text()
+    models = (root / "utils/models.py").read_text()
     denylist = (
         root
         / "scripts/euler_axis_v2_generalist_8gpu/hlo_algorithm_denylist.pbtxt"
@@ -331,13 +346,27 @@ def test_axis_v2_path_preserves_global_batch_for_4gpu_fallback():
     assert "unset XLA_FLAGS" in sbatch
     assert '"autotune_results_sha256=$AUTOTUNE_RESULTS_SHA"' in sbatch
     assert 'test "${#GPU_NAMES[@]}" -ge "$EXPECTED_DEVICES"' in sbatch
-    assert 'device.device_kind == "NVIDIA GeForce RTX 4090"' in sbatch
+    cuda_check = (root / "scripts/check_axis_v2_cuda_runtime.py").read_text()
+    assert 'default="NVIDIA GeForce RTX 4090"' in cuda_check
     assert 'NUM_DEVICES="$EXPECTED_DEVICES"' in sbatch
-    assert "(devices, envs_per_device, spatial, spatial, channels)" in sbatch
+    assert '--num-devices "$EXPECTED_DEVICES"' in sbatch
+    assert '--envs-per-device "$EXPECTED_ENVS_PER_DEVICE"' in sbatch
+    assert '"terra_axis_v2_cuda_runtime_validation_v1"' in cuda_check
+    assert '"encoder_convolution_batch_per_device"' in cuda_check
+    assert "convolution_batch = min(args.envs_per_device, 64)" in cuda_check
+    assert "class PPOTransition" in train_mixed
+    assert "def _rollout_step" in train_mixed
+    assert "def _ppo_step" in train_mixed
+    assert "safe_bf16_batch = 64" in models
+    assert "scan_chunks = nn.scan" in models
+    assert "expected_ones_kernel_gradient" in cuda_check
+    assert "expected_full" in cuda_check
+    assert "np.testing.assert_allclose(observed, 6.0" in cuda_check
     assert 'NUM_DEVICES="${NUM_DEVICES:-8}"' in runner
     assert 'NUM_ENVS_PER_DEVICE="${NUM_ENVS_PER_DEVICE:-256}"' in runner
     assert "1:256:8192|4:512:65536|8:256:65536" in runner
-    assert "--config trench_axis_generalist_partial_v2" in runner
+    assert '--config "$TRAIN_CONFIG"' in runner
+    assert "trench_axis_expert_partial_v1" in runner
     assert "--accepted-bank-condition-profile axis_v2_40_v1" in runner
     assert "bf16[256,16,16,64]" in denylist
     assert "bf16[256,8,8,96]" in denylist
@@ -345,6 +374,11 @@ def test_axis_v2_path_preserves_global_batch_for_4gpu_fallback():
     assert "bf16[512,8,8,96]" in denylist
     assert denylist.count("entries {") == 4
     assert "bootstrap4replay|smoke4replay|fallback4replay" in submit
+    assert "expert_bootstrap4|expert_smoke4|expert_fallback4" in submit
+    assert "expert_bootstrap4replay|expert_smoke4replay|expert_fallback4replay" in submit
+    assert "POLICY_SCOPE=trench_expert" in submit
+    assert 'accepted_bank_arm=$ACCEPTED_BANK_ARM' in sbatch
+    assert 'cuda_runtime_validation_sha256=$CUDA_RUNTIME_VALIDATION_SHA' in sbatch
     assert "698e856cae464e5fea93e0b2121fc8de" in submit
     assert "$TERRA_EULER_PROJECT_ROOT/terra_runtime/autotune" in submit
     assert "SUBMIT=0: local contracts passed; no SSH" in submit
