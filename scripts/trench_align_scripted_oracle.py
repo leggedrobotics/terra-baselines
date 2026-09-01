@@ -26,17 +26,43 @@ here and asserted against Terra itself:
   * ``State._build_dig_dump_cone`` is only *approximately* translation
     invariant (float32 boundary rounding), so every dig decision is validated
     with an exact per-pose Terra cone rather than an offset table;
-  * ``State._is_valid_move`` applies the agent footprint polygon at the
-    **transposed** map position, because ``compute_polygon_mask`` returns a
-    ``(y, x)`` raster while ``pos_base`` is ``(x=row, y=col)``.  The pose graph
-    replica reproduces that, and ``--verify-action-mask`` checks it against
-    ``State._get_action_mask_tracked`` every step.
+  * ``terra.utils.compute_polygon_mask`` rasterises in ``[x=row, y=col]``
+    order, matching ``pos_base``, so the pose-graph replica evaluates the
+    footprint occupancy directly in pose space; ``--verify-action-mask`` checks
+    it against ``State._get_action_mask_tracked`` every step.
 
 The fresh-trench alignment validity replica is compared against the value
 Terra exports in the observation on every step of every slot.  Any
 disagreement raises.  So the reported completion rate is a *verified* lower
 bound on what the episode contract admits, and the step counts are directly
 comparable with the 450-step horizon.
+
+GATE SEMANTICS.  The run measures **v2** by default (yaw-parallel only; working
+distance is the dig cone's job, tested radially machine -> cell) and
+``--gate-v1`` measures the retired v1 semantics, which additionally required the
+perpendicular base-centre-to-axis standoff to sit in a 3.5-7.0 m lateral band.
+The flag is forced onto the resolved env config and asserted, never inherited
+from the checkpoint: v1 and v2 admit different stations, so a run that does not
+say which one it measured is not comparable with anything.  Under v2 the
+controller prefers ON-AXIS stations (perpendicular offset inside the retired
+3.5 m floor -- dig ahead along the trench line, then retreat), which is the
+station class v1 refused outright.
+
+TWO GUARANTEES the controller enforces rather than hopes for:
+
+  * it navigates over PERSISTENT poses only -- poses that stay legal with the
+    WHOLE trench dug (``fp_conservative``) -- with a first-leg exception out of
+    the spawn pocket, so it can never wall itself off behind its own
+    excavation.  Both the pose-graph BFS and the station set use that
+    restriction (``pose_bfs(persist=...)``).
+  * every station is an airtight dig+DUMP PAIR: the post-dig state is predicted
+    exactly (Terra's own dig selection, lowered by ``dig_depth``, written into
+    ``last_dig_mask``) and a cabin with a legal ACCEPTED dump must exist in it,
+    or the station is refused.  A dump is additionally re-validated against
+    Terra's live cone in the step that executes it and is never pressed without
+    a legal accepted destination -- Terra's fallback branch would drop the load
+    outside ``target > 0``, which is unrecoverable spoil.  An excavator cannot
+    move while loaded, so a dig without a dump is a deadlock, not a setback.
 
 No policy is used; the checkpoint is opened read-only only to inherit the
 treatment arm's exact ``train_config`` (hence its env config and gate flag).
@@ -77,6 +103,8 @@ sys.modules["__main__"].TrainConfig = TrainConfig
 sys.modules["__main__"].MixedAgentTrainConfig = MixedAgentTrainConfig
 
 FORWARD, BACKWARD, CLOCK, ANTICLOCK, CABIN_CLOCK, CABIN_ANTICLOCK, DO, DO_NOTHING = range(8)
+ACTION_NAMES = ["FORWARD", "BACKWARD", "CLOCK", "ANTICLOCK", "CABIN_CLOCK",
+                "CABIN_ANTICLOCK", "DO", "DO_NOTHING"]
 NH = 12
 SHAPE = (64, 64)
 INF = np.int32(1 << 20)
@@ -304,7 +332,7 @@ class Geometry:
                 )
                 got_fp = np.asarray(compute_polygon_mask(corners, 64, 64)).astype(bool)
                 want_fp = np.zeros(SHAPE, dtype=bool)
-                cells = self.footprint_offsets(bh, row, col) + np.array([col, row])
+                cells = self.footprint_offsets(bh, row, col) + np.array([row, col])
                 ins = (
                     (cells[:, 0] >= 0) & (cells[:, 0] < SHAPE[0])
                     & (cells[:, 1] >= 0) & (cells[:, 1] < SHAPE[1])
@@ -430,9 +458,9 @@ def blocked_mask(action_map: np.ndarray, static_base: np.ndarray) -> np.ndarray:
 
 def polygon_mask_np(corners: np.ndarray) -> np.ndarray:
     """float32 replica of ``terra.utils.compute_polygon_mask`` (64x64)."""
-    xs = np.arange(SHAPE[1], dtype=np.float32) + np.float32(0.5)
-    ys = np.arange(SHAPE[0], dtype=np.float32) + np.float32(0.5)
-    X, Y = np.meshgrid(xs, ys, indexing="xy")
+    xs = np.arange(SHAPE[0], dtype=np.float32) + np.float32(0.5)
+    ys = np.arange(SHAPE[1], dtype=np.float32) + np.float32(0.5)
+    X, Y = np.meshgrid(xs, ys, indexing="ij")
     pts = np.stack([X, Y], axis=-1).reshape((-1, 2)).astype(np.float32)
     edges = (np.roll(corners, -1, axis=0) - corners).astype(np.float32)
     diff = (pts[None, :, :] - corners[:, None, :]).astype(np.float32)
@@ -444,10 +472,9 @@ def polygon_mask_np(corners: np.ndarray) -> np.ndarray:
 def footprint_free(blocked: np.ndarray, geom: Geometry) -> np.ndarray:
     """(12, 64, 64) bool: is pose (bh, row, col) a legal Terra pose?
 
-    Reproduces Terra's transposed occupancy test: the footprint polygon raster
-    is indexed ``(col, row)`` while ``pos_base`` is ``(row, col)``, so the
-    occupancy correlation is evaluated in the transposed frame and mapped back.
-    Bounds use the exact per-pose corner extents.
+    ``terra.utils.compute_polygon_mask`` rasterises in ``[x=row, y=col]`` order,
+    matching ``pos_base``, so the occupancy correlation is evaluated directly in
+    pose space.  Bounds use the exact per-pose corner extents.
     """
     out = np.zeros((NH,) + SHAPE, dtype=bool)
     pad = 40
@@ -455,58 +482,107 @@ def footprint_free(blocked: np.ndarray, geom: Geometry) -> np.ndarray:
     big[pad:pad + SHAPE[0], pad:pad + SHAPE[1]] = blocked
     for bh in range(NH):
         pids = geom.fp_pattern_id[bh]
-        free_t = np.zeros(SHAPE, dtype=bool)
+        free_pose = np.zeros(SHAPE, dtype=bool)
         for pid, offs in enumerate(geom.fp_pattern_offsets[bh]):
-            sel = pids == pid            # in (row, col) pose space
+            sel = pids == pid
             if not sel.any():
                 continue
             acc = np.zeros(SHAPE, dtype=bool)
             for da, db in offs:
                 acc |= big[pad + da:pad + da + SHAPE[0], pad + db:pad + db + SHAPE[1]]
-            # acc is indexed by (a, b) = (col, row); select poses via sel.T
-            free_t |= (~acc) & sel.T
-        out[bh] = free_t.T & geom.bounds_ok[bh]
+            free_pose |= (~acc) & sel
+        out[bh] = free_pose & geom.bounds_ok[bh]
     return out
 
 
-def pose_bfs(start, fp_free, geom):
-    """Undirected BFS over Terra's exact pose graph. Returns (12, 64, 64) int32."""
+def _bfs_level(dist, allowed, frontier, step, geom):
+    """One synchronous BFS level over the pose graph. ``frontier`` maps h -> idx."""
+    buckets = {}
+
+    def push(h, cand):
+        if cand.size == 0:
+            return
+        cand = cand[allowed[h, cand] & (dist[h, cand] == INF)]
+        if cand.size == 0:
+            return
+        cand = np.unique(cand)
+        dist[h, cand] = step
+        buckets.setdefault(h, []).append(cand)
+
+    for bh, idxs in frontier.items():
+        push((bh - 1) % NH, idxs)
+        push((bh + 1) % NH, idxs)
+        for a in range(2):
+            d = geom.succ_flat[bh, a][idxs]
+            push(bh, d[d >= 0])
+    return {h: np.concatenate(v) for h, v in buckets.items()}
+
+
+def pose_bfs(start, fp_free, geom, persist=None):
+    """Undirected BFS over Terra's exact pose graph. Returns (12, 64, 64) int32.
+
+    With ``persist`` given the walk is restricted to PERSISTENT poses -- poses
+    that stay legal even when the whole trench is dug -- so the controller can
+    never wall itself off with its own excavation.  The spawn is exempt: a
+    machine that starts inside the trench footprint has to be allowed to drive
+    out of it.  So the search first escapes the non-persistent pocket it starts
+    in (phase 1, over ``fp_free``, absorbing at the first persistent pose on
+    each branch) and is persistent-only from there on (phase 2).  The result is
+    the shortest distance under "non-persistent prefix, then persistent
+    suffix", and every dig station is taken from the persistent set.
+    """
     n = SHAPE[0] * SHAPE[1]
     dist = np.full((NH, n), INF, dtype=np.int32)
     free = fp_free.reshape(NH, n)
+    keep = free if persist is None else (fp_free & persist).reshape(NH, n)
     r0, c0, h0 = start
     idx0 = r0 * SHAPE[1] + c0
     dist[h0, idx0] = 0
-    frontier = [(h0, np.array([idx0], dtype=np.int32))]
-    step = 0
-    while frontier:
-        step += 1
-        buckets = {}
 
-        def push(h, cand):
-            if cand.size == 0:
-                return
-            cand = cand[free[h, cand] & (dist[h, cand] == INF)]
-            if cand.size == 0:
-                return
-            cand = np.unique(cand)
-            dist[h, cand] = step
-            if h in buckets:
-                buckets[h].append(cand)
-            else:
-                buckets[h] = [cand]
+    seeds: dict[int, dict[int, list]] = {}
+    if keep[h0, idx0]:
+        frontier = {h0: np.array([idx0], dtype=np.int32)}
+    else:
+        frontier = {h0: np.array([idx0], dtype=np.int32)}
+        step = 0
+        while frontier:
+            step += 1
+            produced = _bfs_level(dist, free, frontier, step, geom)
+            nxt = {}
+            for h, idxs in produced.items():
+                pers = keep[h, idxs]
+                if pers.any():
+                    seeds.setdefault(step, {}).setdefault(h, []).append(idxs[pers])
+                rest = idxs[~pers]
+                if rest.size:
+                    nxt[h] = rest
+            frontier = nxt
+        frontier = {}
 
-        for bh, idxs in frontier:
-            push((bh - 1) % NH, idxs)
-            push((bh + 1) % NH, idxs)
-            for a in range(2):
-                d = geom.succ_flat[bh, a][idxs]
-                push(bh, d[d >= 0])
-        frontier = [(h, np.concatenate(v)) for h, v in buckets.items()]
+    level = 0
+    last_seed = max(seeds) if seeds else 0
+    while frontier or level < last_seed:
+        if level in seeds:
+            for h, parts in seeds[level].items():
+                arr = np.concatenate(parts)
+                frontier[h] = (
+                    np.concatenate([frontier[h], arr]) if h in frontier else arr
+                )
+        if frontier:
+            frontier = _bfs_level(dist, keep, frontier, level + 1, geom)
+        level += 1
     return dist.reshape((NH,) + SHAPE)
 
 
-def reconstruct_actions(dist, goal, geom):
+def reconstruct_actions(dist, goal, geom, persist=None):
+    """Descend ``dist`` to the start, preferring predecessors of the same class.
+
+    With ``persist`` given, a persistent node keeps a persistent predecessor
+    whenever one exists; the first time it cannot, the walk has crossed into the
+    spawn's non-persistent pocket and stays there.  That keeps the executed path
+    "pocket prefix, then persistent suffix" rather than re-entering a pose the
+    machine's own digging could delete.
+    """
     r, c, h = goal
     if dist[h, r, c] >= INF:
         return None
@@ -514,29 +590,36 @@ def reconstruct_actions(dist, goal, geom):
     guard = 0
     idx = r * SHAPE[1] + c
     flat = dist.reshape(NH, -1)
+    pers = None if persist is None else persist.reshape(NH, -1)
+    want_persistent = pers is not None and bool(pers[h, idx])
     while flat[h, idx] > 0:
         guard += 1
         if guard > 4096:
             return None
         d = flat[h, idx]
-        found = False
+        # candidate predecessors: (heading, index, action)
+        options = []
         for dh, act in ((-1, ANTICLOCK), (1, CLOCK)):
             ph = (h + dh) % NH
             if flat[ph, idx] == d - 1:
-                actions.append(act)
-                h = ph
-                found = True
-                break
-        if found:
-            continue
+                options.append((ph, idx, act))
         for pidx, act in geom.pred_lists[h][idx]:
             if flat[h, pidx] == d - 1:
-                actions.append(act)
-                idx = pidx
-                found = True
-                break
-        if not found:
+                options.append((h, pidx, act))
+        if not options:
             return None
+        choice = None
+        if pers is not None and want_persistent:
+            for ph, pidx, act in options:
+                if pers[ph, pidx]:
+                    choice = (ph, pidx, act)
+                    break
+            if choice is None:
+                want_persistent = False
+        if choice is None:
+            choice = options[0]
+        h, idx, act = choice
+        actions.append(act)
     actions.reverse()
     return actions
 
@@ -587,7 +670,8 @@ class SlotOracle:
     IDLE, NAV, DUMP = 0, 1, 2
 
     def __init__(self, index, cell, target, padding, dumpability_init, records,
-                 naxes, membership, geom, tile_size, yaw_tol, so_min, so_max):
+                 naxes, membership, geom, tile_size, yaw_tol, so_min, so_max,
+                 standoff_enforced, dig_depth):
         self.index = index
         self.cell = cell
         self.target = target.astype(np.int32)
@@ -598,6 +682,11 @@ class SlotOracle:
         self.membership = membership
         self.geom = geom
         self.accepted = (self.target > 0) & (~self.padding)
+        # Accepted cells whose 3x3 neighbourhood is also accepted.  Terra's dump
+        # commits only when soil relaxation stays inside the containment mask
+        # (the accepted zone), so dumping into the interior is what keeps a
+        # dump from silently no-opping.
+        self.accepted_interior = self.accepted & ~dilate_linf(~self.accepted, 1)
         self.dig_targets = self.target < 0
 
         # float32 throughout, matching State._get_fresh_trench_dig_alignment_details
@@ -627,6 +716,23 @@ class SlotOracle:
             self.yaw_err[bh] = np.arccos(cosine)
             self.yaw_ok[bh] = self.yaw_err[bh] <= np.float32(yaw_tol)
 
+        # Pose validity per (section, heading, cell), exactly as the gate tests
+        # it.  v1 (standoff_enforced): yaw-parallel AND inside the lateral
+        # standoff band.  v2 (the default): yaw-parallel, full stop -- working
+        # distance is the dig cone's job and it is tested radially,
+        # machine -> cell, so standing ON the trench line is legal.
+        self.standoff_enforced = bool(standoff_enforced)
+        self.dig_depth = int(dig_depth)
+        self.pose_ok = np.zeros((max(self.naxes, 1), NH) + SHAPE, dtype=bool)
+        for a in range(self.naxes):
+            for bh in range(NH):
+                if not self.yaw_ok[bh, a]:
+                    continue
+                self.pose_ok[a, bh] = self.band[a] if self.standoff_enforced else True
+        # "on axis" = nearer the section line than the retired v1 floor: the
+        # dig-ahead-retreat station v1 refused and v2 admits.
+        self.on_axis = self.standoff < np.float32(so_min)
+
         # Order-independent worst case: a pose that stays legal with the whole
         # trench dug can never be walled off by the machine's own digging.
         self.fp_conservative = footprint_free(self.padding | self.dig_targets, geom)
@@ -646,6 +752,8 @@ class SlotOracle:
         self.move_refused = 0
         self.blocked_until_change = False
         self.stall_attribution = None
+        self.stations_on_axis = 0
+        self.dump_precheck_blocks = 0
         self.reasons = {}
 
     def note(self, reason):
@@ -654,51 +762,85 @@ class SlotOracle:
     def pose_bits(self, r, c, bh):
         bits = 0
         for a in range(self.naxes):
-            if self.yaw_ok[bh, a] and self.band[a, r, c]:
+            if self.pose_ok[a, bh, r, c]:
                 bits |= 1 << a
         return bits
+
+    def station_is_on_axis(self, r, c, bh):
+        """Is this a dig-ahead-retreat station (inside the retired v1 floor)?"""
+        return any(
+            bool(self.pose_ok[a, bh, r, c]) and bool(self.on_axis[a, r, c])
+            for a in range(self.naxes)
+        )
 
     def dig_admissible(self, r, c, bh, cone, action_map, last_dig):
         """Exact replica of applicability + gate validity for one prospective DO.
 
-        Returns (applicable, valid, selected_cells, fresh_trench_cells).
+        Returns (applicable, valid, selected_cells, fresh_trench_cells,
+        selected_mask).  The mask is Terra's own dig selection, which is what
+        ``_handle_dig`` removes and what it writes into ``last_dig_mask``, so
+        the dump side can be predicted from it exactly rather than guessed.
         """
+        selm = np.zeros(SHAPE, dtype=bool)
         rr, cc = np.nonzero(cone)
         if rr.size == 0:
-            return False, True, 0, 0
+            return False, True, 0, 0, selm
         am = action_map[rr, cc]
         tg = self.target[rr, cc]
         has_pile = bool(np.any(am > 0))
         amb = (am > 0) if has_pile else (am == 0)
         sel = ((tg < 0) | (am > 0)) & amb & (am > -1) & (~last_dig[rr, cc])
+        selm[rr[sel], cc[sel]] = True
         fresh = sel & (tg < 0) & (am == 0)
         mem = self.membership[rr, cc]
         fresh_trench = fresh & (mem != 0)
         n_fresh_trench = int(fresh_trench.sum())
         if n_fresh_trench == 0:
-            return False, True, int(sel.sum()), 0
+            return False, True, int(sel.sum()), 0, selm
         bits = self.pose_bits(r, c, bh)
         valid = bool(np.all((mem[fresh_trench] & np.uint8(bits)) != 0))
-        return True, valid, int(sel.sum()), n_fresh_trench
+        return True, valid, int(sel.sum()), n_fresh_trench, selm
 
-    def dump_legal_count(self, cone, action_map, last_dig, occupied):
-        """Replica of the excavator dump mask's legal-accepted branch."""
-        rr, cc = np.nonzero(cone)
-        if rr.size == 0:
-            return 0
+    def dump_context(self, action_map, occupied):
+        """Everything in the dump mask that does not depend on the cabin.
+
+        ``dilate_square5`` over the whole hole map is the expensive part and it
+        is identical for all twelve cabin headings, so it is computed once per
+        (map, base pose) and reused -- the dump search calls the mask twelve
+        times per candidate station.
+        """
         holes = action_map < 0
         dumpable = self.dumpability_init & ~dilate_square5(holes)
-        if np.any(last_dig[rr, cc] & (action_map[rr, cc] > 0)):
-            return 0
         free = (action_map == 0) & (~occupied) & (~self.padding)
-        legal = (
-            (~holes[rr, cc]) & dumpable[rr, cc] & free[rr, cc] & self.accepted[rr, cc]
+        return holes, ((~holes) & dumpable & free & self.accepted)
+
+    def dump_legal_mask(self, cone, action_map, last_dig, occupied, ctx=None):
+        """Replica of the excavator dump mask's legal-accepted branch.
+
+        Terra dumps into ``accepted`` (target > 0) whenever ANY accepted cell
+        survives the physical filters, and falls back to non-accepted cells only
+        when none does -- the one path that creates illegal spoil.  So a
+        non-empty mask here is exactly the condition "this dump lands inside the
+        zone", and the controller never presses DO while loaded without it.
+        """
+        _holes, legal_anywhere = (
+            self.dump_context(action_map, occupied) if ctx is None else ctx
         )
-        return int(legal.sum())
+        rr, cc = np.nonzero(cone)
+        if rr.size == 0:
+            return np.zeros(SHAPE, dtype=bool)
+        if np.any(last_dig[rr, cc] & (action_map[rr, cc] > 0)):
+            return np.zeros(SHAPE, dtype=bool)
+        return cone & legal_anywhere
+
+    def dump_legal_count(self, cone, action_map, last_dig, occupied, ctx=None):
+        return int(
+            self.dump_legal_mask(cone, action_map, last_dig, occupied, ctx).sum()
+        )
 
     def occupied_mask(self, r, c, bh):
         occ = np.zeros(SHAPE, dtype=bool)
-        cells = self.geom.footprint_offsets(bh, r, c) + np.array([c, r])
+        cells = self.geom.footprint_offsets(bh, r, c) + np.array([r, c])
         ins = (
             (cells[:, 0] >= 0) & (cells[:, 0] < SHAPE[0])
             & (cells[:, 1] >= 0) & (cells[:, 1] < SHAPE[1])
@@ -709,41 +851,74 @@ class SlotOracle:
 
 
 def _dump_cabin_after_dig(o, r2, c2, bh2, cb2, cones12, action_map, last_dig,
-                          keep_clear=None):
+                          sel_mask, keep_clear=None):
     """Cabin heading with a legal accepted dump once the dig at cb2 has happened.
 
-    A pile inside a later dig cone makes ``_mask_out_wrong_dig_tiles`` select the
-    pile instead of fresh trench soil, so spoil dropped next to still-undug
-    trench blocks it.  Cabins whose legal cells all lie outside ``keep_clear``
-    are therefore preferred; the maximum-capacity cabin is the fallback.
+    This is the DUMP half of the dig+dump pair, and it is what makes a station
+    choice airtight: the machine cannot move while loaded, so a dig with no
+    same-base legal dump is a hard deadlock.  The post-dig state is predicted
+    EXACTLY -- ``sel_mask`` is Terra's own dig selection, ``_handle_dig`` lowers
+    exactly those cells by ``dig_depth`` and writes exactly that mask into
+    ``last_dig_mask`` -- so the dump legality tested here is the dump legality
+    that will hold after the dig.  Returns None when no cabin has one, i.e.
+    "do not take this station".
+
+    Preferences among the cabins that do work, in order:
+      * ``far``: no legal cell lies within ``keep_clear`` of still-undug trench.
+        A pile next to fresh trench makes ``_mask_out_wrong_dig_tiles`` select
+        the pile instead of the soil and blocks digging there.
+      * ``interior``: every legal cell's 3x3 neighbourhood is inside the
+        accepted zone.  Terra refuses the whole dump (``stayed_contained``) if
+        soil relaxation would push a unit outside the containment mask, so an
+        interior target is the one least likely to no-op.
+      * otherwise the maximum-capacity cabin.
     """
-    cone = cones12[cb2].astype(bool)
-    rr, cc = np.nonzero(cone)
-    am = action_map[rr, cc]
-    tg = o.target[rr, cc]
-    sel = (tg < 0) & (am == 0) & (~last_dig[rr, cc])
-    selm = np.zeros(SHAPE, dtype=bool)
-    selm[rr[sel], cc[sel]] = True
     pred = action_map.copy()
-    pred[selm] = -1
+    pred[sel_mask] = action_map[sel_mask] - o.dig_depth
     occ = o.occupied_mask(r2, c2, bh2)
-    best_far, best_far_n = None, 0
-    best_cb, best_n = None, 0
+    ctx = o.dump_context(pred, occ)
+    ranked = []
     for cbd in range(NH):
         cone_d = cones12[cbd].astype(bool)
-        n = o.dump_legal_count(cone_d, pred, selm, occ)
-        if n > best_n:
-            best_n, best_cb = n, cbd
-        if keep_clear is not None and n > 0:
-            far = o.dump_legal_count(cone_d & ~keep_clear, pred, selm, occ)
-            if far == n and far > best_far_n:
-                best_far_n, best_far = far, cbd
-    return best_far if best_far is not None else best_cb
+        legal = o.dump_legal_mask(cone_d, pred, sel_mask, occ, ctx)
+        n = int(legal.sum())
+        if n == 0:
+            continue
+        far = keep_clear is None or not bool(np.any(legal & keep_clear))
+        interior = not bool(np.any(legal & ~o.accepted_interior))
+        ranked.append((int(far) * 2 + int(interior), n, cbd))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda t: (-t[0], -t[1]))
+    return ranked[0][2]
+
+
+ON_AXIS_BONUS = 6
+POSE_CAP = 400
+SWEEP_CAP = 150
 
 
 def choose_station(o: SlotOracle, r, c, bh, cb, action_map, last_dig, banned,
                    fp_free, dist, max_probe=40, reach=12, persistent_only=True):
-    """Pick an exactly gate-admissible dig station with a legal same-base dump."""
+    """Pick a gate-admissible dig station that is also a legal DUMP station.
+
+    Two properties are enforced, not hoped for:
+
+      * the station is PERSISTENT (``fp_conservative``) whenever
+        ``persistent_only`` -- legal even with the whole trench dug -- and the
+        ``dist`` map it is scored against was built the same way, so the
+        controller cannot drive somewhere its own excavation deletes;
+      * a dump cabin with a legal ACCEPTED destination exists in the EXACT
+        predicted post-dig state (``_dump_cabin_after_dig``).  An excavator
+        cannot move while loaded, so a dig without that is a deadlock, not a
+        setback.
+
+    Under v2 the on-axis stations (perpendicular offset inside the retired
+    3.5 m floor -- dig ahead, then retreat along the axis) are preferred by a
+    score bonus; they simply do not exist under v1, where the band forbids them.
+
+    Returns ``(key, dump_cabin, selected_cells, on_axis)`` or None.
+    """
     geom = o.geom
     diggable = o.dig_targets & (action_map == 0) & (~last_dig)
     if not diggable.any():
@@ -761,13 +936,25 @@ def choose_station(o: SlotOracle, r, c, bh, cb, action_map, last_dig, banned,
         for bh2 in range(NH):
             if not o.yaw_ok[bh2, a]:
                 continue
-            posemask = o.band[a] & fp_free[bh2] & near & (dist[bh2] < INF)
+            posemask = o.pose_ok[a, bh2] & fp_free[bh2] & near & (dist[bh2] < INF)
             if persistent_only:
                 posemask = posemask & o.fp_conservative[bh2]
             poses = np.argwhere(posemask)
             if poses.shape[0] == 0:
                 continue
             dd = dist[bh2][posemask]
+            bonus = np.where(
+                o.on_axis[a][posemask], np.int32(ON_AXIS_BONUS), np.int32(0)
+            )
+            # v2 drops the lateral band, so the pose-valid set for one heading
+            # is every cell within reach of the section instead of a narrow
+            # lane -- thousands of poses, and the twelve-cabin cone scan below
+            # is linear in that.  Keep the nearest POSE_CAP (on-axis poses
+            # counted as closer), which is what the score would have preferred
+            # anyway; the exact-cone sweep below is the safety net.
+            if poses.shape[0] > POSE_CAP:
+                order = np.argpartition(dd - bonus, POSE_CAP)[:POSE_CAP]
+                poses, dd, bonus = poses[order], dd[order], bonus[order]
             for cb2 in range(NH):
                 offs = geom.cones[bh2][cb2]
                 nsel, nbad, npad, npile = gather_counts(
@@ -778,7 +965,7 @@ def choose_station(o: SlotOracle, r, c, bh, cb, action_map, last_dig, banned,
                     continue
                 cabin_cost = min((cb2 - cb) % NH, (cb - cb2) % NH)
                 idx = np.flatnonzero(good)
-                score = nsel[idx] * 3 - (dd[idx] + cabin_cost)
+                score = nsel[idx] * 3 - (dd[idx] + cabin_cost) + bonus[idx]
                 if idx.size > 16:
                     keep = np.argpartition(-score, 16)[:16]
                     idx, score = idx[keep], score[keep]
@@ -797,19 +984,15 @@ def choose_station(o: SlotOracle, r, c, bh, cb, action_map, last_dig, banned,
         probes += 1
         cones12 = geom.cones_all_cabins(r2, c2, bh2)
         cone = cones12[cb2].astype(bool)
-        appl, valid, nsel_exact, _ = o.dig_admissible(
-            r2, c2, bh2, cone, action_map, last_dig)
-        if not (appl and valid and nsel_exact > 0):
-            continue
-        if np.any(o.padding[cone]):
-            continue
-        dump_cb = _dump_cabin_after_dig(o, r2, c2, bh2, cb2, cones12,
-                                        action_map, last_dig, keep_clear)
-        if dump_cb is not None:
-            return key, dump_cb, nsel_exact
+        picked = _validate_station(o, r2, c2, bh2, cb2, cones12, cone,
+                                   action_map, last_dig, keep_clear)
+        if picked is not None:
+            dump_cb, nsel_exact = picked
+            return key, dump_cb, nsel_exact, o.station_is_on_axis(r2, c2, bh2)
 
     # The offset-table cone is only ~81% exact, so when the fast scan finds
-    # nothing, sweep the nearest in-band reachable poses with exact Terra cones.
+    # nothing, sweep the nearest reachable pose-valid poses with exact Terra
+    # cones.  On-axis poses are swept first under v2.
     pool = []
     for a in range(o.naxes):
         own = (o.membership & np.uint8(1 << a)) != 0
@@ -820,14 +1003,23 @@ def choose_station(o: SlotOracle, r, c, bh, cb, action_map, last_dig, banned,
         for bh2 in range(NH):
             if not o.yaw_ok[bh2, a]:
                 continue
-            pm = o.band[a] & fp_free[bh2] & near & (dist[bh2] < INF)
+            pm = o.pose_ok[a, bh2] & fp_free[bh2] & near & (dist[bh2] < INF)
             if persistent_only:
                 pm = pm & o.fp_conservative[bh2]
-            for rr2, cc2 in np.argwhere(pm):
-                pool.append((int(dist[bh2, rr2, cc2]), int(rr2), int(cc2), bh2))
+            cells = np.argwhere(pm)
+            if cells.shape[0] == 0:
+                continue
+            rank = dist[bh2][pm] - np.where(
+                o.on_axis[a][pm], np.int32(ON_AXIS_BONUS), np.int32(0)
+            )
+            if cells.shape[0] > SWEEP_CAP:
+                order = np.argpartition(rank, SWEEP_CAP)[:SWEEP_CAP]
+                cells, rank = cells[order], rank[order]
+            for (rr2, cc2), rk in zip(cells, rank):
+                pool.append((int(rk), int(rr2), int(cc2), bh2))
     pool.sort()
     seen = set()
-    for _d, r2, c2, bh2 in pool[:120]:
+    for _rank, r2, c2, bh2 in pool[:120]:
         if (r2, c2, bh2) in seen:
             continue
         seen.add((r2, c2, bh2))
@@ -837,17 +1029,34 @@ def choose_station(o: SlotOracle, r, c, bh, cb, action_map, last_dig, banned,
             if key in banned:
                 continue
             cone = cones12[cb2].astype(bool)
-            appl, valid, nsel, _ = o.dig_admissible(
-                r2, c2, bh2, cone, action_map, last_dig)
-            if not (appl and valid and nsel > 0):
-                continue
-            if np.any(o.padding[cone]):
-                continue
-            dump_cb = _dump_cabin_after_dig(o, r2, c2, bh2, cb2, cones12,
-                                            action_map, last_dig, keep_clear)
-            if dump_cb is not None:
-                return key, dump_cb, nsel
+            picked = _validate_station(o, r2, c2, bh2, cb2, cones12, cone,
+                                       action_map, last_dig, keep_clear)
+            if picked is not None:
+                dump_cb, nsel = picked
+                return key, dump_cb, nsel, o.station_is_on_axis(r2, c2, bh2)
     return None
+
+
+def _validate_station(o, r2, c2, bh2, cb2, cones12, cone, action_map, last_dig,
+                      keep_clear):
+    """Exact dig admissibility plus an exact post-dig dump. (dump_cb, nsel) or None."""
+    appl, valid, nsel, _nft, sel_mask = o.dig_admissible(
+        r2, c2, bh2, cone, action_map, last_dig)
+    if not (appl and valid and nsel > 0):
+        return None
+    if np.any(o.padding[cone]):
+        return None
+    # The post-dig prediction assumes the clean-dirt branch of ``_apply_dig_mask``
+    # (lower every selected cell by dig_depth).  Refuse the station rather than
+    # predict the positive-soil branch, whose prefix apportionment would make the
+    # dump-legality test approximate.
+    if np.any(action_map[sel_mask] != 0):
+        return None
+    dump_cb = _dump_cabin_after_dig(o, r2, c2, bh2, cb2, cones12,
+                                    action_map, last_dig, sel_mask, keep_clear)
+    if dump_cb is None:
+        return None
+    return dump_cb, nsel
 
 
 def attribute_stall(o: SlotOracle, action_map, last_dig, fp_free, dist):
@@ -866,12 +1075,31 @@ def attribute_stall(o: SlotOracle, action_map, last_dig, fp_free, dist):
     n = remaining.shape[0]
     index = -np.ones(SHAPE, dtype=np.int32)
     index[remaining[:, 0], remaining[:, 1]] = np.arange(n)
-    stages = ["in_cone_without_obstacle", "pose_in_band_and_parallel",
+    pose_stage = ("pose_in_band_and_parallel" if o.standoff_enforced
+                  else "pose_yaw_parallel")
+    stages = ["in_cone_without_obstacle", pose_stage,
               "no_perpendicular_veto", "no_pile_in_cone",
-              "pose_footprint_legal", "pose_reachable", "legal_dump_after_dig"]
+              "pose_footprint_legal", "pose_persistent", "pose_reachable",
+              "legal_dump_after_dig"]
     reach = {k: np.zeros(n, dtype=bool) for k in stages}
     piles = action_map > 0
     dump_cache = {}
+    cone_cache = {}
+    # The dump stage costs one exact Terra cone bundle plus a twelve-cabin dump
+    # scan per candidate pose.  Under v1 the lateral band kept that population
+    # tiny; v2 admits every yaw-parallel pose in reach, so it has to be bounded
+    # or the attribution costs more than the episode it explains.  Poses past
+    # the budget are simply not credited with the last stage, which makes the
+    # final number a LOWER bound on "has a legal dump", never an over-claim.
+    dump_budget = 400
+    dump_budget_hit = False
+
+    def cones_for(pr, pc, bh):
+        key = (pr, pc, bh)
+        if key not in cone_cache:
+            cone_cache[key] = geom.cones_all_cabins(pr, pc, bh)
+        return cone_cache[key]
+
     for bh2 in range(NH):
         poses = np.argwhere(dilate_linf(diggable, 12))
         if poses.shape[0] == 0:
@@ -879,6 +1107,7 @@ def attribute_stall(o: SlotOracle, action_map, last_dig, fp_free, dist):
         pbits = np.array([o.pose_bits(int(pr), int(pc), bh2) for pr, pc in poses],
                          dtype=np.uint8)
         fpok = fp_free[bh2][poses[:, 0], poses[:, 1]]
+        persistent = o.fp_conservative[bh2][poses[:, 0], poses[:, 1]]
         reachable = dist[bh2][poses[:, 0], poses[:, 1]] < INF
         for cb2 in range(NH):
             offs = geom.cones[bh2][cb2]
@@ -898,7 +1127,7 @@ def attribute_stall(o: SlotOracle, action_map, last_dig, fp_free, dist):
                 b = pbits[i]
                 if b == 0:
                     continue
-                reach["pose_in_band_and_parallel"][cells] = True
+                reach[pose_stage][cells] = True
                 m = mem[i][freshm[i]]
                 tr = m != 0
                 if tr.any() and not ((m[tr] & b) != 0).all():
@@ -910,15 +1139,23 @@ def attribute_stall(o: SlotOracle, action_map, last_dig, fp_free, dist):
                 if not fpok[i]:
                     continue
                 reach["pose_footprint_legal"][cells] = True
+                if not persistent[i]:
+                    continue
+                reach["pose_persistent"][cells] = True
                 if not reachable[i]:
                     continue
                 reach["pose_reachable"][cells] = True
                 pr, pc = int(poses[i, 0]), int(poses[i, 1])
                 ck = (pr, pc, bh2, cb2)
                 if ck not in dump_cache:
-                    cones12 = geom.cones_all_cabins(pr, pc, bh2)
-                    dump_cache[ck] = _dump_cabin_after_dig(
-                        o, pr, pc, bh2, cb2, cones12, action_map, last_dig)
+                    if len(dump_cache) >= dump_budget:
+                        dump_budget_hit = True
+                        continue
+                    cones12 = cones_for(pr, pc, bh2)
+                    cone_exact = cones12[cb2].astype(bool)
+                    dump_cache[ck] = _validate_station(
+                        o, pr, pc, bh2, cb2, cones12, cone_exact,
+                        action_map, last_dig, None)
                 if dump_cache[ck] is None:
                     continue
                 reach["legal_dump_after_dig"][cells] = True
@@ -934,6 +1171,8 @@ def attribute_stall(o: SlotOracle, action_map, last_dig, fp_free, dist):
         prev = prev & reach[k]
     out["binding_stage_cells"] = binding
     out["cells_with_no_option_at_all"] = int(np.sum(~reach[stages[-1]]))
+    out["dump_stage_budget_exhausted"] = bool(dump_budget_hit)
+    out["dump_stage_poses_tested"] = len(dump_cache)
     return out
 
 
@@ -1004,6 +1243,14 @@ def main() -> None:
     ap.add_argument("--include-family", nargs="*", default=["trench"])
     ap.add_argument("--include-cell", nargs="*", default=[])
     ap.add_argument("--exclude-cell", nargs="*", default=["trn-net4-*"])
+    ap.add_argument(
+        "--include-net4", action="store_true",
+        help="also run the 48 trn-net4-* slots (clears the default exclusion)")
+    ap.add_argument(
+        "--gate-v1", action="store_true",
+        help="run the retired v1 gate semantics (perpendicular standoff band "
+             "ENFORCED, EnvConfig.trench_dig_standoff_enforced=True) instead of "
+             "the shipped v2 yaw-parallel-only semantics")
     ap.add_argument("--slot-limit-per-cell", type=int, default=0)
     ap.add_argument("--horizon", type=int, default=450)
     ap.add_argument("--extended-horizon", type=int, default=0)
@@ -1014,6 +1261,7 @@ def main() -> None:
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     bank_root = args.bank_root.resolve()
+    exclude_cells = [] if args.include_net4 else list(args.exclude_cell)
 
     release_id = json.loads((bank_root / "dataset.json").read_text()).get("release_id")
     accepted_bank = load_accepted_bank(
@@ -1027,7 +1275,7 @@ def main() -> None:
 
     slot_indices = select_slots(
         rows, set(args.include_family) if args.include_family else set(),
-        list(args.include_cell), list(args.exclude_cell),
+        list(args.include_cell), exclude_cells,
     )
     if args.slot_limit_per_cell > 0:
         seen, kept = {}, []
@@ -1050,6 +1298,16 @@ def main() -> None:
     config = configure_for_bank(checkpoint["train_config"], panel.maps_path, count)
     if not bool(getattr(config, "enforce_trench_dig_alignment", False)):
         raise RuntimeError("this oracle must run with the gate ON")
+    # The gate semantics are an explicit CLI choice, never inherited silently:
+    # v1 and v2 admit different stations, so a run that does not say which one
+    # it measured is not comparable with anything.
+    if not hasattr(config, "trench_dig_standoff_enforced"):
+        raise RuntimeError(
+            "this baselines revision predates the gate-semantics selector; "
+            "trench_dig_standoff_enforced is required")
+    config.trench_dig_standoff_enforced = bool(args.gate_v1)
+    print(f"gate semantics: {'v1 (standoff band ENFORCED)' if args.gate_v1 else 'v2 (yaw-parallel only)'}",
+          flush=True)
     _, env, env_params, _ = make_mixed_agent_states(config)
     env_params = jax.tree_util.tree_map(lambda v: v[0], env_params)
 
@@ -1071,6 +1329,14 @@ def main() -> None:
     yaw_tol = float(np.ravel(np.asarray(resolved.trench_dig_yaw_tolerance_rad))[0])
     so_min = float(np.ravel(np.asarray(resolved.trench_dig_standoff_min_m))[0])
     so_max = float(np.ravel(np.asarray(resolved.trench_dig_standoff_max_m))[0])
+    standoff_enforced = bool(
+        np.ravel(np.asarray(resolved.trench_dig_standoff_enforced))[0]
+    )
+    if standoff_enforced != bool(args.gate_v1):
+        raise RuntimeError(
+            f"resolved env gate semantics standoff_enforced={standoff_enforced} "
+            f"but --gate-v1={bool(args.gate_v1)} was requested")
+    dig_depth = int(np.ravel(np.asarray(resolved.agent.dig_depth))[0])
     agent_w = int(np.ravel(np.asarray(resolved.agent.width))[0])
     agent_h = int(np.ravel(np.asarray(resolved.agent.height))[0])
     if tile_size <= 0 or agent_w <= 0 or agent_h <= 0:
@@ -1112,6 +1378,7 @@ def main() -> None:
         oracles.append(SlotOracle(
             k, slot_rows[k]["primary_cell"], target[k], padding[k], dump_init[k],
             records[k], ttype[k], membership[k], geom, tile_size, yaw_tol, so_min, so_max,
+            standoff_enforced, dig_depth,
         ))
     required = np.array([int((target[k] < 0).sum()) for k in range(count)])
 
@@ -1134,10 +1401,19 @@ def main() -> None:
     cone_diff_cells = 0
     cone_diff_steps = 0
     cone_compared = 0
+    accepted_stack = np.stack([o.accepted for o in oracles])
+    illegal_by_action = np.zeros(8, dtype=np.int64)
+    illegal_events = []
+    prev_illegal = np.zeros(count, dtype=np.int64)
     fp_cache = [None] * count
     dist_cache = [None] * count
 
     t_start = time.time()
+    # Coarse wall-clock accounting, printed with the progress line.  The v2
+    # station search scans a much larger pose set than v1 (no lateral band), so
+    # knowing where the time goes is the difference between "slow" and "wrong".
+    timers = {"terra_step": 0.0, "probe": 0.0, "plan": 0.0, "bfs": 0.0,
+              "stall_attribution": 0.0}
     for step in range(horizon):
         active = ~terminated
         pos = np.asarray(st.agent.agent_states[0].pos_base).reshape(count, 2).astype(np.int32)
@@ -1150,6 +1426,7 @@ def main() -> None:
             timestep.observation["fresh_trench_dig_alignment_valid"]
         ).reshape(-1)
         cur_cones = geom.cones_batch(pos[:, 0], pos[:, 1], bh_all, cb_all)
+        _t = time.time()
         _pr = terra_probe(st)
         t_cone_mask = _pr[5]
         (t_appl, t_valid, t_nfresh, t_ncone, t_nsel) = [
@@ -1174,6 +1451,7 @@ def main() -> None:
         cone_diff_steps += int(np.sum(syn != t_ncone))
         cone_compared += count
         cur_cones = np.asarray(t_cone_mask)
+        timers["probe"] += time.time() - _t
         if False:
             raise RuntimeError(
                 "unreachable")
@@ -1189,7 +1467,7 @@ def main() -> None:
             r, c, bh, cb = int(pos[k, 0]), int(pos[k, 1]), int(bh_all[k]), int(cb_all[k])
             am, ld = action_maps[k], last_digs[k]
 
-            appl, val, nsel_r, nft = o.dig_admissible(
+            appl, val, nsel_r, nft, _selm = o.dig_admissible(
                 r, c, bh, cur_cones[k].astype(bool), am, ld
             )
             # Terra's applicability also requires an empty excavator.
@@ -1237,30 +1515,50 @@ def main() -> None:
                 if o.phase != o.DUMP or not o.plan:
                     occ = o.occupied_mask(r, c, bh)
                     cones12 = geom.cones_all_cabins(r, c, bh)
+                    ctx = o.dump_context(am, occ)
                     keep_clear = dilate_linf(
                         o.dig_targets & (am == 0) & (~ld), 6)
-                    best_cb, best_n = None, 0
-                    best_far, best_far_n = None, 0
+                    ranked = []
                     for cbd in range(NH):
                         if (r, c, bh, cbd) in banned_dump[k]:
                             continue
                         cone_d = cones12[cbd].astype(bool)
-                        n = o.dump_legal_count(cone_d, am, ld, occ)
-                        if n > best_n:
-                            best_n, best_cb = n, cbd
-                        if n > 0:
-                            far = o.dump_legal_count(cone_d & ~keep_clear, am, ld, occ)
-                            if far == n and far > best_far_n:
-                                best_far_n, best_far = far, cbd
-                    if best_far is not None:
-                        best_cb = best_far
-                    if best_cb is None:
+                        legal = o.dump_legal_mask(cone_d, am, ld, occ, ctx)
+                        n = int(legal.sum())
+                        if n == 0:
+                            continue
+                        far = not bool(np.any(legal & keep_clear))
+                        interior = not bool(np.any(legal & ~o.accepted_interior))
+                        ranked.append((int(far) * 2 + int(interior), n, cbd))
+                    if not ranked:
+                        # Deadlock: an excavator cannot move while loaded, so
+                        # only a cabin rotation could help and none does.  The
+                        # controller waits rather than dumping into the
+                        # fallback branch, which would drop the load outside
+                        # target > 0 and cap dump_purity for the episode.
                         o.stuck_loaded += 1
                         o.note("loaded_no_legal_dump")
                         continue
+                    ranked.sort(key=lambda t: (-t[0], -t[1]))
+                    best_cb = ranked[0][2]
                     o.plan = cabin_actions(cb, best_cb) + [DO]
                     o.dump_cabin = best_cb
                     o.phase = o.DUMP
+                # Re-validate the dump against Terra's own live cone in the very
+                # step that executes it.  A dump with no legal accepted cell
+                # falls back to non-accepted ground and is unrecoverable spoil,
+                # so it is never pressed.
+                if o.plan and o.plan[0] == DO:
+                    occ_now = o.occupied_mask(r, c, bh)
+                    if o.dump_legal_count(
+                        cur_cones[k].astype(bool), am, ld, occ_now
+                    ) == 0:
+                        banned_dump[k].add((r, c, bh, cb))
+                        o.plan = []
+                        o.phase = o.IDLE
+                        o.dump_precheck_blocks += 1
+                        o.note("dump_precheck_failed")
+                        continue
             else:
                 if o.phase == o.DUMP:
                     o.phase = o.IDLE
@@ -1270,26 +1568,34 @@ def main() -> None:
                     o.no_candidate += 1
                     continue
                 if not o.plan:
-                    dist = pose_bfs((r, c, bh), fp_free, geom)
+                    # Navigate over PERSISTENT poses only (legal even with the
+                    # whole trench dug), with a first-leg exception out of the
+                    # spawn pocket.  This is what stops the controller walling
+                    # itself off behind its own excavation.
+                    _t = time.time()
+                    dist = pose_bfs((r, c, bh), fp_free, geom,
+                                    persist=o.fp_conservative)
                     dist_cache[k] = dist
+                    timers["bfs"] += time.time() - _t
+                    _t = time.time()
                     picked = choose_station(o, r, c, bh, cb, am, ld,
                                            banned_station[k], fp_free, dist)
-                    if picked is None:
-                        picked = choose_station(
-                            o, r, c, bh, cb, am, ld, banned_station[k],
-                            fp_free, dist, persistent_only=False)
+                    timers["plan"] += time.time() - _t
                     o.replans += 1
                     if picked is None:
                         o.no_candidate += 1
                         o.blocked_until_change = True
                         o.note("no_admissible_station")
                         if o.stall_attribution is None:
+                            _t = time.time()
                             o.stall_attribution = attribute_stall(
                                 o, am, ld, fp_free, dist)
+                            timers["stall_attribution"] += time.time() - _t
                             o.stall_attribution["step"] = step
                         continue
-                    (sr, sc, sbh, scb), dump_cb, _n = picked
-                    nav = reconstruct_actions(dist, (sr, sc, sbh), geom)
+                    (sr, sc, sbh, scb), dump_cb, _n, on_axis = picked
+                    nav = reconstruct_actions(dist, (sr, sc, sbh), geom,
+                                              persist=o.fp_conservative)
                     if nav is None:
                         banned_station[k].add((sr, sc, sbh, scb))
                         o.note("unreachable_station")
@@ -1299,9 +1605,10 @@ def main() -> None:
                     o.dump_cabin = dump_cb
                     o.phase = o.NAV
                     o.stations += 1
+                    o.stations_on_axis += int(bool(on_axis))
                 # re-validate a dig right before executing it
                 if o.plan and o.plan[0] == DO:
-                    appl2, val2, nsel2, _ = o.dig_admissible(
+                    appl2, val2, nsel2, _nft2, _sm2 = o.dig_admissible(
                         r, c, bh, cur_cones[k].astype(bool), am, ld
                     )
                     if not (appl2 and val2 and nsel2 > 0):
@@ -1316,10 +1623,13 @@ def main() -> None:
         prev_bh = bh_all.copy()
         prev_loaded = loaded_all.copy()
 
+        _t = time.time()
         wrapped = wrap_action(jnp.asarray(actions, dtype=jnp.int32), env.batch_cfg.action_type)
         candidate = env.step_no_reset(
             timestep, wrapped, jax.random.split(jax.random.PRNGKey(step), count)
         )
+        jax.block_until_ready(candidate.reward)
+        timers["terra_step"] += time.time() - _t
         act_j = jnp.asarray(active)
 
         def _preserve(previous, cand):
@@ -1337,6 +1647,25 @@ def main() -> None:
         new_bh = np.asarray(st.agent.agent_states[0].angle_base).reshape(-1).astype(np.int32)
         new_loaded = np.asarray(st.agent.agent_states[0].loaded).reshape(-1).astype(np.int32)
         had_effect = np.asarray(timestep.info["action_had_effect"]).reshape(-1).astype(bool)
+
+        # positive soil sitting outside the accepted dump zone, per slot.  Any
+        # increase is attributed to the action just executed, which separates
+        # dig-side soil relaxation from the dump-mask fallback.
+        post = np.asarray(st.world.action_map.map).reshape(count, *SHAPE).astype(np.int64)
+        pos = np.clip(post, 0, None)
+        illegal_now = np.sum(np.where(accepted_stack, 0, pos), axis=(1, 2))
+        delta_illegal = illegal_now - prev_illegal
+        for k in np.flatnonzero((delta_illegal != 0) & active):
+            a = int(actions[k])
+            illegal_by_action[a] += int(delta_illegal[k])
+            if len(illegal_events) < 400:
+                illegal_events.append({
+                    "step": step, "slot": int(k), "condition": oracles[k].cell,
+                    "action": ACTION_NAMES[a], "delta": int(delta_illegal[k]),
+                    "loaded_before": int(prev_loaded[k]),
+                    "loaded_after": int(new_loaded[k]),
+                })
+        prev_illegal = illegal_now
 
         for k in range(count):
             if not active[k]:
@@ -1396,8 +1725,10 @@ def main() -> None:
         terminated |= active & (step_succ if args.extended_horizon else step_done)
 
         if step % 10 == 0 or terminated.all():
+            spent = " ".join(f"{k}={v:.0f}s" for k, v in timers.items() if v >= 1.0)
             print(f"step {step + 1} done={int(terminated.sum())}/{count} "
-                  f"succ={int(succeeded.sum())} elapsed={time.time() - t_start:.0f}s",
+                  f"succ={int(succeeded.sum())} elapsed={time.time() - t_start:.0f}s "
+                  f"[{spent}]",
                   flush=True)
         if terminated.all():
             break
@@ -1424,10 +1755,24 @@ def main() -> None:
             "dig_fraction": float(dig_fraction[k]),
             "positive_soil": int(np.sum(np.clip(final[k], 0, None))),
             "accepted_soil": int(np.sum(np.where(o.accepted, np.clip(final[k], 0, None), 0))),
-            "stations": o.stations, "digs": o.digs, "dumps": o.dumps,
+            "illegal_soil": int(
+                np.sum(np.clip(final[k], 0, None))
+                - np.sum(np.where(o.accepted, np.clip(final[k], 0, None), 0))
+            ),
+            "stations": o.stations, "stations_on_axis": o.stations_on_axis,
+            "digs": o.digs, "dumps": o.dumps,
             "failed_digs": o.failed_digs, "failed_dumps": o.failed_dumps,
             "replans": o.replans, "no_candidate_steps": o.no_candidate,
             "stuck_loaded_steps": o.stuck_loaded, "move_refused": o.move_refused,
+            "dump_precheck_blocks": o.dump_precheck_blocks,
+            # An excavator cannot move while loaded, so "ended loaded with no
+            # legal accepted dump from any cabin" is a hard deadlock, not a
+            # slow episode.
+            "loaded_deadlock": bool(
+                (not succeeded[k]) and o.stuck_loaded > 0
+                and int(np.ravel(np.asarray(
+                    st.agent.agent_states[0].loaded))[k]) > 0
+            ),
             "no_effect_actions": int(no_effect[k]),
             "reasons": o.reasons,
             "stall_attribution": o.stall_attribution,
@@ -1436,25 +1781,43 @@ def main() -> None:
 
     by_cond = {}
     for row in per_slot:
-        e = by_cond.setdefault(row["condition"],
-                               {"slots": 0, "within": 0, "steps": [], "df": []})
+        e = by_cond.setdefault(
+            row["condition"],
+            {"slots": 0, "within": 0, "succ": 0, "steps": [], "all_steps": [],
+             "df": [], "deadlock": 0, "spoil": 0},
+        )
         e["slots"] += 1
         e["within"] += int(row["within_horizon"])
+        e["succ"] += int(row["succeeded"])
         if row["within_horizon"]:
             e["steps"].append(row["success_step"])
+        if row["succeeded"]:
+            e["all_steps"].append(row["success_step"])
         e["df"].append(row["dig_fraction"])
+        e["deadlock"] += int(row["loaded_deadlock"])
+        e["spoil"] += int(row["illegal_soil"])
     summary_by_condition = []
     for cond in sorted(by_cond):
         e = by_cond[cond]
         summary_by_condition.append({
             "condition": cond, "slots": e["slots"], "within_horizon": e["within"],
             "rate": e["within"] / e["slots"],
+            "succeeded_any_horizon": e["succ"],
             "median_success_step": float(np.median(e["steps"])) if e["steps"] else None,
+            "p90_success_step": (
+                float(np.percentile(e["steps"], 90)) if e["steps"] else None),
             "max_success_step": int(max(e["steps"])) if e["steps"] else None,
+            "median_success_step_any_horizon": (
+                float(np.median(e["all_steps"])) if e["all_steps"] else None),
+            "max_success_step_any_horizon": (
+                int(max(e["all_steps"])) if e["all_steps"] else None),
             "mean_dig_fraction": float(np.mean(e["df"])),
+            "loaded_deadlocks": e["deadlock"],
+            "illegal_soil_units": e["spoil"],
         })
 
     steps_ok = [r["success_step"] for r in per_slot if r["within_horizon"]]
+    steps_all = [r["success_step"] for r in per_slot if r["succeeded"]]
     payload = {
         "schema": SCHEMA,
         "contract": {
@@ -1463,6 +1826,11 @@ def main() -> None:
             "terra_revision": args.terra_revision,
             "checkpoint": str(args.checkpoint),
             "gate": True, "horizon": args.horizon, "stepped_horizon": horizon,
+            "gate_semantics": "v1" if args.gate_v1 else "v2",
+            "trench_dig_standoff_enforced": standoff_enforced,
+            "yaw_tolerance_rad": yaw_tol,
+            "standoff_band_m": [so_min, so_max],
+            "navigation": "persistent_poses_with_spawn_first_leg_exception",
             "slots": count,
             "verify_action_mask": bool(args.verify_action_mask),
             "alignment_export_checks": align_checks,
@@ -1470,8 +1838,14 @@ def main() -> None:
             "synthetic_cone_vs_terra_compared": cone_compared,
             "synthetic_cone_vs_terra_differing_poses": cone_diff_steps,
             "synthetic_cone_vs_terra_total_cell_diff": cone_diff_cells,
+            "illegal_soil_by_action": {
+                ACTION_NAMES[i]: int(illegal_by_action[i]) for i in range(8)
+                if illegal_by_action[i] != 0
+            },
+            "illegal_soil_events": illegal_events,
             "geometry": geom_report,
             "wall_seconds": time.time() - t_start,
+            "wall_seconds_by_phase": {k: round(v, 1) for k, v in timers.items()},
         },
         "summary": {
             "slots": count,
@@ -1481,7 +1855,24 @@ def main() -> None:
             "median_success_step": float(np.median(steps_ok)) if steps_ok else None,
             "p90_success_step": float(np.percentile(steps_ok, 90)) if steps_ok else None,
             "max_success_step": int(max(steps_ok)) if steps_ok else None,
+            "median_success_step_any_horizon": (
+                float(np.median(steps_all)) if steps_all else None),
+            "p90_success_step_any_horizon": (
+                float(np.percentile(steps_all, 90)) if steps_all else None),
+            "max_success_step_any_horizon": (
+                int(max(steps_all)) if steps_all else None),
             "mean_dig_fraction": float(np.mean(dig_fraction)),
+            "stations": int(sum(r["stations"] for r in per_slot)),
+            "stations_on_axis": int(sum(r["stations_on_axis"] for r in per_slot)),
+            "loaded_no_legal_dump_deadlocks": int(
+                sum(r["loaded_deadlock"] for r in per_slot)),
+            "slots_with_stuck_loaded_steps": int(
+                sum(1 for r in per_slot if r["stuck_loaded_steps"] > 0)),
+            "dump_precheck_blocks": int(
+                sum(r["dump_precheck_blocks"] for r in per_slot)),
+            "illegal_soil_units": int(sum(r["illegal_soil"] for r in per_slot)),
+            "slots_with_illegal_soil": int(
+                sum(1 for r in per_slot if r["illegal_soil"] > 0)),
         },
         "summary_by_condition": summary_by_condition,
         "per_slot": per_slot,
@@ -1490,8 +1881,11 @@ def main() -> None:
     print(json.dumps(payload["summary"], indent=1))
     for row in summary_by_condition:
         print(f"{row['condition']:26s} {row['within_horizon']:2d}/{row['slots']:2d} "
-              f"median={row['median_success_step']} max={row['max_success_step']} "
-              f"digfrac={row['mean_dig_fraction']:.3f}")
+              f"(any-horizon {row['succeeded_any_horizon']:2d}) "
+              f"median={row['median_success_step']} p90={row['p90_success_step']} "
+              f"max={row['max_success_step']} "
+              f"digfrac={row['mean_dig_fraction']:.3f} "
+              f"deadlock={row['loaded_deadlocks']} spoil={row['illegal_soil_units']}")
     print(f"wrote {output}")
 
 
