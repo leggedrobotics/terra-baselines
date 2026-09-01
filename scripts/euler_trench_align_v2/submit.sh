@@ -57,7 +57,7 @@ grep -q "path: &v2gen_bank $BANK_MAPS_PATH\$" \
 
 echo "terra_baselines_revision=$BASELINES_REVISION"
 echo "runtime_terra_revision=$RUNTIME_TERRA_REVISION"
-echo "arms=c0,t1 seed=$SEED devices=4 envs_per_device=512 target=$TARGET_UPDATE"
+echo "arm=gen (v2 generalist, gate on, yaw-only) seed=$SEED devices=4 envs_per_device=512 target=$TARGET_UPDATE"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: local contract passed; no external mutation"
     exit 0
