@@ -981,3 +981,30 @@ trench_align_t1_v1:
       max_steps: 450
       rewards_type: DENSE
       apply_trench_rewards: false
+
+# -----------------------------------------------------------------------------
+# v2 generalist: foundation + trench, fresh-trench gate ON under the corrected
+# v2 semantics (yaw-parallel only; working distance is the dig cone's job;
+# the retired perpendicular standoff band is NOT enforced). Single arm.
+# Bank: pooled generalist slice of the finite-enriched V8 R2 release (repoint
+# the ONE anchor below at the pooled folder; DATASET_SIZE = its map count).
+# The v7-trn conditions (no finite provenance) are never in the pool.
+# -----------------------------------------------------------------------------
+trench_align_v2_generalist_gen:
+  description: v2 generalist (foundation + trench) with the fresh-trench gate on, yaw-only semantics
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  trench_alignment_observation: true
+  require_trench_alignment_metadata: true
+  enforce_trench_dig_alignment: true
+  trench_dig_standoff_enforced: false
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: &v2gen_bank train_v2_pooled_generalist
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
