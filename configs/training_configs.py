@@ -104,6 +104,12 @@ class TrainingConfig:
     enforce_trench_dig_alignment: Optional[bool] = None
     require_trench_alignment_metadata: bool = False
     trench_alignment_observation: bool = False
+    # Gate semantics selector (Terra EnvConfig.trench_dig_standoff_enforced).
+    # True = v1: the retired perpendicular 3.5-7.0 m standoff band is enforced
+    # (kept ONLY so the C0/T1 pilot replays as trained). False = v2: yaw-parallel
+    # only; working distance is the dig cone's job. None = Terra default (v2).
+    # See Terra TRENCH_GATE_STANDOFF_SEMANTICS_BUG_20260901.md.
+    trench_dig_standoff_enforced: Optional[bool] = None
 
 
 # Cache for loaded configs
@@ -209,6 +215,7 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             trench_alignment_observation=cfg.get(
                 "trench_alignment_observation", False
             ),
+            trench_dig_standoff_enforced=cfg.get("trench_dig_standoff_enforced"),
         )
 
     _CONFIGS_LOADED = True

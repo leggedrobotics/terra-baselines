@@ -1543,6 +1543,10 @@ class MixedAgentTrainConfig:
     enforce_trench_dig_alignment: bool | None = None
     require_trench_alignment_metadata: bool = False
     trench_alignment_observation: bool = False
+    # v1 (True) enforces the retired perpendicular standoff band; v2 (False,
+    # Terra default) is yaw-parallel only. None leaves Terra's default. Pilot
+    # presets pin True so the C0/T1 arms replay as trained.
+    trench_dig_standoff_enforced: bool | None = None
 
     # Curriculum/maps override (from YAML config)
     # Format: list of dicts with keys: maps_path, max_steps_in_episode, rewards_type, apply_trench_rewards
@@ -1893,6 +1897,7 @@ def create_mixed_agent_env_config(
     truck_road_restricted=None,
     enforce_foundation_border_alignment=None,
     enforce_trench_dig_alignment=None,
+    trench_dig_standoff_enforced=None,
     # F15: resolution-scaling overrides (all None = no change)
     agent_move_tiles=None,
     dig_radius_tiles=None,
@@ -1965,6 +1970,15 @@ def create_mixed_agent_env_config(
     if enforce_trench_dig_alignment is not None:
         env_config = env_config._replace(
             enforce_trench_dig_alignment=bool(enforce_trench_dig_alignment)
+        )
+    if trench_dig_standoff_enforced is not None:
+        if not hasattr(env_config, "trench_dig_standoff_enforced"):
+            raise RuntimeError(
+                "trench_dig_standoff_enforced was requested but this Terra "
+                "runtime predates the v2 gate semantics selector"
+            )
+        env_config = env_config._replace(
+            trench_dig_standoff_enforced=bool(trench_dig_standoff_enforced)
         )
 
     # F15: tile-denominated agent geometry. These survive update_env_cfgs (which
@@ -2299,6 +2313,7 @@ def make_mixed_agent_states(
                 truck_road_restricted=config.truck_road_restricted,
                 enforce_foundation_border_alignment=config.enforce_foundation_border_alignment,
                 enforce_trench_dig_alignment=config.enforce_trench_dig_alignment,
+                trench_dig_standoff_enforced=config.trench_dig_standoff_enforced,
                 # F15 resolution-scaling overrides
                 agent_move_tiles=config.agent_move_tiles,
                 dig_radius_tiles=config.dig_radius_tiles,
@@ -2366,6 +2381,19 @@ def make_mixed_agent_states(
     print(
         "🧭 Fresh-trench dig gate (effective): "
         f"{bool(np.ravel(np.asarray(env_params.enforce_trench_dig_alignment))[0])}"
+    )
+    _standoff_enforced = getattr(env_params, "trench_dig_standoff_enforced", None)
+    print(
+        "🧭 Fresh-trench gate semantics (effective): "
+        + (
+            "pre-v2 Terra runtime (band always enforced)"
+            if _standoff_enforced is None
+            else (
+                "v1 (perpendicular standoff band enforced)"
+                if bool(np.ravel(np.asarray(_standoff_enforced))[0])
+                else "v2 (yaw-parallel only; reach left to the dig cone)"
+            )
+        )
     )
 
     # Report the effective value after preset, CLI, and checkpoint precedence.
@@ -5076,6 +5104,7 @@ if __name__ == "__main__":
     enforce_trench_dig_alignment = None
     require_trench_alignment_metadata = False
     trench_alignment_observation = False
+    trench_dig_standoff_enforced = None
     curriculum_levels_override = None
     curriculum_increase_level_threshold = None
     curriculum_decrease_level_threshold = None
@@ -5134,6 +5163,7 @@ if __name__ == "__main__":
             trench_alignment_observation = bool(
                 preset.trench_alignment_observation
             )
+            trench_dig_standoff_enforced = preset.trench_dig_standoff_enforced
 
             # Apply maps/curriculum from preset (convert MapLevel objects to dict format)
             if preset.maps and len(preset.maps) > 0:
@@ -5448,6 +5478,7 @@ if __name__ == "__main__":
         enforce_trench_dig_alignment=enforce_trench_dig_alignment,
         require_trench_alignment_metadata=require_trench_alignment_metadata,
         trench_alignment_observation=trench_alignment_observation,
+        trench_dig_standoff_enforced=trench_dig_standoff_enforced,
         curriculum_levels_override=curriculum_levels_override,
         curriculum_increase_level_threshold=curriculum_increase_level_threshold,
         curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,

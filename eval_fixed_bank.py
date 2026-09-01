@@ -178,6 +178,14 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
                 _field(config, "require_trench_alignment_metadata", False)
             ),
         }
+        # Gate semantics (v1 band vs v2 yaw-only) is an env treatment too.
+        # Included only when the checkpoint's config carries the field, so the
+        # pilot's pre-v2 fingerprints stay byte-identical.
+        standoff_enforced = _field(config, "trench_dig_standoff_enforced")
+        if standoff_enforced is not None:
+            contract["trench_dig_alignment"]["trench_dig_standoff_enforced"] = bool(
+                standoff_enforced
+            )
     partial_reset_digest = _field(config, "partial_reset_bank_sha256")
     if partial_reset_digest is not None:
         raw_partial_receipt = checkpoint.get("partial_reset_curriculum")
@@ -1335,6 +1343,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--gate-v1",
+        action="store_true",
+        help=(
+            "Evaluate under the v1 gate semantics (perpendicular standoff band "
+            "enforced). Required to evaluate checkpoints TRAINED under v1 whose "
+            "config predates the selector, e.g. the C0/T1 pilot; without it a "
+            "pre-v2 checkpoint is silently evaluated under v2 (yaw-only)."
+        ),
+    )
+    parser.add_argument(
         "--panel-family",
         default=EVALUATION_PANEL_FAMILY_DEFAULT,
         help=(
@@ -1506,6 +1524,26 @@ def main() -> None:
         os.environ["DATASET_PATH"] = str(bank_root)
         os.environ["DATASET_SIZE"] = str(count)
         config = configure_for_bank(reference_train_config, relative_path, count)
+        # Gate semantics: the evaluator rebuilds the env from train_config, not
+        # from the checkpoint's env_config, so a checkpoint TRAINED under the v1
+        # band but lacking the selector would otherwise be evaluated under v2.
+        _ckpt_standoff = getattr(config, "trench_dig_standoff_enforced", None)
+        if args.gate_v1:
+            config.trench_dig_standoff_enforced = True
+        if (
+            bool(getattr(config, "enforce_trench_dig_alignment", None))
+            and _ckpt_standoff is None
+        ):
+            print(
+                "⚠️  gate-on checkpoint predates the v2 semantics selector; "
+                + (
+                    "evaluating under v1 (--gate-v1)."
+                    if args.gate_v1
+                    else "evaluating under v2 (yaw-only). Pass --gate-v1 to "
+                    "replay it as trained."
+                ),
+                flush=True,
+            )
         # The eval config is a rewrite of the checkpoint's own train_config, so
         # re-run the architecture contract against what actually builds the
         # model: any field the rewrite dropped fails here instead of silently
@@ -1553,6 +1591,21 @@ def main() -> None:
                 f"{effective_trench_gate}",
                 flush=True,
             )
+            _eff_standoff = getattr(env_params, "trench_dig_standoff_enforced", None)
+            if _eff_standoff is not None:
+                _eff_standoff = bool(np.ravel(np.asarray(_eff_standoff))[0])
+                _want_standoff = getattr(config, "trench_dig_standoff_enforced", None)
+                if _want_standoff is not None and bool(_want_standoff) != _eff_standoff:
+                    raise RuntimeError(
+                        "gate semantics mismatch: requested "
+                        f"standoff_enforced={bool(_want_standoff)} but the eval env "
+                        f"has {_eff_standoff}"
+                    )
+                print(
+                    "🧭 eval env gate semantics (effective): "
+                    + ("v1 (standoff band enforced)" if _eff_standoff else "v2 (yaw-only)"),
+                    flush=True,
+                )
         if explicit_episode_panel is not None:
             selection_rows = [
                 {
