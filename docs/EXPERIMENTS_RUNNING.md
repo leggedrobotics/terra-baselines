@@ -408,6 +408,25 @@ running job keeps its open inode, and the patch recorded in the snapshot's
 `SOURCE_REVISIONS.txt`). The running job's original `job.sbatch` and
 `terra.edf.toml` are kept in the run root as `*.attempt0`.
 
+The hand-off path was exercised end to end before it is needed. Job
+**`4587176`** (partition `debug`, 30 min, node `nid006553`, run id
+`terra-v2spec-resumesmoke-20260902`) took a copy of `4586880`'s
+`..._update_000500.pkl` as the only checkpoint of a fresh run root and was
+submitted with `--resume-latest` and `4586880`'s trainer arguments verbatim
+except `--total_timesteps 33095680` (= 4 x 512 x 32 x 505), a smoke `--name`
+and its own `--checkpoint_dir`. The launcher printed
+`resume_from=.../terra-v2spec-resumesmoke-20260902/checkpoints/trench_align_v2_spec_cscs_145a94c_s20260901_update_000500.pkl`,
+the trainer printed `Loaded resume checkpoint`, `Replaced model parameters from
+checkpoint.` and `Restored optimizer state from checkpoint (next_update=500).`,
+ran only the 5 remaining updates (the eval fired at absolute update 500) and
+exited 0; `sacct` reports COMPLETED, 15:31 wall (4.7 min start-up and map load,
+9:18 to the first update through both XLA compilations, 2.2 s/update after).
+Both runtime files of the reused `4586880` snapshot are byte-identical to the
+freshly staged ones, so the smoke ran the same code the continuations will
+(`run_training.sh` SHA-256 `a7274e46…`, `train_mixed.py` `e370c5bf…`). One
+launcher note: a second `submit.sh` call for the same run id needs `--no-sync`,
+because `sync_code.sh` refuses an existing snapshot.
+
 ## Current issue checklist
 
 The living status ledger, exact u40 readout, and bounded next actions are in
