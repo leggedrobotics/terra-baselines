@@ -111,7 +111,8 @@ printf '%s\n' \
     "bank_archive_sha256=$BANK_ARCHIVE_SHA" \
     "bank_maps_path=$BANK_MAPS_PATH" \
     "bank_dataset_size=$BANK_DATASET_SIZE" \
-    "gate_semantics=v2_yaw_only_standoff_not_enforced" \
+    "gate_semantics=v2_yaw_parallel_and_on_the_line" \
+    "gate_max_offset_m=$("$PYTHON" -c 'from terra.config import EnvConfig; print(EnvConfig().trench_dig_max_offset_m)')" \
     "reward_stage=reward_v2" \
     "reward_v2_timing_variant=0" \
     "distance_protocol_id=obstacle_geodesic_8_physical_global_v1" \

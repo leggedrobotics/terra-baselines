@@ -2479,10 +2479,16 @@ def make_mixed_agent_states(
             else (
                 "v1 (perpendicular standoff band enforced)"
                 if bool(np.ravel(np.asarray(_standoff_enforced))[0])
-                else "v2 (yaw-parallel only; reach left to the dig cone)"
+                else "v2 (yaw-parallel and on the line; reach left to the dig cone)"
             )
         )
     )
+    _max_offset = getattr(env_params, "trench_dig_max_offset_m", None)
+    if _max_offset is not None:
+        print(
+            "🧭 Fresh-trench on-the-line bound (effective): "
+            f"{float(np.ravel(np.asarray(_max_offset))[0]):.2f} m (<= 0 disables)"
+        )
 
     # Report the effective value after preset, CLI, and checkpoint precedence.
     print(
