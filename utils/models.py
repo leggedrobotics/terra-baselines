@@ -4,6 +4,7 @@ from jax import Array
 import flax.linen as nn
 from typing import Any, Sequence, Union
 from terra.actions import TrackedAction, WheeledAction
+from terra.config import REWARD_V2_DISTANCE_BOUND
 from terra.env import TerraEnvBatch
 from functools import partial
 
@@ -327,6 +328,12 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         previous_outcome_observation=bool(
             _config_option(config, "previous_outcome_observation", False)
         ),
+        relocation_distance_observation=bool(
+            _config_option(config, "relocation_distance_observation", False)
+        ),
+        admissible_dig_observation=bool(
+            _config_option(config, "admissible_dig_observation", False)
+        ),
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
         use_aux_decoder=use_aux_decoder,
@@ -384,6 +391,12 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         obs.append(jnp.zeros((init_batch_size, 4), dtype=jnp.float32))
     if bool(_config_option(config, "previous_outcome_observation", False)):
         obs.append(jnp.zeros((init_batch_size, 2), dtype=jnp.float32))
+    if bool(_config_option(config, "relocation_distance_observation", False)):
+        obs.append(
+            jnp.zeros((init_batch_size, map_width, map_height), dtype=jnp.float32)
+        )
+    if bool(_config_option(config, "admissible_dig_observation", False)):
+        obs.append(jnp.zeros((init_batch_size, angles_cabin), dtype=jnp.float32))
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
     # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
@@ -640,6 +653,9 @@ class LocalMapNet(nn.Module):
     map_min_max: Sequence[int]
     mlp_use_layernorm: bool
     hidden_dim_layers_mlp: Sequence[int] = (256, 32)
+    # Tenth map: fresh digs a DO would be admitted per cabin angle (raw count,
+    # like the dumpability/obstacle sums). Changes the first Dense's fan-in.
+    admissible_dig_observation: bool = False
 
     def setup(self) -> None:
         self.mlp = MLP(
@@ -652,7 +668,8 @@ class LocalMapNet(nn.Module):
         Processes local 1D maps.
         Expects order:
         action_neg, action_pos, target_neg, target_pos, dumpability, obstacles,
-        border_workspace, edge_alignment_error, border_diggable.
+        border_workspace, edge_alignment_error, border_diggable
+        [, admissible_dig when ``admissible_dig_observation``].
         """
         # Normalize first four maps (heights)
         m0 = normalize(local_maps[0], self.map_min_max[0], self.map_min_max[1])
@@ -683,8 +700,16 @@ class LocalMapNet(nn.Module):
         m7 = ensure_batch(m7)
         m8 = ensure_batch(m8)
 
+        maps = [m0, m1, m2, m3, m4, m5, m6, m7, m8]
+        if self.admissible_dig_observation:
+            if len(local_maps) < 10:
+                raise ValueError(
+                    "admissible_dig_observation requires the width-12 "
+                    "admissible-dig local map as the tenth local map"
+                )
+            maps.append(ensure_batch(local_maps[9]))
         # Concatenate into (B, large vector)
-        x = jnp.concatenate((m0, m1, m2, m3, m4, m5, m6, m7, m8), axis=-1)
+        x = jnp.concatenate(maps, axis=-1)
         # Single MLP over concatenated vector
         x = self.mlp(x)
         return x
@@ -1219,6 +1244,10 @@ class MapsNet(nn.Module):
     attn_latent_queries: int = 4
     flatten_reduce_channels: int | None = None
     use_aux_decoder: bool = False
+    # Extra input channel: Terra's static geodesic distance to the accepted
+    # dump zone, scaled by REWARD_V2_DISTANCE_BOUND to [0, 1]. Changes the
+    # stem conv's fan-in only.
+    relocation_distance_observation: bool = False
 
     def setup(self) -> None:
         encoder_type = canonical_map_encoder(self.encoder_type)
@@ -1274,11 +1303,20 @@ class MapsNet(nn.Module):
             return
         raise AssertionError(f"Unhandled map encoder: {encoder_type}")
 
-    def __call__(self, obs: dict[str, Array], agent_embedding: Array = None):
+    def __call__(
+        self,
+        obs: dict[str, Array],
+        agent_embedding: Array = None,
+        relocation_distance_map: Array | None = None,
+    ):
         """
         Expects 7 global maps in order:
         traversability_mask, reachability_mask, action_map, target_map,
         padding_mask, dumpability_mask, interaction_mask.
+
+        ``relocation_distance_map`` ([B, H, W], metres / REWARD_V2_DISTANCE_REF_M,
+        clipped at REWARD_V2_DISTANCE_BOUND) is required exactly when
+        ``relocation_distance_observation`` is set and appended as a channel.
 
         ``agent_embedding`` is the active agent's AgentStateNet output and is
         consumed only by the cross-attention (xattn) encoder (F13); every other
@@ -1373,6 +1411,17 @@ class MapsNet(nn.Module):
                     coord_y[..., None].astype(compute_dtype),
                 ]
             )
+
+        if self.relocation_distance_observation:
+            if relocation_distance_map is None:
+                raise ValueError(
+                    "relocation_distance_observation requires the distance map "
+                    "but MapsNet.__call__ was given relocation_distance_map=None"
+                )
+            distance = as_map_batch(relocation_distance_map).astype(
+                jnp.float32
+            ) / jnp.float32(REWARD_V2_DISTANCE_BOUND)
+            channels.append(distance[..., None].astype(compute_dtype))
 
         x = jnp.concatenate(channels, axis=-1)
         if is_spatial_xattn:
@@ -1510,6 +1559,11 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     trench_alignment_observation: bool = False
     movement_feasibility_observation: bool = False
     previous_outcome_observation: bool = False
+    # Trailing optional obs entries appended by obs_to_model_input AFTER the
+    # scalar ones above, in this order: [H, W] relocation distance map, then
+    # the width-12 admissible-dig local map.
+    relocation_distance_observation: bool = False
+    admissible_dig_observation: bool = False
     attn_latent_queries: int = 4
     flatten_reduce_channels: int | None = None
     use_aux_decoder: bool = False
@@ -1638,6 +1692,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             map_min_max=self.local_map_min_max,
             mlp_use_layernorm=self.mlp_use_layernorm,
             hidden_dim_layers_mlp=self.local_map_hidden_dim_layers_mlp,
+            admissible_dig_observation=self.admissible_dig_observation,
         )
 
         self.agent_state_net = AgentStateNet(
@@ -1664,6 +1719,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             attn_latent_queries=self.attn_latent_queries,
             flatten_reduce_channels=self.flatten_reduce_channels,
             use_aux_decoder=self.use_aux_decoder,
+            relocation_distance_observation=self.relocation_distance_observation,
         )
 
         self.actions_net = PreviousActionsNet(
@@ -1719,8 +1775,36 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         # Process only active agent local maps (ignore other agents' locals)
         # Debug prints removed for cleaner training logs
         
-        # Local maps are at indices 3-11
+        # Trailing optional entries appended by obs_to_model_input after the
+        # scalar optionals (stall age, reset context, trench alignment,
+        # movement feasibility, previous outcome), in this order.
+        extra_index = (
+            22
+            + int(self.stall_age_observation)
+            + int(self.reward_v2_reset_context_observation)
+            + int(self.trench_alignment_observation)
+            + int(self.movement_feasibility_observation)
+            + int(self.previous_outcome_observation)
+        )
+        relocation_distance_map = None
+        if self.relocation_distance_observation:
+            if len(obs) <= extra_index:
+                raise ValueError(
+                    "relocation_distance_observation requires the [H, W] "
+                    f"relocation distance map at obs[{extra_index}]"
+                )
+            relocation_distance_map = obs[extra_index]
+            extra_index += 1
+        # Local maps are at indices 3-11 (+ the admissible-dig map when on)
         local_maps_1 = [obs[3], obs[4], obs[5], obs[6], obs[7], obs[8], obs[9], obs[10], obs[11]]
+        if self.admissible_dig_observation:
+            if len(obs) <= extra_index:
+                raise ValueError(
+                    "admissible_dig_observation requires the width-12 "
+                    f"admissible-dig local map at obs[{extra_index}]"
+                )
+            local_maps_1.append(obs[extra_index])
+            extra_index += 1
         x_local_active = self.local_map_net(local_maps_1)
         
         # Process global maps. Support both observation layouts:
@@ -1757,7 +1841,11 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             "resnet_spatial_8x8_se_sa_xattn",
         ):
             maps_agent_embedding = x_agents[:, 0, :]
-        x_maps = self.maps_net(map_obs, agent_embedding=maps_agent_embedding)
+        x_maps = self.maps_net(
+            map_obs,
+            agent_embedding=maps_agent_embedding,
+            relocation_distance_map=relocation_distance_map,
+        )
         x_actions = self.actions_net(obs)
         
         # Force feature branches to [B, F] before concatenation.

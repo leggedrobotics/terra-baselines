@@ -15,7 +15,9 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$REPO/cluster/euler_account.sh"
 terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
 
-TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_merge_main_20260902}"
+# Terra checkout at the pinned revision below (branch
+# experiment/obs-relocation-admissible-20260902; re-point at main after merge).
+TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_obs_v2_20260902}"
 
 # ---- pinned inputs, per arm --------------------------------------------------
 ARMS="${ARMS:-gen}"                     # space-separated: gen spec
@@ -40,8 +42,8 @@ bank_for_arm() {
 # Frozen R2 receipt: canonical_distance_sidecar_dataset_sha256 of the enriched
 # bank (.artifacts/terra_v8_trench_finite_enriched_20260819/dataset.json).
 BANK_DISTANCE_SIDECAR_SHA=f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980
-EXPECTED_PARAMETERS=2307645
-TRENCH_TERRA_REVISION_PIN=c383b0b13c59e12b940fc6f44f3ecc86074716c4
+EXPECTED_PARAMETERS=2311701
+TRENCH_TERRA_REVISION_PIN=09712ad569650fc56eb5bfca0086d5833cfc6de8
 SEED=20260901
 TARGET_UPDATE=100000
 # -----------------------------------------------------------------------------

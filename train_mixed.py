@@ -579,6 +579,10 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "trench_alignment_observation": False,
         "movement_feasibility_observation": False,
         "previous_outcome_observation": False,
+        # Distance channel (stem conv fan-in) and admissible-dig local map
+        # (LocalMapNet fan-in) both change parameter shapes.
+        "relocation_distance_observation": False,
+        "admissible_dig_observation": False,
         # V6 readout block: all three change parameter shapes.
         "flatten_reduce_channels": None,
         "attn_latent_queries": 4,
@@ -1559,6 +1563,10 @@ class MixedAgentTrainConfig:
     stall_age_observation: bool = False
     movement_feasibility_observation: bool = False
     previous_outcome_observation: bool = False
+    # Terra's static geodesic dump-zone distance map as an encoder channel.
+    relocation_distance_observation: bool = False
+    # Fresh digs a DO would be admitted per cabin angle (tenth local map).
+    admissible_dig_observation: bool = False
     # D3: mask provably-ineffective actions out of the sampling distribution
     # (env supplies obs["action_mask"]; DO_NOTHING always stays valid).
     action_logit_masking: bool = False
@@ -5274,6 +5282,19 @@ if __name__ == "__main__":
         help="Append the previous transition's physical/material outcome bits.",
     )
     parser.add_argument(
+        "--relocation_distance_observation",
+        action="store_true",
+        help="Feed Terra's static geodesic dump-zone distance map (the "
+        "reward-v2 potential input) to the map encoder as a channel.",
+    )
+    parser.add_argument(
+        "--admissible_dig_observation",
+        action="store_true",
+        help="Append the width-12 count of fresh target cells a DO would be "
+        "admitted to dig per cabin angle from the current base pose "
+        "(trench gate folded in) as the tenth local map.",
+    )
+    parser.add_argument(
         "--action_logit_masking",
         action="store_true",
         help="Mask provably-ineffective actions out of the sampling "
@@ -5754,6 +5775,8 @@ if __name__ == "__main__":
             args.movement_feasibility_observation
         ),
         previous_outcome_observation=args.previous_outcome_observation,
+        relocation_distance_observation=args.relocation_distance_observation,
+        admissible_dig_observation=args.admissible_dig_observation,
         action_logit_masking=args.action_logit_masking,
         distance_protocol_id=args.distance_protocol_id,
         distance_sidecar_sha256=args.distance_sidecar_sha256,

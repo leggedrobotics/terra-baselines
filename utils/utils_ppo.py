@@ -13,6 +13,7 @@ _LOCAL_MAP_KEYS = (
     "local_map_border_workspace",
     "local_map_edge_alignment_error",
     "local_map_border_diggable",
+    "local_map_admissible_dig",
 )
 
 
@@ -51,7 +52,8 @@ def scale_local_maps_in_obs(obs, scale):
     obs = dict(obs)
     scale_arr = jnp.asarray(scale, dtype=jnp.float32)
     for key in _LOCAL_MAP_KEYS:
-        obs[key] = obs[key].astype(jnp.float32) / scale_arr
+        if key in obs:
+            obs[key] = obs[key].astype(jnp.float32) / scale_arr
     return obs
 
 
@@ -120,12 +122,33 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         )
         if previous_action_outcome.shape[-1:] != (2,):
             raise ValueError("previous_action_outcome must end with width 2")
+    relocation_distance_map = None
+    if _config_option(train_cfg, "relocation_distance_observation", False):
+        if "relocation_distance_map" not in obs:
+            raise ValueError(
+                "relocation_distance_observation requires Terra "
+                "obs['relocation_distance_map']"
+            )
+        relocation_distance_map = jnp.asarray(
+            obs["relocation_distance_map"], dtype=jnp.float32
+        )
+    admissible_dig_observation = bool(
+        _config_option(train_cfg, "admissible_dig_observation", False)
+    )
+    if admissible_dig_observation and "local_map_admissible_dig" not in obs:
+        raise ValueError(
+            "admissible_dig_observation requires Terra "
+            "obs['local_map_admissible_dig']"
+        )
     # Feature engineering
     if _config_option(train_cfg, "clip_action_maps", True):
         obs = clip_action_map_in_obs(obs)
     obs = scale_local_maps_in_obs(
         obs,
         _config_option(train_cfg, "local_map_area_scale", 1.0),
+    )
+    local_map_admissible_dig = (
+        obs["local_map_admissible_dig"] if admissible_dig_observation else None
     )
 
     # Create input list with indexed comments for easy reference
@@ -171,6 +194,14 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs.append(movement_feasibility)
     if previous_action_outcome is not None:
         obs.append(previous_action_outcome)
+    if relocation_distance_map is not None:
+        # [H, W] static per-episode geodesic distance to the accepted dump
+        # zone (reward-v2 potential input); MapsNet appends it as a channel.
+        obs.append(relocation_distance_map)
+    if local_map_admissible_dig is not None:
+        # Width-12: fresh target cells a DO would be admitted to dig per cabin
+        # angle from the current base pose; LocalMapNet's tenth map.
+        obs.append(local_map_admissible_dig)
     if _config_option(train_cfg, "action_logit_masking", False):
         # Effect-based action mask from the env (D3). Appended last; the model
         # consumes no fixed index for it, only policy() masking reads it.

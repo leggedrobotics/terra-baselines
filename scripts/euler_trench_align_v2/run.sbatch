@@ -91,6 +91,7 @@ config = Config(
     attn_latent_queries=8, aux_coef=0.0, carry_work_observation=True,
     stall_age_observation=False, reward_v2_reset_context_observation=False,
     trench_alignment_observation=True,
+    relocation_distance_observation=True, admissible_dig_observation=True,
 )
 env = SimpleNamespace(
     batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
@@ -170,6 +171,8 @@ exec "$PYTHON" -u "$BASELINES_ROOT/train_mixed.py" \
     --ent_schedule_steps 20000 \
     --no_value_clip \
     --carry_work_observation \
+    --relocation_distance_observation \
+    --admissible_dig_observation \
     --reward_stage reward_v2 \
     --reward_v2_timing_variant 0 \
     --distance_protocol_id obstacle_geodesic_8_physical_global_v1 \
