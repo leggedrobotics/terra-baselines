@@ -15,7 +15,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$REPO/cluster/euler_account.sh"
 terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
 
-TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_trench_fresh_dig_alignment_20260818}"
+TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_merge_main_20260902}"
 
 # ---- pinned pilot inputs (filled from the enrichment manifest) --------------
 BANK_ARCHIVE=/home/lorenzo/moleworks/.artifacts/terra_v8_trench_finite_enriched_20260819/terra_v2_generalist_pooled_bank_20260901.tar.zst
@@ -26,7 +26,7 @@ BANK_DATASET_SIZE=3840
 # bank (.artifacts/terra_v8_trench_finite_enriched_20260819/dataset.json).
 BANK_DISTANCE_SIDECAR_SHA=f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980
 EXPECTED_PARAMETERS=2307645
-TRENCH_TERRA_REVISION_PIN=fd7195751f238bc3c0afd0ad60385741021de35b
+TRENCH_TERRA_REVISION_PIN=cb8a9afb18c255463b335424466ee052e1ba5937
 SEED=20260901
 TARGET_UPDATE=100000
 # -----------------------------------------------------------------------------
