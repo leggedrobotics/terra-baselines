@@ -112,6 +112,10 @@ class TrainingConfig:
     # only; working distance is the dig cone's job. None = Terra default (v2).
     # See Terra TRENCH_GATE_STANDOFF_SEMANTICS_BUG_20260901.md.
     trench_dig_standoff_enforced: Optional[bool] = None
+    # v2 "on the line" clause (Terra EnvConfig.trench_dig_max_offset_m):
+    # perpendicular base-centre-to-axis offset ceiling in metres; <= 0 disables
+    # it (yaw-parallel only).  Inert under v1.  None leaves Terra's default.
+    trench_dig_max_offset_m: Optional[float] = None
 
 
 # Cache for loaded configs
@@ -222,6 +226,7 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
                 "trench_alignment_observation", False
             ),
             trench_dig_standoff_enforced=cfg.get("trench_dig_standoff_enforced"),
+            trench_dig_max_offset_m=cfg.get("trench_dig_max_offset_m"),
         )
 
     _CONFIGS_LOADED = True
