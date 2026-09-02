@@ -72,15 +72,32 @@ nvidia-smi --query-gpu=name --format=csv,noheader | grep -qv "$GPU_MODEL" && exi
 ALGORITHM_DENYLIST="$BASELINES_ROOT/scripts/euler_trench_align_v2/hlo_algorithm_denylist.pbtxt"
 AUTOTUNE_CACHE="${TERRA_AUTOTUNE_CACHE:-/cluster/project/rsl/alesweber/terra_runtime/autotune/terra_trench_align_generalist_partial_v1/rtx4090_cc89_cudnn897_jaxlib0426_45e2dbc_u3501.pbtxt}"
 AUTOTUNE_CACHE_SHA="698e856cae464e5fea93e0b2121fc8de4d9cb691135571ca4b5d56f3259d16a3"
-if [ "$GPU_TYPE" = rtx_4090 ]; then
-    test -r "$ALGORITHM_DENYLIST"
-    test -r "$AUTOTUNE_CACHE"
-    test "$(sha256sum "$AUTOTUNE_CACHE" | awk '{print $1}')" = "$AUTOTUNE_CACHE_SHA"
-    export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$ALGORITHM_DENYLIST --xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
-    CUDNN_REPAIR="rtx4090_engine20_denylist+autotune_cache_${AUTOTUNE_CACHE_SHA:0:8}"
-else
-    CUDNN_REPAIR="none"
+# CUDNN_REPAIR_MODE (from submit.sh TERRA_CUDNN_REPAIR): auto | denylist_cache |
+# frontend_off | none. auto = denylist_cache on RTX 4090 (cc 8.9 keyed
+# denylist + pinned cache), frontend_off elsewhere. frontend_off
+# (--xla_gpu_enable_cudnn_frontend=false) uses the legacy cuDNN algorithm API,
+# which has no frontend engines at all; the local RTX 4090 battery of
+# 2026-09-02 ran it at the same steady-state speed as denylist+level 4
+# (~6 s/update, 30/30 updates, exact per-device shapes).
+CUDNN_REPAIR_MODE="${CUDNN_REPAIR_MODE:-auto}"
+if [ "$CUDNN_REPAIR_MODE" = auto ]; then
+    if [ "$GPU_TYPE" = rtx_4090 ]; then CUDNN_REPAIR_MODE=denylist_cache; else CUDNN_REPAIR_MODE=frontend_off; fi
 fi
+case "$CUDNN_REPAIR_MODE" in
+    denylist_cache)
+        test "$GPU_TYPE" = rtx_4090
+        test -r "$ALGORITHM_DENYLIST"
+        test -r "$AUTOTUNE_CACHE"
+        test "$(sha256sum "$AUTOTUNE_CACHE" | awk '{print $1}')" = "$AUTOTUNE_CACHE_SHA"
+        export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$ALGORITHM_DENYLIST --xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
+        CUDNN_REPAIR="rtx4090_engine20_denylist+autotune_cache_${AUTOTUNE_CACHE_SHA:0:8}" ;;
+    frontend_off)
+        export XLA_FLAGS="--xla_gpu_enable_cudnn_frontend=false --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
+        CUDNN_REPAIR="cudnn_frontend_off" ;;
+    none)
+        CUDNN_REPAIR="none" ;;
+    *) echo "CUDNN_REPAIR_MODE must be auto, denylist_cache, frontend_off or none" >&2; exit 2 ;;
+esac
 "$PYTHON" - <<'PY'
 import jax
 

@@ -20,6 +20,7 @@ TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_merge_main_20
 # ---- pinned inputs, per arm --------------------------------------------------
 ARMS="${ARMS:-gen}"                     # space-separated: gen spec
 GPU_TYPE="${GPU_TYPE:-rtx_4090}"        # rtx_4090 | rtx_3090 (4 per job)
+CUDNN_REPAIR="${TERRA_CUDNN_REPAIR:-auto}"  # auto | denylist_cache | frontend_off | none (see run.sbatch)
 bank_for_arm() {
     case "$1" in
         gen)
@@ -74,7 +75,7 @@ done
 
 echo "terra_baselines_revision=$BASELINES_REVISION"
 echo "runtime_terra_revision=$RUNTIME_TERRA_REVISION"
-echo "arms=$ARMS gpu=$GPU_TYPE x4 (gate on, parallel + on the line) seed=$SEED envs_per_device=512 target=$TARGET_UPDATE"
+echo "arms=$ARMS gpu=$GPU_TYPE x4 cudnn_repair=$CUDNN_REPAIR (gate on, parallel + on the line) seed=$SEED envs_per_device=512 target=$TARGET_UPDATE"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: local contract passed; no external mutation"
     exit 0
@@ -123,7 +124,7 @@ for ARM in $ARMS; do
     RUN_NAME="trench_align_v2_${ARM}_${BASELINES_REVISION:0:12}_s${SEED}"
     RUN_DIR="$REMOTE_RUNS/$BASELINES_REVISION/s$SEED/$ARM"
     remote "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
-    EXPORTS="ALL,ARM=$ARM,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,SEED=$SEED,VENV=$REMOTE_VENV,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$BANK_ARCHIVE_SHA,BANK_MAPS_PATH=$BANK_MAPS_PATH,BANK_DATASET_SIZE=$BANK_DATASET_SIZE,BANK_DISTANCE_SIDECAR_SHA=$BANK_DISTANCE_SIDECAR_SHA,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,GPU_TYPE=$GPU_TYPE,TARGET_UPDATE=$TARGET_UPDATE"
+    EXPORTS="ALL,ARM=$ARM,CUDNN_REPAIR_MODE=$CUDNN_REPAIR,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,SEED=$SEED,VENV=$REMOTE_VENV,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$BANK_ARCHIVE_SHA,BANK_MAPS_PATH=$BANK_MAPS_PATH,BANK_DATASET_SIZE=$BANK_DATASET_SIZE,BANK_DISTANCE_SIDECAR_SHA=$BANK_DISTANCE_SIDECAR_SHA,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,GPU_TYPE=$GPU_TYPE,TARGET_UPDATE=$TARGET_UPDATE"
     JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_v2/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='$PARTITION' --time='$WALLTIME' --gpus="$GPU_TYPE:4" --cpus-per-task='8' --exclude='eu-g6-064' --job-name="terra-trench-v2$ARM" --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
     JOB_ID="${JOB_RAW%%;*}"
     [[ "$JOB_ID" =~ ^[0-9]+$ ]]
