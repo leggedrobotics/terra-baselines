@@ -141,6 +141,43 @@ latest preserved slow-run checkpoint is u4,000, SHA-256
 the run stopped at u4,442. The repair changes compiler selection only and is
 not policy or curriculum evidence.
 
+## v2 generalist with the corrected fresh-trench gate (submitted 2026-09-02)
+
+Single gate-on arm, foundation + trench, launched from `main` after the gate's
+standoff semantics were corrected (see Terra
+`TRENCH_GATE_STANDOFF_SEMANTICS_BUG_20260901.md`): a dig is admitted iff the
+chassis is parallel to the section axis (<= 0.2619 rad) AND the base centre is
+within 2.0 m of the line (on top of the trench); the retired v1 band is off;
+working distance is the dig cone's.
+
+- terra-baselines `445ad79662eb0863a1588762074ec99bfbc18d28` (main);
+  Terra `facc44e66aa36e6132267afaa4e3b9e0f38722f7` (main), which also carries
+  the corrected footprint raster and contained dig-side soil relaxation;
+- preset `trench_align_v2_generalist_gen`; bank = pooled 40-condition slice
+  `train_v2_pooled_generalist` (25 foundation + 15 trench incl. net4, 3,840
+  maps) of the finite-enriched V8 R2 release, archive
+  `terra_v2_generalist_pooled_bank_20260901.tar.zst` SHA-256
+  `1125177d322df6097f8da9f67ec95fe48762e16327f83dc157ec282b24993fb3`;
+- reward_v2 timing 0, R2 distance protocol, seed `20260901`, 4 x 512 envs x 32
+  steps, 32 minibatches, two PPO epochs, target u100,000 (beyond one
+  allocation; wall exit with a checkpoint is CONTINUABLE), checkpoints every 500;
+- job `12505854`, account `lterenzi` (`/cluster/project/rsl` became group-only
+  on 2026-09-01 and `alesweber` can no longer read the pinned venv), Slurm
+  account es_hutter, `gpuhe.120h`, 4 x RTX 4090; run dir
+  `/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_generalist/runs/445ad79…/s20260901/gen`;
+  W&B `trench_align_v2gen_gen_445ad79662_s20260901`.
+
+Launch gates: Terra suites 51 passed on the merged tree, baselines 44; local
+GPU first-update smoke on the exact pooled bank (gate on, v2, bound 2.0 m,
+checkpoint finite); archive round-tripped through the fail-closed loader.
+Solvability under the corrected gate: every panel and pooled trench cell is
+admissibly diggable from an aligned on-the-line station (zero loss at 2.0 m);
+all 2,400 trench maps have complete covers under v2 (net4 re-admitted).
+
+No matched control was launched; a clean causal claim needs a C0 pair.
+Evaluate checkpoints with `eval_fixed_bank.py --panel-family gate_main`
+(the pilot's v1 checkpoints need `--gate-v1`).
+
 ## Current issue checklist
 
 The living status ledger, exact u40 readout, and bounded next actions are in
