@@ -61,6 +61,26 @@ export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cu
 
 test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -eq 4
 nvidia-smi --query-gpu=name --format=csv,noheader | grep -qv "$GPU_MODEL" && exit 3
+
+# RTX 4090 (cc 8.9, cuDNN 8.9.7, driver 580): cuDNN frontend engine 20 returns
+# wrong bf16 backward-filter results for these exact PPO minibatch shapes; job
+# 12505854 died before update 1 with CUDNN_STATUS_EXECUTION_FAILED. Reuse the
+# repair proven in euler_trench_align_generalist_partial_v1: level-4 autotuning,
+# the exact engine-20 denylist, and the four-GPU autotune cache that completed
+# native PPO updates (ledger revision 58e26fc9). Level 0 reproduced a ~8x slow
+# path there, so it is not used. RTX 3090 (cc 8.6) is unaffected and unchanged.
+ALGORITHM_DENYLIST="$BASELINES_ROOT/scripts/euler_trench_align_v2/hlo_algorithm_denylist.pbtxt"
+AUTOTUNE_CACHE="${TERRA_AUTOTUNE_CACHE:-/cluster/project/rsl/alesweber/terra_runtime/autotune/terra_trench_align_generalist_partial_v1/rtx4090_cc89_cudnn897_jaxlib0426_45e2dbc_u3501.pbtxt}"
+AUTOTUNE_CACHE_SHA="698e856cae464e5fea93e0b2121fc8de4d9cb691135571ca4b5d56f3259d16a3"
+if [ "$GPU_TYPE" = rtx_4090 ]; then
+    test -r "$ALGORITHM_DENYLIST"
+    test -r "$AUTOTUNE_CACHE"
+    test "$(sha256sum "$AUTOTUNE_CACHE" | awk '{print $1}')" = "$AUTOTUNE_CACHE_SHA"
+    export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$ALGORITHM_DENYLIST --xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
+    CUDNN_REPAIR="rtx4090_engine20_denylist+autotune_cache_${AUTOTUNE_CACHE_SHA:0:8}"
+else
+    CUDNN_REPAIR="none"
+fi
 "$PYTHON" - <<'PY'
 import jax
 
@@ -117,6 +137,7 @@ printf '%s\n' \
     "experiment=trench_align_v2_generalist" \
     "arm=$ARM" \
     "gpu_type=$GPU_TYPE" \
+    "cudnn_repair=$CUDNN_REPAIR" \
     "config=$CONFIG" \
     "terra_baselines_revision=$BASELINES_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
