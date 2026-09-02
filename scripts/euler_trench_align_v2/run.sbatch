@@ -27,6 +27,29 @@ for REQUIRED in ARM TARGET_UPDATE RUN_DIR RUN_NAME BASELINES_ROOT \
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
+# cuDNN 8.9.7 on this stack fails CUDNN_STATUS_EXECUTION_FAILED at the first
+# _update_step in roughly two of three starts (both GPU classes, any plan
+# selection; see docs/EXPERIMENTS_RUNNING.md 2026-09-02). A failed attempt
+# resubmits itself with ATTEMPT+1 into the same RUN_DIR; if a checkpoint exists
+# it resumes from the latest one (model, optimizer, absolute update clock).
+ATTEMPT="${ATTEMPT:-0}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-6}"
+RESUME_FROM="${RESUME_FROM:-none}"
+RESUBMIT_SBATCH_ARGS="${RESUBMIT_SBATCH_ARGS:-}"
+[[ "$ATTEMPT" =~ ^[0-9]+$ ]] || exit 2
+[[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ ]] || exit 2
+if [ "$ATTEMPT" -gt 0 ]; then
+    # a retry always prefers the newest checkpoint written into this RUN_DIR
+    LATEST_CKPT="$(ls -1 "$RUN_DIR"/checkpoints/*_update_*.pkl 2>/dev/null | sort | tail -1 || true)"
+    [ -n "$LATEST_CKPT" ] && RESUME_FROM="$LATEST_CKPT"
+fi
+if [ "$RESUME_FROM" != none ]; then
+    test -r "$RESUME_FROM"
+    RESUME_ARGS=(--resume_from "$RESUME_FROM")
+else
+    RESUME_ARGS=()
+fi
+
 case "$ARM" in
     gen)  CONFIG="trench_align_v2_generalist_gen" ;;
     spec) CONFIG="trench_align_v2_specialist_spec" ;;
@@ -137,7 +160,8 @@ count = sum(int(np.asarray(x).size) for x in jax.tree.leaves(params))
 assert count == int(os.environ["EXPECTED_PARAMETERS"]), count
 PY
 
-export WANDB_ENTITY WANDB_PROJECT WANDB_MODE=online WANDB_RESUME=never
+if [ "$ATTEMPT" -gt 0 ] || [ "$RESUME_FROM" != none ]; then WANDB_RESUME=allow; else WANDB_RESUME=never; fi
+export WANDB_ENTITY WANDB_PROJECT WANDB_MODE=online WANDB_RESUME
 export WANDB_RUN_ID="trench_align_v2_${ARM}_${BASELINES_REVISION:0:10}_s${SEED}"
 export WANDB_DIR="$RUN_DIR/wandb"
 scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/slurm_job.txt"
@@ -155,6 +179,9 @@ printf '%s\n' \
     "arm=$ARM" \
     "gpu_type=$GPU_TYPE" \
     "cudnn_repair=$CUDNN_REPAIR" \
+    "attempt=$ATTEMPT" \
+    "max_attempts=$MAX_ATTEMPTS" \
+    "resume_from=$RESUME_FROM" \
     "config=$CONFIG" \
     "terra_baselines_revision=$BASELINES_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
@@ -176,8 +203,10 @@ printf '%s\n' \
     "transitions_per_update=$((NUM_DEVICES * NUM_ENVS_PER_DEVICE * NUM_STEPS))" \
     "target_update=$TARGET_UPDATE" \
     "slurm_job_id=$SLURM_JOB_ID" > "$RUN_DIR/run_contract.env"
+cp "$RUN_DIR/run_contract.env" "$RUN_DIR/run_contract.attempt${ATTEMPT}.job${SLURM_JOB_ID}.env"
 
-exec "$PYTHON" -u "$BASELINES_ROOT/train_mixed.py" \
+TRAIN_RC=0
+"$PYTHON" -u "$BASELINES_ROOT/train_mixed.py" \
     --config "$CONFIG" \
     --machine euler \
     --name "$RUN_NAME" \
@@ -220,4 +249,25 @@ exec "$PYTHON" -u "$BASELINES_ROOT/train_mixed.py" \
     --checkpoint_interval 500 \
     --cache_clear_interval 1000 \
     --keep_checkpoint_history \
-    --checkpoint_dir "$RUN_DIR/checkpoints"
+    --checkpoint_dir "$RUN_DIR/checkpoints" \
+    ${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"} || TRAIN_RC=$?
+
+if [ "$TRAIN_RC" -eq 0 ]; then
+    echo "status=COMPLETED" >> "$RUN_DIR/run_contract.env"
+    exit 0
+fi
+SLURM_LOG="$RUN_DIR/slurm_${SLURM_JOB_ID}.out"
+if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ] && grep -aq "CUDNN_STATUS_EXECUTION_FAILED" "$SLURM_LOG" 2>/dev/null; then
+    IFS='|' read -r -a SBATCH_OPTS <<< "$RESUBMIT_SBATCH_ARGS"
+    # drop the parent allocation's SLURM_* inputs; the child reads the script
+    # header plus these explicit options only
+    UNSET_SLURM=(); for v in $(compgen -e | grep -E '^SLURM_' || true); do UNSET_SLURM+=(-u "$v"); done
+    CHILD="$(env ${UNSET_SLURM[@]+"${UNSET_SLURM[@]}"} sbatch --parsable "${SBATCH_OPTS[@]}" --export="ALL,ATTEMPT=$((ATTEMPT + 1))" \
+        "$BASELINES_ROOT/scripts/euler_trench_align_v2/run.sbatch")"
+    CHILD="${CHILD%%;*}"
+    printf '%s\n' "status=FAILED_CUDNN_RESUBMITTED" "child_job_id=$CHILD" "child_attempt=$((ATTEMPT + 1))" >> "$RUN_DIR/run_contract.env"
+    echo "cuDNN startup/execution failure on attempt $ATTEMPT; resubmitted as job $CHILD (attempt $((ATTEMPT + 1)))"
+else
+    echo "status=FAILED train_rc=$TRAIN_RC" >> "$RUN_DIR/run_contract.env"
+fi
+exit "$TRAIN_RC"
