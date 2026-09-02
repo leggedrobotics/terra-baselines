@@ -111,7 +111,16 @@ from functools import partial
 from flax.jax_utils import replicate, unreplicate
 from flax import struct
 import utils.helpers as helpers
-from utils.utils_ppo import select_action_ppo, wrap_action, obs_to_model_input, policy
+from utils.utils_ppo import (
+    initial_actor_hidden,
+    is_recurrent_actor,
+    obs_to_model_input,
+    policy,
+    select_action_ppo,
+    select_action_ppo_recurrent,
+    value_ppo,
+    wrap_action,
+)
 from utils.episode_aggregates import (
     aggregate_to_payload,
     assert_aggregate_integrity,
@@ -129,6 +138,7 @@ from utils.accepted_bank import (
     AcceptedBank,
     load_accepted_bank,
 )
+from utils.accepted_bank import V8_CONDITION_PROFILES
 from utils.pooled_sampler import (
     CONTINUOUS_RULES,
     PooledConditionSampler,
@@ -554,6 +564,8 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
     defaults = {
         "map_encoder": "atari",
         "model_core": "mlp",
+        "actor_core": "mlp",
+        "actor_gru_hidden_dim": 64,
         "model_size": "base",
         "critic_hidden_dims": None,
         # F15: spatial-ResNet stage overrides. None (use the model_size preset)
@@ -565,6 +577,8 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "reward_v2_reset_context_observation": False,
         # Fresh-trench alignment adds two (3, 704) embeddings.
         "trench_alignment_observation": False,
+        "movement_feasibility_observation": False,
+        "previous_outcome_observation": False,
         # V6 readout block: all three change parameter shapes.
         "flatten_reduce_channels": None,
         "attn_latent_queries": 4,
@@ -609,7 +623,8 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         raise ValueError(
             "Checkpoint architecture does not match the requested model: "
             + "; ".join(mismatches)
-            + ". Pass matching --map_encoder, --model_core, --model_size, "
+            + ". Pass matching --map_encoder, --model_core, --actor-core, "
+            "--actor-gru-hidden-dim, --model_size, "
             "--critic_hidden_dims, --resnet_stage_channels, "
             "--resnet_blocks_per_stage, --flatten_reduce_channels, "
             "--attn_latent_queries, and --aux_coef values, and the "
@@ -1093,12 +1108,28 @@ def _validate_r2_resume_checkpoint(
             "R2 resume optimizer clock mismatch: "
             f"step={optimizer_step}, expected={expected_step}"
         )
-    if bool(getattr(config, "stall_age_observation", False)):
-        receipt = checkpoint.get("stall_age_prepared_continuation")
+    _stall_age_resume_receipt(checkpoint, config)
+
+
+def _stall_age_resume_receipt(checkpoint: dict, config) -> dict | None:
+    """Return an optional migration receipt for a native stall-age resume."""
+    if not bool(getattr(config, "stall_age_observation", False)):
+        return None
+
+    receipt = checkpoint.get("stall_age_prepared_continuation")
+    if receipt is not None:
         if not isinstance(receipt, dict) or receipt.get("schema") != (
             "terra_v8_v61_stall_age_v3_prepared_v1"
         ):
-            raise ValueError("stall-age resume requires a prepared checkpoint receipt")
+            raise ValueError("stall-age resume has an invalid preparation receipt")
+        return copy.deepcopy(receipt)
+
+    if bool(_checkpoint_config_value(checkpoint, "stall_age_observation", False)):
+        # A policy trained with stall age from update zero is already native and
+        # has no migration receipt. Only an older checkpoint grown offline needs
+        # the v6.1 preparation proof.
+        return None
+    raise ValueError("stall-age resume requires a prepared checkpoint receipt")
 
 
 def _attach_stall_age_receipt(checkpoint: dict, receipt: dict | None) -> None:
@@ -1526,6 +1557,8 @@ class MixedAgentTrainConfig:
     reward_v2_timing_variant: int = 0
     carry_work_observation: bool = False
     stall_age_observation: bool = False
+    movement_feasibility_observation: bool = False
+    previous_outcome_observation: bool = False
     # D3: mask provably-ineffective actions out of the sampling distribution
     # (env supplies obs["action_mask"]; DO_NOTHING always stays valid).
     action_logit_masking: bool = False
@@ -1572,6 +1605,9 @@ class MixedAgentTrainConfig:
     target_map_repeat: int = 0
     model_size: str = "base"
     model_core: str = "mlp"
+    # Temporal actor applied after the expensive same-timestep encoder.
+    actor_core: str = "mlp"
+    actor_gru_hidden_dim: int = 64
     map_encoder: str = "atari"
     # Encoder mixed precision: "float32" (default) or "bfloat16". bf16 is only
     # valid for the spatial ResNet encoders (validated in get_model_ready).
@@ -1630,6 +1666,26 @@ class MixedAgentTrainConfig:
 
     def __post_init__(self):
         _checkpoint_load_mode(self)
+        if self.actor_core not in ("mlp", "gru"):
+            raise ValueError("actor_core must be 'mlp' or 'gru'")
+        if int(self.actor_gru_hidden_dim) < 1:
+            raise ValueError("actor_gru_hidden_dim must be >= 1")
+        if self.actor_core == "gru":
+            if self.flat_minibatch_shuffle:
+                raise ValueError(
+                    "actor_core='gru' requires environment-axis sequence "
+                    "minibatches; disable --flat_minibatch_shuffle"
+                )
+            if float(self.aux_coef) > 0.0:
+                raise ValueError("actor_core='gru' pilot does not support aux_coef")
+            if self.teacher_checkpoint is not None:
+                raise ValueError(
+                    "actor_core='gru' pilot does not support kickstart teachers"
+                )
+            if self.action_logit_masking:
+                raise ValueError(
+                    "actor_core='gru' pilot does not support action-logit masking"
+                )
         if self.reward_stage not in (
             "dense_skill",
             "annealed_objective",
@@ -1643,6 +1699,16 @@ class MixedAgentTrainConfig:
             )
         if self.reward_stage == "reward_v2" and not self.carry_work_observation:
             raise ValueError("reward_v2 requires --carry_work_observation")
+        if self.movement_feasibility_observation or self.previous_outcome_observation:
+            if tuple(self.agent_types_override or ()) != (0,) or tuple(
+                self.action_types_override or ()
+            ) != (0,):
+                raise ValueError(
+                    "movement feedback observations require one tracked excavator: "
+                    "agent_types_override=(0,), action_types_override=(0,)"
+                )
+            if self.action_logit_masking:
+                raise ValueError("movement feedback observations are unmasked")
         if self.reward_v2_timing_variant not in (0, 1):
             raise ValueError(
                 "reward_v2_timing_variant must be 0 (frozen reward_v2) or 1 "
@@ -1681,10 +1747,6 @@ class MixedAgentTrainConfig:
         if self.partial_reset_root is not None:
             if self.reward_stage != "reward_v2":
                 raise ValueError("partial resets require the reward_v2 objective")
-            if self.stall_age_observation:
-                raise ValueError(
-                    "the partial-reset causal arm excludes --stall_age_observation"
-                )
             sampler = self.pooled_sampler or {}
             if not sampler.get("enabled", False) or sampler.get("rule") != (
                 "continuous_banded_v3"
@@ -1818,6 +1880,11 @@ class MixedAgentTrainConfig:
             )
         if self.num_envs_per_device % self.num_minibatches != 0:
             raise ValueError("num_envs_per_device must be divisible by num_minibatches")
+        if self.actor_core == "gru" and self.num_steps != self.num_minibatches:
+            raise ValueError(
+                "actor_core='gru' requires num_steps == num_minibatches so "
+                "rollout and PPO replay use the same encoder batch size"
+            )
         if (
             self.agent_types_override is not None
             and self.action_types_override is not None
@@ -2254,6 +2321,12 @@ def make_mixed_agent_states(
                 f"partial reset bank does not exist: {partial_reset_root}"
             )
         env_kwargs["partial_reset_root"] = partial_reset_root
+    env_kwargs["movement_feasibility_observation"] = bool(
+        config.movement_feasibility_observation
+    )
+    env_kwargs["previous_outcome_observation"] = bool(
+        config.previous_outcome_observation
+    )
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,
         shuffle_maps=False,
@@ -2484,6 +2557,7 @@ def make_mixed_agent_states(
     # Create the unified network with agent type features (now that num_prev_actions is set)
     print(f"🧠 Model size preset: {getattr(config, 'model_size', 'base')}", flush=True)
     print(f"🧠 Model core: {getattr(config, 'model_core', 'mlp')}", flush=True)
+    print(f"🧠 Actor core: {getattr(config, 'actor_core', 'mlp')}", flush=True)
     print(f"🧠 Map encoder: {getattr(config, 'map_encoder', 'atari')}", flush=True)
     print(
         f"🧠 Encoder dtype: {getattr(config, 'encoder_compute_dtype', 'float32')}, "
@@ -2501,6 +2575,12 @@ def make_mixed_agent_states(
     model_core = getattr(config, "model_core", "mlp")
     print("🏗️ Architecture:", flush=True)
     print(f"   core: {model_core}", flush=True)
+    print(f"   actor_core: {getattr(config, 'actor_core', 'mlp')}", flush=True)
+    if is_recurrent_actor(config):
+        print(
+            f"   actor_gru_hidden_dim: {config.actor_gru_hidden_dim}",
+            flush=True,
+        )
     print(f"   model_size: {getattr(config, 'model_size', 'base')}", flush=True)
     print(f"   map_encoder: {getattr(config, 'map_encoder', 'atari')}", flush=True)
     print(
@@ -2633,6 +2713,7 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         f"agents:{'-'.join(agent_type_names.get(int(t), str(t)) for t in agent_types)}",
         f"actions:{'-'.join(action_type_names.get(int(t), str(t)) for t in action_types)}",
         f"model-size:{_tag_value(model_size)}",
+        f"actor-core:{_tag_value(getattr(config, 'actor_core', 'mlp'))}",
         f"map-encoder:{_tag_value(map_encoder)}",
         f"encoder-dtype:{_tag_value(encoder_compute_dtype)}",
         f"attention-dtype:{_tag_value(attention_compute_dtype)}",
@@ -2681,7 +2762,10 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         sampler_profile = getattr(config.accepted_bank, "sampler_profile", None)
         curriculum_stage = getattr(config.accepted_bank, "curriculum_stage", None)
         if sampler_profile in V8_CONTINUOUS_PROFILES:
-            tags.append("support:all47-continuous")
+            tags.append(
+                "support:"
+                f"{_tag_value(getattr(config.accepted_bank, 'condition_profile', 'full'))}"
+            )
         elif curriculum_stage is not None:
             tags.append("curriculum-stage:" f"{_tag_value(curriculum_stage)}")
         if sampler_profile is not None:
@@ -2726,6 +2810,10 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
         )
     if config.reward_v2_reset_context_observation:
         tags.append("obs:reward-v2-reset-context")
+    if config.movement_feasibility_observation:
+        tags.append("obs:movement-feasibility")
+    if config.previous_outcome_observation:
+        tags.append("obs:previous-outcome")
 
     return list(dict.fromkeys(tags))
 
@@ -2796,10 +2884,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 raise KeyError("checkpoint has no 'model' parameters")
             if checkpoint_mode == "resume":
                 _validate_r2_resume_checkpoint(checkpoint, r2_protocol_receipt, config)
-                if config.stall_age_observation:
-                    stall_age_prepared_receipt = copy.deepcopy(
-                        checkpoint["stall_age_prepared_continuation"]
-                    )
+                stall_age_prepared_receipt = _stall_age_resume_receipt(
+                    checkpoint, config
+                )
             _validate_checkpoint_architecture(checkpoint, config)
             if (
                 checkpoint_mode == "resume"
@@ -3105,6 +3192,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 sampler_settings,
                 maps_per_condition=[level.map_count for level in bank.levels],
                 labels=labels,
+                allow_sparse_depths=(
+                    getattr(bank, "condition_profile", "full")
+                    == "trench_aligned_37_v1"
+                ),
             )
             print(
                 "📊 Condition sampler: "
@@ -3247,6 +3338,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 dtype=jnp.int32,
             )
             prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
+            actor_hidden = initial_actor_hidden(
+                config.num_devices * config.num_envs_per_device,
+                config,
+            ).reshape(
+                config.num_devices,
+                config.num_envs_per_device,
+                -1,
+            )
             provenance_fn = jax.vmap(jax.vmap(env.maps_buffer.get_map_provenance))
             (
                 _,
@@ -3278,6 +3377,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 flush_episode_aggregate,
             ):
                 # COLLECT TRAJECTORIES
+                rollout_actor_h0 = jax.lax.stop_gradient(runner_state[-1])
+
                 def _env_step(runner_state, step_idx):
                     (
                         rng,
@@ -3287,17 +3388,35 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         prev_reward,
                         episode_accumulator,
                         pending_aggregate,
+                        actor_hidden,
                     ) = runner_state
 
                     # SELECT ACTION
                     rng, _rng_model, _rng_env = jax.random.split(rng, 3)
-                    action, log_prob, value, _ = select_action_ppo(
-                        train_state,
-                        prev_timestep.observation,
-                        prev_actions,
-                        _rng_model,
-                        config,
-                    )
+                    if is_recurrent_actor(config):
+                        (
+                            action,
+                            log_prob,
+                            value,
+                            _,
+                            next_actor_hidden,
+                        ) = select_action_ppo_recurrent(
+                            train_state,
+                            prev_timestep.observation,
+                            prev_actions,
+                            actor_hidden,
+                            _rng_model,
+                            config,
+                        )
+                    else:
+                        action, log_prob, value, _ = select_action_ppo(
+                            train_state,
+                            prev_timestep.observation,
+                            prev_actions,
+                            _rng_model,
+                            config,
+                        )
+                        next_actor_hidden = actor_hidden
 
                     progress_source_volume = source_soil_volume(
                         prev_timestep.state.world.target_map.map,
@@ -3422,6 +3541,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         jnp.zeros_like(prev_actions),
                         prev_actions,
                     )
+                    actor_hidden = jnp.where(
+                        timestep.done[..., None],
+                        jnp.zeros_like(next_actor_hidden),
+                        next_actor_hidden,
+                    )
 
                     runner_state = (
                         rng,
@@ -3431,6 +3555,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         timestep.reward,
                         episode_accumulator,
                         pending_aggregate,
+                        actor_hidden,
                     )
                     return runner_state, transition
 
@@ -3563,18 +3688,31 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     prev_reward,
                     episode_accumulator,
                     pending_aggregate,
+                    actor_hidden,
                 ) = runner_state
                 rng, _rng = jax.random.split(rng)
-                _, _, last_val, _ = select_action_ppo(
-                    train_state, timestep.observation, prev_actions, _rng, config
-                )
+                if is_recurrent_actor(config):
+                    last_val = value_ppo(
+                        train_state,
+                        timestep.observation,
+                        prev_actions,
+                        config,
+                    )
+                else:
+                    _, _, last_val, _ = select_action_ppo(
+                        train_state,
+                        timestep.observation,
+                        prev_actions,
+                        _rng,
+                        config,
+                    )
                 advantages, targets = calculate_gae(
                     transitions, last_val, config.gamma, config.gae_lambda
                 )
 
                 # UPDATE NETWORK
                 def _update_epoch(update_state, _):
-                    def _update_minbatch(train_state, batch_info):
+                    def _update_minbatch_feedforward(train_state, batch_info):
                         transitions, advantages, targets = batch_info
                         new_train_state, update_info = ppo_update_networks(
                             train_state=train_state,
@@ -3590,11 +3728,55 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         )
                         return new_train_state, update_info
 
+                    def _update_minbatch_recurrent(train_state, batch_info):
+                        transitions, advantages, targets, actor_h0 = batch_info
+                        new_train_state, update_info = ppo_update_networks(
+                            train_state=train_state,
+                            transitions=transitions,
+                            advantages=advantages,
+                            targets=targets,
+                            config=config,
+                            ent_coef_override=ent_coef_current,
+                            actor_hidden_init=actor_h0,
+                        )
+                        return new_train_state, update_info
+
                     rng, train_state, transitions, advantages, targets = update_state
 
                     # MINIBATCHES PREPARATION
                     rng, _rng = jax.random.split(rng)
-                    if getattr(config, "flat_minibatch_shuffle", False):
+                    if is_recurrent_actor(config):
+                        permutation = jax.random.permutation(
+                            _rng, config.num_envs_per_device
+                        )
+                        sequence_batch = jtu.tree_map(
+                            lambda x: x.swapaxes(0, 1),
+                            (transitions, advantages, targets),
+                        )
+                        shuffled_sequences = jtu.tree_map(
+                            lambda x: jnp.take(x, permutation, axis=0),
+                            sequence_batch,
+                        )
+                        shuffled_h0 = jnp.take(
+                            rollout_actor_h0, permutation, axis=0
+                        )
+                        sequence_minibatches = jtu.tree_map(
+                            lambda x: jnp.reshape(
+                                x,
+                                (config.num_minibatches, -1) + x.shape[1:],
+                            ),
+                            shuffled_sequences,
+                        )
+                        hidden_minibatches = jnp.reshape(
+                            shuffled_h0,
+                            (
+                                config.num_minibatches,
+                                -1,
+                                shuffled_h0.shape[-1],
+                            ),
+                        )
+                        minibatches = (*sequence_minibatches, hidden_minibatches)
+                    elif getattr(config, "flat_minibatch_shuffle", False):
                         # F6: collapse [seq_len, batch_size] into a single sample
                         # axis, permute over ALL samples, then reshape into
                         # minibatches. GAE was computed above and is unaffected;
@@ -3637,8 +3819,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             ),
                             shuffled_batch,
                         )
+                    update_minibatch = (
+                        _update_minbatch_recurrent
+                        if is_recurrent_actor(config)
+                        else _update_minbatch_feedforward
+                    )
                     train_state, update_info = jax.lax.scan(
-                        _update_minbatch, train_state, minibatches
+                        update_minibatch, train_state, minibatches
                     )
 
                     update_state = (rng, train_state, transitions, advantages, targets)
@@ -3688,6 +3875,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     prev_reward,
                     episode_accumulator,
                     pending_aggregate,
+                    actor_hidden,
                 )
                 return (
                     runner_state,
@@ -3721,6 +3909,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 prev_reward,
                 episode_accumulator,
                 pending_aggregate,
+                actor_hidden,
             )
 
             # Entropy scheduler: cosine decay using config variables
@@ -4162,6 +4351,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                 config.accepted_bank.environment_protocol_sha256
                             ),
                             "sampler_profile": (config.accepted_bank.sampler_profile),
+                            "condition_profile": getattr(
+                                config.accepted_bank, "condition_profile", "full"
+                            ),
                         }
                         if (
                             config.accepted_bank.sampler_profile
@@ -4169,7 +4361,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         ):
                             receipt_contract.update(
                                 {
-                                    "support_scope": "all47_continuous",
+                                    "support_scope": getattr(
+                                        config.accepted_bank,
+                                        "condition_profile",
+                                        "full",
+                                    ),
                                     "curriculum_graph_sha256": (
                                         config.accepted_bank.curriculum_graph_sha256
                                     ),
@@ -4552,6 +4748,21 @@ if __name__ == "__main__":
         help="Core policy architecture. 'mlp' keeps current behavior; 'transformer' uses a lightweight token-mixer core.",
     )
     parser.add_argument(
+        "--actor-core",
+        choices=["mlp", "gru"],
+        default="mlp",
+        help=(
+            "Temporal actor after the fused spatial encoder. 'gru' replays "
+            "intact rollout sequences and carries memory across PPO rollouts."
+        ),
+    )
+    parser.add_argument(
+        "--actor-gru-hidden-dim",
+        type=int,
+        default=64,
+        help="Hidden width for --actor-core gru.",
+    )
+    parser.add_argument(
         "--map_encoder",
         type=str,
         default="atari",
@@ -4890,6 +5101,16 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--accepted-bank-condition-profile",
+        choices=V8_CONDITION_PROFILES,
+        default=None,
+        help=(
+            "Select a named condition view after validating the immutable V8 "
+            "release. trench_aligned_37_v1 keeps 25 foundation and 12 "
+            "strict-gate-compatible trench conditions."
+        ),
+    )
+    parser.add_argument(
         "--pooled-sampler-interval",
         type=int,
         default=None,
@@ -5022,6 +5243,16 @@ if __name__ == "__main__":
         help="Append Terra's normalized material-stall age after v6.1 fusion.",
     )
     parser.add_argument(
+        "--movement-feasibility-observation",
+        action="store_true",
+        help="Append four unmasked tracked-base movement feasibility bits.",
+    )
+    parser.add_argument(
+        "--previous-outcome-observation",
+        action="store_true",
+        help="Append the previous transition's physical/material outcome bits.",
+    )
+    parser.add_argument(
         "--action_logit_masking",
         action="store_true",
         help="Mask provably-ineffective actions out of the sampling "
@@ -5111,6 +5342,8 @@ if __name__ == "__main__":
     curriculum_last_level_type = None
     pooled_sampler_override = None
     accepted_bank_arm = None
+    accepted_bank_condition_profile = "full"
+    requires_partial_reset = False
     accepted_bank = None
 
     if args.config is not None:
@@ -5137,6 +5370,10 @@ if __name__ == "__main__":
             )
             dump_rewards_enabled = preset.reward_options.dump_rewards_enabled
             accepted_bank_arm = preset.accepted_bank_arm
+            accepted_bank_condition_profile = (
+                preset.accepted_bank_condition_profile
+            )
+            requires_partial_reset = bool(preset.requires_partial_reset)
             sampler = preset.pooled_sampler
             pooled_sampler_override = {
                 field: getattr(sampler, field) for field in sampler.__dataclass_fields__
@@ -5271,6 +5508,10 @@ if __name__ == "__main__":
             raise ValueError(
                 "--accepted-bank-sampler-profile requires an accepted-bank config"
             )
+        if args.accepted_bank_condition_profile not in (None, "full"):
+            raise ValueError(
+                "--accepted-bank-condition-profile requires an accepted-bank config"
+            )
     else:
         if accepted_bank_arm not in ACCEPTED_BANK_ARMS:
             raise ValueError(
@@ -5281,6 +5522,22 @@ if __name__ == "__main__":
             raise ValueError(f"--config {args.config} requires --accepted-bank-root")
         if args.terra_revision is None:
             raise ValueError(f"--config {args.config} requires --terra-revision")
+        if (
+            args.accepted_bank_condition_profile is not None
+            and accepted_bank_condition_profile != "full"
+            and args.accepted_bank_condition_profile
+            != accepted_bank_condition_profile
+        ):
+            raise ValueError(
+                f"--config {args.config} freezes condition profile "
+                f"{accepted_bank_condition_profile!r}"
+            )
+        if args.accepted_bank_condition_profile is not None:
+            accepted_bank_condition_profile = args.accepted_bank_condition_profile
+        if requires_partial_reset and args.partial_reset_root is None:
+            raise ValueError(
+                f"--config {args.config} requires --partial-reset-root"
+            )
         if curriculum_levels_override:
             raise ValueError("accepted-bank configs must not hard-code map paths")
         if args.map_path is not None:
@@ -5296,6 +5553,7 @@ if __name__ == "__main__":
             args.terra_revision,
             curriculum_stage=args.accepted_bank_stage,
             sampler_profile=args.accepted_bank_sampler_profile,
+            condition_profile=accepted_bank_condition_profile,
         )
         os.environ["DATASET_PATH"] = str(accepted_bank.root)
         os.environ["DATASET_SIZE"] = str(accepted_bank.map_count_per_condition)
@@ -5342,7 +5600,8 @@ if __name__ == "__main__":
             f"📦 Accepted bank: {accepted_bank.root} | "
             f"{accepted_bank_arm} | {len(accepted_bank.levels)} conditions x "
             f"{accepted_bank.map_count_per_condition} maps | "
-            f"sampler={accepted_bank.sampler_profile or 'release-default'}",
+            f"sampler={accepted_bank.sampler_profile or 'release-default'} | "
+            f"conditions={accepted_bank.condition_profile}",
             flush=True,
         )
 
@@ -5468,6 +5727,10 @@ if __name__ == "__main__":
         reward_v2_timing_variant=args.reward_v2_timing_variant,
         carry_work_observation=args.carry_work_observation,
         stall_age_observation=args.stall_age_observation,
+        movement_feasibility_observation=(
+            args.movement_feasibility_observation
+        ),
+        previous_outcome_observation=args.previous_outcome_observation,
         action_logit_masking=args.action_logit_masking,
         distance_protocol_id=args.distance_protocol_id,
         distance_sidecar_sha256=args.distance_sidecar_sha256,
@@ -5495,6 +5758,8 @@ if __name__ == "__main__":
         target_map_repeat=args.target_map_repeat,
         model_size=args.model_size,
         model_core=args.model_core,
+        actor_core=args.actor_core,
+        actor_gru_hidden_dim=args.actor_gru_hidden_dim,
         map_encoder=args.map_encoder,
         encoder_compute_dtype=args.encoder_compute_dtype,
         attention_compute_dtype=args.attention_compute_dtype,

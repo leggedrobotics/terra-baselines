@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 from flax.training.train_state import TrainState
+from flax.traverse_util import flatten_dict
 from terra.config import BatchConfig, MapsDimsConfig
 
 from scripts.prepare_v61_stall_age_continuation import (
@@ -17,7 +18,7 @@ from scripts.prepare_v61_stall_age_continuation import (
 )
 from utils.models import get_model_ready
 from utils.utils_ppo import obs_to_model_input
-from train_mixed import _attach_stall_age_receipt
+from train_mixed import _attach_stall_age_receipt, _stall_age_resume_receipt
 
 
 class Config(dict):
@@ -198,6 +199,109 @@ def test_reset_context_uses_two_zero_initialized_branch_embeddings():
     )
 
 
+def test_movement_feedback_adds_only_zero_embeddings_and_preserves_gru_u0():
+    env = SimpleNamespace(
+        batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64))
+    )
+    control_config = config(False)
+    control_config.update(
+        actor_core="gru",
+        actor_gru_hidden_dim=64,
+        reward_v2_reset_context_observation=True,
+    )
+    treatment_config = copy.copy(control_config)
+    treatment_config.update(
+        movement_feasibility_observation=True,
+        previous_outcome_observation=True,
+    )
+    key = jax.random.PRNGKey(17)
+    control_model, control_params = get_model_ready(key, control_config, env)
+    treatment_model, treatment_params = get_model_ready(
+        key, treatment_config, env
+    )
+
+    control_flat = flatten_dict(control_params["params"])
+    treatment_flat = flatten_dict(treatment_params["params"])
+    extras = set(treatment_flat) - set(control_flat)
+    expected_extras = {
+        ("movement_feasibility_actor_embedding",),
+        ("movement_feasibility_critic_embedding",),
+        ("previous_outcome_actor_embedding",),
+        ("previous_outcome_critic_embedding",),
+    }
+    assert extras == expected_extras
+    for name, values in control_flat.items():
+        np.testing.assert_array_equal(
+            np.asarray(treatment_flat[name]),
+            np.asarray(values),
+        )
+    expected_shapes = {
+        "movement_feasibility_actor_embedding": (4, FUSED_WIDTH),
+        "movement_feasibility_critic_embedding": (4, FUSED_WIDTH),
+        "previous_outcome_actor_embedding": (2, FUSED_WIDTH),
+        "previous_outcome_critic_embedding": (2, FUSED_WIDTH),
+    }
+    for name, shape in expected_shapes.items():
+        values = np.asarray(treatment_params["params"][name])
+        assert values.shape == shape
+        np.testing.assert_array_equal(values, np.zeros(shape, dtype=np.float32))
+    control_count = sum(x.size for x in jax.tree.leaves(control_params))
+    treatment_count = sum(x.size for x in jax.tree.leaves(treatment_params))
+    assert control_count == 2_352_573
+    assert treatment_count == 2_361_021
+
+    tx = optax.chain(
+        optax.clip_by_global_norm(0.5),
+        optax.adam(3e-4, eps=1e-5),
+    )
+    control_opt = TrainState.create(
+        apply_fn=control_model.apply, params=control_params, tx=tx
+    ).opt_state[1][0]
+    treatment_opt = TrainState.create(
+        apply_fn=treatment_model.apply, params=treatment_params, tx=tx
+    ).opt_state[1][0]
+    for control_moment, treatment_moment in (
+        (control_opt.mu, treatment_opt.mu),
+        (control_opt.nu, treatment_opt.nu),
+    ):
+        control_moment_flat = flatten_dict(control_moment["params"])
+        treatment_moment_flat = flatten_dict(treatment_moment["params"])
+        for name, values in control_moment_flat.items():
+            np.testing.assert_array_equal(
+                np.asarray(treatment_moment_flat[name]), np.asarray(values)
+            )
+
+    observation = raw_obs()
+    observation["reward_v2_reset_context"] = jnp.asarray(
+        [[0.0, 1.0], [0.25, 0.75], [0.9, 0.1]], dtype=jnp.float32
+    )
+    observation["movement_feasibility"] = jnp.asarray(
+        [[1, 0, 1, 0], [0, 1, 0, 1], [1, 1, 1, 1]], dtype=jnp.float32
+    )
+    observation["previous_action_outcome"] = jnp.asarray(
+        [[0, 0], [1, 0], [1, 1]], dtype=jnp.float32
+    )
+    previous_actions = jnp.zeros((3, 5), dtype=jnp.int32)
+    control_input = obs_to_model_input(
+        observation, previous_actions, control_config
+    )
+    treatment_input = obs_to_model_input(
+        observation, previous_actions, treatment_config
+    )
+    hidden = jnp.zeros((3, 64), dtype=jnp.float32)
+    control_output = control_model.apply(
+        control_params, control_input, hidden, method="actor_step"
+    )
+    treatment_output = treatment_model.apply(
+        treatment_params, treatment_input, hidden, method="actor_step"
+    )
+    for control_value, treatment_value in zip(control_output, treatment_output):
+        np.testing.assert_array_equal(
+            np.asarray(treatment_value),
+            np.asarray(control_value),
+        )
+
+
 def test_stall_age_receipt_is_carried_into_continuation_checkpoints():
     receipt = {
         "schema": "terra_v8_v61_stall_age_v3_prepared_v1",
@@ -210,6 +314,27 @@ def test_stall_age_receipt_is_carried_into_continuation_checkpoints():
     assert rolling["stall_age_prepared_continuation"] == receipt
     assert final["stall_age_prepared_continuation"] == receipt
     assert rolling["stall_age_prepared_continuation"] is not receipt
+
+
+def test_native_stall_age_checkpoint_resumes_without_migration_receipt():
+    checkpoint = {
+        "train_config": SimpleNamespace(stall_age_observation=True),
+    }
+    current = SimpleNamespace(stall_age_observation=True)
+    assert _stall_age_resume_receipt(checkpoint, current) is None
+
+
+def test_legacy_stall_age_checkpoint_still_requires_migration_receipt():
+    checkpoint = {
+        "train_config": SimpleNamespace(stall_age_observation=False),
+    }
+    current = SimpleNamespace(stall_age_observation=True)
+    try:
+        _stall_age_resume_receipt(checkpoint, current)
+    except ValueError as error:
+        assert "prepared checkpoint receipt" in str(error)
+    else:
+        raise AssertionError("legacy checkpoint resumed without migration proof")
 
 
 def test_u14_sampler_conversion_keeps_history_and_clears_only_partial_window():

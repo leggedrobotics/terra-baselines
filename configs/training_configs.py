@@ -86,6 +86,8 @@ class TrainingConfig:
         default_factory=PooledSamplerSettings
     )
     accepted_bank_arm: Optional[str] = None
+    accepted_bank_condition_profile: str = "full"
+    requires_partial_reset: bool = False
 
     # Agent-neutral relocation reward
     relocation_progress_mult: float = 1.5
@@ -200,6 +202,10 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             curriculum=curriculum,
             pooled_sampler=pooled_sampler,
             accepted_bank_arm=cfg.get("accepted_bank_arm"),
+            accepted_bank_condition_profile=cfg.get(
+                "accepted_bank_condition_profile", "full"
+            ),
+            requires_partial_reset=cfg.get("requires_partial_reset", False),
             relocation_progress_mult=cfg.get("relocation_progress_mult", 1.5),
             reward_options=reward_options,
             truck_capacity=cfg.get("truck_capacity"),

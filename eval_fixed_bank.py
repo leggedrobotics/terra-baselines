@@ -144,6 +144,8 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             for name in (
                 "model_size",
                 "model_core",
+                "actor_core",
+                "actor_gru_hidden_dim",
                 "map_encoder",
                 "encoder_compute_dtype",
                 "attention_compute_dtype",
@@ -155,6 +157,10 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             )
         },
     }
+    condition_profile = _field(bank, "condition_profile", "full")
+    if condition_profile != "full":
+        # Preserve historical fingerprints while binding any narrowed V8 view.
+        contract["bank"]["condition_profile"] = condition_profile
     if bool(_field(config, "reward_v2_reset_context_observation", False)):
         # Conditional inclusion keeps historical fingerprints unchanged while
         # binding both the partial arm and its matched full-start control.
@@ -186,6 +192,10 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             contract["trench_dig_alignment"]["trench_dig_standoff_enforced"] = bool(
                 standoff_enforced
             )
+    if bool(_field(config, "movement_feasibility_observation", False)):
+        contract["architecture"]["movement_feasibility_observation"] = True
+    if bool(_field(config, "previous_outcome_observation", False)):
+        contract["architecture"]["previous_outcome_observation"] = True
     partial_reset_digest = _field(config, "partial_reset_bank_sha256")
     if partial_reset_digest is not None:
         raw_partial_receipt = checkpoint.get("partial_reset_curriculum")

@@ -264,9 +264,9 @@ def test_reset_context_supports_a_matched_control_and_rejects_masking():
     treatment = MixedAgentTrainConfig(**partial)
     assert treatment.partial_reset_root == "/tmp/partial-reset-bank"
     assert treatment.reward_v2_reset_context_observation is True
-    try:
-        MixedAgentTrainConfig(**partial, stall_age_observation=True)
-    except ValueError as error:
-        assert "partial-reset causal arm excludes" in str(error)
-    else:
-        raise AssertionError("partial-reset causal arm accepted stall age")
+    treatment_with_stall_age = MixedAgentTrainConfig(
+        **partial,
+        stall_age_observation=True,
+    )
+    assert treatment_with_stall_age.stall_age_observation is True
+    assert treatment_with_stall_age.reward_v2_reset_context_observation is True

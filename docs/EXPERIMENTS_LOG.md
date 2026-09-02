@@ -37,6 +37,23 @@ Cross-run findings:
 - Episode length: E3 55.2 vs E1 59.2 steps — bigger warm-started net is also faster per
   episode; 300-step horizon (E6) exerts no pressure since episodes are ~55 steps.
 
+## Completed training awaiting fixed selection
+
+The 2026-08-21 paired movement-feedback GRU pilot completed 50,000 updates in
+both arms. Control job `11364188` and six-bit feedback job `11364189` exited
+`0:0`; their final checkpoint SHA-256 values are respectively
+`5459bd5347dbdf64431cd78df5f61f22b75ee56bc2b15662d9751fb2959a7f84`
+and `8cde5ccd4fd4ef5b1ed716a9c5c3a4c4b43f69d44db66d29ed7db86f2ad7d7df`.
+
+The final 1,000-update online aggregate has effectively tied success
+(0.99019 control, 0.99037 feedback), while feedback reduces no-effect rate
+from 0.03152 to 0.01450. This supports retaining the optional observation path
+but is not a promotion verdict. The accepted development-720 evaluation is
+still missing, so neither final policy is selected and feedback stays off by
+default. See
+[`research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md`](research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md)
+for the frozen decision gate and full provenance.
+
 ## Accepted-bank campaigns
 
 The metrics below are deterministic fixed-bank terminal absolute completion,
@@ -53,6 +70,7 @@ remain separate. Exact is solved maps / evaluated maps.
 | 08-03 | P5c five-arm low-entropy screen | `9461489`, `9461500`, `9461504`, `9461507`, `9461512` | none | deep latest 0.624 / 0.586 | deep latest 168/512 / 143/512 | all fixed evaluations clean; no arm passed the long-run gate at two consecutive checkpoints |
 | 08-10 | V8 Atari-base small-system control | `10128519` | 19,000 (descriptive promotion selection) | 0.457 / 0.428 | 16/752 / 20/752 | completed 20k; zero mastered conditions and depth 0/0; negative 480k-system result, not an encoder-only ablation |
 | 08-14 | V8 v6.1 reward-v2 + stall age + final-v3 continuation | `10625259` | 40,000 | 0.956 / 0.959 | 657/720 / 663/720 | completed u14->u40; promotion exact 407->657 with 254 conversions and 4 regressions; u39->u40 was high-churn 38/32 for only +6 net, so this is a strong combined-treatment capability result but not stall-age or sampler attribution |
+| 08-23 | trench-aligned 37-condition generalist, initial production attempt | `11529891` | 0 | — | — | exact update-1 smoke `11529665` passed, but production failed before update 1 on `eu-g6-065` with four-replica `CUDNN_STATUS_EXECUTION_FAILED`; no checkpoint and zero W&B training updates, so this is a runtime incident only |
 
 P5b result root:
 `/home/lorenzo/moleworks/.artifacts/terra_p5b_results_20260802_6c56610e`.

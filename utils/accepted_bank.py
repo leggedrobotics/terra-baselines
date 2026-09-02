@@ -39,6 +39,20 @@ V8_SAMPLER_PROFILES = (
     "continuous_banded_v3",
 )
 V8_CONTINUOUS_PROFILES = ("continuous_banded_v3",)
+V8_CONDITION_PROFILES = ("full", "trench_aligned_37_v1")
+V8_TRENCH_ALIGNED_EXCLUDED_CONDITION_IDS = (
+    "trn-net4-side1-road",
+    "trn-net4-side2",
+    "trn-net4-side2-s",
+    "v7-trn-cross-adjacent",
+    "v7-trn-disconnected-pair-adjacent",
+    "v7-trn-dogleg-adjacent",
+    "v7-trn-double-t-adjacent",
+    "v7-trn-network3-adjacent",
+    "v7-trn-straight-adjacent",
+    "v7-trn-tee-adjacent",
+)
+V8_TRENCH_ALIGNED_EVALUATION_FAMILY = "gate_supported_main"
 V8_CONTINUOUS_GRAPH_PATH = (
     Path(__file__).resolve().parents[1]
     / "configs"
@@ -173,6 +187,7 @@ class AcceptedBank:
     v7_core_condition_ids: tuple[str, ...] = ()
     curriculum_depths: tuple[int, ...] = ()
     curriculum_graph_sha256: str | None = None
+    condition_profile: str = "full"
     # Which evaluation/<family>/* directories `evaluation_panels` point at.
     evaluation_panel_family: str = "main"
 
@@ -183,6 +198,8 @@ class AcceptedBank:
             return None
         if name == "evaluation_panel_family":
             return "main"
+        if name == "condition_profile":
+            return "full"
         raise AttributeError(name)
 
 
@@ -703,6 +720,7 @@ def _v8_stage_selection(
     core_ids: tuple[str, ...],
     mixture: dict,
     sampler_profile: str = "bank_v4",
+    condition_profile: str = "full",
 ) -> tuple[tuple[AcceptedLevel, ...], tuple[float, ...]]:
     if stage not in V8_CURRICULUM_STAGES:
         raise ValueError(
@@ -713,6 +731,17 @@ def _v8_stage_selection(
         raise ValueError(
             f"V8 sampler_profile must be one of {V8_SAMPLER_PROFILES}, "
             f"got {sampler_profile!r}"
+        )
+    if condition_profile not in V8_CONDITION_PROFILES:
+        raise ValueError(
+            f"V8 condition_profile must be one of {V8_CONDITION_PROFILES}, "
+            f"got {condition_profile!r}"
+        )
+    if condition_profile != "full" and (
+        stage != "full" or sampler_profile not in V8_CONTINUOUS_PROFILES
+    ):
+        raise ValueError(
+            f"{condition_profile} requires the full stage and a continuous sampler"
         )
     by_id = {level.condition_id: level for level in levels}
     if sampler_profile in V8_CONTINUOUS_PROFILES and stage != "full":
@@ -748,9 +777,31 @@ def _v8_stage_selection(
             slice_mass = {"capability": 1.0, "core": 1.0, "constraint": 1.0}
         else:
             slice_mass = {"capability": 0.0625, "core": 0.1875, "constraint": 0.75}
+    if condition_profile == "trench_aligned_37_v1":
+        excluded = set(V8_TRENCH_ALIGNED_EXCLUDED_CONDITION_IDS)
+        missing = sorted(excluded - selected_ids)
+        if missing:
+            raise ValueError(
+                "trench-aligned profile exclusions are absent from the canonical "
+                f"V8 support: {missing}"
+            )
+        selected_ids -= excluded
     selected = tuple(
         sorted((by_id[name] for name in selected_ids), key=lambda x: x.condition_id)
     )
+    if condition_profile == "trench_aligned_37_v1":
+        family_counts = {
+            family: sum(level.family == family for level in selected)
+            for family in FAMILIES
+        }
+        if len(selected) != 37 or family_counts != {
+            "foundation": 25,
+            "trench": 12,
+        }:
+            raise ValueError(
+                "trench-aligned profile must select 25 foundation and 12 trench "
+                f"conditions; got {family_counts}"
+            )
 
     geometry_mass = mixture.get("v7_geometry_mass_within_family")
     if not isinstance(geometry_mass, dict):
@@ -1156,6 +1207,7 @@ def load_accepted_bank(
     curriculum_stage: str | None = None,
     sampler_profile: str | None = None,
     evaluation_panel_family: str = EVALUATION_PANEL_FAMILY_DEFAULT,
+    condition_profile: str = "full",
 ) -> AcceptedBank:
     """Validate the canonical index and select the levels owned by one arm."""
     if arm not in ARMS:
@@ -1164,6 +1216,11 @@ def load_accepted_bank(
         raise ValueError("terra_revision must be an explicit nonempty string")
     if terra_revision != terra_revision.strip():
         raise ValueError("terra_revision must not have surrounding whitespace")
+    if condition_profile not in V8_CONDITION_PROFILES:
+        raise ValueError(
+            f"condition_profile must be one of {V8_CONDITION_PROFILES}, got "
+            f"{condition_profile!r}"
+        )
     root_path = Path(root).expanduser().resolve()
     if not root_path.is_dir():
         raise FileNotFoundError(root_path)
@@ -1255,6 +1312,18 @@ def load_accepted_bank(
         expected_capability_ids = tuple(
             index.get("v6_capability_floor_condition_ids", ())
         )
+        if condition_profile == "trench_aligned_37_v1":
+            expected_main_ids = tuple(
+                condition_id
+                for condition_id in expected_main_ids
+                if condition_id not in V8_TRENCH_ALIGNED_EXCLUDED_CONDITION_IDS
+            )
+            if evaluation_panel_family == EVALUATION_PANEL_FAMILY_DEFAULT:
+                evaluation_panel_family = V8_TRENCH_ALIGNED_EVALUATION_FAMILY
+    elif condition_profile != "full":
+        raise ValueError(
+            f"condition_profile={condition_profile!r} applies only to {V8_RELEASE_ID}"
+        )
     declared_panels = index.get("evaluation_panels")
     if evaluation_panel_family == EVALUATION_PANEL_FAMILY_DEFAULT:
         panels_to_validate = declared_panels
@@ -1279,7 +1348,8 @@ def load_accepted_bank(
                         f"{evaluation_panel_family!r} introduces conditions "
                         f"outside the frozen macro: {unknown}"
                     )
-        expected_main_ids = None
+        if condition_profile == "full":
+            expected_main_ids = None
     evaluation_panels = _validate_evaluation_panels(
         root_path,
         panels_to_validate,
@@ -1367,6 +1437,7 @@ def load_accepted_bank(
             v7_core_condition_ids,
             v8_mixture,
             sampler_profile,
+            condition_profile,
         )
     else:
         if curriculum_stage is not None:
@@ -1401,11 +1472,18 @@ def load_accepted_bank(
     curriculum_depths: tuple[int, ...] = ()
     curriculum_graph_sha256 = None
     if sampler_profile in V8_CONTINUOUS_PROFILES:
-        curriculum_depths, curriculum_graph_sha256 = _v8_continuous_graph(
-            selected,
+        all_depths, curriculum_graph_sha256 = _v8_continuous_graph(
+            tuple(all_levels),
             capability_floor_condition_ids,
             v7_core_condition_ids,
             v6_constraint_condition_ids,
+        )
+        depth_by_id = {
+            level.condition_id: all_depths[index]
+            for index, level in enumerate(all_levels)
+        }
+        curriculum_depths = tuple(
+            depth_by_id[level.condition_id] for level in selected
         )
     map_counts = {level.map_count for level in selected}
     if len(map_counts) != 1:
@@ -1446,4 +1524,5 @@ def load_accepted_bank(
         curriculum_depths=curriculum_depths,
         curriculum_graph_sha256=curriculum_graph_sha256,
         evaluation_panel_family=evaluation_panel_family,
+        condition_profile=condition_profile,
     )

@@ -11,6 +11,26 @@ traversability-observation versus movement-physics incidence audit, and
 evaluate the stall-age plus Continuous Banded v3 continuation when its final
 checkpoint is available.
 
+## 2026-08-21 decision update
+
+The GRU-u44 failure audit changes the next policy treatment. Base movements
+account for 9,050 of 9,306 ineffective decisions across the 46 failures, while
+the first-cycle counterfactual found a physically effective alternative on all
+44 failures with an exact cycle anchor. The five-way `DO` proposal is also too
+coarse: one action can simultaneously excavate fresh soil and relift staged
+soil. It is therefore deferred.
+
+The next fresh experiment is the two-arm pilot in
+[`V8_MOVEMENT_FEEDBACK_PILOT_20260821.md`](V8_MOVEMENT_FEEDBACK_PILOT_20260821.md).
+Both arms share the repaired one-pass soil mechanics and the under-base
+footprint/visible-blocker fixes. The treatment adds four unmasked current
+movement-feasibility bits and two previous-transition outcome bits; the
+control adds neither. This tests the combined six-bit observation package,
+not its individual components and not the mechanics changes themselves.
+The paired jobs are `11364188` (control) and `11364189` (feedback); both were
+still `PENDING (Priority)` at 2026-08-21 00:56 CEST, so this status is a
+submission record rather than training evidence.
+
 ## Scope boundary
 
 This work does not edit trench generation, trench excavation ordering, or the
@@ -195,16 +215,17 @@ their effects.
 | --- | --- | --- | --- |
 | Stall age plus final v3 | **Trained/evaluated** | The combined u14-to-u40 continuation improves exact completion from 407/720 to 657/720, but five selected recurrent failures remain and late checkpoint churn is high. | Continue the identical treatment for one more 24-hour segment and evaluate several retained checkpoints.  Do not attribute the gain to either component alone. |
 | Evaluator no-effect accounting and material-progress vector | **Diagnostic fixed** | Canonical no-effect counts now use Terra's transition flag, and fixed evaluation measures terminal dig/accepted/off-zone/carried fractions.  These repairs postdate the source that generated u40. | Keep these diagnostics in every subsequent fixed-panel readout; they are measurements, not policy treatments. |
-| Missing action-outcome feedback and greedy attractors | **Unresolved** | Exact no-effect fixed points and effective short cycles remain.  Prior physical effect plus material/load change is a supported fresh-arm hypothesis, not a guaranteed planning fix. | Run a matched fresh observation arm.  Promote only on reduced recurrence without full-panel regression; otherwise proceed to the recurrent-policy rung. |
+| Missing action-outcome feedback and greedy attractors | **Implemented/trained; fixed gate pending** | The matched u50 feedback arm completed. Its final 1,000-update online success is tied with control (0.99037 versus 0.99019), while no-effect rate is about 54% lower (0.01450 versus 0.03152). This is a mechanism signal, not held-out promotion evidence. | Preserve feedback as opt-in and run the paired u40/u50 development-720 plus recurrence readout. Do not enable it by default or select its policy before that gate. |
 | Minimum actionable-unit veto | **Implemented; pending training** | Terra `88c0099e` removes the arbitrary singleton veto.  It is absent from u40 and its direct continuation but included in the fresh u0-to-u200k runtime. | Retain exact-completion and mass-conservation tests, then measure the small expected direct ceiling on the untouched full-start panel. |
 | Atomic rejection of an over-capacity positive relift | **Implemented; pending training** | Terra `30ad500f` implements capacity-bounded, mass-conserving `load what fits`.  It is absent from u40 and its direct continuation but included in the fresh u0-to-u200k runtime. | Train and evaluate the new transition before attributing policy benefit. |
-| Relay and cleanup underexposure | **Submitted; pending training** | Terra `67c72d09` adds natural relay-corridor partial resets, `794d4759` preserves trench access, and `25f855db` adds the bounded reset curriculum.  The baseline side implements the fixed 10k schedule, reset provenance, common-support v3 sampling, full-start-only mastery updates, reset-context matched control, full-start evaluation, and bank-bound native resume.  Fresh jobs `10777230` and `10777232` are queued to u200k. | Judge only on the untouched full-start panel plus recurrence/relay strata. Do not credit this arm with Backplay demonstrations or merge it into the direct u40 continuation. |
+| Relay and cleanup underexposure | **Implemented; fast fresh training pending** | The 37-condition `trench_align_generalist_partial_v1` recipe integrates the bounded u0--u10k partial-start schedule, reset provenance, full-start-only mastery updates, strict trench alignment, and bank-bound native resume. The slow first run reached u4,442 before cancellation; this establishes execution only, not relay benefit. | After deterministic compiler replay passes, start the fresh u0 run and judge only full-start fixed panels plus recurrence/relay strata. Do not credit partial starts as evaluation successes. |
+| Generalist compiler throughput | **Fast four-GPU gate passed once; deterministic replay queued** | Level 0 regressed to 3,124.6 steps/s versus 15,800--16,771 in matched controls. The first bf16 level-4 four-GPU attempt `11735196` crashed before update 1, while identical traced rerun `11738360` completed five finite updates at a 17,454.15-steps/s post-compile median. Revision `58e26fc` pins that successful cache (`698e856c...`) and removes the non-authoritative one-GPU gate. Slow jobs `11626135/11626137` were cancelled after the fast gate passed; u4,000 SHA `1a977ffc...` is retained. | Require pinned-cache replay `11740651` to complete u3,500--u3,505 above 12,000 steps/s, then launch the fresh u0 smoke and production chain. |
 | Accepted-first dump without off-zone fallback | **Unresolved, low observed incidence** | The source-level risk remains, but the selected lifecycle audit observed zero accepted-invalid/off-zone-valid states. | Keep the reason-code diagnostic and add two-pass fallback only after a real trajectory reaches that branch. |
-| Under-base excavation and traversability observation | **Implemented; pending training** | Sparse height-one soil was rarely false-blocked.  The causal selected case was under-base holes hidden by the agent overlay.  Terra `ebdc3ad7` now excludes the exact active-base footprint from dig/relift and preserves underlying blockers in the visible channel.  It is pushed and patched into both still-pending fresh jobs, with 47 local focused tests and two staged Euler regressions passing. | Merge `ebdc3ad7` into Terra `main`, then verify slot 300 and the untouched full panel.  Add a collision-reducing escape rule only if a real pre-existing-overlap state remains reachable; do not add an action mask. |
+| Traversability observation versus physics | **Implemented/trained; effect not isolated** | Both completed u50 arms use the common repaired runtime: dig/relift excludes the active base footprint, blockers remain visible beneath the overlay, and successful excavation relaxes soil once. | Retain the correctness repair in the promoted runtime. Attribute no capability gain until the fixed panel is run; do not add an action mask. |
 | Hidden `last_dig_mask` and ambiguous `DO` outcome | **Deferred pending decodability** | Hidden state changed counterfactual DO eligibility in 38 visited states but produced zero measured exact full-input aliases. | Do not expose raw history now.  Use a large decodability audit to decide whether a compact five-way DO affordance should subsume it. |
 | Point-geodesic potential ignores serviceability | **Audited/unfixed** | One local counterexample improved H by 7.72 but had no same-base relift heading; this does not prove global inaccessibility. | Keep reward-v2 and measure station, heading, and path serviceability over a larger panel before changing the potential. |
 | Clipped global pile heights | **Deferred** | They did not cause the measured target recurrences: no repeated policy-input hash had a different raw action-map hash. | Revisit only if a separate capacity or long-range planning audit finds height-dependent aliases. |
-| Progress age and actor GRU | **Deferred rung** | Stall age delays some traps but saturates, and material-changing ping-pong resets it.  No matched recurrent treatment has run. | Try progress-aligned observations first; if explicit repairs leave multi-step cycles, test actor-only GRU-64 with contiguous sequence PPO and a sequence-batched feed-forward control. |
+| Actor GRU | **Trained/evaluated; residual traps remain** | The concat-skip GRU64 reaches 674/720 on the fixed development panel at u44k versus 652/720 for feed-forward u44k and 670/720 for feed-forward u86k. Zeroing carry changes 17 actions across all 12 recurrence targets and raises target no-effect rate from 24.3% to 50.9%, proving memory use; both carry arms still solve only 9/12. | Keep the complete recurrent treatment as the sample-efficient capability leader, but do not call it a recurrence-only ablation. Target slots 250, 247, and 177 with the feedback/failure panels before changing architecture again. |
 
 ## Execution status
 
@@ -344,8 +365,9 @@ evidence.
 
 The authoritative promotion-panel readout is complete under one matched
 Supercluster RTX-3060 inference contract: forward chunk 120 and
-`--xla_gpu_enable_cudnn_frontend=false`.  This is a new matched u14/u39/u40
-contract rather than a bit-identical replay of the old backend, but the u14
+`--xla_gpu_enable_cudnn_frontend=false`.  This separate inference contract is
+unchanged by the training-runtime recovery described below. It is a new matched
+u14/u39/u40 contract rather than a bit-identical replay of the old backend, but the u14
 readout independently reproduces the historical exact headline of `407/720`.
 Reset, identity, mutation, nonfinite, exact-completion, material-partition,
 and stall-age integrity gates pass for all three 720-map records.
