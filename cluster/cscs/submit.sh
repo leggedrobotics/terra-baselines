@@ -18,6 +18,7 @@ Options:
   --partition NAME            Slurm partition (default from config.env)
   --account NAME              Slurm account (default from config.env)
   --run-id ID                 Stable run identifier
+  --wandb-mode online|offline W&B mode for the job (default: online)
   --test-only                 Run sbatch --test-only; this is the default
   --submit                    Submit the billable job
   --no-sync                   Reuse an existing --run-id snapshot
@@ -29,6 +30,7 @@ JOB_TIME=""
 PARTITION="$CSCS_PARTITION"
 ACCOUNT="$CSCS_ACCOUNT"
 RUN_ID=""
+WANDB_MODE=online
 DATASET_PATH=""
 DATASET_SIZE=""
 MODE=test-only
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
         --partition) PARTITION="$2"; shift 2 ;;
         --account) ACCOUNT="$2"; shift 2 ;;
         --run-id) RUN_ID="$2"; shift 2 ;;
+        --wandb-mode) WANDB_MODE="$2"; shift 2 ;;
         --dataset-path) DATASET_PATH="$2"; shift 2 ;;
         --dataset-size) DATASET_SIZE="$2"; shift 2 ;;
         --test-only) MODE=test-only; shift ;;
@@ -54,6 +57,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$PROFILE" == smoke || "$PROFILE" == production ]] || cscs_die "profile must be smoke or production"
+[[ "$WANDB_MODE" == online || "$WANDB_MODE" == offline ]] || cscs_die "--wandb-mode must be online or offline"
 [[ -n "$DATASET_PATH" ]] || cscs_die "--dataset-path is required"
 cscs_validate_absolute_path "dataset path" "$DATASET_PATH"
 [[ "$DATASET_SIZE" =~ ^[1-9][0-9]*$ ]] || cscs_die "--dataset-size must be a positive integer"
@@ -83,7 +87,7 @@ ssh -T "$CSCS_SSH_TARGET" \
         EDF_PATH="$EDF_PATH" SBATCH_PATH="$SBATCH_PATH" DATASET_PATH="$DATASET_PATH" \
         DATASET_SIZE="$DATASET_SIZE" RUN_ID="$RUN_ID" PROFILE="$PROFILE" \
         ACCOUNT="$ACCOUNT" PARTITION="$PARTITION" JOB_TIME="$JOB_TIME" \
-        CSCS_WANDB_ENTITY="$CSCS_WANDB_ENTITY" \
+        CSCS_WANDB_ENTITY="$CSCS_WANDB_ENTITY" WANDB_MODE="$WANDB_MODE" \
     bash -s <<'REMOTE'
 set -euo pipefail
 mkdir -p "$RUN_ROOT/logs" "$RUN_ROOT/checkpoints" "$RUN_ROOT/wandb" "$RUN_ROOT/work"
@@ -111,6 +115,7 @@ DATASET_PATH = "${DATASET_PATH}"
 DATASET_SIZE = "${DATASET_SIZE}"
 TERRA_RUN_DIR = "${RUN_ROOT}"
 WANDB_DIR = "${RUN_ROOT}/wandb"
+WANDB_MODE = "${WANDB_MODE}"
 WANDB_ENTITY = "${CSCS_WANDB_ENTITY}"
 MPLBACKEND = "Agg"
 SDL_VIDEODRIVER = "dummy"
@@ -141,8 +146,8 @@ if [[ ${#TRAIN_ARGS[@]} -gt 0 ]]; then
     printf -v TRAIN_ARGS_ESCAPED ' %q' "${TRAIN_ARGS[@]}"
 fi
 ssh -T "$CSCS_SSH_TARGET" \
-    env SBATCH_PATH="$SBATCH_PATH" TRAIN_ARGS_ESCAPED="$TRAIN_ARGS_ESCAPED" \
-    bash -s <<'REMOTE'
+    "env SBATCH_PATH=$(printf '%q' "$SBATCH_PATH") \
+        TRAIN_ARGS_ESCAPED=$(printf '%q' "$TRAIN_ARGS_ESCAPED") bash -s" <<'REMOTE'
 set -euo pipefail
 python3 - "$SBATCH_PATH" "$TRAIN_ARGS_ESCAPED" <<'PY'
 from pathlib import Path
