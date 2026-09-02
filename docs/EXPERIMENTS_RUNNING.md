@@ -435,6 +435,41 @@ freshly staged ones, so the smoke ran the same code the continuations will
 launcher note: a second `submit.sh` call for the same run id needs `--no-sync`,
 because `sync_code.sh` refuses an existing snapshot.
 
+### v2 trench specialist + relocation/admissible observations on CSCS (submitted 2026-09-02)
+
+Paired arm for the running specialist above: same bank, seed, recipe, and
+trainer arguments verbatim, plus exactly two observation flags,
+`--relocation_distance_observation` (Terra's static geodesic dump-zone
+distance map as a twelfth encoder channel) and `--admissible_dig_observation`
+(width-12 fresh digs a DO would be admitted per cabin angle from the current
+base pose, LocalMapNet's tenth map). Parameters 2,307,645 -> **2,311,701**
+(+216 stem conv, +3,840 local-map MLP), `obs_len` 23 -> 25. Sources are the
+merged mains: Terra `09712ad5` and terra-baselines `ad9ee96` (snapshot
+`SOURCE_REVISIONS.txt`: both clean, 0 dirty entries), staged from the sibling
+layout `.worktrees/cscs_stage_obs_v2/{terra,terra-baselines}`.
+
+Gates before submission: local RTX 4090 smoke (128 envs, 3 updates, nonfinite
+guard every update, finite FINAL checkpoint, flags recorded in `train_config`);
+CSCS debug smoke **job `4588162`** (run id `terra-v2spec-obs-smoke-20260902`,
+smoke profile with the specialist config and both flags, `COMPLETED 0:0` in
+8:55, `obs_len = 25`, 2,311,701 parameters, one finite update, FINAL
+checkpoint written).
+
+Run id `terra-v2spec-obs-ad9ee96-s20260901`, run name
+`trench_align_v2_spec_obs_cscs_ad9ee96_s20260901`, account `d130`, partition
+`normal`, 24 h each, `WANDB_MODE=offline`, run root
+`/capstor/scratch/cscs/lterenzi/terra-training/runs/terra-v2spec-obs-ad9ee96-s20260901`:
+
+- **`4588229`** (job A), started 2026-09-02 19:54 UTC;
+- **`4588230`** (job B), `--no-sync --resume-latest --dependency afterany:4588229`;
+- **`4588231`** (job C), `--no-sync --resume-latest --dependency afterany:4588230`.
+
+Each submission rewrites `job.sbatch` and `terra.edf.toml` in the run root, so
+the files there are job C's; Slurm holds each job's own batch script. The
+control chain `4586880 -> 4586997 -> 4586999` is untouched and is the matched
+comparison. The rollout buffer carries the float32 distance map, about +16 KB
+per env-step; irrelevant on GH200 120 GB.
+
 ## Current issue checklist
 
 The living status ledger, exact u40 readout, and bounded next actions are in
