@@ -167,6 +167,25 @@ working distance is the dig cone's.
   `/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_generalist/runs/445ad79…/s20260901/gen`;
   W&B `trench_align_v2gen_gen_445ad79662_s20260901`.
 
+**Job `12505854` FAILED before update 1** (10 min on `eu-g6-071`, 4 x RTX
+4090, driver 580.178.4, cuDNN 8.9.7): repeated
+`conv_algorithm_picker: Results mismatch between different convolution
+algorithms` on the bf16 3x3 backward-filter convs, then
+`XlaRuntimeError: CUDNN_STATUS_EXECUTION_FAILED`. Same defect the
+`generalist_partial_v1` campaign root-caused to cuDNN frontend engine 20 on
+cc 8.9. Launcher `20b846c` ports that repair for `GPU_TYPE=rtx_4090` only:
+`--xla_gpu_autotune_level=4`, the exact engine-20 denylist
+(`scripts/euler_trench_align_v2/hlo_algorithm_denylist.pbtxt`), and the
+pinned four-GPU autotune cache (SHA-256 `698e856c…`, group-readable under
+`/cluster/project/rsl/alesweber/terra_runtime/autotune/`); the run contract
+records `cudnn_repair`. Level 0 is not used (8x slow path in that campaign).
+RTX 3090 (cc 8.6) path unchanged. Relaunched as **job `12508156`**
+(terra-baselines `e2a020e`, Terra `502c80b2` = doc-only ahead of `c383b0b1`),
+run dir
+`/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_generalist/runs/e2a020e…/s20260901/gen`;
+W&B `trench_align_v2gen_gen_e2a020efc7_s20260901`. Fallback if it dies the
+same way: `GPU_TYPE=rtx_3090`.
+
 Launch gates: Terra suites 51 passed on the merged tree, baselines 44; local
 GPU first-update smoke on the exact pooled bank (gate on, v2, bound 2.0 m,
 checkpoint finite); archive round-tripped through the fail-closed loader.
