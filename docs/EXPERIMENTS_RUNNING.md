@@ -209,6 +209,25 @@ model); run dir
 `/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_specialist/runs/2a5716e…/s20260901/spec`;
 W&B `trench_align_v2_spec_2a5716ee50_s20260901`. Local first-update smoke on
 the exact bank: gate on, v2, bound 2.0 m, checkpoint finite.
+
+**Job `12506562` FAILED before update 1** (15 min on `eu-g4-013`, 4 x RTX
+3090): `CUDNN_STATUS_EXECUTION_FAILED` on every replica at the first
+`_update_step`, with no autotuner mismatch warnings in the log. So the defect
+is not 4090-specific. Evidence gathered: the August pilot (C0/T1) ran on the
+same 580-series driver (580.173.2 vs 580.178.4 now) with the same three
+"Results mismatch" warnings and survived five days; W&B system metrics show
+the pilot and the failed generalist both peaking at 36% / 22% GPU memory, so
+memory pressure is excluded; the pinned venv pairs cuDNN 8.9.7.29 with CUDA
+12.9 cuBLAS/NVRTC/runtime wheels under the cuda/12.1.1 module. The failure is
+therefore a flaky autotuner pick of a faulty cuDNN frontend engine (timing
+decides which engine wins). The cc-8.9 denylist and cache do not apply on
+3090, so the specialist was resubmitted on **4 x RTX 4090** with the same
+repaired path as the generalist: **job `12508490`** (terra-baselines
+`23297f6`, Terra `502c80b2`), run dir
+`/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_specialist/runs/23297f6…/s20260901/spec`;
+W&B `trench_align_v2_spec_23297f63fd_s20260901`. A local RTX 4090 battery
+(frontend off / denylist / default / level 0 / float32 convs at the exact
+per-device shapes) is measuring a class-independent fix in parallel.
 Evaluate checkpoints with `eval_fixed_bank.py --panel-family gate_main`
 (the pilot's v1 checkpoints need `--gate-v1`).
 
