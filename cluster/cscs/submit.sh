@@ -22,6 +22,8 @@ Options:
   --test-only                 Run sbatch --test-only; this is the default
   --submit                    Submit the billable job
   --no-sync                   Reuse an existing --run-id snapshot
+  --resume-latest             Continue from the newest checkpoint in the run
+  --dependency SPEC           Slurm dependency, e.g. afterany:JOBID
 EOF
 }
 
@@ -35,6 +37,8 @@ DATASET_PATH=""
 DATASET_SIZE=""
 MODE=test-only
 SYNC_CODE=1
+RESUME_LATEST=0
+DEPENDENCY=""
 TRAIN_ARGS=()
 
 while [[ $# -gt 0 ]]; do
@@ -50,6 +54,8 @@ while [[ $# -gt 0 ]]; do
         --test-only) MODE=test-only; shift ;;
         --submit) MODE=submit; shift ;;
         --no-sync) SYNC_CODE=0; shift ;;
+        --resume-latest) RESUME_LATEST=1; shift ;;
+        --dependency) DEPENDENCY="$2"; shift 2 ;;
         --) shift; TRAIN_ARGS=("$@"); break ;;
         -h|--help) usage; exit 0 ;;
         *) cscs_die "unknown argument: $1" ;;
@@ -65,6 +71,8 @@ cscs_validate_token "partition" "$PARTITION"
 cscs_validate_token "account" "$ACCOUNT"
 JOB_TIME="${JOB_TIME:-$([[ "$PROFILE" == smoke ]] && echo 00:20:00 || echo 24:00:00)}"
 [[ "$JOB_TIME" =~ ^[0-9]{2}:[0-9]{2}:[0-9]{2}$ ]] || cscs_die "--time must use HH:MM:SS"
+[[ -z "$DEPENDENCY" || "$DEPENDENCY" =~ ^(afterany|afterok|afternotok|after):[0-9]+(:[0-9]+)*$ ]] \
+    || cscs_die "--dependency must look like afterany:JOBID"
 
 cscs_resolve_root
 RUN_ID="${RUN_ID:-$(cscs_default_run_id)}"
@@ -88,9 +96,16 @@ ssh -T "$CSCS_SSH_TARGET" \
         DATASET_SIZE="$DATASET_SIZE" RUN_ID="$RUN_ID" PROFILE="$PROFILE" \
         ACCOUNT="$ACCOUNT" PARTITION="$PARTITION" JOB_TIME="$JOB_TIME" \
         CSCS_WANDB_ENTITY="$CSCS_WANDB_ENTITY" WANDB_MODE="$WANDB_MODE" \
+        RESUME_LATEST="$RESUME_LATEST" DEPENDENCY="$DEPENDENCY" \
     bash -s <<'REMOTE'
 set -euo pipefail
 mkdir -p "$RUN_ROOT/logs" "$RUN_ROOT/checkpoints" "$RUN_ROOT/wandb" "$RUN_ROOT/work"
+
+SBATCH_DEPENDENCY=""
+if [[ -n "$DEPENDENCY" ]]; then
+    # Trailing newline keeps the directive inside the contiguous #SBATCH block.
+    SBATCH_DEPENDENCY="#SBATCH --dependency=${DEPENDENCY}"$'\n'
+fi
 
 cat > "$EDF_PATH" <<EOF
 image = "${IMAGE_PATH}"
@@ -121,6 +136,11 @@ MPLBACKEND = "Agg"
 SDL_VIDEODRIVER = "dummy"
 EOF
 
+if [[ "$RESUME_LATEST" == "1" ]]; then
+    # Appended inside the [env] block, which is the last section of the EDF.
+    printf 'TERRA_RESUME_LATEST = "1"\n' >> "$EDF_PATH"
+fi
+
 cat > "$SBATCH_PATH" <<EOF
 #!/usr/bin/env bash
 #SBATCH --account=${ACCOUNT}
@@ -131,7 +151,7 @@ cat > "$SBATCH_PATH" <<EOF
 #SBATCH --cpus-per-task=64
 #SBATCH --hint=nomultithread
 #SBATCH --time=${JOB_TIME}
-#SBATCH --job-name=terra-${PROFILE}
+${SBATCH_DEPENDENCY}#SBATCH --job-name=terra-${PROFILE}
 #SBATCH --output=${RUN_ROOT}/logs/slurm-%j.out
 #SBATCH --error=${RUN_ROOT}/logs/slurm-%j.err
 

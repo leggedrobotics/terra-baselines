@@ -75,5 +75,26 @@ case "$PROFILE" in
         ;;
 esac
 
+# TERRA_RESUME_LATEST continues a run past the partition wall-time cap: pick the
+# newest checkpoint of this run and hand it to the trainer, which restores the
+# optimizer state and the absolute update counter.
+RESUME_ARGS=()
+if [[ "${TERRA_RESUME_LATEST:-0}" == "1" ]]; then
+    LATEST_CHECKPOINT="$(
+        find "$RUN_DIR/checkpoints" -maxdepth 1 -type f -name '*_update_*.pkl' \
+            | sed -E 's|.*_update_0*([0-9]+)\.pkl$|\1 &|' \
+            | sort -n -k1,1 \
+            | tail -n 1 \
+            | cut -d' ' -f2-
+    )"
+    if [[ -n "$LATEST_CHECKPOINT" ]]; then
+        RESUME_ARGS=(--resume_from "$LATEST_CHECKPOINT")
+        echo "resume_from=$LATEST_CHECKPOINT"
+    else
+        echo "resume_from=none"
+    fi
+fi
+
 echo "Launching Terra training profile: $PROFILE"
-python -u /workspace/terra-baselines/train_mixed.py "${PROFILE_ARGS[@]}" "$@"
+python -u /workspace/terra-baselines/train_mixed.py "${PROFILE_ARGS[@]}" "$@" \
+    ${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"}

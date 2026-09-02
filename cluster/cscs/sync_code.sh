@@ -34,8 +34,8 @@ cscs_validate_token "run id" "$RUN_ID"
 cscs_require_command git
 cscs_require_command rsync
 cscs_require_command ssh
-[[ -d "${CSCS_TERRA_DIR}/.git" ]] || cscs_die "Terra repository not found: ${CSCS_TERRA_DIR}"
-[[ -d "${CSCS_BASELINES_DIR}/.git" ]] || cscs_die "terra-baselines repository not found: ${CSCS_BASELINES_DIR}"
+[[ -e "${CSCS_TERRA_DIR}/.git" ]] || cscs_die "Terra repository not found: ${CSCS_TERRA_DIR}"
+[[ -e "${CSCS_BASELINES_DIR}/.git" ]] || cscs_die "terra-baselines repository not found: ${CSCS_BASELINES_DIR}"
 
 cscs_resolve_root
 SNAPSHOT_ROOT="${CSCS_ROOT}/snapshots/${RUN_ID}"

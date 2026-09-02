@@ -80,3 +80,36 @@ cluster/cscs/submit.sh \
 Use a new `CSCS_IMAGE_TAG` for image changes. Source snapshots are immutable by
 run ID. Checkpoints, W&B files, and Slurm logs are written under
 `$SCRATCH/terra-training/runs/RUN_ID`.
+
+## Continuation past the 24 h cap
+
+The `normal` partition caps a job at 24 h, so long runs continue in chained
+jobs. `--resume-latest` sets `TERRA_RESUME_LATEST=1` in the job environment;
+`run_training.sh` then picks the newest `*_update_*.pkl` under
+`RUN_DIR/checkpoints` and appends `--resume_from` to the trainer arguments, so
+the model, the optimizer state, and the absolute update counter carry over and
+training continues towards the same `--total_timesteps`. It prints
+`resume_from=<path>`, or `resume_from=none` when the run has no checkpoint yet
+and training starts from scratch. `--dependency` adds an `#SBATCH --dependency`
+directive, so the follow-up is queued before its predecessor finishes.
+
+Reuse the run ID and the existing snapshot, and repeat the trainer arguments of
+the first job verbatim:
+
+```bash
+cluster/cscs/submit.sh \
+  --profile production --partition normal --account d130 --time 24:00:00 \
+  --dataset-path /capstor/scratch/cscs/lterenzi/terra-training/datasets/DATASET \
+  --dataset-size 1440 \
+  --run-id RUN_ID \
+  --no-sync \
+  --wandb-mode offline \
+  --resume-latest \
+  --dependency afterany:PREVIOUS_JOB_ID \
+  --submit \
+  -- TRAIN_ARGS...
+```
+
+Chain the next job on the one just submitted. Each submission rewrites
+`job.sbatch` and `terra.edf.toml` in the run root; copy them aside first if a
+predecessor's exact files must be kept.
