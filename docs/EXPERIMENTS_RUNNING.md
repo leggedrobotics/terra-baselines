@@ -288,6 +288,77 @@ listed in that run dir's contract.
 Evaluate checkpoints with `eval_fixed_bank.py --panel-family gate_main`
 (the pilot's v1 checkpoints need `--gate-v1`).
 
+### v2 trench specialist on CSCS Daint (submitted 2026-09-02)
+
+Third venue for the same arm, opened because every Euler attempt died on the
+cuDNN 8.9.7 defect. Daint's GH200 nodes are a different stack (aarch64,
+NVIDIA JAX 24.10 image `terra-jax+jax24.10-v1`, cuDNN 9, CUDA 12.6, NCCL
+2.22.3, driver 590.48.01), so that defect does not apply. Launcher
+`cluster/cscs/submit.sh` (`--profile production`), one JAX process with all
+four GH200 GPUs on one node.
+
+Dataset uploaded once as
+`/capstor/scratch/cscs/lterenzi/terra-training/datasets/terra_v2_trench15_pooled_bank_20260902`
+(**1,440 maps**; archive `terra_v2_trench15_pooled_bank_20260902.tar.zst`,
+SHA-256 `788e4744…a002a72`; remote `dataset.json` byte-identical to the local
+copy, so the R2 sidecar receipt checks out). `DATASET_PATH` is the bank root
+and the preset selects `train_v2_pooled_trench15` itself.
+
+Run id `terra-v2spec-145a94c-s20260901`, **Slurm job `4586880`**, account
+`d130`, partition `normal`, 24 h, node `nid005954`, started 2026-09-02
+16:43 UTC. Snapshot revisions: terra-baselines `145a94c`, Terra `502c80b2`
+(both clean detached worktrees; the one dirty entry is the `submit.sh` change
+below, which the job does not execute). Image tag `terra-jax+jax24.10-v1`. Run
+root `/capstor/scratch/cscs/lterenzi/terra-training/runs/terra-v2spec-145a94c-s20260901`,
+checkpoints in `.../checkpoints`; run name
+`trench_align_v2_spec_cscs_145a94c_s20260901`.
+
+Trainer flags are the Euler launcher's `train_mixed.py` line verbatim (medium
+mlp core, `resnet_spatial_8x8_se_sa_xattn`, bf16 encoder / f32 attention,
+critic 512,256, stages 24,48,64,96, blocks 2,2,3,3, mixer init 0.1,
+flatten_reduce 32, latent queries 8, aux 0, vf_coef 2.0, entropy 0.15 to 0.02
+over 20,000, `--no_value_clip`, `--carry_work_observation`, `--lr 3e-4`,
+`--reward_stage reward_v2`, `--reward_v2_timing_variant 0`,
+`--distance_protocol_id obstacle_geodesic_8_physical_global_v1`,
+`--distance_sidecar_sha256 f0c43065…6c58980`, `--fail_on_nonfinite`,
+`--finite_check_interval 10`, `--eval_episodes 100`,
+`--log_eval_interval 100`), plus the CSCS-specific
+`--config trench_align_v2_specialist_spec`,
+`--name trench_align_v2_spec_cscs_145a94c_s20260901 --exact_run_name`,
+`--seed 20260901`, `--num_devices 4`, `--num_envs_per_device 512`,
+`--num_steps 32`, `--num_minibatches 32`, `--update_epochs 2`,
+`--total_timesteps 6553600000` (= 4 x 512 x 32 x 100,000),
+`--checkpoint_interval 500`, `--cache_clear_interval 1000`,
+`--log_train_interval 10`, `--keep_checkpoint_history` and the CSCS
+`--checkpoint_dir`. These follow `run_training.sh`'s production defaults
+(`solo_excavator`, 1024 envs/device, 16 minibatches, 5e10 timesteps,
+checkpoint 100, log_train 1) and argparse takes the last occurrence; the
+generated `job.sbatch` and the trainer's own configuration banner were both
+inspected and every override is in effect (2,307,645 parameters, obs_len 23).
+The profile's `--machine daint` only feeds run-name composition and is inert
+under `--exact_run_name`.
+
+W&B: Daint has no credential, so the job runs `WANDB_MODE=offline` through the
+new `submit.sh --wandb-mode online|offline` option (written into the generated
+EDF `[env]` block). The Slurm log and the checkpoints are the record; the
+offline directory under `runs/…/wandb` can be `wandb sync`ed later.
+
+Runtime check at start: 4 x NVIDIA GH200 120GB, JAX
+`0.4.33.dev20241023+85f5076f1` (jaxlib 0.4.33 from `nvcr.io/nvidia/jax:24.10-py3`),
+cuDNN 9, CUPTI/cuBLAS/NVRTC from CUDA 12.6, NCCL 2.22.3; jitted convolution
+backward and the four-GPU `pmap` all-reduce both passed. Loading 1,440 maps
+took 43 s. **Two XLA compilations** precede steady state: iteration 0 took
+266 s and iteration 1 took 272 s (GPUs at 0% during both, host-side
+compilation of the finite-check and plain variants of the update step);
+from iteration 2 the run is steady at **2.19 s/update** (83 updates in 182 s;
+tqdm 2.18 s/it; ~29,900 env steps/s, versus 3.69 s/update = 17.8k steps/s for
+the generalist on 4 x RTX 4090). No cuDNN execution failure.
+
+`normal` caps at 24 h and 100,000 updates would need ~61 h, so this job reaches
+roughly 39,000 updates. It writes a checkpoint every 500 updates and is
+continuable with the trainer's `--resume_from`; no continuation is wired into
+the CSCS launcher yet.
+
 ## Current issue checklist
 
 The living status ledger, exact u40 readout, and bounded next actions are in
