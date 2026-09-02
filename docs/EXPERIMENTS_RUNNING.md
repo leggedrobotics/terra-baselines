@@ -257,6 +257,34 @@ end, matches the partial_v1 audit); float32 convs OOM on the shared card
 card never reproduced the Euler execution failure, so the battery ranks
 throughput only. Generalist `12508156`: u100 at 19 min, 3.69 s/update =
 17.8k steps/s, pilot speed.
+
+**Job `12511685` (frontend off, 3090, `eu-g4-007`) FAILED the same way** at
+the first update, and its log shows even the legacy algorithms disagreeing by
+~50% on the bf16 backward-filter convs. Verdict: the failure is independent
+of plan selection and GPU class; it is the same cuDNN 8.9.7 defect the
+13 August v6.1 audit bisected (needs the token mixer + flatten-reduce
+readout, shape dependent, float32 does not help) and that killed job
+`10569391` mid-run at u14,001 on 8 x RTX 3090. It predates the driver patch
+and the pilot's two clean starts were luck (5 of 7 v2 starts failed today).
+The venv is untouched since 30 July (identical to the pilot's).
+
+Operational fix, launcher `c239d12`: a failed attempt greps its own log for
+`CUDNN_STATUS_EXECUTION_FAILED` and sbatch-es itself again into the same
+RUN_DIR (`ATTEMPT+1`, up to `MAX_ATTEMPTS`=6, same sbatch options via
+`RESUBMIT_SBATCH_ARGS`), resuming from the newest `*_update_*.pkl` when one
+exists (model, optimizer, absolute update clock through `--resume_from`;
+W&B `resume=allow`). `run_contract.env` records attempt/resume_from and the
+terminal status; each attempt keeps `run_contract.attempt<N>.job<id>.env`.
+`TERRA_RESUME_FROM` allows a manual continuation. The running generalist
+`12508156` predates this launcher; if it dies, continue it manually with
+`TERRA_RESUME_FROM=<its newest checkpoint>`.
+
+Specialist attempt chain: **job `12517301`** (4 x RTX 4090, `auto` =
+denylist + pinned cache, terra-baselines `c239d12`, Terra `502c80b2`), run
+dir
+`/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_specialist/runs/c239d12…/s20260901/spec`;
+W&B `trench_align_v2_spec_c239d124d5_s20260901`; children (if any) are
+listed in that run dir's contract.
 Evaluate checkpoints with `eval_fixed_bank.py --panel-family gate_main`
 (the pilot's v1 checkpoints need `--gate-v1`).
 
