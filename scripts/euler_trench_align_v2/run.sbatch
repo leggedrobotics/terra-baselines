@@ -265,7 +265,10 @@ if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ] && grep -aq "CUDNN_STATUS_EXECUTION_FAILED
     CHILD="$(env ${UNSET_SLURM[@]+"${UNSET_SLURM[@]}"} sbatch --parsable "${SBATCH_OPTS[@]}" --export="ALL,ATTEMPT=$((ATTEMPT + 1))" \
         "$BASELINES_ROOT/scripts/euler_trench_align_v2/run.sbatch")"
     CHILD="${CHILD%%;*}"
-    printf '%s\n' "status=FAILED_CUDNN_RESUBMITTED" "child_job_id=$CHILD" "child_attempt=$((ATTEMPT + 1))" >> "$RUN_DIR/run_contract.env"
+    # the child rewrites run_contract.env when it starts, so keep the pointer in
+    # this attempt's own copy as well
+    printf '%s\n' "status=FAILED_CUDNN_RESUBMITTED" "child_job_id=$CHILD" "child_attempt=$((ATTEMPT + 1))" \
+        | tee -a "$RUN_DIR/run_contract.env" >> "$RUN_DIR/run_contract.attempt${ATTEMPT}.job${SLURM_JOB_ID}.env"
     echo "cuDNN startup/execution failure on attempt $ATTEMPT; resubmitted as job $CHILD (attempt $((ATTEMPT + 1)))"
 else
     echo "status=FAILED train_rc=$TRAIN_RC" >> "$RUN_DIR/run_contract.env"
