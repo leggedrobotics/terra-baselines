@@ -356,8 +356,37 @@ the generalist on 4 x RTX 4090). No cuDNN execution failure.
 
 `normal` caps at 24 h and 100,000 updates would need ~61 h, so this job reaches
 roughly 39,000 updates. It writes a checkpoint every 500 updates and is
-continuable with the trainer's `--resume_from`; no continuation is wired into
-the CSCS launcher yet.
+continuable with the trainer's `--resume_from`.
+
+Continuation is now wired into the launcher. `submit.sh --resume-latest` writes
+`TERRA_RESUME_LATEST = "1"` into the EDF `[env]` block; `run_training.sh` then
+picks the newest `*_update_*.pkl` under `runs/.../checkpoints` and appends
+`--resume_from <path>` after the caller's arguments, so the model, the
+optimizer state and the absolute update counter carry over and the job
+continues towards the same `--total_timesteps`. `submit.sh --dependency
+afterany:JOBID` adds the matching `#SBATCH --dependency` directive, so the
+whole chain is queued in advance. Environment, RNG and action-history state
+restart at each hand-off, so the continuation is not bit-exact.
+
+Two follow-ups were submitted on 2026-09-02 with the same run id, the same
+snapshot (`--no-sync`), `--wandb-mode offline` and the trainer arguments of
+`4586880` verbatim (the generated `job.sbatch` differs from the running job's
+only by the dependency line, and the EDF only by `TERRA_RESUME_LATEST`):
+
+- **`4586997`** (job B), `--dependency afterany:4586880`
+- **`4586999`** (job C), `--dependency afterany:4586997`
+
+Each job costs about 9 minutes of start-up before steady state (two XLA
+compilations, ~266 s and ~272 s, plus the 43 s map load) and then covers
+roughly 39,000 updates in 24 h, so the three jobs together reach the 100,000
+update target with margin. Because `--no-sync` reuses the immutable snapshot
+staged for `4586880`, the snapshot's own
+`terra-baselines/cluster/cscs/run_training.sh` was replaced in place with the
+continuation-aware version (original kept beside it as
+`run_training.sh.attempt0`, the substitution done by atomic rename so the
+running job keeps its open inode, and the patch recorded in the snapshot's
+`SOURCE_REVISIONS.txt`). The running job's original `job.sbatch` and
+`terra.edf.toml` are kept in the run root as `*.attempt0`.
 
 ## Current issue checklist
 
