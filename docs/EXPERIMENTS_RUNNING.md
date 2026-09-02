@@ -175,6 +175,21 @@ admissibly diggable from an aligned on-the-line station (zero loss at 2.0 m);
 all 2,400 trench maps have complete covers under v2 (net4 re-admitted).
 
 No matched control was launched; a clean causal claim needs a C0 pair.
+
+### v2 trench specialist (submitted 2026-09-02)
+
+Second arm on the same launcher: trench only, all 15 trench conditions
+including net4 (re-admitted under v2), pooled bank `train_v2_pooled_trench15`
+(1,440 maps; archive `terra_v2_trench15_pooled_bank_20260902.tar.zst`,
+SHA-256 `788e47444d51a0281c1dbddfaea12683a90890afe2ee889cee6bc254ea002a72`),
+preset `trench_align_v2_specialist_spec`, same gate semantics, seed, PPO
+config and target as the generalist. terra-baselines `2a5716e` (main), Terra
+`c383b0b1` (main; doc-only ahead of `facc44e6`). Job `12506562`, account
+`lterenzi`, `gpuhe.120h`, **4 x RTX 3090** (in-job guard refuses any other
+model); run dir
+`/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_specialist/runs/2a5716e…/s20260901/spec`;
+W&B `trench_align_v2_spec_2a5716ee50_s20260901`. Local first-update smoke on
+the exact bank: gate on, v2, bound 2.0 m, checkpoint finite.
 Evaluate checkpoints with `eval_fixed_bank.py --panel-family gate_main`
 (the pilot's v1 checkpoints need `--gate-v1`).
 
