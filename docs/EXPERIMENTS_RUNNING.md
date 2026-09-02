@@ -228,6 +228,26 @@ repaired path as the generalist: **job `12508490`** (terra-baselines
 W&B `trench_align_v2_spec_23297f63fd_s20260901`. A local RTX 4090 battery
 (frontend off / denylist / default / level 0 / float32 convs at the exact
 per-device shapes) is measuring a class-independent fix in parallel.
+
+**Job `12508490` FAILED too** (8 min on `eu-g6-072`, 4 x RTX 4090, with the
+denylist + pinned cache active, contract `cudnn_repair=rtx4090_engine20_
+denylist+autotune_cache_698e856c`): all four replicas
+`CUDNN_STATUS_EXECUTION_FAILED` at the first `_update_step`, no autotuner
+output at all (plans came from the cache). The generalist `12508156` runs the
+identical pinned plans on `eu-g6-071` and cleared update 1. So the failure is
+nondeterministic at execution even with a fixed plan; plan pinning is not a
+reliable repair. Local RTX 4090 battery (exact per-device shapes, 30 updates
+each, shared card): frontend off, denylist+level 4 and default all pass at
+the same steady-state ~6 s/update (the local card does not reproduce the
+Euler failure, so the battery ranks throughput only). Launcher `c0e06d1`
+adds `TERRA_CUDNN_REPAIR` = auto | denylist_cache | frontend_off | none
+(auto = denylist_cache on 4090, frontend_off elsewhere). Specialist
+relaunched with **`--xla_gpu_enable_cudnn_frontend=false`** (legacy cuDNN
+algorithm API, no frontend engines) on **4 x RTX 3090**: **job `12511685`**
+(terra-baselines `c0e06d1`, Terra `502c80b2`), run dir
+`/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_specialist/runs/c0e06d1…/s20260901/spec`;
+W&B `trench_align_v2_spec_c0e06d1527_s20260901`. If the generalist dies the
+same way, it is relaunched with frontend_off as well.
 Evaluate checkpoints with `eval_fixed_bank.py --panel-family gate_main`
 (the pilot's v1 checkpoints need `--gate-v1`).
 
