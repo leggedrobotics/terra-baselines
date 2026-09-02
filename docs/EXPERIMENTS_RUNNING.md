@@ -305,6 +305,14 @@ dir
 `/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_specialist/runs/c239d12…/s20260901/spec`;
 W&B `trench_align_v2_spec_c239d124d5_s20260901`; children (if any) are
 listed in that run dir's contract.
+
+**Euler specialist chain CANCELLED 2026-09-02 (user decision: one
+generalist on Euler + one specialist on CSCS is enough).** Attempt 0
+`12517301` and attempt 1 `12561591` both died at the first update with the
+cuDNN error on `eu-g6-047` and resubmitted themselves as designed (child
+pointers recorded); attempt 2 `12562373` was cancelled by hand at 5 min
+while compiling. Euler v2 start tally today: 2 of 8 survived. The
+specialist endpoint is now carried by CSCS job `4586880` and its chain.
 Evaluate checkpoints with `eval_fixed_bank.py --panel-family gate_main`
 (the pilot's v1 checkpoints need `--gate-v1`).
 
