@@ -248,6 +248,15 @@ algorithm API, no frontend engines) on **4 x RTX 3090**: **job `12511685`**
 `/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_specialist/runs/c0e06d1…/s20260901/spec`;
 W&B `trench_align_v2_spec_c0e06d1527_s20260901`. If the generalist dies the
 same way, it is relaunched with frontend_off as well.
+
+Local battery final (RTX 4090 shared with another job, 512 envs x 32 steps x
+32 minibatches, 30 updates, seconds per update over updates 10--30):
+frontend_off 6.0, denylist+level 4 6.4, default 5.2, level 0 30.0 (5x, dead
+end, matches the partial_v1 audit); float32 convs OOM on the shared card
+(6 GB extra activations) and would change numerics, not pursued. The local
+card never reproduced the Euler execution failure, so the battery ranks
+throughput only. Generalist `12508156`: u100 at 19 min, 3.69 s/update =
+17.8k steps/s, pilot speed.
 Evaluate checkpoints with `eval_fixed_bank.py --panel-family gate_main`
 (the pilot's v1 checkpoints need `--gate-v1`).
 
