@@ -258,6 +258,26 @@ card never reproduced the Euler execution failure, so the battery ranks
 throughput only. Generalist `12508156`: u100 at 19 min, 3.69 s/update =
 17.8k steps/s, pilot speed.
 
+**Generalist early readout (2026-09-02, u2000/u3000 checkpoints, local
+`eval_fixed_bank.py` gate_main/development panel, 608 slots / 38 conditions,
+deterministic, horizon 450, seed 20260724, v2 gate on so admissible =
+raw).** W&B `online_eval/success_within_horizon_rate` 0 -> 0.055 by u3100,
+return -4.36 -> -3.80, episode length 446 -> 430, entropy 1.9-2.0 (no
+collapse), KL 0.003-0.006, no nonfinite; 12x the pilot T1 at matched
+updates, about half the gate-off C0. Panel: ALL of the aggregate is trench
+straights: side1 / side1-tight 7/16 (43.75%), altsides / side2 4/16 (25%),
+each roughly doubled from u2000; every tee / seg / net3 / net4 condition
+0/16; ALL 24 foundation conditions 0/384 at both checkpoints (graded
+terminal_absolute macro 0.28 -> 0.41, dig_fraction 0.52 -> 0.71, but no
+episode closes). Trench-minus-net4 endpoint 22/176 = 12.5% at u3000
+(pilot T1 reached 38.6% at u10000). Watch item: failing straight episodes
+regress (median dig_fraction 0.875 -> 0.381) while successes grow, i.e.
+finish-or-stall sharpening. W&B logs no per-family or per-condition eval;
+the panel eval is the only family-resolved instrument. Throughput drifts
+3.67 -> 4.0 s/update (ETA 108 h vs 115 h wall); a manual continuation via
+`TERRA_RESUME_FROM` may be needed near the end. Receipts:
+scratchpad `gen_u3000_panel/` (session-local).
+
 **Job `12511685` (frontend off, 3090, `eu-g4-007`) FAILED the same way** at
 the first update, and its log shows even the legacy algorithms disagreeing by
 ~50% on the bf16 backward-filter convs. Verdict: the failure is independent
