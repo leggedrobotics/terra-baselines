@@ -17,16 +17,31 @@ terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
 
 TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_merge_main_20260902}"
 
-# ---- pinned pilot inputs (filled from the enrichment manifest) --------------
-BANK_ARCHIVE=/home/lorenzo/moleworks/.artifacts/terra_v8_trench_finite_enriched_20260819/terra_v2_generalist_pooled_bank_20260901.tar.zst
-BANK_ARCHIVE_SHA=1125177d322df6097f8da9f67ec95fe48762e16327f83dc157ec282b24993fb3
-BANK_MAPS_PATH=train_v2_pooled_generalist
-BANK_DATASET_SIZE=3840
+# ---- pinned inputs, per arm --------------------------------------------------
+ARMS="${ARMS:-gen}"                     # space-separated: gen spec
+GPU_TYPE="${GPU_TYPE:-rtx_4090}"        # rtx_4090 | rtx_3090 (4 per job)
+bank_for_arm() {
+    case "$1" in
+        gen)
+            BANK_ARCHIVE=/home/lorenzo/moleworks/.artifacts/terra_v8_trench_finite_enriched_20260819/terra_v2_generalist_pooled_bank_20260901.tar.zst
+            BANK_ARCHIVE_SHA=1125177d322df6097f8da9f67ec95fe48762e16327f83dc157ec282b24993fb3
+            BANK_MAPS_PATH=train_v2_pooled_generalist
+            BANK_DATASET_SIZE=3840
+            BANK_ANCHOR='&v2gen_bank' ;;
+        spec)
+            BANK_ARCHIVE=/home/lorenzo/moleworks/.artifacts/terra_v8_trench_finite_enriched_20260819/terra_v2_trench15_pooled_bank_20260902.tar.zst
+            BANK_ARCHIVE_SHA=788e47444d51a0281c1dbddfaea12683a90890afe2ee889cee6bc254ea002a72
+            BANK_MAPS_PATH=train_v2_pooled_trench15
+            BANK_DATASET_SIZE=1440
+            BANK_ANCHOR='&v2spec_bank' ;;
+        *) echo "unknown arm $1" >&2; exit 2 ;;
+    esac
+}
 # Frozen R2 receipt: canonical_distance_sidecar_dataset_sha256 of the enriched
 # bank (.artifacts/terra_v8_trench_finite_enriched_20260819/dataset.json).
 BANK_DISTANCE_SIDECAR_SHA=f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980
 EXPECTED_PARAMETERS=2307645
-TRENCH_TERRA_REVISION_PIN=facc44e66aa36e6132267afaa4e3b9e0f38722f7
+TRENCH_TERRA_REVISION_PIN=c383b0b13c59e12b940fc6f44f3ecc86074716c4
 SEED=20260901
 TARGET_UPDATE=100000
 # -----------------------------------------------------------------------------
@@ -35,7 +50,7 @@ REMOTE_HOST="${REMOTE_HOST:-euler-$TERRA_EULER_USER}"
 REMOTE_VENV="${TERRA_REMOTE_VENV:-/cluster/project/rsl/lterenzi/terra_curriculum_20260730_c14bd7d_3ce0e84_py312_jax0426}"
 REMOTE_WORK_ROOT="${TERRA_REMOTE_WORK_ROOT:-$TERRA_EULER_SCRATCH_ROOT/codex_terra_edge_validation}"
 REMOTE_RUN_ROOT="${TERRA_REMOTE_RUN_ROOT:-$TERRA_EULER_SCRATCH_ROOT/codex_terra_edge_runs}"
-CAMPAIGN=terra_trench_align_v2_generalist
+CAMPAIGN="${CAMPAIGN:-terra_trench_align_v2_generalist}"
 REMOTE_WORK="$REMOTE_WORK_ROOT/$CAMPAIGN"
 REMOTE_RUNS="$REMOTE_RUN_ROOT/$CAMPAIGN/runs"
 REMOTE_INPUTS="$REMOTE_RUN_ROOT/$CAMPAIGN/inputs"
@@ -51,13 +66,15 @@ test -z "$(git -C "$TERRA_REPO" status --porcelain)"
 BASELINES_REVISION="$(git -C "$REPO" rev-parse HEAD)"
 RUNTIME_TERRA_REVISION="$(git -C "$TERRA_REPO" rev-parse HEAD)"
 test "$RUNTIME_TERRA_REVISION" = "$TRENCH_TERRA_REVISION_PIN"
-test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_ARCHIVE_SHA"
-grep -q "path: &v2gen_bank $BANK_MAPS_PATH\$" \
-    "$REPO/configs/training_configs.yaml"
+for ARM in $ARMS; do
+    bank_for_arm "$ARM"
+    test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_ARCHIVE_SHA"
+    grep -q "path: $BANK_ANCHOR $BANK_MAPS_PATH\$" "$REPO/configs/training_configs.yaml"
+done
 
 echo "terra_baselines_revision=$BASELINES_REVISION"
 echo "runtime_terra_revision=$RUNTIME_TERRA_REVISION"
-echo "arm=gen (v2 generalist, gate on, yaw-only) seed=$SEED devices=4 envs_per_device=512 target=$TARGET_UPDATE"
+echo "arms=$ARMS gpu=$GPU_TYPE x4 (gate on, parallel + on the line) seed=$SEED envs_per_device=512 target=$TARGET_UPDATE"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: local contract passed; no external mutation"
     exit 0
@@ -83,12 +100,15 @@ if ! remote "test -e '$REMOTE_TERRA'"; then
 fi
 remote "mkdir -p '$REMOTE_INPUTS' '$REMOTE_RUNS'"
 
-REMOTE_BANK="$REMOTE_INPUTS/trench-bank-$BANK_ARCHIVE_SHA.tar.zst"
-if ! remote "test -f '$REMOTE_BANK'"; then
-    scp -q -o BatchMode=yes "$BANK_ARCHIVE" "$REMOTE_HOST:$REMOTE_BANK.partial.$$"
-    remote "test \"\$(sha256sum '$REMOTE_BANK.partial.$$' | awk '{print \$1}')\" = '$BANK_ARCHIVE_SHA' && mv -T '$REMOTE_BANK.partial.$$' '$REMOTE_BANK'"
-fi
-remote "test \"\$(sha256sum '$REMOTE_BANK' | awk '{print \$1}')\" = '$BANK_ARCHIVE_SHA'"
+upload_bank() {
+    REMOTE_BANK="$REMOTE_INPUTS/trench-bank-$BANK_ARCHIVE_SHA.tar.zst"
+    if ! remote "test -f '$REMOTE_BANK'"; then
+        scp -q -o BatchMode=yes "$BANK_ARCHIVE" "$REMOTE_HOST:$REMOTE_BANK.partial.$$"
+        remote "test \"\$(sha256sum '$REMOTE_BANK.partial.$$' | awk '{print \$1}')\" = '$BANK_ARCHIVE_SHA' && mv -T '$REMOTE_BANK.partial.$$' '$REMOTE_BANK'"
+    fi
+    remote "test \"\$(sha256sum '$REMOTE_BANK' | awk '{print \$1}')\" = '$BANK_ARCHIVE_SHA'"
+}
+for ARM in $ARMS; do bank_for_arm "$ARM"; upload_bank; done
 
 PARTITION=gpuhe.120h
 WALLTIME=119:45:00
@@ -98,12 +118,13 @@ if [ "$SUBMIT" = stage ]; then
     exit 0
 fi
 
-for ARM in gen; do
-    RUN_NAME="trench_align_v2gen_${ARM}_${BASELINES_REVISION:0:12}_s${SEED}"
+for ARM in $ARMS; do
+    bank_for_arm "$ARM"; upload_bank
+    RUN_NAME="trench_align_v2_${ARM}_${BASELINES_REVISION:0:12}_s${SEED}"
     RUN_DIR="$REMOTE_RUNS/$BASELINES_REVISION/s$SEED/$ARM"
     remote "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
-    EXPORTS="ALL,ARM=$ARM,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,SEED=$SEED,VENV=$REMOTE_VENV,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$BANK_ARCHIVE_SHA,BANK_MAPS_PATH=$BANK_MAPS_PATH,BANK_DATASET_SIZE=$BANK_DATASET_SIZE,BANK_DISTANCE_SIDECAR_SHA=$BANK_DISTANCE_SIDECAR_SHA,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,TARGET_UPDATE=$TARGET_UPDATE"
-    JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_v2/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='$PARTITION' --time='$WALLTIME' --gpus='rtx_4090:4' --cpus-per-task='8' --exclude='eu-g6-064' --job-name='terra-trench-v2gen' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
+    EXPORTS="ALL,ARM=$ARM,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,SEED=$SEED,VENV=$REMOTE_VENV,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$BANK_ARCHIVE_SHA,BANK_MAPS_PATH=$BANK_MAPS_PATH,BANK_DATASET_SIZE=$BANK_DATASET_SIZE,BANK_DISTANCE_SIDECAR_SHA=$BANK_DISTANCE_SIDECAR_SHA,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,GPU_TYPE=$GPU_TYPE,TARGET_UPDATE=$TARGET_UPDATE"
+    JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_v2/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='$PARTITION' --time='$WALLTIME' --gpus="$GPU_TYPE:4" --cpus-per-task='8' --exclude='eu-g6-064' --job-name="terra-trench-v2$ARM" --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
     JOB_ID="${JOB_RAW%%;*}"
     [[ "$JOB_ID" =~ ^[0-9]+$ ]]
     printf '%s\n' "arm=$ARM job_id=$JOB_ID run_dir=$RUN_DIR"

@@ -8,9 +8,12 @@
 #SBATCH --time=119:45:00
 #SBATCH --no-requeue
 
-# v2 generalist: foundation + trench with the fresh-trench gate ON under the
-# corrected v2 semantics (yaw-parallel only; standoff band not enforced).
-# ARM=gen selects the YAML preset trench_align_v2_generalist_gen.
+# v2 arms with the fresh-trench gate ON under the corrected semantics (parallel
+# to the section axis AND on the line; the retired standoff band is off).
+# ARM=gen  -> trench_align_v2_generalist_gen  (foundation + trench, 40 cond)
+# ARM=spec -> trench_align_v2_specialist_spec (trench only, 15 cond)
+# GPU_TYPE selects the node class (rtx_4090 | rtx_3090); the in-job guard
+# refuses any other model.
 
 set -euo pipefail
 umask 027
@@ -19,12 +22,21 @@ for REQUIRED in ARM TARGET_UPDATE RUN_DIR RUN_NAME BASELINES_ROOT \
     BASELINES_REVISION RUNTIME_TERRA_ROOT RUNTIME_TERRA_REVISION SEED VENV \
     TERRA_EULER_USER TERRA_EULER_HOME_ROOT WANDB_ENTITY WANDB_PROJECT \
     BANK_ARCHIVE BANK_ARCHIVE_SHA BANK_MAPS_PATH BANK_DATASET_SIZE \
-    BANK_DISTANCE_SIDECAR_SHA \
+    BANK_DISTANCE_SIDECAR_SHA GPU_TYPE \
     EXPECTED_PARAMETERS SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
-case "$ARM" in gen) ;; *) echo "ARM must be gen" >&2; exit 2 ;; esac
+case "$ARM" in
+    gen)  CONFIG="trench_align_v2_generalist_gen" ;;
+    spec) CONFIG="trench_align_v2_specialist_spec" ;;
+    *) echo "ARM must be gen or spec" >&2; exit 2 ;;
+esac
+case "$GPU_TYPE" in
+    rtx_4090) GPU_MODEL="RTX 4090" ;;
+    rtx_3090) GPU_MODEL="RTX 3090" ;;
+    *) echo "GPU_TYPE must be rtx_4090 or rtx_3090" >&2; exit 2 ;;
+esac
 test "$(id -un)" = "$TERRA_EULER_USER"
 test "$HOME" = "$TERRA_EULER_HOME_ROOT"
 test "$(cat "$BASELINES_ROOT/REVISION")" = "$BASELINES_REVISION"
@@ -48,14 +60,13 @@ export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-con
 export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -eq 4
-nvidia-smi --query-gpu=name --format=csv,noheader | grep -qv "RTX 4090" && exit 3
+nvidia-smi --query-gpu=name --format=csv,noheader | grep -qv "$GPU_MODEL" && exit 3
 "$PYTHON" - <<'PY'
 import jax
 
 assert jax.local_device_count() == 4, jax.devices()
 PY
 
-CONFIG="trench_align_v2_generalist_${ARM}"
 EXPECTED_PARAMETERS="$EXPECTED_PARAMETERS" CONFIG="$CONFIG" "$PYTHON" - <<'PY'
 import os
 from types import SimpleNamespace
@@ -90,7 +101,7 @@ assert count == int(os.environ["EXPECTED_PARAMETERS"]), count
 PY
 
 export WANDB_ENTITY WANDB_PROJECT WANDB_MODE=online WANDB_RESUME=never
-export WANDB_RUN_ID="trench_align_v2gen_${ARM}_${BASELINES_REVISION:0:10}_s${SEED}"
+export WANDB_RUN_ID="trench_align_v2_${ARM}_${BASELINES_REVISION:0:10}_s${SEED}"
 export WANDB_DIR="$RUN_DIR/wandb"
 scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/slurm_job.txt"
 nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
@@ -105,6 +116,7 @@ printf '%s\n' \
     "status=RUNNING" \
     "experiment=trench_align_v2_generalist" \
     "arm=$ARM" \
+    "gpu_type=$GPU_TYPE" \
     "config=$CONFIG" \
     "terra_baselines_revision=$BASELINES_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \

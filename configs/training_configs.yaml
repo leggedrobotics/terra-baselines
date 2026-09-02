@@ -1101,3 +1101,25 @@ trench_align_v2_generalist_gen:
       max_steps: 450
       rewards_type: DENSE
       apply_trench_rewards: false
+
+# v2 trench specialist: trench-only (all 15 trench conditions incl. net4,
+# re-admitted under v2), fresh-trench gate ON under the corrected semantics
+# (parallel to the axis AND on the line, bound EnvConfig default 2.0 m).
+trench_align_v2_specialist_spec:
+  description: v2 trench specialist (15 trench conditions) with the fresh-trench gate on, on-the-line semantics
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  trench_alignment_observation: true
+  require_trench_alignment_metadata: true
+  enforce_trench_dig_alignment: true
+  trench_dig_standoff_enforced: false
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: &v2spec_bank train_v2_pooled_trench15
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
