@@ -37,16 +37,20 @@ disagreement raises.  So the reported completion rate is a *verified* lower
 bound on what the episode contract admits, and the step counts are directly
 comparable with the 450-step horizon.
 
-GATE SEMANTICS.  The run measures **v2** by default (yaw-parallel only; working
-distance is the dig cone's job, tested radially machine -> cell) and
-``--gate-v1`` measures the retired v1 semantics, which additionally required the
-perpendicular base-centre-to-axis standoff to sit in a 3.5-7.0 m lateral band.
-The flag is forced onto the resolved env config and asserted, never inherited
-from the checkpoint: v1 and v2 admit different stations, so a run that does not
-say which one it measured is not comparable with anything.  Under v2 the
-controller prefers ON-AXIS stations (perpendicular offset inside the retired
-3.5 m floor -- dig ahead along the trench line, then retreat), which is the
-station class v1 refused outright.
+GATE SEMANTICS.  The run measures **v2** by default (yaw-parallel AND "on the
+line": the base centre's perpendicular offset from the section axis is at most
+``EnvConfig.trench_dig_max_offset_m``, ``--max-offset-m``, and any value <= 0
+disables that clause; working distance itself is the dig cone's job, tested
+radially machine -> cell).  ``--gate-v1`` measures the retired v1 semantics,
+which instead required that perpendicular standoff to sit in a 3.5-7.0 m
+lateral band.  Both the flag and the bound are forced onto the resolved env
+config and asserted, never inherited from the checkpoint: they admit different
+stations, so a run that does not say what it measured is not comparable with
+anything.  Under v2 the controller prefers ON-AXIS stations (perpendicular
+offset inside the retired 3.5 m floor -- dig ahead along the trench line, then
+retreat), which is the station class v1 refused outright; with an on-the-line
+bound at or below that floor every admitted station is on-axis, and
+``stations_on_axis == stations`` in the receipt is the proof.
 
 TWO GUARANTEES the controller enforces rather than hopes for:
 
@@ -671,7 +675,7 @@ class SlotOracle:
 
     def __init__(self, index, cell, target, padding, dumpability_init, records,
                  naxes, membership, geom, tile_size, yaw_tol, so_min, so_max,
-                 standoff_enforced, dig_depth):
+                 standoff_enforced, dig_depth, max_offset=0.0):
         self.index = index
         self.cell = cell
         self.target = target.astype(np.int32)
@@ -718,19 +722,31 @@ class SlotOracle:
 
         # Pose validity per (section, heading, cell), exactly as the gate tests
         # it.  v1 (standoff_enforced): yaw-parallel AND inside the lateral
-        # standoff band.  v2 (the default): yaw-parallel, full stop -- working
-        # distance is the dig cone's job and it is tested radially,
-        # machine -> cell, so standing ON the trench line is legal.
+        # standoff band.  v2 (the default): yaw-parallel AND "on the line" --
+        # the base centre's perpendicular offset from the axis is at most
+        # ``max_offset`` metres (<= 0 disables that clause).  Working distance
+        # is the dig cone's job and it is tested radially, machine -> cell, so
+        # standing ON the trench line is legal; standing parallel but metres to
+        # the SIDE (the retired v1 lane) is what the bound refuses.
         self.standoff_enforced = bool(standoff_enforced)
+        self.max_offset = float(max_offset)
+        self.on_line = (self.standoff <= np.float32(self.max_offset)
+                        if (not self.standoff_enforced and self.max_offset > 0.0)
+                        else np.ones_like(self.band))
         self.dig_depth = int(dig_depth)
         self.pose_ok = np.zeros((max(self.naxes, 1), NH) + SHAPE, dtype=bool)
         for a in range(self.naxes):
             for bh in range(NH):
                 if not self.yaw_ok[bh, a]:
                     continue
-                self.pose_ok[a, bh] = self.band[a] if self.standoff_enforced else True
+                self.pose_ok[a, bh] = (self.band[a] if self.standoff_enforced
+                                       else self.on_line[a])
         # "on axis" = nearer the section line than the retired v1 floor: the
-        # dig-ahead-retreat station v1 refused and v2 admits.
+        # dig-ahead-retreat station v1 refused and v2 admits.  It is the
+        # station-selection preference (ON_AXIS_BONUS) and the reported
+        # counter.  With an on-the-line bound at or below that floor every
+        # admitted station is on-axis by construction, so stations_on_axis ==
+        # stations is the receipt that the clause bound the pose set.
         self.on_axis = self.standoff < np.float32(so_min)
 
         # Order-independent worst case: a pose that stays legal with the whole
@@ -1075,8 +1091,11 @@ def attribute_stall(o: SlotOracle, action_map, last_dig, fp_free, dist):
     n = remaining.shape[0]
     index = -np.ones(SHAPE, dtype=np.int32)
     index[remaining[:, 0], remaining[:, 1]] = np.arange(n)
-    pose_stage = ("pose_in_band_and_parallel" if o.standoff_enforced
-                  else "pose_yaw_parallel")
+    pose_stage = (
+        "pose_in_band_and_parallel" if o.standoff_enforced
+        else ("pose_on_line_and_parallel" if o.max_offset > 0.0
+              else "pose_yaw_parallel")
+    )
     stages = ["in_cone_without_obstacle", pose_stage,
               "no_perpendicular_veto", "no_pile_in_cone",
               "pose_footprint_legal", "pose_persistent", "pose_reachable",
@@ -1251,6 +1270,12 @@ def main() -> None:
         help="run the retired v1 gate semantics (perpendicular standoff band "
              "ENFORCED, EnvConfig.trench_dig_standoff_enforced=True) instead of "
              "the shipped v2 yaw-parallel-only semantics")
+    ap.add_argument(
+        "--max-offset-m", type=float, default=None,
+        help="v2 'on the line' bound (Terra EnvConfig.trench_dig_max_offset_m, "
+             "metres): the base centre's perpendicular offset from the section "
+             "axis. <= 0 disables the clause (yaw-parallel only). Inert under "
+             "--gate-v1. Default: Terra's own config value.")
     ap.add_argument("--slot-limit-per-cell", type=int, default=0)
     ap.add_argument("--horizon", type=int, default=450)
     ap.add_argument("--extended-horizon", type=int, default=0)
@@ -1306,7 +1331,13 @@ def main() -> None:
             "this baselines revision predates the gate-semantics selector; "
             "trench_dig_standoff_enforced is required")
     config.trench_dig_standoff_enforced = bool(args.gate_v1)
-    print(f"gate semantics: {'v1 (standoff band ENFORCED)' if args.gate_v1 else 'v2 (yaw-parallel only)'}",
+    if not hasattr(config, "trench_dig_max_offset_m"):
+        raise RuntimeError(
+            "this baselines revision predates the v2 'on the line' clause; "
+            "trench_dig_max_offset_m is required")
+    if args.max_offset_m is not None:
+        config.trench_dig_max_offset_m = float(args.max_offset_m)
+    print(f"gate semantics: {'v1 (standoff band ENFORCED)' if args.gate_v1 else 'v2 (yaw-parallel + on the line)'}",
           flush=True)
     _, env, env_params, _ = make_mixed_agent_states(config)
     env_params = jax.tree_util.tree_map(lambda v: v[0], env_params)
@@ -1336,6 +1367,26 @@ def main() -> None:
         raise RuntimeError(
             f"resolved env gate semantics standoff_enforced={standoff_enforced} "
             f"but --gate-v1={bool(args.gate_v1)} was requested")
+    if not hasattr(resolved, "trench_dig_max_offset_m"):
+        raise RuntimeError(
+            "resolved env config predates the v2 'on the line' clause")
+    max_offset = float(
+        np.ravel(np.asarray(resolved.trench_dig_max_offset_m))[0]
+    )
+    # float32 round-trip through the env config: compare at float32 precision.
+    if args.max_offset_m is not None and abs(
+        max_offset - float(np.float32(args.max_offset_m))
+    ) > 1e-6 * max(1.0, abs(max_offset)):
+        raise RuntimeError(
+            f"resolved trench_dig_max_offset_m={max_offset} but "
+            f"--max-offset-m={args.max_offset_m} was requested")
+    print(
+        "on-line clause: "
+        + ("inert under v1" if standoff_enforced else
+           ("DISABLED (yaw-parallel only)" if max_offset <= 0.0
+            else f"perpendicular offset <= {max_offset:.4f} m")),
+        flush=True,
+    )
     dig_depth = int(np.ravel(np.asarray(resolved.agent.dig_depth))[0])
     agent_w = int(np.ravel(np.asarray(resolved.agent.width))[0])
     agent_h = int(np.ravel(np.asarray(resolved.agent.height))[0])
@@ -1378,7 +1429,7 @@ def main() -> None:
         oracles.append(SlotOracle(
             k, slot_rows[k]["primary_cell"], target[k], padding[k], dump_init[k],
             records[k], ttype[k], membership[k], geom, tile_size, yaw_tol, so_min, so_max,
-            standoff_enforced, dig_depth,
+            standoff_enforced, dig_depth, max_offset,
         ))
     required = np.array([int((target[k] < 0).sum()) for k in range(count)])
 
@@ -1828,6 +1879,13 @@ def main() -> None:
             "gate": True, "horizon": args.horizon, "stepped_horizon": horizon,
             "gate_semantics": "v1" if args.gate_v1 else "v2",
             "trench_dig_standoff_enforced": standoff_enforced,
+            "trench_dig_max_offset_m": max_offset,
+            "max_offset_forced": args.max_offset_m is not None,
+            "on_line_clause": (
+                "inert under v1" if standoff_enforced else
+                ("disabled (yaw-parallel only)" if max_offset <= 0.0
+                 else f"perpendicular offset <= {max_offset} m")
+            ),
             "yaw_tolerance_rad": yaw_tol,
             "standoff_band_m": [so_min, so_max],
             "navigation": "persistent_poses_with_spawn_first_leg_exception",
