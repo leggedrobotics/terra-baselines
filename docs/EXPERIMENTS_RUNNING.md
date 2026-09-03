@@ -607,3 +607,19 @@ Terra `171cf116`, terra-baselines `ba08192`, 4 x RTX 4090, cuDNN repair
 `/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_generalist/runs/ba08192…/s20260901/genpc`;
 W&B `trench_align_v2_genpc_ba08192ca3_s20260901`.
 
+### v2 trench specialist on CSCS Daint, per-cell + relocation/admissible-dig observations (submitted 2026-09-03)
+
+Same epoch as the Euler generalist: Terra `171cf116`, terra-baselines
+`ba08192`, preset `trench_align_v2_specialist_spec` with
+`--relocation_distance_observation --admissible_dig_observation` (obs length
+25, 2,311,701 parameters), bank `terra_v2_trench15_pooled_bank_20260902`
+(1,440 maps), seed 20260901, 4 x GH200, W&B offline. Run id
+`terra-v2specpc-obs-ba08192-s20260901`; chain **A `4592317`** (running,
+`nid005567`) -> **B `4592319`** (afterany A, `--resume-latest`) -> **C
+`4592320`** (afterany B). Steady rate about 2.2 s/update between evals
+(updates 40 -> 80 in 88 s), unchanged from the veto-era run. An interim
+chain for run id `terra-v2specpc-7989a9b-s20260901` (Terra a4da127a,
+without the observation flags; jobs `4592193` / `4592194` / `4592197`) was
+cancelled before it reached update 500. The user's own chain
+`terra-v2spec-obs-ad9ee96-s20260901` (jobs 4588229-4588231) is untouched.
+
