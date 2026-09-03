@@ -278,6 +278,25 @@ the panel eval is the only family-resolved instrument. Throughput drifts
 `TERRA_RESUME_FROM` may be needed near the end. Receipts:
 scratchpad `gen_u3000_panel/` (session-local).
 
+**Generalist u10000 panel (2026-09-03, same gate_main/development recipe,
+matched update with the pilot U10000 readout).** Whole panel 279/608 =
+45.9% (pilot T1 73/608, C0 raw 204/608). Foundation 226/384 = 58.9%, every
+one of the 24 foundation conditions closes episodes (best
+`v7-fnd-pads-adjacent` 16/16, `fnd-slab-ring3x` 15/16; T1 4/384, C0
+12/384). Trench straights 53/64 = 82.8% (T1 41/64), closing in 113 steps
+mean. Junctions 0/160: tee 0/32, seg 0/32, net3 0/48, net4 0/48 (T1 had
+27/112 across tee/seg/net3); graded terminal_absolute 0.19-0.28 there, so
+material moves but episodes stall at the 450 cap. Pilot endpoint (trench
+minus net4, admissible): 53/176 = 30.1% vs T1 68/176 = 38.6%; the whole
+gap is the junction gap. u5000 -> u10000: 31/608 -> 279/608, foundation
+0 -> 226, straights 31 -> 53, junctions flat at 0. Receipts clean
+(integrity passed, no horizon censoring, manifest 1216bee3be9f). Caveat:
+v2 does not enforce the standoff band, so admissibility is marginally
+looser than T1's (about 0.8% of T1's blocked attempts were standoff-only).
+Watch item for u20000: any junction completion; if tee/seg/net stay at
+zero, the junction veto under v2 needs a look before calling it an RL
+difficulty. Receipts: scratchpad `gen_u10000_panel/`.
+
 **Job `12511685` (frontend off, 3090, `eu-g4-007`) FAILED the same way** at
 the first update, and its log shows even the legacy algorithms disagreeing by
 ~50% on the bf16 backward-filter convs. Verdict: the failure is independent
