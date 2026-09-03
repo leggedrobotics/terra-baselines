@@ -44,7 +44,7 @@ bank_for_arm() {
 # bank (.artifacts/terra_v8_trench_finite_enriched_20260819/dataset.json).
 BANK_DISTANCE_SIDECAR_SHA=f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980
 EXPECTED_PARAMETERS=2311701
-TRENCH_TERRA_REVISION_PIN=a4da127a006a3315f1c43aefaf5c7091f6552dfb  # per-cell junction admission (veto removed)
+TRENCH_TERRA_REVISION_PIN=171cf116f09160299140cebd012eda6f323c4f5d  # main: relocation/admissible-dig obs export (09712ad5) + junction veto removed
 SEED=20260901
 TARGET_UPDATE=100000
 # -----------------------------------------------------------------------------
