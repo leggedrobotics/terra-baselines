@@ -116,10 +116,6 @@ class TrainingConfig:
     # perpendicular base-centre-to-axis offset ceiling in metres; <= 0 disables
     # it (yaw-parallel only).  Inert under v1.  None leaves Terra's default.
     trench_dig_max_offset_m: Optional[float] = None
-    # Junction admission (Terra EnvConfig.trench_dig_per_cell_admission): True
-    # digs the aligned fresh cells in the cone and leaves the rest instead of
-    # vetoing the whole DO at multi-section junctions. None = Terra default.
-    trench_dig_per_cell_admission: Optional[bool] = None
 
 
 # Cache for loaded configs
@@ -231,7 +227,6 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             ),
             trench_dig_standoff_enforced=cfg.get("trench_dig_standoff_enforced"),
             trench_dig_max_offset_m=cfg.get("trench_dig_max_offset_m"),
-            trench_dig_per_cell_admission=cfg.get("trench_dig_per_cell_admission"),
         )
 
     _CONFIGS_LOADED = True

@@ -53,8 +53,8 @@ fi
 case "$ARM" in
     gen)  CONFIG="trench_align_v2_generalist_gen" ;;
     spec) CONFIG="trench_align_v2_specialist_spec" ;;
-    genpc) CONFIG="trench_align_v2pc_generalist_gen" ;;
-    specpc) CONFIG="trench_align_v2pc_specialist_spec" ;;
+    genpc) CONFIG="trench_align_v2_generalist_gen" ;;    # per-cell junction admission epoch (Terra >= 2026-09-03)
+    specpc) CONFIG="trench_align_v2_specialist_spec" ;;  # same preset; the Terra pin carries the semantics
     *) echo "ARM must be gen, spec, genpc or specpc" >&2; exit 2 ;;
 esac
 case "$GPU_TYPE" in
@@ -191,7 +191,7 @@ printf '%s\n' \
     "bank_archive_sha256=$BANK_ARCHIVE_SHA" \
     "bank_maps_path=$BANK_MAPS_PATH" \
     "bank_dataset_size=$BANK_DATASET_SIZE" \
-    "gate_semantics=$(case "$ARM" in *pc) echo v2_yaw_parallel_on_the_line_per_cell_admission ;; *) echo v2_yaw_parallel_and_on_the_line_all_or_nothing ;; esac)" \
+    "gate_semantics=v2_yaw_parallel_on_the_line_per_cell_admission" \
     "gate_max_offset_m=$("$PYTHON" -c 'from terra.config import EnvConfig; print(EnvConfig().trench_dig_max_offset_m)')" \
     "reward_stage=reward_v2" \
     "reward_v2_timing_variant=0" \

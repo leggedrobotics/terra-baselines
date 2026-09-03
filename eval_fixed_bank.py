@@ -192,13 +192,6 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             contract["trench_dig_alignment"]["trench_dig_standoff_enforced"] = bool(
                 standoff_enforced
             )
-        # Junction admission (per-cell vs all-or-nothing) changes what a DO
-        # digs at multi-section junctions; same opt-in rule as above.
-        per_cell_admission = _field(config, "trench_dig_per_cell_admission")
-        if per_cell_admission is not None:
-            contract["trench_dig_alignment"]["trench_dig_per_cell_admission"] = bool(
-                per_cell_admission
-            )
     if bool(_field(config, "movement_feasibility_observation", False)):
         contract["architecture"]["movement_feasibility_observation"] = True
     if bool(_field(config, "previous_outcome_observation", False)):
