@@ -21,6 +21,9 @@ def test_euler_trench_v2_defaults_to_the_coherent_cudnn9_runtime() -> None:
     assert RUNTIME_LOCK_SHA in submit
     assert 'CUDNN_REPAIR="${TERRA_CUDNN_REPAIR:-none}"' in submit
     assert 'MAX_ATTEMPTS="${TERRA_MAX_ATTEMPTS:-0}"' in submit
+    assert 'TERRA_SLURM_DEPENDENCY:-none' in submit
+    assert "^afterok:[0-9]+$" in submit
+    assert 'DEPENDENCY_OPTION="--dependency=$SLURM_DEPENDENCY"' in submit
     assert "RUNTIME_LOCK_SHA=$RUNTIME_LOCK_SHA" in submit
 
     assert "module load stack/2024-06 eth_proxy" in sbatch
