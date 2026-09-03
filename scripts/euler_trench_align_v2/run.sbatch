@@ -20,6 +20,7 @@ umask 027
 
 for REQUIRED in ARM TARGET_UPDATE RUN_DIR RUN_NAME BASELINES_ROOT \
     BASELINES_REVISION RUNTIME_TERRA_ROOT RUNTIME_TERRA_REVISION SEED VENV \
+    RUNTIME_LOCK_SHA \
     TERRA_EULER_USER TERRA_EULER_HOME_ROOT WANDB_ENTITY WANDB_PROJECT \
     BANK_ARCHIVE BANK_ARCHIVE_SHA BANK_MAPS_PATH BANK_DATASET_SIZE \
     BANK_DISTANCE_SIDECAR_SHA GPU_TYPE \
@@ -27,13 +28,12 @@ for REQUIRED in ARM TARGET_UPDATE RUN_DIR RUN_NAME BASELINES_ROOT \
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
-# cuDNN 8.9.7 on this stack fails CUDNN_STATUS_EXECUTION_FAILED at the first
-# _update_step in roughly two of three starts (both GPU classes, any plan
-# selection; see docs/EXPERIMENTS_RUNNING.md 2026-09-02). A failed attempt
-# resubmits itself with ATTEMPT+1 into the same RUN_DIR; if a checkpoint exists
-# it resumes from the latest one (model, optimizer, absolute update clock).
+# The default runtime is the coherent JAX 0.4.33 / CUDA 12.6 / cuDNN 9.5
+# environment validated by a separate cold-start smoke. Runtime failures fail
+# closed. The retry path remains only for explicit reproduction with an older
+# runtime; it is disabled by default in submit.sh.
 ATTEMPT="${ATTEMPT:-0}"
-MAX_ATTEMPTS="${MAX_ATTEMPTS:-6}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-0}"
 RESUME_FROM="${RESUME_FROM:-none}"
 RESUBMIT_SBATCH_ARGS="${RESUBMIT_SBATCH_ARGS:-}"
 [[ "$ATTEMPT" =~ ^[0-9]+$ ]] || exit 2
@@ -67,6 +67,7 @@ test "$HOME" = "$TERRA_EULER_HOME_ROOT"
 test "$(cat "$BASELINES_ROOT/REVISION")" = "$BASELINES_REVISION"
 test "$(cat "$RUNTIME_TERRA_ROOT/REVISION")" = "$RUNTIME_TERRA_REVISION"
 test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_ARCHIVE_SHA"
+test "$(sha256sum "$VENV/requirements.lock.txt" | awk '{print $1}')" = "$RUNTIME_LOCK_SHA"
 
 mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/wandb"
 tar --zstd -xf "$BANK_ARCHIVE" -C "$TMPDIR" bank
@@ -74,26 +75,24 @@ export DATASET_PATH="$TMPDIR/bank"
 export DATASET_SIZE="$BANK_DATASET_SIZE"
 test -d "$DATASET_PATH/$BANK_MAPS_PATH/metadata"
 
-module load stack/2024-06 cuda/12.1.1 eth_proxy
+module purge >/dev/null 2>&1 || true
+module load stack/2024-06 eth_proxy
 PYTHON="$VENV/bin/python"
-SITE_PACKAGES="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
 export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false JAX_PLATFORMS=cuda,cpu
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
-export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if printf '%s' "${LD_LIBRARY_PATH:-}" | grep -Eqi 'cuda|cudnn|cublas|nccl|nvrtc'; then
+    echo "CUDA libraries leaked into LD_LIBRARY_PATH: $LD_LIBRARY_PATH" >&2
+    exit 3
+fi
 
 test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -eq 4
 nvidia-smi --query-gpu=name --format=csv,noheader | grep -qv "$GPU_MODEL" && exit 3
 
-# RTX 4090 (cc 8.9, cuDNN 8.9.7, driver 580): cuDNN frontend engine 20 returns
-# wrong bf16 backward-filter results for these exact PPO minibatch shapes; job
-# 12505854 died before update 1 with CUDNN_STATUS_EXECUTION_FAILED. Reuse the
-# repair proven in euler_trench_align_generalist_partial_v1: level-4 autotuning,
-# the exact engine-20 denylist, and the four-GPU autotune cache that completed
-# native PPO updates (ledger revision 58e26fc9). Level 0 reproduced a ~8x slow
-# path there, so it is not used. RTX 3090 (cc 8.6) is unaffected and unchanged.
+# Legacy reproduction modes for the retired cuDNN 8.9.7 runtime. The clean
+# cuDNN 9 default must use none and must not load these graph-specific files.
 ALGORITHM_DENYLIST="$BASELINES_ROOT/scripts/euler_trench_align_v2/hlo_algorithm_denylist.pbtxt"
 AUTOTUNE_CACHE="${TERRA_AUTOTUNE_CACHE:-/cluster/project/rsl/alesweber/terra_runtime/autotune/terra_trench_align_generalist_partial_v1/rtx4090_cc89_cudnn897_jaxlib0426_45e2dbc_u3501.pbtxt}"
 AUTOTUNE_CACHE_SHA="698e856cae464e5fea93e0b2121fc8de4d9cb691135571ca4b5d56f3259d16a3"
@@ -104,7 +103,8 @@ AUTOTUNE_CACHE_SHA="698e856cae464e5fea93e0b2121fc8de4d9cb691135571ca4b5d56f3259d
 # which has no frontend engines at all; the local RTX 4090 battery of
 # 2026-09-02 ran it at the same steady-state speed as denylist+level 4
 # (~6 s/update, 30/30 updates, exact per-device shapes).
-CUDNN_REPAIR_MODE="${CUDNN_REPAIR_MODE:-auto}"
+CUDNN_REPAIR_MODE="${CUDNN_REPAIR_MODE:-none}"
+XLA_BASE_FLAGS="--xla_gpu_enable_latency_hiding_scheduler=true --xla_gpu_enable_triton_gemm=false --xla_gpu_mlir_emitter_level=0"
 if [ "$CUDNN_REPAIR_MODE" = auto ]; then
     if [ "$GPU_TYPE" = rtx_4090 ]; then CUDNN_REPAIR_MODE=denylist_cache; else CUDNN_REPAIR_MODE=frontend_off; fi
 fi
@@ -114,20 +114,32 @@ case "$CUDNN_REPAIR_MODE" in
         test -r "$ALGORITHM_DENYLIST"
         test -r "$AUTOTUNE_CACHE"
         test "$(sha256sum "$AUTOTUNE_CACHE" | awk '{print $1}')" = "$AUTOTUNE_CACHE_SHA"
-        export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$ALGORITHM_DENYLIST --xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
+        export XLA_FLAGS="$XLA_BASE_FLAGS --xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$ALGORITHM_DENYLIST --xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
         CUDNN_REPAIR="rtx4090_engine20_denylist+autotune_cache_${AUTOTUNE_CACHE_SHA:0:8}" ;;
     frontend_off)
-        export XLA_FLAGS="--xla_gpu_enable_cudnn_frontend=false --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
+        export XLA_FLAGS="$XLA_BASE_FLAGS --xla_gpu_enable_cudnn_frontend=false --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
         CUDNN_REPAIR="cudnn_frontend_off" ;;
     none)
-        CUDNN_REPAIR="none" ;;
+        export XLA_FLAGS="$XLA_BASE_FLAGS"
+        CUDNN_REPAIR="none_cudnn9" ;;
     *) echo "CUDNN_REPAIR_MODE must be auto, denylist_cache, frontend_off or none" >&2; exit 2 ;;
 esac
 "$PYTHON" - <<'PY'
-import jax
+import importlib.metadata as metadata
 
-assert jax.local_device_count() == 4, jax.devices()
+expected = {
+    "jax": "0.4.33",
+    "jaxlib": "0.4.33",
+    "jax-cuda12-plugin": "0.4.33",
+    "nvidia-cuda-runtime-cu12": "12.6.77",
+    "nvidia-cudnn-cu12": "9.5.0.50",
+    "nvidia-nccl-cu12": "2.23.4",
+}
+observed = {name: metadata.version(name) for name in expected}
+assert observed == expected, observed
+print("PASS pinned JAX CUDA runtime", observed)
 PY
+"$PYTHON" "$BASELINES_ROOT/cluster/cscs/check_jax_runtime.py" --min-devices 4
 
 EXPECTED_PARAMETERS="$EXPECTED_PARAMETERS" CONFIG="$CONFIG" "$PYTHON" - <<'PY'
 import os
@@ -182,6 +194,8 @@ printf '%s\n' \
     "arm=$ARM" \
     "gpu_type=$GPU_TYPE" \
     "cudnn_repair=$CUDNN_REPAIR" \
+    "runtime_venv=$VENV" \
+    "runtime_lock_sha256=$RUNTIME_LOCK_SHA" \
     "attempt=$ATTEMPT" \
     "max_attempts=$MAX_ATTEMPTS" \
     "resume_from=$RESUME_FROM" \
