@@ -297,6 +297,32 @@ Watch item for u20000: any junction completion; if tee/seg/net stay at
 zero, the junction veto under v2 needs a look before calling it an RL
 difficulty. Receipts: scratchpad `gen_u10000_panel/`.
 
+**Junction diagnosis at u10000 (rollout probe, 224 trench slots, patched to
+v2 semantics with per-step clause records; scratchpad
+`gen_u10000_junction_probe/`).** Explicit gate refusals are a non-event:
+61 in 224 episodes, confined to 2 episodes. The gate binds as DETERRENCE:
+the policy presses DO when the exported valid bit is 0 at 0.0-0.02% of
+steps. On junction maps the machine reaches a dig-opportunity pose (empty,
+fresh cell in cone) as often as on straights (26-34% of steps) but the gate
+marks 71 / 86 / 83 / 97% of those poses invalid (tee / seg / net3 / net4;
+straights 62%). Clause shares of the invalid poses: junction
+all-or-nothing 41 / 45 / 43 / 22% (straights 0% by construction), yaw-only
+54 / 54 / 47 / 60% (straights 56%), on-the-line 4 / 2 / 10 / 17%
+(straights 44%). Where the gate says valid, DO is pressed 12 / 23 / 13 /
+97% (straights 80%). Three classes among the 160 junction episodes: A (19)
+parked the whole horizon against the junction veto (dig 0.24; e.g. seg2
+slot 389: 0/68 cells, 437/438 opportunities vetoed because the +-30 deg
+cone straddles both oblique sections and no yaw is parallel to both);
+B (36) parked against the yaw clause (dig 0.25); C (105) rarely
+gate-blocked (dig 0.43) but 67% of post-stall moves refused by
+traversability (dug cells non-traversable, 7x11 chassis). All stop digging
+by step 40-60 and spend ~400 steps in 5-8 base cells; 90-96% of undug
+cells were inside cone reach of a visited pose. Illegal spoil (8-15 units)
+lands on neutral ground, not on trench cells (secondary). Verdict: mix of
+a structural junction veto (class A), yaw deterrence (B), an RL deficit
+(DO pressed at only 12-23% of valid junction poses) and a traversability
+deadlock (C). Next: per-cell admission variant probe (in flight).
+
 **Job `12511685` (frontend off, 3090, `eu-g4-007`) FAILED the same way** at
 the first update, and its log shows even the legacy algorithms disagreeing by
 ~50% on the bf16 backward-filter convs. Verdict: the failure is independent
