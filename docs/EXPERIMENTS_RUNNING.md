@@ -554,3 +554,33 @@ The archived Oracle response remains unchanged in
 [`research/ORACLE_TERRA_STAGING_REVIEW_20260814.md`](research/ORACLE_TERRA_STAGING_REVIEW_20260814.md).
 
 Completed historical runs remain in [`EXPERIMENTS_LOG.md`](EXPERIMENTS_LOG.md).
+
+## Per-cell junction admission epoch (2026-09-03)
+
+User decision after the geometric check: the all-or-nothing junction veto is
+removed from Terra (per-cell admission is the only behaviour; no switch).
+Terra `a4da127a` = branch `launch/trench-per-cell-20260903` (veto removal
+on top of `c703c4eb`; Terra main additionally received the unrelated
+`09712ad5` relocation-distance / admissible-dig-map export from another
+session, which is NOT part of this launch). terra-baselines `7989a9b`
+(flag threading dropped, arms `genpc` / `specpc` map to the v2 presets,
+run contract `gate_semantics=v2_yaw_parallel_on_the_line_per_cell_admission`,
+Terra pin a4da127a). Local gates: Terra alignment + dump-contract suites
+48/48 on a4da127a; local first-update smoke of the specialist preset on
+a4da127a (3/3 updates, finite checkpoint).
+
+Veto-era runs cancelled at 08:30 UTC: Euler generalist `12508156`
+(u14,000, 28 checkpoints kept on disk) and the CSCS specialist chain
+`4586880` / `4586997` / `4586999` (u18,000, 34 checkpoints kept). Their
+u10000 panel and probe receipts remain the veto baseline.
+
+### v2 generalist, per-cell (Euler, submitted 2026-09-03)
+
+Job `12640873`, arm `genpc`, preset `trench_align_v2_generalist_gen`,
+bank `train_v2_pooled_generalist` (3,840 maps, same archive), seed
+20260901, 4 x RTX 4090, cuDNN repair `auto` (denylist + pinned cache) with
+the self-resubmit chain (`MAX_ATTEMPTS`=6); run dir
+`/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_generalist/runs/7989a9b…/s20260901/genpc`;
+W&B `trench_align_v2_genpc_7989a9bea7_s20260901`. Attempt chain recorded in
+that run dir's `run_contract.attempt<N>.job<id>.env` files.
+
