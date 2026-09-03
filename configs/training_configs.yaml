@@ -1123,3 +1123,48 @@ trench_align_v2_specialist_spec:
       max_steps: 450
       rewards_type: DENSE
       apply_trench_rewards: false
+
+# v2pc arms: identical to the v2 arms except the junction admission. At u10000
+# the v2 generalist completed 0/160 junction panel episodes; the all-or-nothing
+# veto was 36% of its gate-invalid junction poses and structurally total between
+# oblique segments. Per-cell admission digs the aligned fresh cells and leaves
+# the others (Terra EnvConfig.trench_dig_per_cell_admission).
+trench_align_v2pc_generalist_gen:
+  description: v2 generalist with per-cell junction admission (gate on, on-the-line semantics)
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  trench_alignment_observation: true
+  require_trench_alignment_metadata: true
+  enforce_trench_dig_alignment: true
+  trench_dig_standoff_enforced: false
+  trench_dig_per_cell_admission: true
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: train_v2_pooled_generalist
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
+trench_align_v2pc_specialist_spec:
+  description: v2 trench specialist (15 conditions) with per-cell junction admission
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  trench_alignment_observation: true
+  require_trench_alignment_metadata: true
+  enforce_trench_dig_alignment: true
+  trench_dig_standoff_enforced: false
+  trench_dig_per_cell_admission: true
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: train_v2_pooled_trench15
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false

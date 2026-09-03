@@ -18,20 +18,20 @@ terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
 TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_merge_main_20260902}"
 
 # ---- pinned inputs, per arm --------------------------------------------------
-ARMS="${ARMS:-gen}"                     # space-separated: gen spec
+ARMS="${ARMS:-gen}"                     # space-separated: gen spec genpc specpc (pc = per-cell junction admission)
 GPU_TYPE="${GPU_TYPE:-rtx_4090}"        # rtx_4090 | rtx_3090 (4 per job)
 CUDNN_REPAIR="${TERRA_CUDNN_REPAIR:-auto}"  # auto | denylist_cache | frontend_off | none (see run.sbatch)
 MAX_ATTEMPTS="${TERRA_MAX_ATTEMPTS:-6}"      # in-job resubmits after CUDNN_STATUS_EXECUTION_FAILED (see run.sbatch)
 RESUME_FROM="${TERRA_RESUME_FROM:-none}"     # explicit checkpoint .pkl to resume (manual continuation); none = scratch
 bank_for_arm() {
     case "$1" in
-        gen)
+        gen|genpc)
             BANK_ARCHIVE=/home/lorenzo/moleworks/.artifacts/terra_v8_trench_finite_enriched_20260819/terra_v2_generalist_pooled_bank_20260901.tar.zst
             BANK_ARCHIVE_SHA=1125177d322df6097f8da9f67ec95fe48762e16327f83dc157ec282b24993fb3
             BANK_MAPS_PATH=train_v2_pooled_generalist
             BANK_DATASET_SIZE=3840
             BANK_ANCHOR='&v2gen_bank' ;;
-        spec)
+        spec|specpc)
             BANK_ARCHIVE=/home/lorenzo/moleworks/.artifacts/terra_v8_trench_finite_enriched_20260819/terra_v2_trench15_pooled_bank_20260902.tar.zst
             BANK_ARCHIVE_SHA=788e47444d51a0281c1dbddfaea12683a90890afe2ee889cee6bc254ea002a72
             BANK_MAPS_PATH=train_v2_pooled_trench15

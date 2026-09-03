@@ -1592,6 +1592,9 @@ class MixedAgentTrainConfig:
     # section axis must be at most this many metres (<= 0 disables it, i.e.
     # yaw-parallel only).  Inert under v1.  None leaves Terra's default.
     trench_dig_max_offset_m: float | None = None
+    # Junction admission: True = per-cell (aligned fresh cells dug, others
+    # left), False = all-or-nothing veto, None = Terra default.
+    trench_dig_per_cell_admission: bool | None = None
 
     # Curriculum/maps override (from YAML config)
     # Format: list of dicts with keys: maps_path, max_steps_in_episode, rewards_type, apply_trench_rewards
@@ -1978,6 +1981,7 @@ def create_mixed_agent_env_config(
     enforce_trench_dig_alignment=None,
     trench_dig_standoff_enforced=None,
     trench_dig_max_offset_m=None,
+    trench_dig_per_cell_admission=None,
     # F15: resolution-scaling overrides (all None = no change)
     agent_move_tiles=None,
     dig_radius_tiles=None,
@@ -2068,6 +2072,15 @@ def create_mixed_agent_env_config(
             )
         env_config = env_config._replace(
             trench_dig_max_offset_m=float(trench_dig_max_offset_m)
+        )
+    if trench_dig_per_cell_admission is not None:
+        if not hasattr(env_config, "trench_dig_per_cell_admission"):
+            raise RuntimeError(
+                "trench_dig_per_cell_admission was requested but this Terra "
+                "runtime predates the junction per-cell admission option"
+            )
+        env_config = env_config._replace(
+            trench_dig_per_cell_admission=bool(trench_dig_per_cell_admission)
         )
 
     # F15: tile-denominated agent geometry. These survive update_env_cfgs (which
@@ -2410,6 +2423,7 @@ def make_mixed_agent_states(
                 enforce_trench_dig_alignment=config.enforce_trench_dig_alignment,
                 trench_dig_standoff_enforced=config.trench_dig_standoff_enforced,
                 trench_dig_max_offset_m=config.trench_dig_max_offset_m,
+                trench_dig_per_cell_admission=config.trench_dig_per_cell_admission,
                 # F15 resolution-scaling overrides
                 agent_move_tiles=config.agent_move_tiles,
                 dig_radius_tiles=config.dig_radius_tiles,
@@ -2491,6 +2505,14 @@ def make_mixed_agent_states(
             )
         )
     )
+    _per_cell = getattr(env_params, "trench_dig_per_cell_admission", None)
+    if _per_cell is not None:
+        print(
+            "🧭 Fresh-trench junction admission (effective): "
+            + ("per-cell (aligned cells dug, others left)"
+               if bool(np.ravel(np.asarray(_per_cell))[0])
+               else "all-or-nothing veto")
+        )
     _max_offset = getattr(env_params, "trench_dig_max_offset_m", None)
     if _max_offset is not None:
         print(
@@ -5379,6 +5401,7 @@ if __name__ == "__main__":
     trench_alignment_observation = False
     trench_dig_standoff_enforced = None
     trench_dig_max_offset_m = None
+    trench_dig_per_cell_admission = None
     curriculum_levels_override = None
     curriculum_increase_level_threshold = None
     curriculum_decrease_level_threshold = None
@@ -5445,6 +5468,7 @@ if __name__ == "__main__":
             )
             trench_dig_standoff_enforced = preset.trench_dig_standoff_enforced
             trench_dig_max_offset_m = preset.trench_dig_max_offset_m
+            trench_dig_per_cell_admission = preset.trench_dig_per_cell_admission
 
             # Apply maps/curriculum from preset (convert MapLevel objects to dict format)
             if preset.maps and len(preset.maps) > 0:
@@ -5789,6 +5813,7 @@ if __name__ == "__main__":
         trench_alignment_observation=trench_alignment_observation,
         trench_dig_standoff_enforced=trench_dig_standoff_enforced,
         trench_dig_max_offset_m=trench_dig_max_offset_m,
+        trench_dig_per_cell_admission=trench_dig_per_cell_admission,
         curriculum_levels_override=curriculum_levels_override,
         curriculum_increase_level_threshold=curriculum_increase_level_threshold,
         curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,
