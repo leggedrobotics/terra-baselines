@@ -607,6 +607,19 @@ Terra `171cf116`, terra-baselines `ba08192`, 4 x RTX 4090, cuDNN repair
 `/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_generalist/runs/ba08192…/s20260901/genpc`;
 W&B `trench_align_v2_genpc_ba08192ca3_s20260901`.
 
+**Chain exhausted: 7 of 7 starts died of `CUDNN_STATUS_EXECUTION_FAILED`
+at the first update** (attempts 0-6: jobs `12643491`, `12644464`,
+`12646060`, `12647121`, `12648578`, `12649756`, `12650797`; nodes eu-g6-042
+/ 027 / 050 / 050 / 056 / 057 / 057; 9-10 min each; no autotuner mismatch
+lines, no other error). Versus 2 of 3 failing starts yesterday, the new
+observation layout appears to raise the failure probability on the cuDNN
+8.9.7 stack. Fallback chain in **frontend-off mode** (legacy cuDNN API, no
+frontend engines): root job **`12686930`**, arm `genpc`,
+`TERRA_CUDNN_REPAIR=frontend_off`, same revisions (Terra 171cf116,
+baselines 20cf553 = ba08192 plus ledger commits), run dir
+`runs/20cf553…/s20260901/genpc`. Open decision: move the generalist to CSCS
+(no cuDNN failures there, third daint node) if this chain also exhausts.
+
 ### v2 trench specialist on CSCS Daint, per-cell + relocation/admissible-dig observations (submitted 2026-09-03)
 
 Same epoch as the Euler generalist: Terra `171cf116`, terra-baselines
