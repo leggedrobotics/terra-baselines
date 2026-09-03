@@ -321,7 +321,25 @@ cells were inside cone reach of a visited pose. Illegal spoil (8-15 units)
 lands on neutral ground, not on trench cells (secondary). Verdict: mix of
 a structural junction veto (class A), yaw deterrence (B), an RL deficit
 (DO pressed at only 12-23% of valid junction poses) and a traversability
-deadlock (C). Next: per-cell admission variant probe (in flight).
+deadlock (C). Next: per-cell admission variant probe.
+
+**Per-cell admission A/B (scratch Terra copy, same probe, same 224 slots,
+u10000 checkpoint; straight control 0/64 episodes changed).** Replacing the
+all-or-nothing veto by admitting the aligned fresh cells in the cone (valid
+bit on when at least one is admissible): junction gate-invalid poses
+18,101 -> 9,693, all-or-nothing share 36% -> 0%, yaw share 54% -> 95%;
+junction dig fraction 0.366 -> 0.515 (tee 0.45 -> 0.61, seg 0.39 -> 0.55,
+net3 0.35 -> 0.52, net4 0.31 -> 0.43); episodes at dig fraction >= 0.8
+0 -> 14 of 160; completions 0 -> 2. Class A (parked against the veto)
+0.24 -> 0.57 and its DO-when-valid rate 5.8% -> 87.9%. Residual: yaw
+deterrence (95% of remaining invalid poses), RL competence (DO at 16-35%
+of admitted junction poses vs 80% on straights), traversability deadlock
+(blocked moves rise to 180-240/episode as episodes keep working). Scratch
+A/B only: no EnvConfig field, fingerprint identical to baseline, not
+poolable with panel receipts. Decision pending (user): adopt per-cell
+admission as the gate semantics and restart both arms, or continue under
+the veto. Artifacts: scratchpad `gen_u10000_junction_probe/` and
+`terra_percell_variant/`.
 
 **Job `12511685` (frontend off, 3090, `eu-g4-007`) FAILED the same way** at
 the first update, and its log shows even the legacy algorithms disagreeing by
