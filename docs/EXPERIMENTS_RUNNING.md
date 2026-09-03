@@ -620,6 +620,15 @@ baselines 20cf553 = ba08192 plus ledger commits), run dir
 `runs/20cf553…/s20260901/genpc`. Open decision: move the generalist to CSCS
 (no cuDNN failures there, third daint node) if this chain also exhausts.
 
+**Superseded 2026-09-03 17:18 UTC:** the frontend-off fallback `12686930`
+was cancelled while pending by the other session, which is replacing the
+Euler runtime instead: a cuDNN 9 runtime smoke campaign
+(`terra_cudnn9_runtime_smoke`; 1-GPU smoke `12690597` PASSED with three
+cold update-1 starts and ten continuous updates; 4-GPU smoke `12696174`
+queued) gates the Euler generalist `12688665` (`afterok:12696174`, same
+revisions ba08192 / 171cf116, 4 x RTX 4090). This session no longer
+submits Euler generalist jobs; the CSCS specialist chain stays here.
+
 ### v2 trench specialist on CSCS Daint, per-cell + relocation/admissible-dig observations (submitted 2026-09-03)
 
 Same epoch as the Euler generalist: Terra `171cf116`, terra-baselines
