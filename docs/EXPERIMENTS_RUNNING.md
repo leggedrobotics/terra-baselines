@@ -341,6 +341,19 @@ admission as the gate semantics and restart both arms, or continue under
 the veto. Artifacts: scratchpad `gen_u10000_junction_probe/` and
 `terra_percell_variant/`.
 
+**Geometric confirmation (2026-09-03, axis-sweep feasibility tool, same
+code/config for both rules, self-checked against Terra's gate, 0
+mismatches).** On-axis lane (stand on the line, dig straight ahead or
+behind, back up, one axis at a time), maps complete at tolerance
+0.5 / 1.0 / 2.0 tiles: straight 64/64 both rules; tee veto 2/4/5 of 32 vs
+per-cell 32/32/32; segmented veto 0/2/5 of 32 vs 32/32/32; net3 veto 0/0/0
+of 16 vs 16/16/16. Under the all-or-nothing veto a junction cannot be dug
+by approaching along one of its axes; per-cell admission restores the
+intended semantics (junction diggable from any of its axes, order left to
+the policy) with every straight map unchanged. Terra note
+TRENCH_JUNCTION_PER_CELL_ADMISSION_20260903.md on branch
+epoch/trench-per-cell-admission-20260903.
+
 **Job `12511685` (frontend off, 3090, `eu-g4-007`) FAILED the same way** at
 the first update, and its log shows even the legacy algorithms disagreeing by
 ~50% on the bf16 backward-filter convs. Verdict: the failure is independent
