@@ -4,14 +4,16 @@ The trench-v2 launcher uses a pip-managed CUDA runtime rather than mixing the
 Euler `cuda` module with CUDA libraries from Python wheels. The validated stack
 is Python 3.12.8, JAX 0.4.33, CUDA 12.6.77, cuDNN 9.5.0.50, and NCCL 2.23.4.
 
-Build it on an Euler login node with only the base stack and proxy loaded:
+Build it on an Euler login node with Python 3.12.8 and uv 0.11.9, with only the
+base stack and proxy loaded:
 
 ```bash
 module purge
 module load stack/2024-06 eth_proxy
 
 runtime=/cluster/project/rsl/$USER/terra_runtime/terra_jax0433_cuda126_cudnn950_20260903
-uv venv --python 3.12 "$runtime"
+test "$(uv --version)" = "uv 0.11.9 (x86_64-unknown-linux-gnu)"
+uv venv --python 3.12.8 "$runtime"
 uv pip install --python "$runtime/bin/python" \
   -r cluster/euler_runtime/requirements-jax0433-cuda126-cudnn950.txt
 uv pip check --python "$runtime/bin/python"

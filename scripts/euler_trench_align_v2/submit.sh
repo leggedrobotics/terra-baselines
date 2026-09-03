@@ -20,8 +20,6 @@ TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_merge_main_20
 # ---- pinned inputs, per arm --------------------------------------------------
 ARMS="${ARMS:-gen}"                     # space-separated: gen spec genpc specpc (pc = per-cell junction admission)
 GPU_TYPE="${GPU_TYPE:-rtx_4090}"        # rtx_4090 | rtx_3090 (4 per job)
-CUDNN_REPAIR="${TERRA_CUDNN_REPAIR:-none}"  # clean cuDNN 9 runtime needs no algorithm workaround
-MAX_ATTEMPTS="${TERRA_MAX_ATTEMPTS:-0}"      # fail closed; do not retry a runtime error into a pass
 RESUME_FROM="${TERRA_RESUME_FROM:-none}"     # explicit checkpoint .pkl to resume (manual continuation); none = scratch
 SLURM_DEPENDENCY="${TERRA_SLURM_DEPENDENCY:-none}"  # none | afterok:<job-id>
 if [ "$SLURM_DEPENDENCY" != none ] && [[ ! "$SLURM_DEPENDENCY" =~ ^afterok:[0-9]+$ ]]; then
@@ -83,7 +81,7 @@ done
 
 echo "terra_baselines_revision=$BASELINES_REVISION"
 echo "runtime_terra_revision=$RUNTIME_TERRA_REVISION"
-echo "arms=$ARMS gpu=$GPU_TYPE x4 cudnn_repair=$CUDNN_REPAIR max_attempts=$MAX_ATTEMPTS dependency=$SLURM_DEPENDENCY (gate on, parallel + on the line) seed=$SEED envs_per_device=512 target=$TARGET_UPDATE"
+echo "arms=$ARMS gpu=$GPU_TYPE x4 cudnn_runtime=locked_cudnn9 dependency=$SLURM_DEPENDENCY (gate on, parallel + on the line) seed=$SEED envs_per_device=512 target=$TARGET_UPDATE"
 echo "runtime=$REMOTE_VENV runtime_lock_sha256=$RUNTIME_LOCK_SHA"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: local contract passed; no external mutation"
@@ -133,10 +131,7 @@ for ARM in $ARMS; do
     RUN_NAME="trench_align_v2_${ARM}_${BASELINES_REVISION:0:12}_s${SEED}"
     RUN_DIR="$REMOTE_RUNS/$BASELINES_REVISION/s$SEED/$ARM"
     remote "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
-    # In-job self-resubmission on a cuDNN startup failure re-issues exactly
-    # these sbatch options ('|'-separated; no commas allowed inside --export).
-    RESUBMIT_SBATCH_ARGS="--account=es_hutter|--partition=$PARTITION|--time=$WALLTIME|--gpus=$GPU_TYPE:4|--cpus-per-task=8|--exclude=eu-g6-064|--job-name=terra-trench-v2$ARM|--output=$RUN_DIR/slurm_%j.out"
-    EXPORTS="ALL,ARM=$ARM,CUDNN_REPAIR_MODE=$CUDNN_REPAIR,ATTEMPT=0,MAX_ATTEMPTS=$MAX_ATTEMPTS,RESUME_FROM=$RESUME_FROM,RESUBMIT_SBATCH_ARGS=$RESUBMIT_SBATCH_ARGS,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,SEED=$SEED,VENV=$REMOTE_VENV,RUNTIME_LOCK_SHA=$RUNTIME_LOCK_SHA,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$BANK_ARCHIVE_SHA,BANK_MAPS_PATH=$BANK_MAPS_PATH,BANK_DATASET_SIZE=$BANK_DATASET_SIZE,BANK_DISTANCE_SIDECAR_SHA=$BANK_DISTANCE_SIDECAR_SHA,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,GPU_TYPE=$GPU_TYPE,TARGET_UPDATE=$TARGET_UPDATE"
+    EXPORTS="ALL,ARM=$ARM,RESUME_FROM=$RESUME_FROM,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,SEED=$SEED,VENV=$REMOTE_VENV,RUNTIME_LOCK_SHA=$RUNTIME_LOCK_SHA,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$BANK_ARCHIVE_SHA,BANK_MAPS_PATH=$BANK_MAPS_PATH,BANK_DATASET_SIZE=$BANK_DATASET_SIZE,BANK_DISTANCE_SIDECAR_SHA=$BANK_DISTANCE_SIDECAR_SHA,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,GPU_TYPE=$GPU_TYPE,TARGET_UPDATE=$TARGET_UPDATE"
     DEPENDENCY_OPTION=""
     if [ "$SLURM_DEPENDENCY" != none ]; then
         DEPENDENCY_OPTION="--dependency=$SLURM_DEPENDENCY"
