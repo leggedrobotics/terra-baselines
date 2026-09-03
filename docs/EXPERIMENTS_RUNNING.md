@@ -584,3 +584,26 @@ the self-resubmit chain (`MAX_ATTEMPTS`=6); run dir
 W&B `trench_align_v2_genpc_7989a9bea7_s20260901`. Attempt chain recorded in
 that run dir's `run_contract.attempt<N>.job<id>.env` files.
 
+**Job `12640873` FAILED at start (3 min):** `relocation_distance_observation
+requires Terra obs['relocation_distance_map']`. Cause: baselines `e18f7f1`
+(other session, 2026-09-02) made the v2 launcher pass
+`--relocation_distance_observation --admissible_dig_observation` (parameter
+count 2,311,701, obs length 25) for Terra `09712ad5`, and my re-pin to
+`a4da127a` (veto removal on top of `c383b0b1`-era main) kept the flags but
+not the Terra that exports the maps. Not a cuDNN failure, so no
+self-resubmit. Resolution: the epoch is per-cell admission AND the two new
+observations. Terra main `171cf116` = `09712ad5` + veto removal (alignment,
+dump-contract and admissible-dig-map suites 52/52); baselines `ba08192`
+pins it and points `TERRA_REPO` back to the main worktree. Local smoke with
+the exact launcher flags on 171cf116: 2/2 updates, finite checkpoints,
+2,311,701 parameters. The per-cell-only branch
+`launch/trench-per-cell-20260903` (a4da127a) is superseded.
+
+### v2 generalist, per-cell + relocation/admissible-dig observations (Euler, submitted 2026-09-03)
+
+Job `12643491`, arm `genpc`, preset `trench_align_v2_generalist_gen`,
+Terra `171cf116`, terra-baselines `ba08192`, 4 x RTX 4090, cuDNN repair
+`auto`, self-resubmit chain; run dir
+`/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_align_v2_generalist/runs/ba08192…/s20260901/genpc`;
+W&B `trench_align_v2_genpc_ba08192ca3_s20260901`.
+
