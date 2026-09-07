@@ -158,6 +158,7 @@ from utils.wandb_human import (
 )
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -1049,6 +1050,41 @@ def _validate_foundation_behavior_config(config) -> None:
             raise ValueError("finetune_foundation_behavior requires reward_v2")
 
 
+def _validate_task_bank_transfer(config, checkpoint=None) -> None:
+    """A declared bank transfer keeps native Adam but starts a fresh task env."""
+    if not getattr(config, "finetune_task_bank", False):
+        return
+    if (
+        config.reward_stage != "reward_v2"
+        or not getattr(config, "resume_from", None)
+        or getattr(config, "warm_start_from", None)
+        or getattr(config, "resume_update", None) is not None
+    ):
+        raise ValueError("finetune_task_bank requires native reward_v2 resume_from")
+    if getattr(config, "load_env_from_checkpoint", True):
+        raise ValueError("finetune_task_bank requires --no-load-env-from-checkpoint")
+    configs = [("current", config)]
+    if checkpoint is not None:
+        saved = checkpoint.get("train_config")
+        if saved is None or _checkpoint_config_value(checkpoint, "reward_stage", None) != "reward_v2":
+            raise ValueError("finetune_task_bank requires a recorded reward_v2 parent")
+        configs.append(("saved", saved))
+        for name in ("pooled_sampler_state", "partial_reset_curriculum"):
+            if checkpoint.get(name) is not None:
+                raise ValueError(f"finetune_task_bank cannot carry over {name}")
+    for label, settings in configs:
+        def field(name, default=None):
+            return settings.get(name, default) if isinstance(settings, dict) else getattr(settings, name, default)
+        sampler = field("pooled_sampler")
+        if sampler is not None and (
+            sampler.get("enabled", False) if isinstance(sampler, dict)
+            else getattr(sampler, "enabled", False)
+        ):
+            raise ValueError(f"finetune_task_bank does not support {label} pooled_sampler")
+        if field("partial_reset_root") is not None or field("partial_reset_bank_sha256") is not None:
+            raise ValueError(f"finetune_task_bank does not support {label} partial resets")
+
+
 def _r2_protocol_receipt(config) -> dict | None:
     if config.reward_stage != "reward_v2":
         return None
@@ -1172,16 +1208,19 @@ def _validate_r2_resume_checkpoint(
     checkpoint: dict, current_receipt: dict | None, config
 ) -> None:
     """Fail if an R2 continuation would change its protocol or optimizer clock."""
+    _validate_task_bank_transfer(config, checkpoint)
     if current_receipt is None:
+        if getattr(config, "finetune_task_bank", False):
+            raise ValueError("finetune_task_bank requires a current R2 protocol receipt")
         return
     saved_receipt = checkpoint.get("r2_protocol_receipt")
     if isinstance(saved_receipt, dict):
         saved_receipt = _r2_receipt_with_baseline_timing(saved_receipt, current_receipt)
     # This is a declared change of objective/affordance, not an ordinary
-    # continuation. Only these four recorded fields may change; distance,
-    # timing, shaping, and the rest of the R2 contract must still match.
+    # continuation. Each opt-in permits only its named receipt fields; timing,
+    # shaping, distance semantics and the optimizer clock still have to match.
     behavior_finetune = bool(getattr(config, "finetune_foundation_behavior", False))
-    receipts_match = saved_receipt == current_receipt
+    ignored_fields = set()
     if behavior_finetune and isinstance(saved_receipt, dict):
         for receipt in (saved_receipt, current_receipt):
             settings = receipt.get("foundation_behavior")
@@ -1190,9 +1229,20 @@ def _validate_r2_resume_checkpoint(
                 or set(settings) != set(_foundation_behavior_settings(config))
             ):
                 raise ValueError("unknown foundation behavior fields in R2 receipt")
+        ignored_fields.add("foundation_behavior")
+    if getattr(config, "finetune_task_bank", False):
+        for receipt in (saved_receipt, current_receipt):
+            if not isinstance(receipt, dict) or receipt.get("schema") != "terra_v8_r2_reward_protocol_v1":
+                raise ValueError("finetune_task_bank requires native R2 protocol receipts")
+            sidecar_sha = receipt.get("distance_sidecar_sha256")
+            if not isinstance(sidecar_sha, str) or re.fullmatch(r"[0-9a-f]{64}", sidecar_sha) is None:
+                raise ValueError("finetune_task_bank requires recorded distance sidecar hashes")
+        ignored_fields.add("distance_sidecar_sha256")
+    receipts_match = saved_receipt == current_receipt
+    if ignored_fields and isinstance(saved_receipt, dict):
         receipts_match = (
-            {k: v for k, v in saved_receipt.items() if k != "foundation_behavior"}
-            == {k: v for k, v in current_receipt.items() if k != "foundation_behavior"}
+            {k: v for k, v in saved_receipt.items() if k not in ignored_fields}
+            == {k: v for k, v in current_receipt.items() if k not in ignored_fields}
         )
     if not receipts_match:
         raise ValueError(
@@ -1676,6 +1726,9 @@ class MixedAgentTrainConfig:
     # Preserve Adam and absolute update while explicitly changing only the
     # four foundation behavior fields recorded in the R2 receipt.
     finetune_foundation_behavior: bool = False
+    # A new dataset may replace only the R2 sidecar identity, with a fresh env.
+    # Reward/affordance changes require finetune_foundation_behavior separately.
+    finetune_task_bank: bool = False
     carry_work_observation: bool = False
     stall_age_observation: bool = False
     movement_feasibility_observation: bool = False
@@ -1804,6 +1857,7 @@ class MixedAgentTrainConfig:
             self.cache_clear_interval = 0
         _checkpoint_load_mode(self)
         _validate_foundation_behavior_config(self)
+        _validate_task_bank_transfer(self)
         if self.actor_core not in ("mlp", "gru"):
             raise ValueError("actor_core must be 'mlp' or 'gru'")
         if int(self.actor_gru_hidden_dim) < 1:
@@ -3063,6 +3117,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         "and digging affordance semantics. "
                         f"Parent: {checkpoint_path}; "
                         f"settings: {_foundation_behavior_settings(config)}"
+                    )
+                if config.finetune_task_bank:
+                    print(
+                        "Task bank transfer: preserving model, Adam, and absolute "
+                        "update; rebuilding the environment from the new bank. "
+                        f"Parent: {checkpoint_path}; distance sidecar: "
+                        f"{checkpoint['r2_protocol_receipt']['distance_sidecar_sha256']} "
+                        f"-> {config.distance_sidecar_sha256}"
                     )
                 stall_age_prepared_receipt = _stall_age_resume_receipt(
                     checkpoint, config
@@ -5473,6 +5535,14 @@ if __name__ == "__main__":
         "Omit for ordinary continuation of the same treatment.",
     )
     parser.add_argument(
+        "--finetune_task_bank",
+        action="store_true",
+        help="Native R2 task transfer: allow a new bank's distance-sidecar identity "
+        "while retaining Adam and the absolute update; requires "
+        "--no-load-env-from-checkpoint and no adaptive/partial-reset state. "
+        "Reward changes require --finetune_foundation_behavior separately.",
+    )
+    parser.add_argument(
         "--action_logit_masking",
         action="store_true",
         help="Mask provably-ineffective actions out of the sampling "
@@ -5952,6 +6022,7 @@ if __name__ == "__main__":
         base_turn_cost=args.base_turn_cost,
         executable_dig_observation=args.executable_dig_observation,
         finetune_foundation_behavior=args.finetune_foundation_behavior,
+        finetune_task_bank=args.finetune_task_bank,
         carry_work_observation=args.carry_work_observation,
         stall_age_observation=args.stall_age_observation,
         movement_feasibility_observation=(

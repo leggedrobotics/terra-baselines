@@ -133,7 +133,25 @@ def _identity(row: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def validate_pair(reference: dict[str, Any], candidate: dict[str, Any]) -> None:
+def _foundation_settings(record: dict[str, Any]) -> dict[str, Any]:
+    defaults = {"executable_dig_observation": False, "lateral_dig_cost": 0.0,
+                "base_travel_cost": 0.0, "base_turn_cost": 0.0}
+    receipt = record.get("r2_protocol_receipt")
+    if not isinstance(receipt, dict):
+        raise ValueError("foundation reward comparison requires R2 protocol receipts")
+    settings = receipt.get("foundation_behavior", defaults)
+    if not isinstance(settings, dict) or set(settings) != set(defaults):
+        raise ValueError("unknown foundation behavior receipt fields")
+    if not isinstance(settings["executable_dig_observation"], bool):
+        raise ValueError("executable_dig_observation must be boolean")
+    for name in ("lateral_dig_cost", "base_travel_cost", "base_turn_cost"):
+        if _finite(settings[name], name) < 0:
+            raise ValueError(f"{name} must be nonnegative")
+    return dict(settings)
+
+
+def validate_pair(reference: dict[str, Any], candidate: dict[str, Any], *,
+                  compare_foundation_rewards: bool = False) -> None:
     for label, record in (("reference", reference), ("candidate", candidate)):
         if record.get("deterministic") is not True:
             raise ValueError(f"{label} fixed evaluation is not deterministic")
@@ -146,11 +164,21 @@ def validate_pair(reference: dict[str, Any], candidate: dict[str, Any]) -> None:
         "stratum",
         "policy_mode",
         "completion_contract",
-        "r2_protocol_receipt",
         "accepted_bank",
     ):
         if reference.get(name) != candidate.get(name):
             raise ValueError(f"fixed evaluations use different {name}")
+    before_receipt = reference.get("r2_protocol_receipt")
+    after_receipt = candidate.get("r2_protocol_receipt")
+    if compare_foundation_rewards:
+        _foundation_settings(reference)
+        _foundation_settings(candidate)
+        before_receipt = {key: value for key, value in before_receipt.items()
+                          if key != "foundation_behavior"}
+        after_receipt = {key: value for key, value in after_receipt.items()
+                         if key != "foundation_behavior"}
+    if before_receipt != after_receipt:
+        raise ValueError("fixed evaluations use different r2_protocol_receipt")
     if reference.get("manifest_sha256") != candidate.get("manifest_sha256"):
         raise ValueError("fixed evaluations use different manifests")
     if reference.get("horizon") != candidate.get("horizon"):
@@ -433,8 +461,9 @@ def build_dashboard_data(
     media_dir: Path | None,
     output_dir: Path,
     review_limit: int,
+    compare_foundation_rewards: bool = False,
 ) -> dict[str, Any]:
-    validate_pair(reference, candidate)
+    validate_pair(reference, candidate, compare_foundation_rewards=compare_foundation_rewards)
     rows = aligned_rows(reference, candidate)
     conditions = condition_rows(rows)
     selection = choose_review_rows(rows, review_limit)
@@ -539,15 +568,22 @@ def build_dashboard_data(
         },
         "labels": {"reference": reference_label, "candidate": candidate_label},
         "contract": {
+            "foundation_reward_comparison": (
+                {"reference": _foundation_settings(reference),
+                 "candidate": _foundation_settings(candidate)}
+                if compare_foundation_rewards else None
+            ),
             "manifest_sha256": reference["manifest_sha256"],
             "horizon": int(reference["horizon"]),
             "seed": int(reference["seed"]),
             "maps": len(rows),
             "panel_conditions": len(conditions),
-            "training_conditions": V8_TRAINING_CONDITION_COUNT,
+            "training_conditions": (
+                V8_TRAINING_CONDITION_COUNT if reference.get("accepted_bank") else None
+            ),
             "omitted_training_conditions": (
                 list(PROMOTION_PANEL_OMISSIONS)
-                if len(conditions) == V8_TRAINING_CONDITION_COUNT - 2
+                if reference.get("accepted_bank") and len(conditions) == V8_TRAINING_CONDITION_COUNT - 2
                 else []
             ),
             "reference_checkpoint_sha256": reference["checkpoint_sha256"],
@@ -698,6 +734,7 @@ code {{ overflow-wrap:anywhere; }}
 <body><main>
 <h1>{title}</h1>
 <div class="sub" id="contract"></div>
+<div class="sub" id="reward-treatment"></div>
 <div class="stats" id="stats"></div>
 <h2>Travel and excavation behavior</h2>
 <p class="sub">A productive base stance keeps base position and heading fixed; cabin swing does not split it. Legacy productive workspace cycles are a separate counter. Lateral digging metrics describe geometry, not physical safety. New target area counts newly excavated cells; lateral volume also reflects target depth.</p>
@@ -743,7 +780,9 @@ function drawBehavior(){{
 }}
 for(const id of ['behavior-scope','behavior-cohort'])$(id).addEventListener('change',drawBehavior);
 drawBehavior();
-$('contract').textContent=`${{DATA.contract.maps}} maps · ${{DATA.contract.panel_conditions}}/${{DATA.contract.training_conditions}} training conditions · horizon ${{DATA.contract.horizon}} · seed ${{DATA.contract.seed}} · manifest ${{DATA.contract.manifest_sha256.slice(0,12)}}…${{DATA.contract.omitted_training_conditions.length?' · omitted: '+DATA.contract.omitted_training_conditions.join(', '):''}}`;
+const conditionCount=DATA.contract.training_conditions===null?`${{DATA.contract.panel_conditions}} panel conditions`:`${{DATA.contract.panel_conditions}}/${{DATA.contract.training_conditions}} training conditions`;
+$('contract').textContent=`${{DATA.contract.maps}} maps · ${{conditionCount}} · horizon ${{DATA.contract.horizon}} · seed ${{DATA.contract.seed}} · manifest ${{DATA.contract.manifest_sha256.slice(0,12)}}…${{DATA.contract.omitted_training_conditions.length?' · omitted: '+DATA.contract.omitted_training_conditions.join(', '):''}}`;
+if(DATA.contract.foundation_reward_comparison){{const r=DATA.contract.foundation_reward_comparison;const describe=x=>`executable affordance ${{x.executable_dig_observation?'on':'off'}}, lateral ${{x.lateral_dig_cost}}, travel/m ${{x.base_travel_cost}}, turn/rad ${{x.base_turn_cost}}`;$('reward-treatment').textContent=`Declared foundation treatment comparison · ${{DATA.labels.reference}}: ${{describe(r.reference)}} · ${{DATA.labels.candidate}}: ${{describe(r.candidate)}}`;}}
 const s=DATA.summary; const n=DATA.contract.maps;
 $('stats').innerHTML=`<div class="stat"><span>${{DATA.labels.reference}}</span><b>${{s.reference_successes}}/${{n}}</b></div><div class="stat"><span>${{DATA.labels.candidate}}</span><b>${{s.candidate_successes}}/${{n}}</b></div><div class="stat"><span>net exact</span><b class="${{s.exact_delta>=0?'good':'bad'}}">${{signed(s.exact_delta)}}</b></div><div class="stat"><span>conversions / regressions</span><b>${{s.conversion}} / ${{s.regression}}</b></div>`;
 function drawConditions(){{const root=$('conditions');root.innerHTML='';for(const c of DATA.conditions){{const card=document.createElement('div');card.className='condition-card';const b=document.createElement('button');b.type='button';b.className='condition'+(selectedCondition===c.condition?' selected':'');b.innerHTML=`<b>${{c.condition}}</b><span>${{c.candidate_exact}}/${{c.maps}} vs ${{c.reference_exact}}/${{c.maps}} · Δ ${{signed(c.exact_delta)}}</span>`;b.onclick=()=>{{selectedCondition=selectedCondition===c.condition?'':c.condition;drawConditions();drawMaps();}};card.appendChild(b);const dots=document.createElement('div');dots.className='episode-dots';for(const e of c.episode_outcomes){{const d=document.createElement('button');d.type='button';d.className='episode-dot dot-'+e.outcome.replaceAll(' ','-');d.title=`slot ${{e.slot}} · ${{e.map_id}} · ${{e.outcome}}`;d.onclick=()=>{{const row=DATA.maps.find(x=>x.slot===e.slot);if(row)drawDetail(row);}};dots.appendChild(d);}}card.appendChild(dots);root.appendChild(card);}}}}
@@ -776,6 +815,8 @@ def main() -> None:
     parser.add_argument("--media-dir", type=Path)
     parser.add_argument("--review-limit", type=int, default=20)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--compare-foundation-rewards", action="store_true",
+                        help="Explicitly compare recorded foundation reward/affordance treatments; all other R2 and panel contracts must match.")
     args = parser.parse_args()
     if args.review_limit < 1:
         raise ValueError("--review-limit must be positive")
@@ -796,6 +837,7 @@ def main() -> None:
         media_dir=args.media_dir.resolve() if args.media_dir else None,
         output_dir=output_dir,
         review_limit=args.review_limit,
+        compare_foundation_rewards=args.compare_foundation_rewards,
     )
     output_dir.mkdir(parents=True)
     (output_dir / "dashboard_data.json").write_text(

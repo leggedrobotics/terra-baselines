@@ -11,6 +11,7 @@ Ported from:
   - TerraProject/terra-baselines/eval_mixed.py        (multi-agent + single map)
 """
 
+import os
 import sys
 import time
 from functools import partial
@@ -82,7 +83,19 @@ _DEFAULT_MAPS_DIR = Path(__file__).parent / "inference" / "maps"
 # output depends on its own row only. A standalone check of the affected conv
 # at batch 720 gave a bit-identical output sum chunked at 90/128/180 and
 # unchunked. 720 % 120 == 0, so every chunk has the same shape.
-EVAL_FORWARD_CHUNK = 120
+def _configured_eval_forward_chunk():
+    raw = os.environ.get("EVAL_FORWARD_CHUNK", "120")
+    try:
+        size = int(raw)
+    except ValueError as exc:
+        raise ValueError("EVAL_FORWARD_CHUNK must be a positive integer") from exc
+    if size < 1:
+        raise ValueError("EVAL_FORWARD_CHUNK must be a positive integer")
+    return size
+
+
+# Set before importing this module when evaluation shares a training allocation.
+EVAL_FORWARD_CHUNK = _configured_eval_forward_chunk()
 
 
 def _apply_in_batch_chunks(model, model_params, obs_model):
@@ -368,6 +381,10 @@ def rollout_episode(
         timestep = initial_timestep
     if hasattr(timestep, "env_cfg"):
         validate_foundation_behavior_env(rl_config, timestep.env_cfg)
+        # Checkpoint templates may leave tile size and footprint unresolved.
+        # Reset assigns the physical geometry for this map panel.
+        if hasattr(timestep.env_cfg, "tile_size"):
+            env_cfgs = timestep.env_cfg
     if preserve_terminal_states and use_mcts:
         raise ValueError(
             "preserve_terminal_states is only supported for direct policy evaluation"
