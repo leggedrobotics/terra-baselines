@@ -18,7 +18,7 @@ Options:
   --partition NAME            Slurm partition (default from config.env)
   --account NAME              Slurm account (default from config.env)
   --run-id ID                 Stable run identifier
-  --wandb-mode online|offline W&B mode for the job (default: online)
+  --wandb-mode online|offline|disabled W&B mode for the job (default: online)
   --test-only                 Run sbatch --test-only; this is the default
   --submit                    Submit the billable job
   --no-sync                   Reuse an existing --run-id snapshot
@@ -63,7 +63,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$PROFILE" == smoke || "$PROFILE" == production ]] || cscs_die "profile must be smoke or production"
-[[ "$WANDB_MODE" == online || "$WANDB_MODE" == offline ]] || cscs_die "--wandb-mode must be online or offline"
+[[ "$WANDB_MODE" == online || "$WANDB_MODE" == offline || "$WANDB_MODE" == disabled ]] || cscs_die "--wandb-mode must be online, offline, or disabled"
 [[ -n "$DATASET_PATH" ]] || cscs_die "--dataset-path is required"
 cscs_validate_absolute_path "dataset path" "$DATASET_PATH"
 [[ "$DATASET_SIZE" =~ ^[1-9][0-9]*$ ]] || cscs_die "--dataset-size must be a positive integer"

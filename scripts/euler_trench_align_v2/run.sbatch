@@ -20,6 +20,7 @@ umask 027
 
 for REQUIRED in ARM TARGET_UPDATE RUN_DIR RUN_NAME BASELINES_ROOT \
     BASELINES_REVISION RUNTIME_TERRA_ROOT RUNTIME_TERRA_REVISION SEED VENV \
+    RUNTIME_LOCK_SHA \
     TERRA_EULER_USER TERRA_EULER_HOME_ROOT WANDB_ENTITY WANDB_PROJECT \
     BANK_ARCHIVE BANK_ARCHIVE_SHA BANK_MAPS_PATH BANK_DATASET_SIZE \
     BANK_DISTANCE_SIDECAR_SHA GPU_TYPE \
@@ -27,25 +28,12 @@ for REQUIRED in ARM TARGET_UPDATE RUN_DIR RUN_NAME BASELINES_ROOT \
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
-# cuDNN 8.9.7 on this stack fails CUDNN_STATUS_EXECUTION_FAILED at the first
-# _update_step in roughly two of three starts (both GPU classes, any plan
-# selection; see docs/EXPERIMENTS_RUNNING.md 2026-09-02). A failed attempt
-# resubmits itself with ATTEMPT+1 into the same RUN_DIR; if a checkpoint exists
-# it resumes from the latest one (model, optimizer, absolute update clock).
-ATTEMPT="${ATTEMPT:-0}"
-MAX_ATTEMPTS="${MAX_ATTEMPTS:-6}"
+# The only supported runtime is the locked JAX 0.4.33 / CUDA 12.6 / cuDNN 9.5
+# environment. Runtime failures fail closed and are never retried into a pass.
 RESUME_FROM="${RESUME_FROM:-none}"
-RESUBMIT_SBATCH_ARGS="${RESUBMIT_SBATCH_ARGS:-}"
-[[ "$ATTEMPT" =~ ^[0-9]+$ ]] || exit 2
-[[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ ]] || exit 2
-if [ "$ATTEMPT" -gt 0 ]; then
-    # a retry always prefers the newest checkpoint written into this RUN_DIR
-    LATEST_CKPT="$(find "$RUN_DIR/checkpoints" -maxdepth 1 -type f -name '*_update_*.pkl' -print 2>/dev/null | sort | tail -n 1 || true)"
-    [ -n "$LATEST_CKPT" ] && RESUME_FROM="$LATEST_CKPT"
-fi
 if [ "$RESUME_FROM" != none ]; then
     test -r "$RESUME_FROM"
-    RESUME_ARGS=(--resume_from "$RESUME_FROM")
+    RESUME_ARGS=(--resume_from "$RESUME_FROM" --load_env_from_checkpoint)
 else
     RESUME_ARGS=()
 fi
@@ -67,6 +55,7 @@ test "$HOME" = "$TERRA_EULER_HOME_ROOT"
 test "$(cat "$BASELINES_ROOT/REVISION")" = "$BASELINES_REVISION"
 test "$(cat "$RUNTIME_TERRA_ROOT/REVISION")" = "$RUNTIME_TERRA_REVISION"
 test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_ARCHIVE_SHA"
+test "$(sha256sum "$VENV/requirements.lock.txt" | awk '{print $1}')" = "$RUNTIME_LOCK_SHA"
 
 export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$RUN_DIR/jax-cache}"
 export JAX_ENABLE_COMPILATION_CACHE="${JAX_ENABLE_COMPILATION_CACHE:-true}"
@@ -76,60 +65,49 @@ export DATASET_PATH="$TMPDIR/bank"
 export DATASET_SIZE="$BANK_DATASET_SIZE"
 test -d "$DATASET_PATH/$BANK_MAPS_PATH/metadata"
 
-module load stack/2024-06 cuda/12.1.1 eth_proxy
+module purge
+module load stack/2024-06 eth_proxy
 PYTHON="$VENV/bin/python"
-SITE_PACKAGES="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
 export PYTHONPATH="$RUNTIME_TERRA_ROOT:$BASELINES_ROOT"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
 export SDL_VIDEODRIVER=dummy XLA_PYTHON_CLIENT_PREALLOCATE=false JAX_PLATFORMS=cuda,cpu
 export XDG_CACHE_HOME="$TMPDIR/xdg-cache" MPLCONFIGDIR="$TMPDIR/matplotlib"
 export WANDB_CACHE_DIR="$TMPDIR/wandb-cache" WANDB_CONFIG_DIR="$TMPDIR/wandb-config"
-export LD_LIBRARY_PATH="$SITE_PACKAGES/nvidia/cudnn/lib:$SITE_PACKAGES/nvidia/cuda_cupti/lib:$SITE_PACKAGES/nvidia/cublas/lib:$SITE_PACKAGES/nvidia/cuda_nvrtc/lib:$SITE_PACKAGES/nvidia/nccl/lib:$SITE_PACKAGES/nvidia/cusolver/lib:$SITE_PACKAGES/nvidia/cusparse/lib:$SITE_PACKAGES/nvidia/cufft/lib:$SITE_PACKAGES/nvidia/nvjitlink/lib:$SITE_PACKAGES/nvidia/cuda_runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+if printf '%s' "${LD_LIBRARY_PATH:-}" | grep -Eqi 'cuda|cudnn|cublas|nccl|nvrtc|cupti|cusolver|cusparse|cufft|nvjitlink'; then
+    echo "CUDA libraries leaked into LD_LIBRARY_PATH: $LD_LIBRARY_PATH" >&2
+    exit 3
+fi
 
 test "$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)" -eq 4
 nvidia-smi --query-gpu=name --format=csv,noheader | grep -qv "$GPU_MODEL" && exit 3
 
-# RTX 4090 (cc 8.9, cuDNN 8.9.7, driver 580): cuDNN frontend engine 20 returns
-# wrong bf16 backward-filter results for these exact PPO minibatch shapes; job
-# 12505854 died before update 1 with CUDNN_STATUS_EXECUTION_FAILED. Reuse the
-# repair proven in euler_trench_align_generalist_partial_v1: level-4 autotuning,
-# the exact engine-20 denylist, and the four-GPU autotune cache that completed
-# native PPO updates (ledger revision 58e26fc9). Level 0 reproduced a ~8x slow
-# path there, so it is not used. RTX 3090 (cc 8.6) is unaffected and unchanged.
-ALGORITHM_DENYLIST="$BASELINES_ROOT/scripts/euler_trench_align_v2/hlo_algorithm_denylist.pbtxt"
-AUTOTUNE_CACHE="${TERRA_AUTOTUNE_CACHE:-/cluster/project/rsl/alesweber/terra_runtime/autotune/terra_trench_align_generalist_partial_v1/rtx4090_cc89_cudnn897_jaxlib0426_45e2dbc_u3501.pbtxt}"
-AUTOTUNE_CACHE_SHA="698e856cae464e5fea93e0b2121fc8de4d9cb691135571ca4b5d56f3259d16a3"
-# CUDNN_REPAIR_MODE (from submit.sh TERRA_CUDNN_REPAIR): auto | denylist_cache |
-# frontend_off | none. auto = denylist_cache on RTX 4090 (cc 8.9 keyed
-# denylist + pinned cache), frontend_off elsewhere. frontend_off
-# (--xla_gpu_enable_cudnn_frontend=false) uses the legacy cuDNN algorithm API,
-# which has no frontend engines at all; the local RTX 4090 battery of
-# 2026-09-02 ran it at the same steady-state speed as denylist+level 4
-# (~6 s/update, 30/30 updates, exact per-device shapes).
-CUDNN_REPAIR_MODE="${CUDNN_REPAIR_MODE:-auto}"
-if [ "$CUDNN_REPAIR_MODE" = auto ]; then
-    if [ "$GPU_TYPE" = rtx_4090 ]; then CUDNN_REPAIR_MODE=denylist_cache; else CUDNN_REPAIR_MODE=frontend_off; fi
-fi
-case "$CUDNN_REPAIR_MODE" in
-    denylist_cache)
-        test "$GPU_TYPE" = rtx_4090
-        test -r "$ALGORITHM_DENYLIST"
-        test -r "$AUTOTUNE_CACHE"
-        test "$(sha256sum "$AUTOTUNE_CACHE" | awk '{print $1}')" = "$AUTOTUNE_CACHE_SHA"
-        export XLA_FLAGS="--xla_gpu_autotune_level=4 --xla_gpu_algorithm_denylist_path=$ALGORITHM_DENYLIST --xla_gpu_load_autotune_results_from=$AUTOTUNE_CACHE --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
-        CUDNN_REPAIR="rtx4090_engine20_denylist+autotune_cache_${AUTOTUNE_CACHE_SHA:0:8}" ;;
-    frontend_off)
-        export XLA_FLAGS="--xla_gpu_enable_cudnn_frontend=false --xla_gpu_dump_autotune_results_to=$RUN_DIR/autotune_results.pbtxt"
-        CUDNN_REPAIR="cudnn_frontend_off" ;;
-    none)
-        CUDNN_REPAIR="none" ;;
-    *) echo "CUDNN_REPAIR_MODE must be auto, denylist_cache, frontend_off or none" >&2; exit 2 ;;
-esac
-"$PYTHON" - <<'PY'
-import jax
+export XLA_FLAGS="--xla_gpu_enable_latency_hiding_scheduler=true --xla_gpu_enable_triton_gemm=false --xla_gpu_mlir_emitter_level=0"
+CUDNN_RUNTIME="locked_cudnn9_no_workaround"
+"$PYTHON" - "$VENV/requirements.lock.txt" <<'PY'
+import importlib.metadata as metadata
+import sys
 
-assert jax.local_device_count() == 4, jax.devices()
+from packaging.requirements import Requirement
+from packaging.version import Version
+
+requirements = [
+    Requirement(line.strip())
+    for line in open(sys.argv[1], encoding="utf-8")
+    if line.strip() and not line.lstrip().startswith("#")
+]
+mismatches = []
+for requirement in requirements:
+    pins = list(requirement.specifier)
+    if len(pins) != 1 or pins[0].operator != "==" or pins[0].version.endswith(".*"):
+        raise SystemExit(f"runtime lock entry is not an exact pin: {requirement}")
+    observed = metadata.version(requirement.name)
+    if Version(observed) != Version(pins[0].version):
+        mismatches.append(f"{requirement.name}: expected {pins[0].version}, observed {observed}")
+if mismatches:
+    raise SystemExit("runtime lock mismatch:\n" + "\n".join(mismatches))
+print(f"PASS complete runtime lock: {len(requirements)} packages")
 PY
+"$PYTHON" "$BASELINES_ROOT/cluster/cscs/check_jax_runtime.py" --min-devices 4
 
 EXPECTED_PARAMETERS="$EXPECTED_PARAMETERS" CONFIG="$CONFIG" "$PYTHON" - <<'PY'
 import os
@@ -170,7 +148,6 @@ configure_wandb_segment() {
     WANDB_PARENT_RUN_ID=unknown
     export WANDB_RUN_ID="$base_id" WANDB_RESUME=never
     if [[ "$RESUME_FROM" == none ]]; then
-        if [[ "$ATTEMPT" -gt 0 ]]; then WANDB_RESUME=allow; fi
         return
     fi
 
@@ -196,7 +173,7 @@ configure_wandb_segment() {
     fi
 }
 configure_wandb_segment
-export WANDB_ENTITY WANDB_PROJECT WANDB_MODE=online
+export WANDB_ENTITY WANDB_PROJECT WANDB_MODE="${WANDB_MODE:-online}"
 export WANDB_DIR="$RUN_DIR/wandb"
 scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/slurm_job.txt"
 nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
@@ -212,11 +189,12 @@ printf '%s\n' \
     "experiment=trench_align_v2_generalist" \
     "arm=$ARM" \
     "gpu_type=$GPU_TYPE" \
-    "cudnn_repair=$CUDNN_REPAIR" \
-    "attempt=$ATTEMPT" \
-    "max_attempts=$MAX_ATTEMPTS" \
+    "cudnn_runtime=$CUDNN_RUNTIME" \
+    "runtime_venv=$VENV" \
+    "runtime_lock_sha256=$RUNTIME_LOCK_SHA" \
     "resume_from=$RESUME_FROM" \
     "wandb_run_id=$WANDB_RUN_ID" \
+    "wandb_mode=$WANDB_MODE" \
     "wandb_parent_run_id=$WANDB_PARENT_RUN_ID" \
     "wandb_parent_checkpoint=$RESUME_FROM" \
     "config=$CONFIG" \
@@ -242,7 +220,7 @@ printf '%s\n' \
     "transitions_per_update=$((NUM_DEVICES * NUM_ENVS_PER_DEVICE * NUM_STEPS))" \
     "target_update=$TARGET_UPDATE" \
     "slurm_job_id=$SLURM_JOB_ID" > "$RUN_DIR/run_contract.env"
-cp "$RUN_DIR/run_contract.env" "$RUN_DIR/run_contract.attempt${ATTEMPT}.job${SLURM_JOB_ID}.env"
+cp "$RUN_DIR/run_contract.env" "$RUN_DIR/run_contract.job${SLURM_JOB_ID}.env"
 
 TRAIN_RC=0
 "$PYTHON" -u "$BASELINES_ROOT/train_mixed.py" \
@@ -297,21 +275,5 @@ if [ "$TRAIN_RC" -eq 0 ]; then
     echo "status=COMPLETED" >> "$RUN_DIR/run_contract.env"
     exit 0
 fi
-SLURM_LOG="$RUN_DIR/slurm_${SLURM_JOB_ID}.out"
-if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ] && grep -aq "CUDNN_STATUS_EXECUTION_FAILED" "$SLURM_LOG" 2>/dev/null; then
-    IFS='|' read -r -a SBATCH_OPTS <<< "$RESUBMIT_SBATCH_ARGS"
-    # drop the parent allocation's SLURM_* inputs; the child reads the script
-    # header plus these explicit options only
-    UNSET_SLURM=(); for v in $(compgen -e | grep -E '^SLURM_' || true); do UNSET_SLURM+=(-u "$v"); done
-    CHILD="$(env ${UNSET_SLURM[@]+"${UNSET_SLURM[@]}"} sbatch --parsable "${SBATCH_OPTS[@]}" --export="ALL,ATTEMPT=$((ATTEMPT + 1))" \
-        "$BASELINES_ROOT/scripts/euler_trench_align_v2/run.sbatch")"
-    CHILD="${CHILD%%;*}"
-    # the child rewrites run_contract.env when it starts, so keep the pointer in
-    # this attempt's own copy as well
-    printf '%s\n' "status=FAILED_CUDNN_RESUBMITTED" "child_job_id=$CHILD" "child_attempt=$((ATTEMPT + 1))" \
-        | tee -a "$RUN_DIR/run_contract.env" >> "$RUN_DIR/run_contract.attempt${ATTEMPT}.job${SLURM_JOB_ID}.env"
-    echo "cuDNN startup/execution failure on attempt $ATTEMPT; resubmitted as job $CHILD (attempt $((ATTEMPT + 1)))"
-else
-    echo "status=FAILED train_rc=$TRAIN_RC" >> "$RUN_DIR/run_contract.env"
-fi
+echo "status=FAILED train_rc=$TRAIN_RC" >> "$RUN_DIR/run_contract.env"
 exit "$TRAIN_RC"
