@@ -1,5 +1,6 @@
 import json
 import hashlib
+import csv
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,7 @@ import numpy as np
 
 from scripts.build_v8_benchmark_dashboard import (
     aligned_rows,
+    behavior_comparison,
     build_dashboard_data,
     choose_review_rows,
     issue_tags,
@@ -103,6 +105,48 @@ class DashboardTest(unittest.TestCase):
         selected = choose_review_rows(rows, 4)
         self.assertEqual({item["slot"] for item in selected}, {1, 2, 3, 4})
 
+    def test_behavior_deltas_use_only_paired_common_successes(self):
+        for record_, travel in ((self.reference, [10000.0, 1000.0, 4000.0, 20.0]),
+                                (self.candidate, [100.0, 10000.0, 5000.0, 10.0])):
+            for episode, distance in zip(record_["per_map"], travel):
+                episode.update(behavior_metrics_available=True, base_travel_m=distance,
+                               productive_base_stances=2, mean_workspace_dig_area_m2=5.0,
+                               lateral_dig_volume_fraction=0.25)
+        self.reference["per_map"][3]["mean_workspace_dig_area_m2"] = float("nan")
+        comparison = behavior_comparison(aligned_rows(self.reference, self.candidate))
+        self.assertEqual(comparison["successes"]["reference"]["metrics"]["base_travel_m"]["mean"], 510.0)
+        self.assertEqual(comparison["successes"]["candidate"]["metrics"]["base_travel_m"]["mean"], 55.0)
+        paired = comparison["paired_common_successes"]
+        self.assertEqual(paired["episodes"], 1)
+        self.assertEqual(paired["metrics"]["base_travel_m"]["delta"],
+                         {"count": 1, "mean": -10.0, "median": -10.0, "p90": -10.0})
+        self.assertEqual(paired["metrics"]["mean_workspace_dig_area_m2"]["delta"]["count"], 0)
+        self.assertIsNone(paired["metrics"]["mean_workspace_dig_area_m2"]["delta"]["mean"])
+        self.assertEqual(comparison["all_episodes"]["reference"]["episodes"], 4)
+        with tempfile.TemporaryDirectory() as directory:
+            csv_path = Path(directory) / "episodes.csv"
+            write_episode_csv({"maps": aligned_rows(self.reference, self.candidate)}, csv_path)
+            with csv_path.open() as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(rows[0]["paired_common_success_delta_base_travel_m"], "")
+            self.assertEqual(rows[3]["paired_common_success_delta_base_travel_m"], "-10.0")
+            self.assertEqual(rows[3]["reference_mean_workspace_dig_area_m2"], "")
+            self.assertEqual(rows[3]["candidate_productive_base_stances"], "2.0")
+            self.assertEqual(rows[3]["candidate_lateral_dig_volume_fraction"], "0.25")
+
+    def test_legacy_behavior_is_unavailable_and_does_not_reuse_workspace_cycles(self):
+        rows = aligned_rows(self.reference, self.candidate)
+        self.assertEqual(rows[3]["reference"]["workspace_cycles"], 3.0)
+        self.assertIsNone(rows[3]["reference"]["productive_base_stances"])
+        self.assertIsNone(rows[3]["reference"]["base_travel_m"])
+        comparison = behavior_comparison(rows)
+        self.assertEqual(comparison["all_episodes"]["reference"]["available_episodes"], 0)
+        self.assertIsNone(comparison["paired_common_successes"]["metrics"]["base_travel_m"]["delta"]["mean"])
+        self.candidate["per_map"][3]["success"] = False
+        comparison = behavior_comparison(aligned_rows(self.reference, self.candidate))
+        self.assertEqual(comparison["paired_common_successes"]["episodes"], 0)
+        self.assertIsNone(comparison["paired_common_successes"]["metrics"]["base_travel_m"]["reference"]["mean"])
+
     def test_identity_mismatch_fails(self):
         self.candidate["per_map"][0]["episode_id"] = "different"
         with self.assertRaisesRegex(ValueError, "identity mismatch"):
@@ -177,11 +221,26 @@ class DashboardTest(unittest.TestCase):
             self.assertIn("Terra benchmark: gru vs ff", document)
             self.assertIn(encoded[:20], json.dumps(data, allow_nan=False))
             self.assertIn("episode-dot", document)
+            self.assertIn("maps both policies solved", document)
+            self.assertIn("unavailable", document)
+            self.assertIn("Legacy productive workspace cycles", document)
+            self.assertIn("not physical safety", document)
+            self.assertIn("Area per productive stance", document)
+            self.assertIn("by_family", data["behavior"])
+            self.assertIn("fnd-a", data["behavior"]["by_primary_cell"])
             self.assertNotIn("NaN", document)
             csv_path = root / "episodes.csv"
             write_episode_csv(data, csv_path)
             csv_text = csv_path.read_text(encoding="utf-8")
             self.assertIn("candidate_no_effect_rate", csv_text)
+            self.assertIn("candidate_base_travel_m", csv_text)
+            self.assertIn("candidate_productive_base_stances", csv_text)
+            self.assertIn("candidate_mean_workspace_dig_area_m2", csv_text)
+            self.assertIn("candidate_lateral_dig_volume_fraction", csv_text)
+            self.assertIn("paired_common_success_delta_base_travel_m", csv_text)
+            with csv_path.open() as stream:
+                csv_rows = list(csv.DictReader(stream))
+            self.assertEqual(csv_rows[0]["candidate_base_travel_m"], "")
             self.assertIn("episode-1", csv_text)
 
     def test_trace_summary_surfaces_no_effect_and_terminal_cycle(self):

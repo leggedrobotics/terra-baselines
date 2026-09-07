@@ -11,7 +11,13 @@ import numpy as np
 import jax
 from tqdm import tqdm
 from utils.models import load_neural_network_for_checkpoint
-from utils.helpers import load_pkl_object
+from utils.helpers import (
+    checkpoint_evaluation_config,
+    checkpoint_foundation_behavior,
+    load_pkl_object,
+    overlay_foundation_behavior,
+    validate_foundation_behavior_env,
+)
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
 from utils.utils_ppo import obs_to_model_input, wrap_action
@@ -28,6 +34,7 @@ sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
 def rollout_episode(
     env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed
 ):
+    validate_foundation_behavior_env(rl_config, env_cfgs, env=env)
     print(f"Using {seed=}")
     rng = jax.random.PRNGKey(seed)
     rng, _rng = jax.random.split(rng)
@@ -150,7 +157,7 @@ if __name__ == "__main__":
     n_envs = args.n_envs_x * args.n_envs_y
 
     log = load_pkl_object(f"{args.run_name}")
-    config = log["train_config"]
+    config = checkpoint_evaluation_config(log)
     config.num_test_rollouts = n_envs
     config.num_devices = 1
 
@@ -216,6 +223,7 @@ if __name__ == "__main__":
         except Exception:
             return jnp.float32(default)
 
+    env_cfgs = overlay_foundation_behavior(env_cfgs, checkpoint_foundation_behavior(log))
     env_cfgs = env_cfgs._replace(
         cabin_alignment_coefficient=_safe_scalar_float(
             getattr(env_cfgs, "cabin_alignment_coefficient", -0.04), -0.04
@@ -315,6 +323,7 @@ if __name__ == "__main__":
         n_envs_y_rendering=args.n_envs_y,
         display=False,
         shuffle_maps=shuffle_maps,
+        executable_dig_observation=config.executable_dig_observation,
     )
 
     # For visualization, freeze curriculum: use the checkpoint env_config as-is

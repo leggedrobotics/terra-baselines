@@ -10,7 +10,14 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from tqdm import tqdm
 from utils.models import load_neural_network_for_checkpoint
-from utils.helpers import load_pkl_object
+from utils.helpers import (
+    checkpoint_evaluation_config,
+    checkpoint_foundation_behavior,
+    load_pkl_object,
+    overlay_foundation_behavior,
+    replicate_checkpoint_env_config,
+    validate_foundation_behavior_env,
+)
 from terra.env import TerraEnvBatch
 import jax.numpy as jnp
 from utils.utils_ppo import obs_to_model_input, wrap_action
@@ -27,6 +34,7 @@ sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
 def rollout_episode_with_paths(
     env: TerraEnvBatch, model, model_params, env_cfgs, rl_config, max_frames, seed
 ):
+    validate_foundation_behavior_env(rl_config, env_cfgs, env=env)
     print(f"Using {seed=}")
     rng = jax.random.PRNGKey(seed)
     rng, _rng = jax.random.split(rng)
@@ -449,30 +457,18 @@ if __name__ == "__main__":
     args, _ = parser.parse_known_args()
 
     log = load_pkl_object(f"{args.run_name}")
-    config = log["train_config"]
+    config = checkpoint_evaluation_config(log)
     config.num_test_rollouts = 1  # Single environment
     config.num_devices = 1
 
-    env_cfgs = log["env_config"]
+    env_cfgs = overlay_foundation_behavior(
+        log["env_config"], checkpoint_foundation_behavior(log)
+    )
     
     # Debug: print agent types from checkpoint
     print(f"Agent types from checkpoint: {env_cfgs.agent_types}")
     
-    # Custom handling for different field types
-    def replicate_field(x):
-        if x is None:
-            return None
-        # Handle tuples generically (e.g., agent_types of length 1–4)
-        if isinstance(x, tuple):
-            return jnp.array(x)[None, ...].repeat(1, 0)
-        # Handle scalars (int, float, bool) - just replicate the value
-        elif isinstance(x, (int, float, bool)):
-            return jnp.array([x])
-        # Handle arrays - take first element and replicate
-        else:
-            return x[0][None, ...].repeat(1, 0)
-    
-    env_cfgs = jax.tree_map(replicate_field, env_cfgs)
+    env_cfgs = replicate_checkpoint_env_config(env_cfgs, n_envs=1)
     
     # Create batch config for the environment
     from terra.config import BatchConfig
@@ -485,6 +481,7 @@ if __name__ == "__main__":
         n_envs_y_rendering=1,
         display=False,
         shuffle_maps=False,
+        executable_dig_observation=config.executable_dig_observation,
     )
 
     model_params = log["model"]

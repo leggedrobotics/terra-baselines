@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
+from utils.helpers import validate_executable_dig_observation
 
 
 _LOCAL_MAP_KEYS = (
@@ -58,6 +59,7 @@ def scale_local_maps_in_obs(obs, scale):
 
 
 def obs_to_model_input(obs, prev_actions, train_cfg):
+    validate_executable_dig_observation(train_cfg)
     # Capture the env's action mask before ``obs`` is rebound to the list.
     action_mask = (
         obs["action_mask"]
@@ -140,6 +142,11 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
             "admissible_dig_observation requires Terra "
             "obs['local_map_admissible_dig']"
         )
+    if (
+        _config_option(train_cfg, "executable_dig_observation", False)
+        and jnp.shape(obs["local_map_admissible_dig"])[-1:] != (12,)
+    ):
+        raise ValueError("executable local_map_admissible_dig must end with width 12")
     # Feature engineering
     if _config_option(train_cfg, "clip_action_maps", True):
         obs = clip_action_map_in_obs(obs)
@@ -199,8 +206,9 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         # zone (reward-v2 potential input); MapsNet appends it as a channel.
         obs.append(relocation_distance_map)
     if local_map_admissible_dig is not None:
-        # Width-12: fresh target cells a DO would be admitted to dig per cabin
-        # angle from the current base pose; LocalMapNet's tenth map.
+        # Width-12, per cabin angle: legacy admitted fresh-cell count, or
+        # executable fresh volume when the checkpoint opts into that semantic.
+        # EnvConfig is checked before rollout; this is LocalMapNet's tenth map.
         obs.append(local_map_admissible_dig)
     if _config_option(train_cfg, "action_logit_masking", False):
         # Effect-based action mask from the env (D3). Appended last; the model

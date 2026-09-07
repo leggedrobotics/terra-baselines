@@ -14,6 +14,7 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Foundation behavior and efficiency metrics](docs/research/FOUNDATION_BEHAVIOR_20260907.md)
 - [V8 movement-feedback pilot](docs/research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md)
 - [V8 paper-experiment handover](docs/research/V8_PAPER_EXPERIMENT_HANDOVER_20260818.md)
 - [V8 fixed-panel benchmark inspector](docs/research/V8_BENCHMARK_INSPECTOR_20260820.md)

@@ -28,7 +28,13 @@ from terra.config import (
 from terra.env import TerraEnvBatch
 from train import TrainConfig  # needed for unpickling checkpoints
 from train_mixed import MixedAgentTrainConfig
-from utils.helpers import load_pkl_object
+from utils.helpers import (
+    checkpoint_evaluation_config,
+    checkpoint_foundation_behavior,
+    load_pkl_object,
+    overlay_foundation_behavior,
+    validate_foundation_behavior_env,
+)
 from utils.models import load_neural_network
 from utils.utils_ppo import obs_to_model_input, wrap_action
 from eval_mcts import fix_env_cfg_dtypes, make_mcts_step_fn
@@ -104,6 +110,7 @@ def rollout_and_render_episode(
     deterministic,
     use_mcts=False,
 ):
+    validate_foundation_behavior_env(rl_config, env_cfgs, env=env)
     rng = jax.random.PRNGKey(seed)
     rng, _rng = jax.random.split(rng)
     timestep = env.reset(env_cfgs, jax.random.split(_rng, 1))
@@ -241,7 +248,7 @@ if __name__ == "__main__":
     args, _ = parser.parse_known_args()
 
     log = load_pkl_object(args.policy)
-    config = log["train_config"]
+    config = checkpoint_evaluation_config(log)
     config.num_test_rollouts = 1
     config.num_devices = 1
     config.num_embeddings_agent_min = 60
@@ -272,6 +279,7 @@ if __name__ == "__main__":
     except Exception:
         env_cfg = EnvConfig()
 
+    env_cfg = overlay_foundation_behavior(env_cfg, checkpoint_foundation_behavior(log))
     env_cfg = env_cfg._replace(
         cabin_alignment_coefficient=_safe_scalar_float(
             getattr(env_cfg, "cabin_alignment_coefficient", -0.04), -0.04
@@ -356,6 +364,7 @@ if __name__ == "__main__":
         display=False,
         shuffle_maps=False,
         single_map_path=map_path,
+        executable_dig_observation=config.executable_dig_observation,
     )
 
     # Match visualize_mixed behavior exactly: freeze curriculum/config updates
@@ -369,6 +378,7 @@ if __name__ == "__main__":
 
     env.curriculum_manager = _NoopCurriculumManager()
 
+    validate_foundation_behavior_env(config, env_cfgs, env=env)
     model = load_neural_network(config, env)
     model_params = log["model"]
 

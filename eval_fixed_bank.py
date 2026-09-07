@@ -35,7 +35,13 @@ from utils.accepted_bank import (
 from utils.models import validate_model_params_match
 from utils.explicit_episode_bank import ExplicitEpisodePanel
 from utils.explicit_episode_bank import load_explicit_episode_panel
-from utils.helpers import load_pkl_object
+from utils.helpers import (
+    checkpoint_evaluation_config,
+    checkpoint_foundation_behavior,
+    load_pkl_object,
+    validate_foundation_behavior_env,
+)
+from utils.behavior_metrics import BEHAVIOR_METRIC_FIELDS
 
 sys.modules["__main__"].TrainConfig = TrainConfig
 sys.modules["__main__"].MixedAgentTrainConfig = MixedAgentTrainConfig
@@ -92,6 +98,12 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
     config = checkpoint.get("train_config")
     if config is None:
         raise ValueError("checkpoint has no train_config")
+    # Bind the environment's float32 cost values, independent of whether the
+    # checkpoint recorded them as Python floats or only as EnvConfig leaves.
+    foundation_behavior = {
+        name: value if isinstance(value, bool) else float(np.float32(value))
+        for name, value in checkpoint_foundation_behavior(checkpoint).items()
+    }
     bank = _field(config, "accepted_bank")
     curriculum = _field(config, "curriculum_levels_override")
     contract = {
@@ -196,6 +208,10 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
         contract["architecture"]["movement_feasibility_observation"] = True
     if bool(_field(config, "previous_outcome_observation", False)):
         contract["architecture"]["previous_outcome_observation"] = True
+    if any(foundation_behavior.values()):
+        # The executable feature changes semantics, not width. Bind the costs
+        # and observation treatment together while preserving legacy hashes.
+        contract["foundation_behavior"] = foundation_behavior
     partial_reset_digest = _field(config, "partial_reset_bank_sha256")
     if partial_reset_digest is not None:
         raw_partial_receipt = checkpoint.get("partial_reset_curriculum")
@@ -938,6 +954,25 @@ def validate_progress_diagnostics(
         raise RuntimeError("fixed evaluation stall saturation fraction is inconsistent")
 
 
+def _behavior_summary(selected: list[dict]) -> dict:
+    def cohort(episodes):
+        available = [row for row in episodes if row["behavior_metrics_available"]]
+        metrics = {}
+        for field in BEHAVIOR_METRIC_FIELDS:
+            values = [row[field] for row in available if row[field] is not None]
+            metrics[field] = {
+                "count": len(values),
+                "mean": float(np.mean(values)) if values else None,
+                "median": float(np.median(values)) if values else None,
+                "p90": float(np.percentile(values, 90)) if values else None,
+            }
+        return {"episodes": len(episodes), "available_episodes": len(available),
+                "metrics": metrics}
+
+    return {"all_episodes": cohort(selected),
+            "successes": cohort([row for row in selected if row["success"]])}
+
+
 def grouped_results(
     rows: list[dict],
     successes: np.ndarray,
@@ -949,10 +984,21 @@ def grouped_results(
     integrity_metrics: dict[str, np.ndarray] | None = None,
     productive_workspace_cycles: np.ndarray | None = None,
     productive_workspace_cycles_available: np.ndarray | None = None,
+    behavior_metrics: dict[str, np.ndarray] | None = None,
 ) -> tuple[list[dict], dict]:
     completion_metrics = completion_metrics or {}
     integrity_metrics = integrity_metrics or {}
     count = len(rows)
+    behavior_arrays = {key: np.asarray(values) for key, values in (behavior_metrics or {}).items()}
+    unknown = set(behavior_arrays) - {*BEHAVIOR_METRIC_FIELDS, "behavior_metrics_available"}
+    if unknown:
+        raise ValueError(f"unknown behavior metrics: {sorted(unknown)}")
+    for key, values in behavior_arrays.items():
+        if values.shape != (count,):
+            raise ValueError(f"{key} must have one value per map")
+    behavior_available = behavior_arrays.get("behavior_metrics_available", np.zeros(count, dtype=bool))
+    if behavior_available.dtype.kind != "b":
+        raise ValueError("behavior_metrics_available must be boolean")
     if productive_workspace_cycles is None:
         productive_workspace_cycles = np.full(count, -1, dtype=np.int32)
     if productive_workspace_cycles_available is None:
@@ -994,6 +1040,17 @@ def grouped_results(
             key: np.asarray(values)[index].item()
             for key, values in integrity_metrics.items()
         }
+        behavior_values = {"behavior_metrics_available": bool(behavior_available[index])}
+        for key in BEHAVIOR_METRIC_FIELDS:
+            value = np.asarray(behavior_arrays[key][index]).item() if key in behavior_arrays else None
+            if not behavior_available[index] or value is None:
+                value = None
+            else:
+                try:
+                    value = value if np.isfinite(value) else None
+                except TypeError as exc:
+                    raise ValueError(f"{key} must contain numeric values") from exc
+            behavior_values[key] = value
         integrity_failure = bool(
             int(integrity_values.get("maximum_mass_residual", 0)) != 0
             or bool(integrity_values.get("target_mutation", False))
@@ -1021,6 +1078,7 @@ def grouped_results(
                 ),
                 **metric_values,
                 **integrity_values,
+                **behavior_values,
                 "integrity_failure": integrity_failure,
             }
         )
@@ -1182,6 +1240,7 @@ def grouped_results(
                 "carry_work": carry_work_summary(selected),
                 "material_progress": material_progress_summary(selected),
                 "stall_age": stall_age_summary(selected),
+                "behavior": _behavior_summary(selected),
             }
         return result
 
@@ -1196,6 +1255,7 @@ def grouped_results(
             "carry_work": carry_work_summary(per_map),
             "material_progress": material_progress_summary(per_map),
             "stall_age": stall_age_summary(per_map),
+            "behavior": _behavior_summary(per_map),
         },
         "by_family": summarize("family"),
         "by_primary_cell": summarize("primary_cell"),
@@ -1516,7 +1576,7 @@ def main() -> None:
             observed = {key: receipt.get(key) for key in expected_protocol}
             if observed != expected_protocol:
                 raise ValueError(f"{path}: R2 reward protocol mismatch: {observed!r}")
-    reference_train_config = checkpoints[0][1]["train_config"]
+    reference_train_config = checkpoint_evaluation_config(checkpoints[0][1])
     for _, checkpoint in checkpoints:
         if "model" not in checkpoint:
             raise KeyError("checkpoint has no model parameters")
@@ -1578,6 +1638,7 @@ def main() -> None:
             env_params=env_config_override,
         )
         env_params = jax.tree_util.tree_map(lambda value: value[0], env_params)
+        validate_foundation_behavior_env(config, env_params, env=env)
         expected_trench_gate = bool(
             getattr(config, "enforce_trench_dig_alignment", None) or False
         )
@@ -1912,6 +1973,7 @@ def main() -> None:
                 integrity_metrics=integrity_metrics,
                 productive_workspace_cycles=workspace_cycles,
                 productive_workspace_cycles_available=workspace_cycles_available,
+                behavior_metrics=stats.get("behavior"),
             )
             comparison_to_previous = (
                 None
