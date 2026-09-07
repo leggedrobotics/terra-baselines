@@ -1,5 +1,13 @@
 # Experiments — current state (updated 2026-08-24)
 
+## 2026-09-07 local pipeline maintenance
+
+Junction/continuation/compilation fixes passed local CPU checks and a one-GPU
+checkpoint-replay smoke through absolute update 5, with finite model/optimizer
+state and persistent-cache reuse. W&B was disabled and no production or Slurm
+job was launched. See the 2026-09-07 entry in `EXPERIMENTS_LOG.md`. Historical
+cluster entries below were not refreshed by this local maintenance task.
+
 ## No live V8 movement-feedback jobs
 
 The paired fresh-scratch jobs are complete; there is nothing left to cancel:
@@ -644,4 +652,3 @@ chain for run id `terra-v2specpc-7989a9b-s20260901` (Terra a4da127a,
 without the observation flags; jobs `4592193` / `4592194` / `4592197`) was
 cancelled before it reached update 500. The user's own chain
 `terra-v2spec-obs-ad9ee96-s20260901` (jobs 4588229-4588231) is untouched.
-

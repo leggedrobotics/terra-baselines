@@ -40,7 +40,7 @@ RESUBMIT_SBATCH_ARGS="${RESUBMIT_SBATCH_ARGS:-}"
 [[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ ]] || exit 2
 if [ "$ATTEMPT" -gt 0 ]; then
     # a retry always prefers the newest checkpoint written into this RUN_DIR
-    LATEST_CKPT="$(ls -1 "$RUN_DIR"/checkpoints/*_update_*.pkl 2>/dev/null | sort | tail -1 || true)"
+    LATEST_CKPT="$(find "$RUN_DIR/checkpoints" -maxdepth 1 -type f -name '*_update_*.pkl' -print 2>/dev/null | sort | tail -n 1 || true)"
     [ -n "$LATEST_CKPT" ] && RESUME_FROM="$LATEST_CKPT"
 fi
 if [ "$RESUME_FROM" != none ]; then
@@ -68,7 +68,9 @@ test "$(cat "$BASELINES_ROOT/REVISION")" = "$BASELINES_REVISION"
 test "$(cat "$RUNTIME_TERRA_ROOT/REVISION")" = "$RUNTIME_TERRA_REVISION"
 test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_ARCHIVE_SHA"
 
-mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/wandb"
+export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$RUN_DIR/jax-cache}"
+export JAX_ENABLE_COMPILATION_CACHE="${JAX_ENABLE_COMPILATION_CACHE:-true}"
+mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/wandb" "$JAX_COMPILATION_CACHE_DIR"
 tar --zstd -xf "$BANK_ARCHIVE" -C "$TMPDIR" bank
 export DATASET_PATH="$TMPDIR/bank"
 export DATASET_SIZE="$BANK_DATASET_SIZE"
@@ -163,9 +165,38 @@ count = sum(int(np.asarray(x).size) for x in jax.tree.leaves(params))
 assert count == int(os.environ["EXPECTED_PARAMETERS"]), count
 PY
 
-if [ "$ATTEMPT" -gt 0 ] || [ "$RESUME_FROM" != none ]; then WANDB_RESUME=allow; else WANDB_RESUME=never; fi
-export WANDB_ENTITY WANDB_PROJECT WANDB_MODE=online WANDB_RESUME
-export WANDB_RUN_ID="trench_align_v2_${ARM}_${BASELINES_REVISION:0:10}_s${SEED}"
+configure_wandb_segment() {
+    local base_id="trench_align_v2_${ARM}_${BASELINES_REVISION:0:10}_s${SEED}"
+    WANDB_PARENT_RUN_ID=unknown
+    export WANDB_RUN_ID="$base_id" WANDB_RESUME=never
+    if [[ "$RESUME_FROM" == none ]]; then
+        if [[ "$ATTEMPT" -gt 0 ]]; then WANDB_RESUME=allow; fi
+        return
+    fi
+
+    # Replayed updates must not be appended behind the previous W&B history.
+    # Keep the trainer's RUN_NAME and its local checkpoint/receipt paths stable.
+    export WANDB_RUN_ID="${base_id}_resume_j${SLURM_JOB_ID}"
+    local previous_contract="$RUN_DIR/run_contract.env"
+    if [[ ! -f "$previous_contract" ]] || \
+        [[ "$(dirname -- "$(realpath -- "$RESUME_FROM")")" != "$(realpath -- "$RUN_DIR/checkpoints")" ]]; then
+        return
+    fi
+    local previous_run_id
+    previous_run_id="$(sed -n 's/^wandb_run_id=//p' "$previous_contract" | head -n 1)"
+    if [[ "$previous_run_id" =~ ^${base_id}(_resume_j[0-9]+)?$ ]]; then
+        WANDB_PARENT_RUN_ID="$previous_run_id"
+    elif [[ -z "$previous_run_id" ]] && \
+        grep -Fxq "terra_baselines_revision=$BASELINES_REVISION" "$previous_contract" && \
+        grep -Fxq "arm=$ARM" "$previous_contract" && \
+        grep -Fxq "seed=$SEED" "$previous_contract"; then
+        # Older same-run contracts predate the explicit W&B field and used
+        # the deterministic base ID. External checkpoint ancestry is unknown.
+        WANDB_PARENT_RUN_ID="$base_id"
+    fi
+}
+configure_wandb_segment
+export WANDB_ENTITY WANDB_PROJECT WANDB_MODE=online
 export WANDB_DIR="$RUN_DIR/wandb"
 scontrol show job "$SLURM_JOB_ID" -o > "$RUN_DIR/slurm_job.txt"
 nvidia-smi -q > "$RUN_DIR/nvidia_smi.txt"
@@ -185,6 +216,9 @@ printf '%s\n' \
     "attempt=$ATTEMPT" \
     "max_attempts=$MAX_ATTEMPTS" \
     "resume_from=$RESUME_FROM" \
+    "wandb_run_id=$WANDB_RUN_ID" \
+    "wandb_parent_run_id=$WANDB_PARENT_RUN_ID" \
+    "wandb_parent_checkpoint=$RESUME_FROM" \
     "config=$CONFIG" \
     "terra_baselines_revision=$BASELINES_REVISION" \
     "runtime_terra_revision=$RUNTIME_TERRA_REVISION" \
@@ -198,6 +232,8 @@ printf '%s\n' \
     "distance_protocol_id=obstacle_geodesic_8_physical_global_v1" \
     "distance_sidecar_sha256=$BANK_DISTANCE_SIDECAR_SHA" \
     "model_parameter_count=$EXPECTED_PARAMETERS" \
+    "jax_compilation_cache_dir=$JAX_COMPILATION_CACHE_DIR" \
+    "jax_enable_compilation_cache=$JAX_ENABLE_COMPILATION_CACHE" \
     "seed=$SEED" \
     "num_devices=$NUM_DEVICES" \
     "num_envs_per_device=$NUM_ENVS_PER_DEVICE" \
@@ -252,7 +288,7 @@ TRAIN_RC=0
     --log_eval_interval 100 \
     --eval_episodes 100 \
     --checkpoint_interval 500 \
-    --cache_clear_interval 1000 \
+    --cache_clear_interval 0 \
     --keep_checkpoint_history \
     --checkpoint_dir "$RUN_DIR/checkpoints" \
     ${RESUME_ARGS[@]+"${RESUME_ARGS[@]}"} || TRAIN_RC=$?

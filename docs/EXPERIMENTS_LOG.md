@@ -1,5 +1,32 @@
 # Experiments — completed log
 
+## 2026-09-07 local pipeline correctness smoke
+
+Validated the junction observation, native checkpoint replay, and JAX cache
+fixes on starship's single RTX 4090 with W&B disabled. Paired Terra is
+`46b140f8373e098ad832e4968d8136a5ba861bf6`; the trainer changes are on
+`fix-training-continuation-cache`, based on `d410062b`. No Slurm job was launched.
+
+The current v2 encoder (2,311,701 parameters) completed four updates at 8
+environments × 4 steps, 2 epochs, and 2 minibatches. A separate process then
+resumed checkpoint 2 with receipts 3/4 already present and completed absolute
+update 5. All 431 optimizer leaves were restored exactly at step 8; final Adam
+count and train-state step were 20. Model, optimizer, and stored losses were
+finite. Replayed receipts 3/4 were archived unchanged and canonical receipts
+1–5 remained available.
+
+Both processes had one stable update signature and an explicit persistent-cache
+hit for `pmap__update_step`. The original reset counter's weak-to-strong int32
+change had caused a second full compile; its two reset initializers are now
+explicit int32. Periodic cache eviction is removed. Process startup still traces
+and lowers the graph; this small-batch smoke is not a production throughput,
+multi-GPU, or learning-quality benchmark.
+
+CPU validation passed junction/DO parity, reward and counter regressions, and
+39 trainer/launcher tests. Four edited launchers passed shellcheck. Full local
+commands, logs, checkpoints, and independent review are under
+`/home/lorenzo/moleworks/.artifacts/terra_pipeline_fixes_20260907/`.
+
 The first table is the historical spatial-encoder line. Metrics:
 eval/positive_terminations /
 eval/rewards (final), swhr = eval/success_within_horizon_rate, ep_len =

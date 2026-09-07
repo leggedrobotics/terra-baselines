@@ -106,6 +106,7 @@ import eval_ppo
 from datetime import datetime
 from dataclasses import asdict, dataclass
 import time
+import warnings
 from tqdm import tqdm
 from functools import partial
 from flax.jax_utils import replicate, unreplicate
@@ -761,6 +762,44 @@ def _write_episode_aggregate_receipt(
             pass
         raise
     return output_path
+
+
+def _archive_replayed_episode_aggregate_receipts(
+    config,
+    next_update: int,
+) -> Path | None:
+    """Preserve post-checkpoint receipts before a native resume replays them."""
+    output_dir = Path(config.checkpoint_dir) / "episode_aggregates"
+    if not output_dir.is_dir():
+        return None
+
+    prefix = f"{config.name}_update_"
+    replayed_receipts = []
+    # Inspect only this directory and match names literally: run names can
+    # contain glob characters, and previous archives must remain untouched.
+    for path in output_dir.iterdir():
+        if not path.is_file() or not path.name.startswith(prefix):
+            continue
+        if path.suffix != ".json":
+            continue
+        update_text = path.stem[len(prefix):]
+        if update_text.isdecimal() and int(update_text) > next_update:
+            replayed_receipts.append(path)
+
+    if not replayed_receipts:
+        return None
+
+    archive_dir = Path(
+        tempfile.mkdtemp(prefix=f"replayed_from_{next_update:06d}_", dir=output_dir)
+    )
+    for path in sorted(replayed_receipts):
+        path.rename(archive_dir / path.name)
+    print(
+        f"Archived {len(replayed_receipts)} post-checkpoint episode receipts "
+        f"for {config.name} under {archive_dir}.",
+        flush=True,
+    )
+    return archive_dir
 
 
 def _sorted_map_indices(images_dir: Path) -> list[int]:
@@ -1520,7 +1559,8 @@ class MixedAgentTrainConfig:
     loaded_max: int = 100
     local_map_area_scale: float = 1.0
     num_rollouts_eval: int = 200
-    cache_clear_interval: int = 1000
+    # Retained for old commands/configs; clearing live JIT caches forces recompilation.
+    cache_clear_interval: int = 0
     # Entropy scheduler (cosine decay)
     ent_schedule_start: float = 0.15
     ent_schedule_end: float = 0.005
@@ -1677,6 +1717,14 @@ class MixedAgentTrainConfig:
     teacher_obs_downsample: int = 1
 
     def __post_init__(self):
+        if self.cache_clear_interval != 0:
+            warnings.warn(
+                "cache_clear_interval is deprecated and ignored; keeping JAX "
+                "executables cached throughout training (effective interval: 0).",
+                FutureWarning,
+                stacklevel=2,
+            )
+            self.cache_clear_interval = 0
         _checkpoint_load_mode(self)
         if self.actor_core not in ("mlp", "gru"):
             raise ValueError("actor_core must be 'mlp' or 'gru'")
@@ -2895,6 +2943,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
     # Optionally load checkpoint before creating states
     checkpoint = None
+    optimizer_restored = False
     stall_age_prepared_receipt = None
     env_params_override = None
     resume_update = 0
@@ -2988,6 +3037,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     opt_state=checkpoint["optimizer_state"],
                     step=checkpoint.get("train_state_step", train_state.step),
                 )
+                optimizer_restored = True
                 print(
                     "Restored optimizer state from checkpoint "
                     f"(next_update={resume_update})."
@@ -3395,6 +3445,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 ),
                 pending_aggregate_single,
             )
+
+            if optimizer_restored:
+                # Validate checkpoint/configuration and complete environment
+                # initialization before moving this run's replayed receipts.
+                jax.block_until_ready(timestep)
+                _archive_replayed_episode_aggregate_receipts(config, resume_update)
 
             # TRAIN LOOP
             @partial(jax.pmap, axis_name="devices", donate_argnums=(0,))
@@ -4493,16 +4549,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         }
                     )
 
-                # Clear JAX caches and run garbage collection to stabilize memory use
-                if (
-                    config.cache_clear_interval > 0
-                    and (i + 1) % config.cache_clear_interval == 0
-                ):
-                    jax.clear_caches()
-                    import gc
-
-                    gc.collect()
-
             return {
                 "runner_state": runner_state_single,
                 "loss_info": loss_info_single,
@@ -4741,8 +4787,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cache_clear_interval",
         type=int,
-        default=1000,
-        help="JAX cache-clear interval in updates; set 0 to disable.",
+        default=0,
+        help="Deprecated and ignored; JAX executables remain cached during training.",
     )
     parser.add_argument(
         "--ent_schedule_start",

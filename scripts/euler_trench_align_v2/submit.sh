@@ -15,7 +15,21 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$REPO/cluster/euler_account.sh"
 terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
 
-TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_merge_main_20260902}"
+TERRA_REPO="${TERRA_REPO:-$(dirname "$REPO")/terra}"
+
+# These values cross SSH and Slurm's comma-separated --export boundary.
+# Use the same path-character restrictions as the Euler storage roots.
+if [[ -n "${JAX_COMPILATION_CACHE_DIR:-}" ]]; then
+    [[ "$JAX_COMPILATION_CACHE_DIR" =~ ^/[a-zA-Z0-9_./-]+$ ]] || {
+        echo "JAX_COMPILATION_CACHE_DIR must be an absolute path without spaces or shell metacharacters" >&2
+        exit 2
+    }
+fi
+JAX_ENABLE_COMPILATION_CACHE="${JAX_ENABLE_COMPILATION_CACHE:-true}"
+[[ "$JAX_ENABLE_COMPILATION_CACHE" =~ ^[a-zA-Z0-9]+$ ]] || {
+    echo "JAX_ENABLE_COMPILATION_CACHE contains unsupported characters" >&2
+    exit 2
+}
 
 # ---- pinned inputs, per arm --------------------------------------------------
 ARMS="${ARMS:-gen}"                     # space-separated: gen spec genpc specpc (pc = per-cell junction admission)
@@ -44,7 +58,7 @@ bank_for_arm() {
 # bank (.artifacts/terra_v8_trench_finite_enriched_20260819/dataset.json).
 BANK_DISTANCE_SIDECAR_SHA=f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980
 EXPECTED_PARAMETERS=2311701
-TRENCH_TERRA_REVISION_PIN=171cf116f09160299140cebd012eda6f323c4f5d  # main: relocation/admissible-dig obs export (09712ad5) + junction veto removed
+TRENCH_TERRA_REVISION_PIN=46b140f8373e098ad832e4968d8136a5ba861bf6  # junction DO/observation parity and stable reset counter dtype
 SEED=20260901
 TARGET_UPDATE=100000
 # -----------------------------------------------------------------------------
@@ -125,12 +139,14 @@ for ARM in $ARMS; do
     bank_for_arm "$ARM"; upload_bank
     RUN_NAME="trench_align_v2_${ARM}_${BASELINES_REVISION:0:12}_s${SEED}"
     RUN_DIR="$REMOTE_RUNS/$BASELINES_REVISION/s$SEED/$ARM"
+    COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$RUN_DIR/jax-cache}"
     remote "test ! -e '$RUN_DIR' && mkdir -p '$(dirname "$RUN_DIR")' && mkdir '$RUN_DIR'"
     # In-job self-resubmission on a cuDNN startup failure re-issues exactly
     # these sbatch options ('|'-separated; no commas allowed inside --export).
     RESUBMIT_SBATCH_ARGS="--account=es_hutter|--partition=$PARTITION|--time=$WALLTIME|--gpus=$GPU_TYPE:4|--cpus-per-task=8|--exclude=eu-g6-064|--job-name=terra-trench-v2$ARM|--output=$RUN_DIR/slurm_%j.out"
     EXPORTS="ALL,ARM=$ARM,CUDNN_REPAIR_MODE=$CUDNN_REPAIR,ATTEMPT=0,MAX_ATTEMPTS=$MAX_ATTEMPTS,RESUME_FROM=$RESUME_FROM,RESUBMIT_SBATCH_ARGS=$RESUBMIT_SBATCH_ARGS,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME,BASELINES_ROOT=$REMOTE_SOURCE,BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA,RUNTIME_TERRA_REVISION=$RUNTIME_TERRA_REVISION,SEED=$SEED,VENV=$REMOTE_VENV,TERRA_EULER_USER=$TERRA_EULER_USER,TERRA_EULER_HOME_ROOT=$TERRA_EULER_HOME_ROOT,WANDB_ENTITY=$WANDB_ENTITY,WANDB_PROJECT=$WANDB_PROJECT,BANK_ARCHIVE=$REMOTE_BANK,BANK_ARCHIVE_SHA=$BANK_ARCHIVE_SHA,BANK_MAPS_PATH=$BANK_MAPS_PATH,BANK_DATASET_SIZE=$BANK_DATASET_SIZE,BANK_DISTANCE_SIDECAR_SHA=$BANK_DISTANCE_SIDECAR_SHA,EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,GPU_TYPE=$GPU_TYPE,TARGET_UPDATE=$TARGET_UPDATE"
-    JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_v2/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='$PARTITION' --time='$WALLTIME' --gpus="$GPU_TYPE:4" --cpus-per-task='8' --exclude='eu-g6-064' --job-name="terra-trench-v2$ARM" --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
+    EXPORTS+=",JAX_COMPILATION_CACHE_DIR=$COMPILATION_CACHE_DIR,JAX_ENABLE_COMPILATION_CACHE=$JAX_ENABLE_COMPILATION_CACHE"
+    JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_trench_align_v2/run.sbatch' | sbatch --parsable --account='es_hutter' --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:4' --cpus-per-task='8' --exclude='eu-g6-064' --job-name='terra-trench-v2$ARM' --output='$RUN_DIR/slurm_%j.out' --export='$EXPORTS'")"
     JOB_ID="${JOB_RAW%%;*}"
     [[ "$JOB_ID" =~ ^[0-9]+$ ]]
     printf '%s\n' "arm=$ARM job_id=$JOB_ID run_dir=$RUN_DIR"
