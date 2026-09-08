@@ -160,7 +160,8 @@ cython_debug/
 #.idea/
 
 *.pkl
-docs/
+/docs/*
+!/docs/TRAINING_PROTOCOL.md
 wandb/
 
 agents/Terra/dummy.txt

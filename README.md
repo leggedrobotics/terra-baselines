@@ -1,6 +1,16 @@
 # 🌍🚀 Terra Baselines - Training, Evals, and Checkpoints for Terra
 Terra Baselines provides a set of tools to train and evaluate RL policies on the [Terra](https://github.com/leggedrobotics/Terra) environment. This implementation allows to train an agent capable of planning earthworks in trenches and foundations environments in less than 1 minute on 8 Nvidia RTX-4090 GPUs.
 
+## Dataset and methods reference
+
+For the August/September 2026 experiments, start with the
+[audited training and evaluation protocol](docs/TRAINING_PROTOCOL.md), the
+[Terra dataset reference and figures](https://github.com/leggedrobotics/terra/blob/main/docs/DATASET.md), and the
+[environment, reward, and termination reference](https://github.com/leggedrobotics/terra/blob/main/docs/ENVIRONMENT.md).
+These distinguish stored dataset counts, actual sampling, source versions, and
+resolved run settings. The older `TrainConfig` example below is an API example,
+not the PPO configuration of the current generalist or specialist experiments.
+
 ## Features
 - Train on multiple devices using PPO with `train.py` (based on [XLand-MiniGrid](https://github.com/corl-team/xland-minigrid))
 - Generate metrics for your checkpoint with `eval.py`
@@ -62,6 +72,12 @@ and collect your weights in the `checkpoints/` folder.
 ## Training Configs (Recommended)
 
 Instead of manually configuring agent types and maps, you can use **named presets** defined in `configs/training_configs.yaml`. This is the recommended approach for reproducible training setups.
+
+Map presets and the global reward objective are separate settings. The trainer
+accepts `--reward_stage dense_skill`, `annealed_objective`,
+`terminal_objective`, or `reward_v2`; the audited experiments use `reward_v2`.
+See the [training protocol](docs/TRAINING_PROTOCOL.md) for the implemented
+reward selection and resolved experiment recipes.
 
 ### Quick Start with Configs
 

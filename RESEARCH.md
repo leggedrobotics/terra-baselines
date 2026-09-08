@@ -14,6 +14,9 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Audited training, PPO, curriculum, and evaluation protocol](docs/TRAINING_PROTOCOL.md)
+- [Dataset categories, splits, and terrain figures](https://github.com/leggedrobotics/terra/blob/main/docs/DATASET.md)
+- [Environment, reward equations, and exact termination](https://github.com/leggedrobotics/terra/blob/main/docs/ENVIRONMENT.md)
 - [V8 movement-feedback pilot](docs/research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md)
 - [V8 paper-experiment handover](docs/research/V8_PAPER_EXPERIMENT_HANDOVER_20260818.md)
 - [V8 fixed-panel benchmark inspector](docs/research/V8_BENCHMARK_INSPECTOR_20260820.md)
@@ -23,7 +26,8 @@ evaluation, inference, checkpoints, and cluster execution.
 - [`configs/training_configs.yaml`](configs/training_configs.yaml): named
   agent/map/curriculum presets
 - `train_mixed.py`: primary mixed/generalist PPO training path
-- `eval_mixed.py` and `eval_mcts.py`: evaluation paths
+- `eval_fixed_bank.py`: source-identified fixed-panel evaluation
+- `eval_mixed.py` and `eval_mcts.py`: online/legacy and optional search paths
 - [Single-map inference](inference/README.md)
 - [Cluster workflow](cluster/README.md)
 
@@ -49,10 +53,12 @@ num_steps * num_envs_per_device * num_devices
 Changing devices, environments, rollout length, minibatches, or update epochs
 changes either the data distribution or optimizer workload and must be reported.
 
-At the first reset, the trainer randomizes each environment's elapsed step
-within its configured timeout, but the policy input does not expose elapsed or
-remaining episode time. This creates hidden horizon state in the first training
-episode and is a known experimental limitation.
+The current full-reset path requires `env_steps == 0`, checked by
+`assert_initial_env_steps_zero`; it does not randomize the initial elapsed step.
+The policy still does not observe elapsed or remaining time. Partial-completion
+resets, where enabled by the resolved recipe, change the material state rather
+than shorten the initial horizon. Their exact schedule is documented in the
+[training protocol](docs/TRAINING_PROTOCOL.md).
 
 ### PPO optimization and checkpointing
 
@@ -80,6 +86,13 @@ The shared actor-critic combines:
 - a finite previous-action history; and
 - seven global maps: traversability, optional reachability, action state,
   target, padding/obstacle, dumpability, and current interaction workspace.
+
+Those seven are source layers, not the final channel count for every encoder.
+The current attention encoder adds remaining-dig, dump-deficit, and two spatial
+coordinate channels. The September observation variants add a relocation
+distance channel and a tenth local admissible-dig feature. Use the resolved
+encoder and observation table in the [training protocol](docs/TRAINING_PROTOCOL.md)
+when specifying policy input dimensions.
 
 The default `atari` encoder is a compact CNN. `resnet_global_pool` preserves the
 older residual topology and checkpoint preprocessing. `resnet_spatial_8x8`
@@ -121,13 +134,17 @@ Treat it as a frequent training diagnostic, not a paper evaluation.
 
 Use:
 
-- `eval/success_within_horizon_rate` as the primary bounded metric: the
+- `online_eval/success_within_horizon_rate` as the bounded online metric: the
   fraction of the initial reset cohort that succeeds before the fixed horizon;
-- `eval/initial_episode_completion_rate` to expose censoring at that horizon;
-- `eval/completed_episode_success_rate` only as a secondary success-among-ended
+- `online_eval/termination_within_horizon_rate` to expose censoring at that horizon;
+- `online_eval/completed_episode_success_rate` only as a secondary success-among-ended
   measure; and
 - `train/episode_success_rate` as a bounded online diagnostic, reported as NaN
   when no episode ends in the rollout window.
+
+Older logs use `eval/*` names. These online fields remain training-bank
+diagnostics; the current paper-oriented path is `eval_fixed_bank.py` on a
+declared source-disjoint panel, with exact success evaluated at 450 actions.
 
 `progress/episode_completion_rate` is a legacy final-step termination fraction
 that includes timeouts. It must not be reported as task success.
@@ -193,17 +210,24 @@ before relying on re-serialized plans.
 
 ## Checkpoint and logging limitations
 
-Current checkpoints are sufficient for a warm optimizer continuation, but they
-do not store repository revisions, dataset/map identities or hashes, evaluation
-bank, RNG, live environment/curriculum state, previous-action history, or their
-own checksum. Saves overwrite pickle targets directly rather than through an
-atomic/best-model retention protocol.
+Current version-2 checkpoints store parameters, native Adam state and clocks,
+resolved training/environment configuration, losses and transition-integrity
+counts. When enabled, they also store the R2 protocol, adaptive sampler,
+reward-annealing and partial-reset records. The audited experiment recipes
+retain numbered checkpoints every 500 updates. The generic rolling-save
+default is a different setting.
 
-Global online success/completion counts are correctly reduced across devices.
-Some reward-component and terminal-completion diagnostics are still taken from
-device-local or final-timestep values, and inline evaluation logging does not
-share the explicit PPO-update step used by training logs. Use these fields for
-debugging only until population reductions and episode receipts are audited.
+Resume still restarts RNG, live environment state, action history and recurrent
+carry. Source versions, exact bank/evaluation identities, checkpoint checksum
+and completed segment budgets must remain available in the surrounding
+experiment records. See the [training protocol](docs/TRAINING_PROTOCOL.md) for
+the precise resume and changed-batch accounting rules.
+
+Current online success/completion statistics are reduced across devices, and
+inline `online_eval/*` logging includes `train/update`. Training also writes
+episode aggregate records. These remain diagnostics under the live sampling
+distribution; fixed source-disjoint evaluation supplies the comparative
+endpoint.
 
 ## Current research threads
 
@@ -242,7 +266,12 @@ numbers still match.
 - Keep environment semantics in `terra`, training/evaluation evidence here, and
   real/sim execution evidence in `moleworks_ros`.
 
-## Current V8 curriculum
+## Mixed V8 curriculum
+
+This section describes the adaptive mixed V8 lineage. The September v2
+generalist/trench pools and foundation screen instead use one uniformly sampled
+level, with no adaptive condition sampler or partial resets. Their resolved
+settings are in the [training protocol](docs/TRAINING_PROTOCOL.md).
 
 The current method is
 [Continuous Banded v3](docs/research/CONTINUOUS_BANDED_V3_DESIGN_20260812.md).
