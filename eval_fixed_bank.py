@@ -970,7 +970,8 @@ def _behavior_summary(selected: list[dict]) -> dict:
                 "metrics": metrics}
 
     return {"all_episodes": cohort(selected),
-            "successes": cohort([row for row in selected if row["success"]])}
+            "successes": cohort([row for row in selected if row["success"]]),
+            "unsuccessful_episodes": cohort([row for row in selected if not row["success"]])}
 
 
 def grouped_results(

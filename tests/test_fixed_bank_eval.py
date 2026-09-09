@@ -163,6 +163,9 @@ class FixedBankEvalTest(unittest.TestCase):
                 "mean_workspace_dig_area_m2": np.array([8.0, 1.0, np.nan, 999.0]),
                 "dig_area_per_travel_m": np.array([None, 2.0, 0.0, 100.0], dtype=object),
                 "lateral_dig_volume_fraction": np.array([np.nan, 0.8, 0.2, 1.0]),
+                "newly_dug_volume_units": np.array([8, 3, 5, 999]),
+                "relifted_volume_units": np.array([0, 20, 0, 999]),
+                "longest_action_pattern_steps": np.array([0, 100, np.nan, 999]),
             },
         )
         self.assertIsNone(per_map[2]["mean_workspace_dig_area_m2"])
@@ -178,6 +181,13 @@ class FixedBankEvalTest(unittest.TestCase):
         self.assertEqual(successes["metrics"]["base_travel_m"],
                          {"count": 2, "mean": 20.0, "median": 20.0, "p90": 28.0})
         self.assertEqual(successes["metrics"]["mean_workspace_dig_area_m2"]["count"], 1)
+        failures = behavior["unsuccessful_episodes"]
+        self.assertEqual(failures["episodes"], 2)
+        self.assertEqual(failures["available_episodes"], 1)
+        self.assertEqual(failures["metrics"]["relifted_volume_units"]["mean"], 20)
+        self.assertEqual(successes["metrics"]["newly_dug_volume_units"]["mean"], 6.5)
+        self.assertIsNone(per_map[2]["longest_action_pattern_steps"])
+        self.assertIsNone(per_map[3]["newly_dug_volume_units"])
         self.assertEqual(summary["by_family"]["foundation"]["behavior"]["successes"]["metrics"]["base_travel_m"]["mean"], 10.0)
         self.assertEqual(summary["by_primary_cell"]["hard"]["behavior"]["all_episodes"]["available_episodes"], 1)
         self.assertEqual(summary["overall"]["successful_efficiency"]["lexicographic_key"], [2, -4, -32])

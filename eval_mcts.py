@@ -695,7 +695,7 @@ def rollout_episode(
                 next_actor_hidden,
             )
 
-        behavior_metrics.update(timestep, active_env_mask)
+        behavior_metrics.update(timestep, active_env_mask, actions=action)
         reward = jnp.where(active_env_mask, timestep.reward, 0.0)
         next_obs = timestep.observation
         step_done = timestep.done
