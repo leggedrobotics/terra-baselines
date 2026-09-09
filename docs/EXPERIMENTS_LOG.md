@@ -199,8 +199,15 @@ one-GPU policies on one 24-hour CSCS node (at most 96 GPU-hours). All use seed
 This replaces the two-seed foundation-only proposal above. Foundation uses the
 existing 256-map easy bank, trench the existing 1,440-map/15-condition pooled
 bank including junctions. Comparisons are within task, with one paired seed.
-SSH access is restored. The launch package and local trench smoke are being
-finalized; see the [current plan and execution evidence](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/PLAN.md)
+Job **4634548** was submitted September 10 at 00:29:56 CEST and is
+**PENDING (Priority)** at 00:31:34. The provisional Slurm start estimate is
+22:55 CEST September10 and can change. ReqTRES: 256 CPUs, one node, four GPUs;
+normal/d130, 24 hours. Staged source is baselines `30f5f97` with Terra `ba9cc214`.
+The 44 focused tests, independent review, both local family scratch smokes and
+Slurm test-only passed. The new trench smoke completed u1/u2 with finite
+model/optimizer/loss and zero integrity counters. Its local log retains a cuDNN
+bf16 autotuning mismatch warning. Daint has not allocated a node or run its
+numerical gates yet. See the [current plan and execution evidence](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/PLAN.md)
 for current submission/runtime status. No generalist or Euler duplicate is
 included. Evaluate matched checkpoints separately on the 64 easy-foundation
 validation cases and 224 trench rows of the unchanged 608 development panel.
