@@ -10,12 +10,25 @@ MACHINE="${MACHINE:-euler}"
 : "${DISTANCE_SIDECAR_SHA:?Set sha256(bank/distance_sidecar/dataset.json)}"
 : "${RUN_DIR:?Set a separate directory for this arm and segment}"
 : "${RUN_NAME:?Set a unique arm name}"
-: "${RESUME_FROM:?Set the native parent or continuation checkpoint}"
-: "${START_UPDATE:?Set the checkpoint next_update (initial parent: 5000)}"
 : "${TARGET_UPDATE:?Set the absolute target update}"
 : "${EXECUTABLE_DIG_OBSERVATION:?Set 0 for legacy or 1 for executable affordance}"
 SEED="${SEED:-20260907}"
-BANK_TRANSFER="${BANK_TRANSFER:-1}"
+INITIALIZATION="${INITIALIZATION:-resume}"
+case "$INITIALIZATION" in
+    scratch)
+        START_UPDATE="${START_UPDATE:-0}"
+        BANK_TRANSFER="${BANK_TRANSFER:-0}"
+        [[ "$START_UPDATE" == 0 && -z "${RESUME_FROM:-}" && "$BANK_TRANSFER" == 0 ]] || {
+            echo "scratch requires START_UPDATE=0, no RESUME_FROM and BANK_TRANSFER=0" >&2; exit 2;
+        }
+        ;;
+    resume)
+        : "${RESUME_FROM:?Set the native parent or continuation checkpoint}"
+        : "${START_UPDATE:?Set the checkpoint next_update}"
+        BANK_TRANSFER="${BANK_TRANSFER:-1}"
+        ;;
+    *) echo "INITIALIZATION must be scratch or resume" >&2; exit 2 ;;
+esac
 CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-500}"
 LATERAL_DIG_COST="${LATERAL_DIG_COST:-0}"
 BASE_TRAVEL_COST="${BASE_TRAVEL_COST:-0}"
@@ -58,7 +71,6 @@ FOUNDATION_TRAIN_ARGS=(
     --distance_sidecar_sha256 "$DISTANCE_SIDECAR_SHA"
     --lateral_dig_cost "$LATERAL_DIG_COST"
     --base_travel_cost "$BASE_TRAVEL_COST" --base_turn_cost "$BASE_TURN_COST"
-    --resume_from "$RESUME_FROM"
     --fail_on_nonfinite --finite_check_interval 10
     --log_train_interval 10 --log_eval_interval 0
     --checkpoint_interval "$CHECKPOINT_INTERVAL" --cache_clear_interval 0
@@ -67,10 +79,13 @@ FOUNDATION_TRAIN_ARGS=(
 if [[ "$EXECUTABLE_DIG_OBSERVATION" == 1 ]]; then
     FOUNDATION_TRAIN_ARGS+=(--executable_dig_observation)
 fi
-if [[ "$BANK_TRANSFER" == 1 ]]; then
-    FOUNDATION_TRAIN_ARGS+=(--finetune_task_bank --finetune_foundation_behavior --no-load-env-from-checkpoint)
-else
-    FOUNDATION_TRAIN_ARGS+=(--load_env_from_checkpoint)
+if [[ "$INITIALIZATION" == resume ]]; then
+    FOUNDATION_TRAIN_ARGS+=(--resume_from "$RESUME_FROM")
+    if [[ "$BANK_TRANSFER" == 1 ]]; then
+        FOUNDATION_TRAIN_ARGS+=(--finetune_task_bank --finetune_foundation_behavior --no-load-env-from-checkpoint)
+    else
+        FOUNDATION_TRAIN_ARGS+=(--load_env_from_checkpoint)
+    fi
 fi
 
 if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
@@ -82,7 +97,7 @@ if [[ "${1:-}" == --print-args ]]; then
     exit 0
 fi
 [[ $# == 0 ]] || { echo "Usage: bash train.sh [--print-args]" >&2; exit 2; }
-test -r "$RESUME_FROM"
+if [[ "$INITIALIZATION" == resume ]]; then test -r "$RESUME_FROM"; fi
 test -d "$DATASET_PATH/train/all"
 export PYTHONPATH="${TERRA_ROOT:-$(dirname "$SWEEP_REPO")/terra}:$SWEEP_REPO${PYTHONPATH:+:$PYTHONPATH}"
 export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$RUN_DIR/jax-cache}"
@@ -91,7 +106,7 @@ export WANDB_DIR="${WANDB_DIR:-$RUN_DIR/wandb}"
 export WANDB_MODE="${WANDB_MODE:-online}"
 export MPLBACKEND=Agg SDL_VIDEODRIVER=dummy PYTHONUNBUFFERED=1
 mkdir -p "$RUN_DIR/checkpoints" "$WANDB_DIR" "$JAX_COMPILATION_CACHE_DIR"
-printf '%s\n' "parent_checkpoint=$RESUME_FROM" "start_update=$START_UPDATE" \
+printf '%s\n' "initialization=$INITIALIZATION" "parent_checkpoint=${RESUME_FROM:-none}" "start_update=$START_UPDATE" \
     "target_update=$TARGET_UPDATE" "transitions_per_update=16384" \
     "additional_transitions=$(((TARGET_UPDATE - START_UPDATE) * 16384))" \
     "adam_steps_per_update=64" > "$RUN_DIR/training_budget.env"

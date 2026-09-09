@@ -669,3 +669,18 @@ Independent review and Slurm test-only validation pass. Ready for one bounded
 training allocation; see the [current readiness report](../../../../.artifacts/terra_excavation_reliability_20260909/SUBMISSION_READINESS.md)
 for the selected checkpoint, exact source/runtime/bank identities and launch.
 Canonical checkouts and unrelated running/queued jobs are preserved.
+
+## September 9, 2026: scratch foundation comparison on CSCS
+
+The user replaced the proposed Euler continuation with scratch initialization
+on the four-GPU CSCS node. The prepared comparison is control versus 2x costs,
+each at seeds 20260909 and 20260910, using the same repaired Terra `ba9cc214`
+and easy-foundation bank. One 24-hour node is at most 96 GPU-hours. No generalist
+or Euler duplicate is included. No job has been submitted: the CSCS certificate
+expired at 15:10:46 CEST and SSH currently rejects authentication.
+
+The scratch launcher passes 43 focused recipe tests and shellcheck. A local
+512x32 two-update scratch smoke passes: next update 2, Adam step 128, finite
+model/optimizer/loss and zero transition-integrity counters. Independent code
+review found no actionable issues; actual Daint binding/runtime still needs
+the in-allocation checks. See the [current plan and evidence](../../../../.artifacts/terra_foundation_scratch_cscs_20260909/PLAN.md).

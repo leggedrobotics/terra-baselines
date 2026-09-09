@@ -169,6 +169,20 @@ def script_args(env):
     return shlex.split(subprocess.check_output(["bash", str(SCRIPT), "--print-args"], env=env, text=True))
 
 
+def test_scratch_never_imports_checkpoint_or_transfer_state(launch_env):
+    launch_env.update(INITIALIZATION="scratch", START_UPDATE="0", BANK_TRANSFER="0")
+    launch_env.pop("RESUME_FROM")
+    args = script_args(launch_env)
+    assert args[args.index("--total_timesteps") + 1] == str(7000 * 16384)
+    for flag in ("--resume_from", "--warm_start_from", "--resume_update", "--load_env_from_checkpoint",
+                 "--finetune_task_bank", "--finetune_foundation_behavior"):
+        assert flag not in args
+    for changes in ({"RESUME_FROM": "parent.pkl"}, {"START_UPDATE": "5000"}, {"BANK_TRANSFER": "1"}):
+        result = subprocess.run(["bash", str(SCRIPT), "--print-args"], env=launch_env | changes,
+                                capture_output=True, text=True)
+        assert result.returncode != 0
+
+
 def test_sourceable_and_executable_wrappers_share_the_same_arguments(launch_env):
     rendered = script_args(launch_env)
     sourced = subprocess.check_output(

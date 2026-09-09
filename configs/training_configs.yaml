@@ -1127,7 +1127,7 @@ trench_align_v2_specialist_spec:
 # One fixed, simple foundation pool. Model/PPO/treatment settings are supplied
 # by scripts/foundation_reward_sweep/train.sh, identically on both clusters.
 foundation_reward_sweep:
-  description: Simple full-reset foundation reward screen from a native generalist
+  description: Simple full-reset foundation behavior reward screen
   agent_types: [0]
   action_types: [0]
   relocation_progress_mult: 1.5
