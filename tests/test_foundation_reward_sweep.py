@@ -169,10 +169,18 @@ def script_args(env):
     return shlex.split(subprocess.check_output(["bash", str(SCRIPT), "--print-args"], env=env, text=True))
 
 
-def test_scratch_never_imports_checkpoint_or_transfer_state(launch_env):
-    launch_env.update(INITIALIZATION="scratch", START_UPDATE="0", BANK_TRANSFER="0")
+@pytest.mark.parametrize("family,config,maps_path", [
+    ("foundation", "foundation_reward_sweep", "train/all"),
+    ("trench", "trench_align_v2_specialist_spec", "train_v2_pooled_trench15"),
+])
+def test_scratch_never_imports_checkpoint_or_transfer_state(launch_env, family, config, maps_path):
+    launch_env.update(INITIALIZATION="scratch", START_UPDATE="0", BANK_TRANSFER="0", TASK_FAMILY=family)
     launch_env.pop("RESUME_FROM")
     args = script_args(launch_env)
+    assert args[args.index("--config") + 1] == config
+    preset = get_config(config)
+    assert len(preset.maps) == 1 and preset.maps[0].maps_path == maps_path
+    assert preset.maps[0].max_steps_in_episode == 450
     assert args[args.index("--total_timesteps") + 1] == str(7000 * 16384)
     for flag in ("--resume_from", "--warm_start_from", "--resume_update", "--load_env_from_checkpoint",
                  "--finetune_task_bank", "--finetune_foundation_behavior"):
@@ -181,6 +189,13 @@ def test_scratch_never_imports_checkpoint_or_transfer_state(launch_env):
         result = subprocess.run(["bash", str(SCRIPT), "--print-args"], env=launch_env | changes,
                                 capture_output=True, text=True)
         assert result.returncode != 0
+    treatment = script_args(launch_env | {"LATERAL_DIG_COST": "0.5", "BASE_TRAVEL_COST": "0.01",
+                                       "BASE_TURN_COST": "0.04"})
+    expected = args.copy()
+    for flag, value in (("--lateral_dig_cost", "0.5"), ("--base_travel_cost", "0.01"),
+                        ("--base_turn_cost", "0.04")):
+        expected[expected.index(flag) + 1] = value
+    assert treatment == expected
 
 
 def test_sourceable_and_executable_wrappers_share_the_same_arguments(launch_env):

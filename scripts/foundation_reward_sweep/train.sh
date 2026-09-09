@@ -7,7 +7,7 @@ SWEEP_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PYTHON="${TERRA_PYTHON:-python}"
 MACHINE="${MACHINE:-euler}"
 : "${DATASET_PATH:?Set the new bank root}"
-: "${DISTANCE_SIDECAR_SHA:?Set sha256(bank/distance_sidecar/dataset.json)}"
+: "${DISTANCE_SIDECAR_SHA:?Set the recorded bank distance protocol SHA}"
 : "${RUN_DIR:?Set a separate directory for this arm and segment}"
 : "${RUN_NAME:?Set a unique arm name}"
 : "${TARGET_UPDATE:?Set the absolute target update}"
@@ -33,7 +33,20 @@ CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-500}"
 LATERAL_DIG_COST="${LATERAL_DIG_COST:-0}"
 BASE_TRAVEL_COST="${BASE_TRAVEL_COST:-0}"
 BASE_TURN_COST="${BASE_TURN_COST:-0}"
-export DATASET_SIZE="${DATASET_SIZE:-256}"
+TASK_FAMILY="${TASK_FAMILY:-foundation}"
+case "$TASK_FAMILY" in
+    foundation)
+        TRAIN_CONFIG=foundation_reward_sweep
+        MAPS_PATH=train/all
+        export DATASET_SIZE="${DATASET_SIZE:-256}"
+        ;;
+    trench)
+        TRAIN_CONFIG=trench_align_v2_specialist_spec
+        MAPS_PATH=train_v2_pooled_trench15
+        export DATASET_SIZE="${DATASET_SIZE:-1440}"
+        ;;
+    *) echo "TASK_FAMILY must be foundation or trench" >&2; exit 2 ;;
+esac
 
 for value in "$START_UPDATE" "$TARGET_UPDATE" "$SEED"; do
     [[ "$value" =~ ^[0-9]+$ ]] || { echo "updates and seed must be nonnegative integers" >&2; exit 2; }
@@ -51,7 +64,7 @@ for value in "$LATERAL_DIG_COST" "$BASE_TRAVEL_COST" "$BASE_TURN_COST"; do
 done
 
 FOUNDATION_TRAIN_ARGS=(
-    --config foundation_reward_sweep --machine "$MACHINE"
+    --config "$TRAIN_CONFIG" --machine "$MACHINE"
     --name "$RUN_NAME" --exact_run_name --seed "$SEED"
     --num_devices 1 --num_envs_per_device 512 --num_steps 32
     --total_timesteps "$((TARGET_UPDATE * 16384))"
@@ -98,7 +111,7 @@ if [[ "${1:-}" == --print-args ]]; then
 fi
 [[ $# == 0 ]] || { echo "Usage: bash train.sh [--print-args]" >&2; exit 2; }
 if [[ "$INITIALIZATION" == resume ]]; then test -r "$RESUME_FROM"; fi
-test -d "$DATASET_PATH/train/all"
+test -d "$DATASET_PATH/$MAPS_PATH"
 export PYTHONPATH="${TERRA_ROOT:-$(dirname "$SWEEP_REPO")/terra}:$SWEEP_REPO${PYTHONPATH:+:$PYTHONPATH}"
 export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$RUN_DIR/jax-cache}"
 export JAX_ENABLE_COMPILATION_CACHE="${JAX_ENABLE_COMPILATION_CACHE:-true}"
@@ -106,7 +119,7 @@ export WANDB_DIR="${WANDB_DIR:-$RUN_DIR/wandb}"
 export WANDB_MODE="${WANDB_MODE:-online}"
 export MPLBACKEND=Agg SDL_VIDEODRIVER=dummy PYTHONUNBUFFERED=1
 mkdir -p "$RUN_DIR/checkpoints" "$WANDB_DIR" "$JAX_COMPILATION_CACHE_DIR"
-printf '%s\n' "initialization=$INITIALIZATION" "parent_checkpoint=${RESUME_FROM:-none}" "start_update=$START_UPDATE" \
+printf '%s\n' "task_family=$TASK_FAMILY" "initialization=$INITIALIZATION" "parent_checkpoint=${RESUME_FROM:-none}" "start_update=$START_UPDATE" \
     "target_update=$TARGET_UPDATE" "transitions_per_update=16384" \
     "additional_transitions=$(((TARGET_UPDATE - START_UPDATE) * 16384))" \
     "adam_steps_per_update=64" > "$RUN_DIR/training_budget.env"

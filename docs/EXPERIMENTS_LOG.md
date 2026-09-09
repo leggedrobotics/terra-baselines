@@ -189,3 +189,18 @@ The scratch launcher passes 43 focused recipe tests and shellcheck. A local
 model/optimizer/loss and zero transition-integrity counters. Independent code
 review found no actionable issues; actual Daint binding/runtime still needs
 the in-allocation checks. See the [current plan and evidence](../../../../.artifacts/terra_foundation_scratch_cscs_20260909/PLAN.md).
+
+
+## September 10, 2026: paired foundation and trench scratch comparison
+
+The user approved foundation control/2x and trench control/2x as four independent
+one-GPU policies on one 24-hour CSCS node (at most 96 GPU-hours). All use seed
+20260909 and repaired Terra `ba9cc214`; no historical initializer is imported.
+This replaces the two-seed foundation-only proposal above. Foundation uses the
+existing 256-map easy bank, trench the existing 1,440-map/15-condition pooled
+bank including junctions. Comparisons are within task, with one paired seed.
+SSH access is restored. The launch package and local trench smoke are being
+finalized; see the [current plan and execution evidence](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/PLAN.md)
+for current submission/runtime status. No generalist or Euler duplicate is
+included. Evaluate matched checkpoints separately on the 64 easy-foundation
+validation cases and 224 trench rows of the unchanged 608 development panel.

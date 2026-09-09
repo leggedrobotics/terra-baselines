@@ -8,7 +8,7 @@
 #SBATCH --hint=nomultithread
 #SBATCH --time=24:00:00
 #SBATCH --no-requeue
-#SBATCH --job-name=terra-foundation-scratch
+#SBATCH --job-name=terra-excavation-scratch
 set -euo pipefail
 CAMPAIGN_ROOT="${1:?campaign root required}"
 test "$(id -un)" = lterenzi

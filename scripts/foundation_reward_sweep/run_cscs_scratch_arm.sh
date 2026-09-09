@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-# Four independent one-GPU policies: control/2x at two paired seeds.
+# Four independent one-GPU policies: foundation/trench, each control/2x.
 set -euo pipefail
-: "${CAMPAIGN_ROOT:?}" "${BASELINES_ROOT:?}" "${TERRA_ROOT:?}" "${DATASET_PATH:?}"
+: "${CAMPAIGN_ROOT:?}" "${BASELINES_ROOT:?}" "${TERRA_ROOT:?}"
 case "${SLURM_PROCID:?}" in
-    0) SEED=20260909; COST_MULTIPLIER=0 ;;
-    1) SEED=20260909; COST_MULTIPLIER=2 ;;
-    2) SEED=20260910; COST_MULTIPLIER=0 ;;
-    3) SEED=20260910; COST_MULTIPLIER=2 ;;
+    0) TASK_FAMILY=foundation; COST_MULTIPLIER=0 ;;
+    1) TASK_FAMILY=foundation; COST_MULTIPLIER=2 ;;
+    2) TASK_FAMILY=trench; COST_MULTIPLIER=0 ;;
+    3) TASK_FAMILY=trench; COST_MULTIPLIER=2 ;;
     *) exit 2 ;;
 esac
-export SEED
-export RUN_NAME="foundation-scratch-c${COST_MULTIPLIER}-s${SEED}"
+export TASK_FAMILY SEED=20260909
+export RUN_NAME="${TASK_FAMILY}-scratch-c${COST_MULTIPLIER}-s${SEED}"
 ARM_DIR="$CAMPAIGN_ROOT/segments/$SLURM_JOB_ID/$RUN_NAME"
 mkdir -p "$ARM_DIR"
 exec > "$ARM_DIR/process.log" 2>&1
 export TERRA_PYTHON=python MACHINE=daint
-export DATASET_SIZE=256 DISTANCE_SIDECAR_SHA=6b2675998403ed2d6125d955fca446404fbdf260e0a0c2cf7b9864cbdd1fb2bf
+export DATASET_PATH="$CAMPAIGN_ROOT/inputs/$TASK_FAMILY"
+if [[ "$TASK_FAMILY" == foundation ]]; then
+    export DATASET_SIZE=256 DISTANCE_SIDECAR_SHA=6b2675998403ed2d6125d955fca446404fbdf260e0a0c2cf7b9864cbdd1fb2bf
+else
+    export DATASET_SIZE=1440 DISTANCE_SIDECAR_SHA=f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980
+fi
 export EXECUTABLE_DIG_OBSERVATION=1 BANK_TRANSFER=0
 export LATERAL_DIG_COST=0 BASE_TRAVEL_COST=0 BASE_TURN_COST=0
 if [[ "$COST_MULTIPLIER" == 2 ]]; then
@@ -50,6 +55,7 @@ bash "$BASELINES_ROOT/scripts/foundation_reward_sweep/train.sh"
 JAX_PLATFORMS=cpu python -u "$BASELINES_ROOT/scripts/foundation_reward_sweep/verify_scratch_smoke.py" \
     "$RUN_DIR/checkpoints/${RUN_NAME}_update_000001.pkl" \
     "$RUN_DIR/checkpoints/${RUN_NAME}_FINAL.pkl" --seed "$SEED" --cost-multiplier "$COST_MULTIPLIER" \
+    --task-family "$TASK_FAMILY" \
     > "$ARM_DIR/smoke_check.json"
 
 # Resume only this campaign's two fresh updates; no old policy is imported.
@@ -57,6 +63,6 @@ export RESUME_FROM="$RUN_DIR/checkpoints/${RUN_NAME}_FINAL.pkl"
 export INITIALIZATION=resume START_UPDATE=2 TARGET_UPDATE=500000 CHECKPOINT_INTERVAL=500
 export RUN_DIR="$ARM_DIR/training" WANDB_MODE=offline JAX_LOG_COMPILES=0
 export WANDB_DIR="$RUN_DIR/wandb"
-export WANDB_RUN_ID="terra-scratch-c${COST_MULTIPLIER}-s${SEED}-${SLURM_JOB_ID}"
+export WANDB_RUN_ID="terra-scratch-${TASK_FAMILY}-c${COST_MULTIPLIER}-s${SEED}-${SLURM_JOB_ID}"
 printf '%s\n' 'Finite scratch smoke passed; continuing this new run from u2.'
 exec bash "$BASELINES_ROOT/scripts/foundation_reward_sweep/train.sh"
