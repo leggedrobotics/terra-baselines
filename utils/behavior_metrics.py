@@ -33,6 +33,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from utils.retained_work_metrics import RETAINED_WORK_FIELDS, RetainedWorkMetrics
+
 
 BEHAVIOR_METRIC_FIELDS = (
     "base_travel_m",
@@ -62,7 +64,7 @@ BEHAVIOR_METRIC_FIELDS = (
     "longest_task_progress_stall_steps",
     "longest_action_pattern_steps",
     "longest_action_pattern_period",
-)
+) + RETAINED_WORK_FIELDS
 
 _ACTION_PATTERN_PERIODS = np.arange(1, 17)
 
@@ -90,6 +92,7 @@ class _Snapshot:
     acting: np.ndarray
     action_map: np.ndarray
     loaded: np.ndarray | None
+    action_types: np.ndarray | None
 
 
 def _snapshot(timestep, env_cfgs):
@@ -120,6 +123,8 @@ def _snapshot(timestep, env_cfgs):
         action_map=np.array(timestep.state.world.action_map.map, copy=True),
         loaded=(np.stack([np.asarray(s.loaded).reshape(count) for s in states], axis=1)
                 if all(hasattr(s, "loaded") for s in states) else None),
+        action_types=(np.stack([np.asarray(s.action_type).reshape(count) for s in states], axis=1)
+                      if all(hasattr(s, "action_type") for s in states) else None),
     )
 
 
@@ -173,6 +178,16 @@ Older environments without raw agent geometry are also explicitly unavailable.
         self.action_counts = np.zeros(self.count, dtype=np.int32)
         self.period_matches = np.zeros((self.count, 16), dtype=np.int32)
         self.action_pattern_complete = np.ones(self.count, dtype=bool)
+        self.retained = [None] * self.count
+        self.retained_complete = np.ones(self.count, dtype=bool)
+        if self.previous.action_types is not None and self.previous.loaded is not None:
+            for row in range(self.count):
+                slots = np.flatnonzero(self.previous.active[row])
+                if len(slots) == 1:
+                    slot = slots[0]
+                    if (self.previous.types[row, slot], self.previous.action_types[row, slot]) == (0, 0):
+                        pose = (*self.previous.positions[row, slot], self.previous.base_yaw[row, slot])
+                        self.retained[row] = RetainedWorkMetrics(pose, target.shape[-2:], self.tile_size[row])
         self.available[:] = True
 
     def _depth(self, action_map):
@@ -259,6 +274,7 @@ Older environments without raw agent geometry are also explicitly unavailable.
         self.values["redig_volume_units"] += np.where(valid, redig_volume, 0)
         self.values["redig_actions"] += valid & (redig_volume > 0)
 
+        material_changed = None
         if before.loaded is not None and after.loaded is not None:
             slots = before.acting
             rows = np.arange(self.count)
@@ -320,8 +336,18 @@ Older environments without raw agent geometry are also explicitly unavailable.
             self.values["longest_task_progress_stall_steps"], self.progress_stall
         )
         self._update_action_patterns(actions, valid)
-        fresh_area = ((depth > 0) & (self.best_depth == 0)).sum(axis=(-2, -1))
+        fresh_cells = (depth > 0) & (self.best_depth == 0)
+        fresh_area = fresh_cells.sum(axis=(-2, -1))
         fresh_area = fresh_area * self.tile_size**2
+        if actions is None or material_changed is None:
+            self.retained_complete[valid] = False
+        else:
+            for row in np.flatnonzero(valid & material_changed & (_per_episode(actions, self.count) == 6)):
+                tracker = self.retained[row]
+                if tracker is not None:
+                    slot = before.acting[row]
+                    pose = (*before.positions[row, slot], before.base_yaw[row, slot])
+                    tracker.update(pose, fresh_cells[row], fresh_volume[row])
         for row in np.flatnonzero(valid & (fresh_volume > 0)):
             slot = before.acting[row]
             if not before.active[row, slot]:
@@ -391,6 +417,10 @@ Older environments without raw agent geometry are also explicitly unavailable.
                     result[field][:] = np.nan
             for field in ("longest_action_pattern_steps", "longest_action_pattern_period"):
                 result[field][~self.action_pattern_complete] = np.nan
+            for row, tracker in enumerate(self.retained):
+                values = tracker.result() if tracker is not None and self.retained_complete[row] else {}
+                for field in RETAINED_WORK_FIELDS:
+                    result[field][row] = values.get(field, np.nan)
         for value in result.values():
             value[~self.available] = np.nan
         return {"behavior_metrics_available": self.available.copy(), **result}

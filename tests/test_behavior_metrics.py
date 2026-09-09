@@ -16,13 +16,14 @@ def configuration(tile_size=(1.0,)):
 def timestep(
     *, positions=(((0, 0),),), base=None, cabin=None, terrain=None,
     target=None, acting=None, types=None, active=None, done=None, loaded=None,
-    padding=None,
+    padding=None, action_types=None,
 ):
     positions = np.asarray(positions)
     count, slots = positions.shape[:2]
     base = np.zeros((count, slots)) if base is None else np.asarray(base)
     cabin = np.zeros((count, slots)) if cabin is None else np.asarray(cabin)
     types = np.zeros((count, slots)) if types is None else np.asarray(types)
+    action_types = np.zeros((count, slots)) if action_types is None else np.asarray(action_types)
     active = np.ones((count, slots)) if active is None else np.asarray(active)
     terrain = np.zeros((count, 2, 3)) if terrain is None else np.asarray(terrain)
     target = -np.ones_like(terrain) if target is None else np.asarray(target)
@@ -38,6 +39,7 @@ def timestep(
                         angle_base=base[:, slot, None],
                         angle_cabin=cabin[:, slot, None],
                         agent_type=types[:, slot, None],
+                        action_type=action_types[:, slot, None],
                         loaded=loaded[:, slot, None],
                     )
                     for slot in range(slots)
@@ -52,6 +54,27 @@ def timestep(
 
 
 class BehaviorMetricsTest(unittest.TestCase):
+    def test_retained_projection_counts_terminal_dump_and_excludes_reset_jump(self):
+        tracker = EpisodeBehaviorMetrics(timestep(), configuration(), preserve_terminal_states=True)
+        terrain = np.zeros((1, 2, 3))
+        terrain[0, 0, 0] = -1
+        tracker.update(timestep(terrain=terrain, loaded=[[1]]), [True], actions=[6])
+        tracker.update(timestep(terrain=terrain, loaded=[[1]], positions=(((3, 4),),)), [True], actions=[0])
+        terrain[0, 1, 1] = 1
+        tracker.update(timestep(terrain=terrain, positions=(((3, 4),),), done=[True]), [True], actions=[6])
+        tracker.update(timestep(positions=(((90, 90),),)), [True], actions=[6])
+        result = tracker.result()
+        self.assertEqual(result["retained_work_operations"][0], 2)
+        self.assertEqual(result["retained_work_setups"][0], 2)
+        self.assertEqual(result["retained_work_inter_setup_straight_line_m"][0], 5)
+        self.assertEqual(result["retained_productive_setups"][0], 1)
+
+    def test_retained_projection_is_unavailable_for_wheeled_or_missing_actions(self):
+        for state in (timestep(action_types=[[1]]), timestep()):
+            tracker = EpisodeBehaviorMetrics(state, configuration(), preserve_terminal_states=True)
+            tracker.update(state, [True])
+            self.assertTrue(np.isnan(tracker.result()["retained_work_setups"][0]))
+
     def test_travel_includes_first_and_terminal_move_with_per_map_scale(self):
         tracker = EpisodeBehaviorMetrics(
             timestep(positions=(((0, 0),), ((0, 0),))),
