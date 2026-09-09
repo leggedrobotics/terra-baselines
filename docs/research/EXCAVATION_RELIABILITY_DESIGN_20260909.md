@@ -240,3 +240,45 @@ retain exact commands, state witnesses and smoke checkpoints. No cluster jobs
 were submitted or modified. Full fixed-panel policy evaluation, recovery and
 long training remain next-stage work. Local correctness and finite updates do
 not establish policy improvement, Nav2 feasibility or physical acceptance.
+
+
+## Submission preparation follow-up
+
+The full-bank native 2x smoke now passes through u5002, and a fresh-process
+ordinary continuation passes through u5004. Adam advances from 320,000 to
+320,256, all model/optimizer/loss checks are finite, and transition-integrity
+counters are zero. The resumed PPO executable hits the persistent cache;
+loading and Python tracing still incur startup cost. Continuous training keeps
+that cost outside subsequent updates.
+
+The normal fixed-bank evaluator now also measures retained effective DO
+setups, including dump/relift poses, transfer-distance lower bounds, pose and
+A-B-A returns, and fresh-workspace edge/corner adjacency. It preserves raw
+navigation metrics separately. Forty focused tests and 272 comparisons against
+16 earlier replay episodes pass. Geometric-cone overlap and Nav2 paths remain
+outside these counters.
+
+The unchanged specialist solves 175/224 trenches in the repaired environment,
+versus 188/224 previously, with seven rescues and twenty regressions. Its
+remaining failures still have long repeated-action tails. This is not a
+checkpoint promotion. The original generalist u5000 is also weak on the full
+panel: 0/384 foundations under both environments, and 30/224 trenches before
+versus 32/224 after repair. Its 29 common successes have identical retained-work
+efficiency. The reviewed easy-foundation 2x u15000 checkpoint completes 0/608
+cases under the repaired environment; its mean foundation excavation is 9.44%,
+versus 59.85% for the generalist. Reset and integrity checks pass for both.
+Retain the mixed-bank generalist as the initializer. This compares different
+weights, training data and behavior features; it does not isolate reward effects.
+Completion must improve before foundation workspace efficiency can be judged.
+
+An independent Codex review found no actionable issues in the launcher, native
+continuation or retained-work metrics. The Euler runtime gate verifies every
+installed package against the complete 81-package lock. The staged one-GPU,
+24-hour resource request passes Slurm test-only validation without creating a job.
+
+The [submission-readiness report](../../../../../.artifacts/terra_excavation_reliability_20260909/SUBMISSION_READINESS.md)
+records the final comparison, selected parent, runtime gates and exact staged
+source. The [one-GPU training and evaluation recipe](../../scripts/excavation_reliability/README.md)
+keeps a 24-hour allocation, periodic native checkpoints and separate per-job
+receipts. Recovery decoding, new observations and stronger rewards remain
+separate treatments. No new cluster job has been submitted during preparation.

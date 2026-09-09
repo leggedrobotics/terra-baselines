@@ -51,16 +51,24 @@ task_allocated_gpu="${SLURM_JOB_GPUS:-${CUDA_VISIBLE_DEVICES:-}}"
 mapfile -t task_gpu_names < <(nvidia-smi --query-gpu=name --format=csv,noheader)
 (( ${#task_gpu_names[@]} > 0 )) || exit 3
 for name in "${task_gpu_names[@]}"; do [[ "$name" == *'RTX 4090'* ]] || exit 3; done
-"$TERRA_PYTHON" - <<'PY'
-import jax
+"$TERRA_PYTHON" - "$VENV/requirements.lock.txt" <<'PY'
 from importlib.metadata import version
+from pathlib import Path
+import sys
+from packaging.requirements import Requirement
+from packaging.version import Version
+requirements = [Requirement(line.strip()) for line in Path(sys.argv[1]).read_text().splitlines()
+                if line.strip() and not line.lstrip().startswith('#')]
+for requirement in requirements:
+    pins = list(requirement.specifier)
+    assert len(pins) == 1 and pins[0].operator == '==' and not pins[0].version.endswith('.*'), requirement
+    actual = version(requirement.name)
+    assert Version(actual) == Version(pins[0].version), (requirement, actual)
+print(f'PASS complete runtime lock: {len(requirements)} packages', flush=True)
+import jax
 devices = jax.devices()
 assert len(devices) == 1 and devices[0].platform == 'gpu', devices
 assert 'RTX 4090' in devices[0].device_kind, devices
-for name, expected in {'jax': '0.4.33', 'jaxlib': '0.4.33', 'jax-cuda12-plugin': '0.4.33',
-                       'nvidia-cudnn-cu12': '9.5.0.50', 'nvidia-cuda-runtime-cu12': '12.6.77',
-                       'nvidia-nccl-cu12': '2.23.4'}.items():
-    assert version(name) == expected, (name, version(name))
 print('PASS one RTX4090 and pinned runtime', flush=True)
 PY
 "$TERRA_PYTHON" -u "$BASELINES_ROOT/cluster/cscs/check_jax_runtime.py" --min-devices 1

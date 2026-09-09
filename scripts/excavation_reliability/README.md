@@ -9,7 +9,7 @@ are not promoted for deployment by these environment changes.
 - Data: all 3,840 maps in `train_v2_pooled_generalist`, 25 foundation and 15
   finite-metadata trench conditions. Uniform full resets; no partial-reset or
   held-out-state training. The seven unsupported V8 trench conditions stay out.
-- Parent: mixed generalist u5000, Adam320000, 2,311,701 parameters. Same-bank
+- Parent: mixed generalist u5000, Adam step 320,000, 2,311,701 parameters. Same-bank
   native resume retains Adam and the absolute schedule. Executable fresh-dig
   observation replaces the existing affordance semantics without adding inputs.
 - Costs: lateral fresh digging 0.5, actual base travel 0.01/m and turn 0.04/rad.
@@ -28,6 +28,14 @@ are not promoted for deployment by these environment changes.
   an old run. Resumes restart live environments and RNG; they are not bit exact.
   Persistent compilation cache is shared across the campaign; cache clearing
   inside training is disabled.
+
+The full-panel initializer screen retains this mixed-bank parent. Under the
+repaired environment it completes 32/608 cases; the reviewed easy-foundation
+2x u15000 checkpoint completes 0/608. Neither completes any of the 384
+foundations. The next run must establish learning and completion before
+workspace efficiency can be assessed. See the
+[readiness report](../../../../../.artifacts/terra_excavation_reliability_20260909/SUBMISSION_READINESS.md)
+for paired environment results and the descriptive initializer comparison.
 
 `prepare_euler.sh` defaults to a local contract check. It requires clean paired
 source commits and verifies the exact native checkpoint and bank archive. Use
@@ -58,8 +66,8 @@ before scratch retention expires; source and input archives are rebuildable.
 
 Use `eval.sh CHECKPOINT OUTPUT.json` with `TERRA_ROOT`, `BANK_ROOT` and
 `TERRA_PYTHON` set, under the verified CUDA library environment. It evaluates
-only the development panel: 608 frozen episodes, 450 decisions, seed20260724,
-greedy inference in chunks120/120/120/120/120/8. `DECODER=sampled` is a separate
+only the development panel: 608 frozen episodes, 450 decisions, seed 20260724,
+greedy inference in chunks 120/120/120/120/120/8. `DECODER=sampled` is a separate
 treatment. The bank-binding revision passed to the evaluator is not the runtime
 source revision; retain both source commits alongside each result.
 

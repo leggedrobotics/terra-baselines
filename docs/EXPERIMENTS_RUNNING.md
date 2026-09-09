@@ -652,3 +652,20 @@ chain for run id `terra-v2specpc-7989a9b-s20260901` (Terra a4da127a,
 without the observation flags; jobs `4592193` / `4592194` / `4592197`) was
 cancelled before it reached update 500. The user's own chain
 `terra-v2spec-obs-ad9ee96-s20260901` (jobs 4588229-4588231) is untouched.
+
+
+## September 9, 2026: excavation reliability submission preparation
+
+Status: local gates passed; Euler inputs staged; no job submitted. Terra
+`ba9cc214` supplies strict occupied footprints, eligible-soil selection and
+short tracked maneuvers. Baselines `9354b89` adds retained work-pose metrics and
+a one-RTX4090, 24-hour full-bank 2x recipe. Four local native updates including
+an ordinary process restart pass finite and transition-integrity checks; the
+PPO executable cache is reused. The specialist regression screen is 175/224
+versus 188/224. The mixed-bank generalist u5000 remains the initializer: it
+completes 32/608 full-panel cases under the repaired environment, versus 0/608
+for the easy-foundation 2x u15000 checkpoint. Both remain weak on foundations.
+Independent review and Slurm test-only validation pass. Ready for one bounded
+training allocation; see the [current readiness report](../../../../.artifacts/terra_excavation_reliability_20260909/SUBMISSION_READINESS.md)
+for the selected checkpoint, exact source/runtime/bank identities and launch.
+Canonical checkouts and unrelated running/queued jobs are preserved.
