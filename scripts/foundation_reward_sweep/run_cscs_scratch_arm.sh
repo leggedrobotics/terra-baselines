@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Four independent one-GPU policies: foundation/trench, each control/2x.
+# Four one-GPU policies: foundation/trench, each lateral-only/relocation-only.
 set -euo pipefail
 : "${CAMPAIGN_ROOT:?}" "${BASELINES_ROOT:?}" "${TERRA_ROOT:?}"
 case "${SLURM_PROCID:?}" in
-    0) TASK_FAMILY=foundation; COST_MULTIPLIER=0 ;;
-    1) TASK_FAMILY=foundation; COST_MULTIPLIER=2 ;;
-    2) TASK_FAMILY=trench; COST_MULTIPLIER=0 ;;
-    3) TASK_FAMILY=trench; COST_MULTIPLIER=2 ;;
+    0) TASK_FAMILY=foundation; COST_COMPONENT=lateral ;;
+    1) TASK_FAMILY=foundation; COST_COMPONENT=relocation ;;
+    2) TASK_FAMILY=trench; COST_COMPONENT=lateral ;;
+    3) TASK_FAMILY=trench; COST_COMPONENT=relocation ;;
     *) exit 2 ;;
 esac
 export TASK_FAMILY SEED=20260909
-export RUN_NAME="${TASK_FAMILY}-scratch-c${COST_MULTIPLIER}-s${SEED}"
+export RUN_NAME="${TASK_FAMILY}-scratch-${COST_COMPONENT}-s${SEED}"
 ARM_DIR="$CAMPAIGN_ROOT/segments/$SLURM_JOB_ID/$RUN_NAME"
 mkdir -p "$ARM_DIR"
 exec > "$ARM_DIR/process.log" 2>&1
@@ -23,8 +23,10 @@ else
 fi
 export EXECUTABLE_DIG_OBSERVATION=1 BANK_TRANSFER=0
 export LATERAL_DIG_COST=0 BASE_TRAVEL_COST=0 BASE_TURN_COST=0
-if [[ "$COST_MULTIPLIER" == 2 ]]; then
-    export LATERAL_DIG_COST=0.5 BASE_TRAVEL_COST=0.01 BASE_TURN_COST=0.04
+if [[ "$COST_COMPONENT" == lateral ]]; then
+    export LATERAL_DIG_COST=0.5
+else
+    export BASE_TRAVEL_COST=0.01 BASE_TURN_COST=0.04
 fi
 export PYTHONPATH="$TERRA_ROOT:$BASELINES_ROOT"
 export JAX_PLATFORMS=cuda,cpu XLA_PYTHON_CLIENT_PREALLOCATE=false
@@ -54,7 +56,9 @@ unset RESUME_FROM WANDB_RUN_ID WANDB_RESUME
 bash "$BASELINES_ROOT/scripts/foundation_reward_sweep/train.sh"
 JAX_PLATFORMS=cpu python -u "$BASELINES_ROOT/scripts/foundation_reward_sweep/verify_scratch_smoke.py" \
     "$RUN_DIR/checkpoints/${RUN_NAME}_update_000001.pkl" \
-    "$RUN_DIR/checkpoints/${RUN_NAME}_FINAL.pkl" --seed "$SEED" --cost-multiplier "$COST_MULTIPLIER" \
+    "$RUN_DIR/checkpoints/${RUN_NAME}_FINAL.pkl" --seed "$SEED" \
+    --lateral-dig-cost "$LATERAL_DIG_COST" --base-travel-cost "$BASE_TRAVEL_COST" \
+    --base-turn-cost "$BASE_TURN_COST" \
     --task-family "$TASK_FAMILY" \
     > "$ARM_DIR/smoke_check.json"
 
@@ -63,6 +67,6 @@ export RESUME_FROM="$RUN_DIR/checkpoints/${RUN_NAME}_FINAL.pkl"
 export INITIALIZATION=resume START_UPDATE=2 TARGET_UPDATE=500000 CHECKPOINT_INTERVAL=500
 export RUN_DIR="$ARM_DIR/training" WANDB_MODE=offline JAX_LOG_COMPILES=0
 export WANDB_DIR="$RUN_DIR/wandb"
-export WANDB_RUN_ID="terra-scratch-${TASK_FAMILY}-c${COST_MULTIPLIER}-s${SEED}-${SLURM_JOB_ID}"
+export WANDB_RUN_ID="terra-scratch-${TASK_FAMILY}-${COST_COMPONENT}-s${SEED}-${SLURM_JOB_ID}"
 printf '%s\n' 'Finite scratch smoke passed; continuing this new run from u2.'
 exec bash "$BASELINES_ROOT/scripts/foundation_reward_sweep/train.sh"

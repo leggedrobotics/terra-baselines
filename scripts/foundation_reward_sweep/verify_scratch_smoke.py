@@ -1,6 +1,8 @@
 """Verify two native updates began at zero with the intended scratch treatment."""
 import argparse
+import contextlib
 import json
+import sys
 
 import jax
 import numpy as np
@@ -14,15 +16,23 @@ def main():
     parser.add_argument("first_checkpoint")
     parser.add_argument("second_checkpoint")
     parser.add_argument("--seed", type=int, required=True)
-    parser.add_argument("--cost-multiplier", type=int, choices=[0, 2], required=True)
+    parser.add_argument("--lateral-dig-cost", type=float, required=True)
+    parser.add_argument("--base-travel-cost", type=float, required=True)
+    parser.add_argument("--base-turn-cost", type=float, required=True)
     parser.add_argument("--task-family", choices=["foundation", "trench"], default="foundation")
     args = parser.parse_args()
+    costs = {"lateral_dig_cost": args.lateral_dig_cost,
+             "base_travel_cost": args.base_travel_cost,
+             "base_turn_cost": args.base_turn_cost}
+    if not all(np.isfinite(value) and value >= 0 for value in costs.values()):
+        parser.error("behavior costs must be finite and nonnegative")
     expected_config, expected_sidecar = {
         "foundation": ("foundation_reward_sweep", "6b2675998403ed2d6125d955fca446404fbdf260e0a0c2cf7b9864cbdd1fb2bf"),
         "trench": ("trench_align_v2_specialist_spec", "f0c430651d21cced4189a6879eb53187d6abb1607f9a997978ff748506c58980"),
     }[args.task_family]
     register_checkpoint_config_classes()
-    checkpoints = [load_pkl_object(path) for path in (args.first_checkpoint, args.second_checkpoint)]
+    with contextlib.redirect_stdout(sys.stderr):
+        checkpoints = [load_pkl_object(path) for path in (args.first_checkpoint, args.second_checkpoint)]
     for update, checkpoint in enumerate(checkpoints, start=1):
         assert checkpoint["next_update"] == update
         assert int(np.asarray(checkpoint["train_state_step"])) == update * 64
@@ -44,10 +54,7 @@ def main():
         assert cfg.distance_sidecar_sha256 == expected_sidecar
         assert (cfg.ent_schedule_start, cfg.ent_schedule_end, cfg.ent_schedule_steps) == (.15, .02, 20000)
         behavior = checkpoint_foundation_behavior(checkpoint)
-        for key, value in {"executable_dig_observation": True,
-                           "lateral_dig_cost": .25 * args.cost_multiplier,
-                           "base_travel_cost": .005 * args.cost_multiplier,
-                           "base_turn_cost": .02 * args.cost_multiplier}.items():
+        for key, value in {"executable_dig_observation": True, **costs}.items():
             assert np.isclose(behavior[key], value), (key, behavior[key])
     before, after = [checkpoint["model"] for checkpoint in checkpoints]
     assert jax.tree.structure(before) == jax.tree.structure(after)
@@ -55,7 +62,7 @@ def main():
     assert any(not np.array_equal(a, b) for a, b in zip(jax.tree.leaves(before), jax.tree.leaves(after)))
     print(json.dumps({"status": "PASS", "initialization": "scratch", "seed": args.seed,
                       "task_family": args.task_family,
-                      "cost_multiplier": args.cost_multiplier, "next_update": 2,
+                      "behavior_costs": costs, "next_update": 2,
                       "adam_step": 128, "new_transitions": 32768,
                       "finite_model_optimizer_loss": True, "transition_integrity_zero": True}, indent=2))
 
