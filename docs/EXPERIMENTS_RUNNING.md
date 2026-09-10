@@ -706,3 +706,29 @@ numerical gates yet. See the [current plan and execution evidence](../../../../.
 for current submission/runtime status. No generalist or Euler duplicate is
 included. Evaluate matched checkpoints separately on the 64 easy-foundation
 validation cases and 224 trench rows of the unchanged 608 development panel.
+
+
+### September 10, 09:46 CEST: all four scratch gates passed
+
+Job 4634548 is RUNNING on nid005895, started 09:32:30 with four distinct GH200s;
+end time is September 11 09:32:30. Node-level conv backward/NCCL and each arm's
+own conv backward/u1/u2 gates passed. All four checkpoints have finite model,
+optimizer and loss, Adam 128 and zero transition-integrity counters. Each arm
+restored its own new u2 optimizer state for production; first-update compilation
+was still running at 09:46:18. No production checkpoint or matched behavioral
+evaluation exists yet. This is a numerical-startup result only.
+
+The fixed environment's random-transition and recorded-state probes support
+mass/occupancy correctness and restored short moves. Frozen specialist replay
+regressed 188→175/224; generalist trench replay improved 30→32/224 with foundations
+still 0/384. Thus there is no demonstrated overall learned-policy improvement.
+The scratch comparison holds the fixes constant and tests zero versus 2x costs
+within each task, with one paired seed. See the [status and interpretation](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260910_MORNING.md)
+and its per-arm live evidence. No jobs or training settings changed during the
+status check.
+
+At 09:48:15, both foundation arms had production receipts through u31 and steady
+updates at roughly 7,150 transitions/s (2.3 s/update); both trench arms were still
+compiling their first resumed production update. The foundation u31 batch had
+512 timeouts and no successes in each arm; this is too early to rank costs or
+claim saturation. The linked morning status retains the exact observations.
