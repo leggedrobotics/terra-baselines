@@ -237,3 +237,21 @@ updates at roughly 7,150 transitions/s (2.3 s/update); both trench arms were sti
 compiling their first resumed production update. The foundation u31 batch had
 512 timeouts and no successes in each arm; this is too early to rank costs or
 claim saturation. The linked morning status retains the exact observations.
+
+
+### September 10, 13:35 CEST: all arms past u5000; cost concern
+
+CSCS 4634548 remains RUNNING on four GH200s, with recorded updates F0=5500,
+F2=5921, T0=5381, T2=5861. Latest saved checkpoints are 5500/5500/5000/5500.
+All four retrieved u5000 checkpoints have finite model/optimizer/loss, zero
+transition integrity and Adam 320000; native continuation is working. No
+execution/cuDNN/nonfinite error was found. Rates are around 6100-7200
+transitions/s/GPU. No training settings or jobs changed.
+
+The matched online update 4000-5000 window raises concern about early cost
+suppression: foundation mean excavation 68.9% control vs 15.4% 2x; trench 48.3%
+vs 0.32%. These are sampled training episodes, not a held-out efficiency result.
+The authorized 24-hour screen continues. Four matched u5000 evaluations are
+running locally; the completed foundation control is 0/64 success and 48.9%
+excavated, with zero integrity failures. Other results are pending; comparison
+is scheduled after all four finish. See the [afternoon evidence report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260910_AFTERNOON.md).
