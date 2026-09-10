@@ -278,3 +278,43 @@ checkpoints and u10001 receipts (managed session 88723, PID 3052299). It has a
 three-hour readiness deadline, checks the actual Adam count and local GPU
 availability, then runs the unchanged matched evaluations and summary inline.
 No u10000 result is available yet; no Slurm job or training setting changed.
+
+
+### September 11, 00:30 CEST: component arms submitted; evaluation recovery
+
+Original CSCS 4634548 remains RUNNING (last live check 00:18), about 14h46m into
+its 24-hour allocation. Recorded updates are F0=20201, F2=22291, T0=19911, T2=22501.
+The sampled online u18000-19000 window gives exact success 4.84%/0% foundations
+and 25.69%/0% trenches (control/combined 2x). Excavation is 86.66%/5.48% and
+70.36%/0.135%. No runtime failure or physical/per-step integrity violation was
+found; one small informational accumulated reward-drift count is documented.
+These online results are separate from the fixed held-out evaluation.
+
+The old automatic u10000 evaluation had stopped before downloading checkpoints
+on SSH exit 255. All four checkpoints were retrieved and passed finite checks
+and actual Adam 640000 today; recovery evaluation began 00:08:59 locally.
+Foundation results are complete: control 0/64 exact, 66.64% dug; combined 2x 0/64,
+14.76% dug. Both integrity checks pass. The trench evaluations are still running.
+
+Lorenzo authorized four additional overnight experiments. Submitted CSCS 4642631
+at 00:18:13 for one additional 24-hour four-GPU node (at most 96 GPU-hours), with
+foundation/trench lateral-only (0.5,0,0) and relocation-only (0,0.01,0.04), same
+scratch seed 20260909, data, model, PPO and repaired environment. Original jobs
+are unchanged. New immutable source: Terra ba9cc214 and baselines 275571b;
+changes are launcher/verifier wiring and docs only. The 38 existing launch tests,
+CLI comparison, shellcheck, known finite checkpoint verifier and independent
+review passed. Each new arm still requires its actual per-GPU finite-u2 gate.
+
+New job state at 00:18:41 was PENDING(Resources), with an estimated 16:35 start
+that may change. The SSH certificate expired 00:19:13 after submission. Two
+read-only shorter-segment queries failed authentication; no walltime change or
+extra submission occurred. Root requested renewal if Lorenzo was still awake.
+Submitted/running jobs do not require continued SSH access.
+
+At 00:29:41 the reviewed serial evaluation driver started in local tmux
+terra-components-eval-20260911 (worker 3821255), waiting for current u10000 before
+original u15000/u25000 and new component u5000/u10000. Retrieval requires renewed
+authentication; each helper has a 12-hour bounded readiness/download window.
+No new generalist, recipe promotion, or saturation claim is made.
+See the [current status](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260911_0025.md)
+and [component plan](../../../../.artifacts/terra_excavation_cost_components_cscs_20260911/PLAN.md).
