@@ -750,3 +750,26 @@ The authorized 24-hour screen continues. Four matched u5000 evaluations are
 running locally; the completed foundation control is 0/64 success and 48.9%
 excavated, with zero integrity failures. Other results are pending; comparison
 is scheduled after all four finish. See the [afternoon evidence report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260910_AFTERNOON.md).
+
+
+### September 10, 15:31 CEST: completed u5000 comparison
+
+Job 4634548 remains healthy at about six hours: updates F0=8171, F2=8901,
+T0=8041, T2=8891; no execution/cuDNN/nonfinite errors. All four u5000 fixed
+results are complete. Foundation control/2x: 0/64 successes each and 48.91% versus
+15.49% excavation. Trench control/2x: 3/224 versus 0/224 and 46.71% versus 0.178%
+excavation. Trench 2x digs no fresh soil on 220/224 maps. There are no common
+successes within either pair; reduced travel cannot be promoted as efficiency.
+All 1344 evaluated episodes have zero integrity failures/unavailable counters.
+Independent review checked matching identities, reset receipts, hashes and
+settings; all result counts reproduce. The newer sampled online u7000-8000
+window still shows large 2x progress suppression. These are early one-seed
+cost-treatment results, not convergence or an environment-fix ablation.
+Continue the authorized 24-hour screen; the next planned evaluation is u10000.
+See the [completed comparison report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260910_1530.md).
+
+At 15:41 CEST, a reviewed local helper started waiting for all four u10000
+checkpoints and u10001 receipts (managed session 88723, PID 3052299). It has a
+three-hour readiness deadline, checks the actual Adam count and local GPU
+availability, then runs the unchanged matched evaluations and summary inline.
+No u10000 result is available yet; no Slurm job or training setting changed.
