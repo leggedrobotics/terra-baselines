@@ -866,3 +866,34 @@ waiting for original u15000 retrieval; CSCS SSH still fails authentication.
 The previous retrieval log is preserved and the helper has a fresh bounded
 12-hour readiness window. No Slurm jobs or training settings changed, and no
 live scheduler update is available. See the [historical report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/historical_foundation_comparison_20260911/REPORT.md).
+
+### September 11, 10:51 CEST: foundation movement bug confirmed and corrected
+
+The frozen 2x u15000 checkpoint now solves **63/64** easy-foundation validation
+maps with corrected movement, versus 51/64 under ba9cc214 and 64/64 under
+original fa8d5d13. Twelve lost completions recover and no new ones are lost.
+Mean excavation improves 95.274% -> 99.938%; no-effect actions 76.000 -> 4.016
+and steps 134.625 -> 60.875. The same checkpoint, all map/reset identities,
+reward/treatment receipt, greedy policy, seed 20260907, 450 horizon and 32-row
+forward chunks match. All 64 episodes pass existing integrity checks. Slot 38
+remains unsolved at 96.0317% dug.
+
+Seven first divergences came from rounded intermediate chassis centers
+stepping sideways into cells outside the actual straight sweep. Six others
+first diverged at intended global soil/rotation protections; five of those
+also recover after movement repair. The correction uses whole straight swept
+paths plus valid endpoints and retains strict soil-free chassis rules.
+It is committed locally as Terra 7fb30402 in the isolated
+`terra_straight_sweep_20260911/terra` worktree. Eighteen focused CPU tests,
+384 independent old-endpoint comparisons and thirteen exact GPU transitions
+pass. The explicit thirteen-state probes preserve chassis clearance and mass;
+ordinary full-episode integrity counters do not independently measure chassis
+soil occupancy. Independent review confirms the fix and final paired counts.
+
+No policy was retrained and no Slurm job, cost, observation or PPO setting was
+changed. The original CSCS cohort and its automatic evaluator retain ba9cc214.
+The evaluator is alive after its 10:25:31 resumption and still awaits original
+u15000 retrieval; there is no refreshed scheduler result after the recorded
+authentication failure. Use the correction for subsequent submissions and
+re-evaluate scratch checkpoints before attributing old failures to reward
+weights. See the [diagnosis and complete evidence](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/foundation_regression_diagnosis_20260911/REPORT.md).

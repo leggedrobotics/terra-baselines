@@ -344,3 +344,17 @@ original u15000 retrieval within a 12-hour deadline until about 12:46:56. No
 u15000/u25000 or component u5000/u10000 results exist yet. Lorenzo was asked to
 renew authentication. No jobs, training settings or runtime source changed.
 See the [morning report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260911_MORNING.md).
+
+### September 11: frozen foundation regression traced to intermediate rounding
+
+Corrected Terra 7fb30402 restores 12/13 lost frozen-2x completions on the same
+64-map easy validation panel: 51/64 -> 63/64, zero new losses, 95.274% ->
+99.938% mean excavation. The earlier original-environment result was 64/64.
+Intermediate grid rounding introduced sideways chassis excursions and false
+collisions; the correction checks the entire straight sweep to each candidate
+endpoint and retains all soil protections. Eighteen focused CPU tests, 384
+independent endpoint comparisons and thirteen exact GPU probes pass. Independent
+review confirms matched metadata and result counts. This is frozen-policy
+replay evidence, not a scratch-learning or reward-cost result. No cluster job
+or training setting changed; the original ba9cc214 cohort remains separate.
+See the [diagnosis, corrected replay and tests](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/foundation_regression_diagnosis_20260911/REPORT.md).

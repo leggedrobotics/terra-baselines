@@ -299,3 +299,49 @@ is a next-test hypothesis; the old 2x failure tails also require diagnosis.
 Neither stronger penalties nor policy promotion follows from these results.
 The [historical comparison and raw replay evidence](../../../../../.artifacts/terra_excavation_scratch_cscs_20260910/historical_foundation_comparison_20260911/REPORT.md)
 record the matched panels, lineage, limits and independent checks.
+
+## September 11: movement regression isolated and corrected
+
+Exact first-transition replay identifies a movement bug in Terra ba9cc214.
+Seven of the thirteen lost frozen-2x successes first diverge because separately
+rounded intermediate chassis centers leave the straight path and collide with
+nearby soil or holes. Every nominal endpoint is valid, and every first blocker
+is outside the straight swept polygon under Terra's cell-center convention.
+The remaining six first divergences are intended global soil corrections:
+three old rotations enter height-one soil and three old relaxation updates
+place material under a clear chassis. Foundation maps have no trench axes;
+the junction gate does not explain these differences.
+
+Terra 7fb30402, isolated in `terra_straight_sweep_20260911/terra`, checks each
+candidate's entire straight swept path and valid endpoint, choosing the longest
+clear candidate. It keeps the soil-free chassis invariant and does not allow
+clear endpoints to bypass intervening obstacles. Eighteen focused CPU tests
+pass, independent clear-ground checks preserve 384/384 old endpoints, and exact
+GPU probes restore all seven old moves while preserving all six soil fixes.
+Those thirteen transitions conserve mass and preserve chassis clearance.
+
+The full matched replay recovers twelve of thirteen lost successes: **51/64 ->
+63/64**, with no new losses and all 64 episodes passing existing integrity
+checks. Checkpoint bytes/update, map/reset identities, full treatment fingerprint,
+reward protocol, greedy policy, seed 20260907, horizon 450 and chunk size 32
+match. Mean excavation improves 95.274% -> 99.938%, no-effect actions
+76.000 -> 4.016 and steps 134.625 -> 60.875. Slot 38 remains unsolved at
+96.0317% excavation. Restoring twelve completions includes five cases whose
+first divergence was an intended soil change: first-transition labels were
+not exclusive whole-episode causes. The original fa8d5d13 replay was 64/64.
+
+The main demonstrated gain is restored completion. On the 51 common successes,
+workspace area is 8.167 -> 8.199 m² and productive poses 5.078 -> 5.059;
+the correction does not establish a learned larger-workspace strategy.
+
+All thirteen original stalled states have a material-changing cabin heading
+in independent actual-DO checks. Eleven expose fresh work after at most one
+base action plus cabin adjustment. These local witnesses do not prove episode
+completion or within-horizon recovery. Keep remaining policy action loops
+separate from the confirmed movement bug, and do not infer an effect on scratch
+learning speed from the frozen-policy comparison.
+
+The original CSCS cohort and automatic evaluator still use ba9cc214; no weights,
+PPO settings, reward costs or observations changed. The
+[diagnosis, correction tests and replay evidence](../../../../../.artifacts/terra_excavation_scratch_cscs_20260910/foundation_regression_diagnosis_20260911/REPORT.md)
+include the recorded geometry and independent review.

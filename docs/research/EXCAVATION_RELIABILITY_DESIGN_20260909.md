@@ -76,6 +76,32 @@ trench section. There is no wider fresh-first or radial soil-priority redesign.
 
 ### 2. Allow shorter tracked-excavator maneuvers
 
+**September 11 correction:** the integer-prefix design below introduced false
+collisions at angled headings. Independently rounding intermediate centers
+produces lateral excursions outside the straight sweep. This is the first
+divergence in seven of thirteen lost easy-foundation successes under frozen
+weights; all seven old endpoints satisfy strict occupancy.
+
+The corrected contract tests candidate distances from `move_tiles` down to one.
+For each rounded endpoint, check the entire straight translation of the current
+chassis polygon, using Terra's existing strict cell-center membership. Choose
+the longest candidate with a clear sweep and a valid actual endpoint. Check
+start and translated-end bounds too. Candidates are checked independently:
+their rounded directions differ slightly, so a shorter endpoint's rejection
+does not prove that a longer candidate's straight path is blocked. A clear
+endpoint may never bypass a blocker in its own swept path. Keep strict soil,
+hole, static and other-active-chassis occupancy, loaded-movement rejection,
+nominal open-ground endpoints and other embodiments' existing action models.
+
+Correction commit `7fb30402` is isolated in `terra_straight_sweep_20260911/terra`; the original
+CSCS experiment and its evaluator retain Terra ba9cc214. This is a continuous
+translation check of Terra's raster polygon against cell centers, not physical
+cell-area clearance, a turn sweep or a Nav2 route certificate. See the
+[regression diagnosis](../../../../../.artifacts/terra_excavation_scratch_cscs_20260910/foundation_regression_diagnosis_20260911/REPORT.md)
+for exact transitions, validation and replay results.
+
+The following describes the **superseded September 9 implementation**:
+
 Keep the eight-action policy interface. Forward/backward for an unloaded
 tracked excavator move through the longest valid prefix up to the configured
 nominal distance. For each integer distance from one to `move_tiles`, compute
