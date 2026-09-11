@@ -9,7 +9,9 @@ import eval_mcts
 import eval_mixed
 from eval_mcts import make_mcts_recurrent_fn, make_mcts_step_fn, rollout_episode
 from terra.actions import TrackedAction
-from terra.env import TimeStep
+from terra.config import BatchConfig, EnvConfig
+from terra.env import TerraEnvBatch, TimeStep
+from utils.helpers import replicate_checkpoint_env_config
 from utils.utils_ppo import clip_action_map_in_obs
 
 BATCH_SIZE = 2
@@ -143,6 +145,60 @@ class FakeRolloutEnv(FakeEnv):
 
 
 class RolloutEpisodeAccountingTest(unittest.TestCase):
+    def test_metrics_use_geometry_resolved_at_reset_when_saved_template_is_zero(self):
+        class ResolvedGeometryEnv(FakeRolloutEnv):
+            batch_cfg = BatchConfig(maps_dims=BatchConfig().maps_dims._replace(maps_edge_length=64))
+
+            def reset(self, env_cfgs, rng_keys):
+                del rng_keys
+                resolved = TerraEnvBatch.update_env_cfgs(self, env_cfgs)
+                template = _timestep()
+                agent = SimpleNamespace(
+                    pos_base=jnp.zeros((BATCH_SIZE, 2)),
+                    angle_base=jnp.zeros((BATCH_SIZE, 1)),
+                    angle_cabin=jnp.zeros((BATCH_SIZE, 1)),
+                    agent_type=jnp.zeros((BATCH_SIZE, 1), dtype=jnp.int32),
+                    loaded=jnp.zeros((BATCH_SIZE, 1)),
+                )
+                state = SimpleNamespace(
+                    agent=SimpleNamespace(agent_states=(agent,),
+                                          agent_active=jnp.ones((BATCH_SIZE, 1)),
+                                          current_agent=jnp.zeros(BATCH_SIZE, dtype=jnp.int32)),
+                    world=SimpleNamespace(action_map=SimpleNamespace(map=template.observation["action_map"]),
+                                          target_map=SimpleNamespace(map=template.observation["target_map"]),
+                                          padding_mask=SimpleNamespace(map=template.observation["padding_mask"])),
+                )
+                return template._replace(env_cfg=resolved, state=state)
+
+            def step(self, timestep, action, rng_keys):
+                del action, rng_keys
+                before = timestep.state.agent.agent_states[0]
+                after = SimpleNamespace(**(vars(before) | {"pos_base": before.pos_base + jnp.array([1, 0])}))
+                state = SimpleNamespace(
+                    agent=SimpleNamespace(**(vars(timestep.state.agent) | {"agent_states": (after,)})),
+                    world=timestep.state.world,
+                )
+                return timestep._replace(state=state, done=jnp.ones(BATCH_SIZE, dtype=jnp.bool_))
+
+            step_no_reset = step
+
+        config = _config()
+        config.num_prev_actions = 3
+        saved_template = replicate_checkpoint_env_config(EnvConfig(), BATCH_SIZE)
+        np.testing.assert_array_equal(saved_template.tile_size, np.zeros(BATCH_SIZE))
+        env = ResolvedGeometryEnv()
+        for explicit in (False, True):
+            initial = env.reset(saved_template, None) if explicit else None
+            with self.subTest(explicit_initial_timestep=explicit):
+                _, stats, _ = rollout_episode(
+                    env, FakeModel(), None, saved_template, config, max_frames=1,
+                    deterministic=True, seed=0, preserve_terminal_states=True,
+                    initial_timestep=initial,
+                )
+                expected_tile = env.batch_cfg.maps.edge_length_m / env.batch_cfg.maps_dims.maps_edge_length
+                np.testing.assert_array_equal(stats["behavior"]["behavior_metrics_available"], [True, True])
+                np.testing.assert_allclose(stats["behavior"]["base_travel_m"], [expected_tile, expected_tile])
+
     def test_action_map_clipping_does_not_mutate_raw_height_observation(self):
         raw = {"action_map": jnp.array([[[3, -2]]], dtype=jnp.int8)}
         clipped = clip_action_map_in_obs(raw)

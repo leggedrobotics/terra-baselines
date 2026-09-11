@@ -191,6 +191,12 @@ def test_bounded_logging_schema_and_manual_workspace():
             "kickstart/kl": np.array(0.6),
             "kickstart/value_mse": np.array(0.7),
             "diagnostics/params_all_finite": np.array(1.0),
+            "reward_v2_lateral_dig": np.array(-0.03),
+            "reward_v2_base_travel": np.array(-0.04),
+            "reward_v2_base_turn": np.array(-0.05),
+            "reward_v2_fresh_dig_volume": np.array(0.6),
+            "reward_v2_base_travel_m": np.array(0.7),
+            "reward_v2_base_turn_rad": np.array(0.8),
         },
         entropy_coef=0.02,
         teacher_enabled=True,
@@ -199,9 +205,16 @@ def test_bounded_logging_schema_and_manual_workspace():
     )
     assert metrics["ppo/policy_loss"] == 1.0
     assert metrics["kickstart/kl"] == pytest.approx(0.6)
+    assert metrics["reward/lateral_dig_per_step"] == pytest.approx(-0.03)
+    assert metrics["reward/base_travel_per_step"] == pytest.approx(-0.04)
+    assert metrics["reward/base_turn_per_step"] == pytest.approx(-0.05)
+    assert metrics["behavior/fresh_dig_volume_per_step"] == pytest.approx(0.6)
+    assert metrics["behavior/base_travel_m_per_step"] == pytest.approx(0.7)
+    assert metrics["behavior/base_turn_rad_per_step"] == pytest.approx(0.8)
     assert not any(key.startswith("diagnostics/") for key in metrics)
 
-    assert len(TRAINING_SCALAR_KEYS) <= 67
+    # Six per-transition cost/physical diagnostics support the foundation treatment.
+    assert len(TRAINING_SCALAR_KEYS) <= 73
     assert "reward/terminal_objective_mix" in TRAINING_SCALAR_KEYS
     assert "train/full_start_episode_success_rate" in TRAINING_SCALAR_KEYS
     assert {

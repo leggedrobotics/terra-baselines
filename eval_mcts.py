@@ -11,6 +11,7 @@ Ported from:
   - TerraProject/terra-baselines/eval_mixed.py        (multi-agent + single map)
 """
 
+import os
 import sys
 import time
 from functools import partial
@@ -23,14 +24,19 @@ import jax.random as jrandom
 from tensorflow_probability.substrates import jax as tfp
 
 from utils.models import load_neural_network_for_checkpoint
+from utils.behavior_metrics import EpisodeBehaviorMetrics
 from utils.episode_aggregates import (
     normalized_material_progress,
     source_soil_volume,
 )
 from utils.helpers import (
     checkpoint_batch_config,
+    checkpoint_evaluation_config,
+    checkpoint_foundation_behavior,
     load_pkl_object,
+    overlay_foundation_behavior,
     replicate_checkpoint_env_config,
+    validate_foundation_behavior_env,
 )
 from utils.utils_ppo import (
     _config_option,
@@ -77,7 +83,19 @@ _DEFAULT_MAPS_DIR = Path(__file__).parent / "inference" / "maps"
 # output depends on its own row only. A standalone check of the affected conv
 # at batch 720 gave a bit-identical output sum chunked at 90/128/180 and
 # unchunked. 720 % 120 == 0, so every chunk has the same shape.
-EVAL_FORWARD_CHUNK = 120
+def _configured_eval_forward_chunk():
+    raw = os.environ.get("EVAL_FORWARD_CHUNK", "120")
+    try:
+        size = int(raw)
+    except ValueError as exc:
+        raise ValueError("EVAL_FORWARD_CHUNK must be a positive integer") from exc
+    if size < 1:
+        raise ValueError("EVAL_FORWARD_CHUNK must be a positive integer")
+    return size
+
+
+# Set before importing this module when evaluation shares a training allocation.
+EVAL_FORWARD_CHUNK = _configured_eval_forward_chunk()
 
 
 def _apply_in_batch_chunks(model, model_params, obs_model):
@@ -331,6 +349,7 @@ def rollout_episode(
     record_completion=False,
     initial_timestep=None,
 ):
+    validate_foundation_behavior_env(rl_config, env_cfgs, env=env)
     mode_str = (
         "MCTS"
         if use_mcts
@@ -360,6 +379,12 @@ def rollout_episode(
         timestep = env.reset(env_cfgs, rng_reset)
     else:
         timestep = initial_timestep
+    if hasattr(timestep, "env_cfg"):
+        validate_foundation_behavior_env(rl_config, timestep.env_cfg)
+        # Checkpoint templates may leave tile size and footprint unresolved.
+        # Reset assigns the physical geometry for this map panel.
+        if hasattr(timestep.env_cfg, "tile_size"):
+            env_cfgs = timestep.env_cfg
     if preserve_terminal_states and use_mcts:
         raise ValueError(
             "preserve_terminal_states is only supported for direct policy evaluation"
@@ -562,6 +587,10 @@ def rollout_episode(
     AGENT_TYPE_IDX = 6
     EXCAVATOR_TYPE = 0
 
+    behavior_metrics = EpisodeBehaviorMetrics(
+        timestep, env_cfgs, preserve_terminal_states=preserve_terminal_states
+    )
+
     mcts_ppo_diff_count = 0
     mcts_decision_count = 0
 
@@ -666,6 +695,7 @@ def rollout_episode(
                 next_actor_hidden,
             )
 
+        behavior_metrics.update(timestep, active_env_mask, actions=action)
         reward = jnp.where(active_env_mask, timestep.reward, 0.0)
         next_obs = timestep.observation
         step_done = timestep.done
@@ -1058,6 +1088,7 @@ def rollout_episode(
     stall_age_denominator = jnp.maximum(stall_age_decision_count, 1)
 
     stats = {
+        "behavior": behavior_metrics.result(),
         "episode_done_once": episode_succeeded_once,
         "episode_terminated_once": episode_terminated_once,
         "episode_length": episode_length,
@@ -1366,7 +1397,7 @@ def main():
 
     n_envs = args.n_envs
     log = load_pkl_object(f"{args.run_name}")
-    config = log["train_config"]
+    config = checkpoint_evaluation_config(log)
     config.num_test_rollouts = n_envs
     config.num_devices = 1
     # MCTS params (only used when --use-mcts)
@@ -1376,7 +1407,9 @@ def main():
     if not hasattr(config, "gamma"):
         config.gamma = 0.99
 
-    env_cfgs = log["env_config"]
+    env_cfgs = overlay_foundation_behavior(
+        log["env_config"], checkpoint_foundation_behavior(log)
+    )
 
     print("=== Eval configuration (from checkpoint) ===")
     agent_types_ckpt = getattr(env_cfgs, "agent_types", None)
@@ -1434,6 +1467,9 @@ def main():
     )
     env_kwargs["previous_outcome_observation"] = bool(
         getattr(config, "previous_outcome_observation", False)
+    )
+    env_kwargs["executable_dig_observation"] = bool(
+        getattr(config, "executable_dig_observation", False)
     )
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,

@@ -186,6 +186,14 @@ def _run_ppo_update(config, train_state, transitions, advantages, targets, **kwa
 
 
 class TrainingAccountingTest(unittest.TestCase):
+    def test_legacy_cache_clear_setting_keeps_compiled_executables(self):
+        for config_type in (TrainConfig, MixedAgentTrainConfig):
+            with self.subTest(config_type=config_type.__name__):
+                self.assertEqual(config_type(name="default").cache_clear_interval, 0)
+                with self.assertWarnsRegex(FutureWarning, "deprecated and ignored"):
+                    config = config_type(name="legacy", cache_clear_interval=2)
+                self.assertEqual(config.cache_clear_interval, 0)
+
     def test_transition_integrity_fails_before_checkpoint(self):
         passing = {
             "maximum_mass_residual": 0,

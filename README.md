@@ -149,6 +149,39 @@ by the current schema, including through `--warm_start_from`. Extract parameters
 under the matching historical Terra revision, then write a current-schema
 params-only checkpoint. Treat any resulting run as a new reward treatment.
 
+### Continuing an interrupted run
+
+Use `--resume_from` with a checkpoint containing optimizer state and retain the
+resolved training configuration and exact run name. After checkpoint validation
+and environment initialization, the trainer moves this run's episode receipts
+newer than the checkpoint's `next_update` into a unique
+`episode_aggregates/replayed_from_<update>_<suffix>/` directory. Replayed updates
+then write new receipts at the usual top level. Earlier receipts, other run
+names, and previous archives are preserved. Read only top-level receipt files
+when aggregating the continued trajectory; archived windows belong to abandoned
+post-checkpoint attempts. Fresh runs and parameter-only warm starts still reject
+duplicate receipts.
+
+This local archive does not rewind W&B history. If the checkpoint is behind the
+last logged `train/update`, use a new W&B run ID and record its parent checkpoint.
+Reuse the previous W&B ID only when the checkpoint is at or beyond that update.
+The active v2 Euler launcher automatically uses a new W&B segment ID on every
+checkpoint resume while preserving the local run name. Its run contract records
+the checkpoint and the previous W&B ID when identifiable; external checkpoint
+ancestry is recorded as unknown.
+Environment state, RNG, and previous-action history restart on resume, so the
+continuation is not bit-exact.
+
+The active v2 Euler and CSCS launchers keep JAX's persistent compilation cache
+under `<run directory>/jax-cache`, outside job-local temporary storage, so it can
+be reused by subsequent segments. Set `JAX_COMPILATION_CACHE_DIR` to an absolute
+remote path to override it, or `JAX_ENABLE_COMPILATION_CACHE=false` to disable
+persistent caching. Both settings are forwarded by the submit scripts. Training
+does not periodically clear its compiled functions. The paired Terra revision
+also keeps the workspace-cycle counter's reset dtype stable, avoiding a second
+update compilation after the first rollout. A new process still traces and
+lowers the program before loading a compatible cached executable.
+
 ### Global Map Encoders
 
 `train_mixed.py --map_encoder` accepts these canonical names:

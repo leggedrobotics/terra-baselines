@@ -11,6 +11,7 @@ import eval_ppo
 from datetime import datetime
 from dataclasses import asdict, dataclass
 import time
+import warnings
 from tqdm import tqdm
 from functools import partial
 from flax.jax_utils import replicate, unreplicate
@@ -66,9 +67,18 @@ class TrainConfig:
     loaded_max: int = 100
     local_map_area_scale: float = 1.0
     num_rollouts_eval: int = 500
-    cache_clear_interval: int = 1000
+    # Retained for old commands/configs; clearing live JIT caches forces recompilation.
+    cache_clear_interval: int = 0
 
     def __post_init__(self):
+        if self.cache_clear_interval != 0:
+            warnings.warn(
+                "cache_clear_interval is deprecated and ignored; keeping JAX "
+                "executables cached throughout training (effective interval: 0).",
+                FutureWarning,
+                stacklevel=2,
+            )
+            self.cache_clear_interval = 0
         self.num_devices = (
             jax.local_device_count() if self.num_devices == 0 else self.num_devices
         )
@@ -1264,15 +1274,6 @@ def make_train(
                 )
 
                 wandb.log(loss_info_single)
-
-            # Clear JAX caches and run garbage collection to stabilize memory use
-            if (
-                config.cache_clear_interval > 0
-                and (i + 1) % config.cache_clear_interval == 0
-            ):
-                jax.clear_caches()
-                import gc
-                gc.collect()
 
         return {"runner_state": runner_state_single, "loss_info": loss_info_single}
 

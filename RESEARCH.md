@@ -17,6 +17,8 @@ evaluation, inference, checkpoints, and cluster execution.
 - [Audited training, PPO, curriculum, and evaluation protocol](docs/TRAINING_PROTOCOL.md)
 - [Dataset categories, splits, and terrain figures](https://github.com/leggedrobotics/terra/blob/main/docs/DATASET.md)
 - [Environment, reward equations, and exact termination](https://github.com/leggedrobotics/terra/blob/main/docs/ENVIRONMENT.md)
+- [Scratch foundation and trench comparison on CSCS](scripts/foundation_reward_sweep/README.md)
+- [Foundation behavior and efficiency metrics](docs/research/FOUNDATION_BEHAVIOR_20260907.md)
 - [V8 movement-feedback pilot](docs/research/V8_MOVEMENT_FEEDBACK_PILOT_20260821.md)
 - [V8 paper-experiment handover](docs/research/V8_PAPER_EXPERIMENT_HANDOVER_20260818.md)
 - [V8 fixed-panel benchmark inspector](docs/research/V8_BENCHMARK_INSPECTOR_20260820.md)

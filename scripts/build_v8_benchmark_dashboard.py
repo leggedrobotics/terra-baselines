@@ -16,13 +16,83 @@ import json
 import math
 import os
 from pathlib import Path
+import sys
 from typing import Any
+
+import numpy as np
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from utils.behavior_metrics import BEHAVIOR_METRIC_FIELDS
 
 
 SCHEMA = "terra_v8_benchmark_dashboard_v1"
 FIXED_SCHEMA = "terra_fixed_bank_eval_v4"
 V8_TRAINING_CONDITION_COUNT = 47
 PROMOTION_PANEL_OMISSIONS = ("fnd-slab-allfree", "trn-straight-allfree")
+BEHAVIOR_LABELS = {
+    "base_travel_m": "Base travel (m)",
+    "base_travel_per_sqrt_target_area": "Travel / sqrt target area",
+    "base_heading_change_deg": "Base heading change (deg)",
+    "cabin_swing_deg": "Cabin swing (deg)",
+    "base_reposition_count": "Base repositions",
+    "productive_dig_actions": "Productive digs",
+    "productive_base_stances": "Productive base stances",
+    "unique_productive_base_poses": "Unique productive base poses",
+    "newly_dug_area_m2": "New target area (m²)",
+    "mean_dig_area_m2": "Area per productive dig (m²)",
+    "mean_workspace_dig_area_m2": "Area per productive stance (m²)",
+    "p10_workspace_dig_area_m2": "Episode p10 stance area (m²)",
+    "dig_area_per_travel_m": "New target area / travel (m²/m)",
+    "lateral_dig_volume_fraction": "Lateral dig volume fraction",
+    "mean_dig_lateral_score": "Volume-weighted lateral score",
+}
+
+
+def _optional_number(value):
+    if value is None:
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def _behavior_values(row):
+    available = row.get("behavior_metrics_available") is True
+    return {"behavior_metrics_available": available,
+            **{field: _optional_number(row.get(field)) if available else None
+               for field in BEHAVIOR_METRIC_FIELDS}}
+
+
+def _distribution(values):
+    return {"count": len(values),
+            "mean": float(np.mean(values)) if values else None,
+            "median": float(np.median(values)) if values else None,
+            "p90": float(np.percentile(values, 90)) if values else None}
+
+
+def behavior_comparison(rows):
+    def cohort(selected, role):
+        available = [row[role] for row in selected if row[role]["behavior_metrics_available"]]
+        return {"episodes": len(selected), "available_episodes": len(available),
+                "metrics": {field: _distribution([row[field] for row in available if row[field] is not None])
+                            for field in BEHAVIOR_METRIC_FIELDS}}
+
+    common = [row for row in rows if row["reference"]["success"] and row["candidate"]["success"]]
+    paired_metrics = {}
+    for field in BEHAVIOR_METRIC_FIELDS:
+        pairs = [(row["reference"][field], row["candidate"][field]) for row in common
+                 if row["reference"][field] is not None and row["candidate"][field] is not None]
+        paired_metrics[field] = {
+            "reference": _distribution([before for before, _ in pairs]),
+            "candidate": _distribution([after for _, after in pairs]),
+            "delta": _distribution([after - before for before, after in pairs]),
+        }
+    return {
+        "all_episodes": {role: cohort(rows, role) for role in ("reference", "candidate")},
+        "successes": {role: cohort([row for row in rows if row[role]["success"]], role)
+                      for role in ("reference", "candidate")},
+        "paired_common_successes": {"episodes": len(common), "metrics": paired_metrics},
+    }
 
 
 def _finite(value: Any, name: str) -> float:
@@ -63,7 +133,25 @@ def _identity(row: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def validate_pair(reference: dict[str, Any], candidate: dict[str, Any]) -> None:
+def _foundation_settings(record: dict[str, Any]) -> dict[str, Any]:
+    defaults = {"executable_dig_observation": False, "lateral_dig_cost": 0.0,
+                "base_travel_cost": 0.0, "base_turn_cost": 0.0}
+    receipt = record.get("r2_protocol_receipt")
+    if not isinstance(receipt, dict):
+        raise ValueError("foundation reward comparison requires R2 protocol receipts")
+    settings = receipt.get("foundation_behavior", defaults)
+    if not isinstance(settings, dict) or set(settings) != set(defaults):
+        raise ValueError("unknown foundation behavior receipt fields")
+    if not isinstance(settings["executable_dig_observation"], bool):
+        raise ValueError("executable_dig_observation must be boolean")
+    for name in ("lateral_dig_cost", "base_travel_cost", "base_turn_cost"):
+        if _finite(settings[name], name) < 0:
+            raise ValueError(f"{name} must be nonnegative")
+    return dict(settings)
+
+
+def validate_pair(reference: dict[str, Any], candidate: dict[str, Any], *,
+                  compare_foundation_rewards: bool = False) -> None:
     for label, record in (("reference", reference), ("candidate", candidate)):
         if record.get("deterministic") is not True:
             raise ValueError(f"{label} fixed evaluation is not deterministic")
@@ -76,11 +164,21 @@ def validate_pair(reference: dict[str, Any], candidate: dict[str, Any]) -> None:
         "stratum",
         "policy_mode",
         "completion_contract",
-        "r2_protocol_receipt",
         "accepted_bank",
     ):
         if reference.get(name) != candidate.get(name):
             raise ValueError(f"fixed evaluations use different {name}")
+    before_receipt = reference.get("r2_protocol_receipt")
+    after_receipt = candidate.get("r2_protocol_receipt")
+    if compare_foundation_rewards:
+        _foundation_settings(reference)
+        _foundation_settings(candidate)
+        before_receipt = {key: value for key, value in before_receipt.items()
+                          if key != "foundation_behavior"}
+        after_receipt = {key: value for key, value in after_receipt.items()
+                         if key != "foundation_behavior"}
+    if before_receipt != after_receipt:
+        raise ValueError("fixed evaluations use different r2_protocol_receipt")
     if reference.get("manifest_sha256") != candidate.get("manifest_sha256"):
         raise ValueError("fixed evaluations use different manifests")
     if reference.get("horizon") != candidate.get("horizon"):
@@ -157,6 +255,7 @@ def aligned_rows(reference: dict[str, Any], candidate: dict[str, Any]) -> list[d
                 "issue": tags[0] if tags else "none",
                 "issue_tags": tags,
                 "reference": {
+                    **_behavior_values(before),
                     "success": bool(before["success"]),
                     "steps": before_steps,
                     "terminal_soil": before_terminal,
@@ -167,10 +266,11 @@ def aligned_rows(reference: dict[str, Any], candidate: dict[str, Any]) -> list[d
                     "stall_saturation": _metric(
                         before, "stall_age_saturated_decision_fraction"
                     ),
-                    "workspace_cycles": before.get("productive_workspace_cycles"),
+                    "workspace_cycles": _optional_number(before.get("productive_workspace_cycles")),
                     "max_carry": _metric(before, "maximum_carry_work_normalized"),
                 },
                 "candidate": {
+                    **_behavior_values(after),
                     "success": bool(after["success"]),
                     "steps": after_steps,
                     "terminal_soil": after_terminal,
@@ -181,7 +281,7 @@ def aligned_rows(reference: dict[str, Any], candidate: dict[str, Any]) -> list[d
                     "stall_saturation": _metric(
                         after, "stall_age_saturated_decision_fraction"
                     ),
-                    "workspace_cycles": after.get("productive_workspace_cycles"),
+                    "workspace_cycles": _optional_number(after.get("productive_workspace_cycles")),
                     "max_carry": _metric(after, "maximum_carry_work_normalized"),
                 },
                 "delta": {
@@ -361,8 +461,9 @@ def build_dashboard_data(
     media_dir: Path | None,
     output_dir: Path,
     review_limit: int,
+    compare_foundation_rewards: bool = False,
 ) -> dict[str, Any]:
-    validate_pair(reference, candidate)
+    validate_pair(reference, candidate, compare_foundation_rewards=compare_foundation_rewards)
     rows = aligned_rows(reference, candidate)
     conditions = condition_rows(rows)
     selection = choose_review_rows(rows, review_limit)
@@ -457,17 +558,32 @@ def build_dashboard_data(
     }
     return {
         "schema": SCHEMA,
+        "behavior_labels": BEHAVIOR_LABELS,
+        "behavior": {
+            "overall": behavior_comparison(rows),
+            "by_family": {family: behavior_comparison([row for row in rows if row["family"] == family])
+                          for family in sorted({row["family"] for row in rows})},
+            "by_primary_cell": {condition: behavior_comparison([row for row in rows if row["condition"] == condition])
+                                for condition in sorted({row["condition"] for row in rows})},
+        },
         "labels": {"reference": reference_label, "candidate": candidate_label},
         "contract": {
+            "foundation_reward_comparison": (
+                {"reference": _foundation_settings(reference),
+                 "candidate": _foundation_settings(candidate)}
+                if compare_foundation_rewards else None
+            ),
             "manifest_sha256": reference["manifest_sha256"],
             "horizon": int(reference["horizon"]),
             "seed": int(reference["seed"]),
             "maps": len(rows),
             "panel_conditions": len(conditions),
-            "training_conditions": V8_TRAINING_CONDITION_COUNT,
+            "training_conditions": (
+                V8_TRAINING_CONDITION_COUNT if reference.get("accepted_bank") else None
+            ),
             "omitted_training_conditions": (
                 list(PROMOTION_PANEL_OMISSIONS)
-                if len(conditions) == V8_TRAINING_CONDITION_COUNT - 2
+                if reference.get("accepted_bank") and len(conditions) == V8_TRAINING_CONDITION_COUNT - 2
                 else []
             ),
             "reference_checkpoint_sha256": reference["checkpoint_sha256"],
@@ -515,7 +631,11 @@ def write_episode_csv(data: dict[str, Any], path: Path) -> None:
         "candidate_no_effect_rate",
         "reference_stall_saturation",
         "candidate_stall_saturation",
-    )
+        "paired_common_success",
+        "reference_behavior_metrics_available", "candidate_behavior_metrics_available",
+        "reference_legacy_productive_workspace_cycles", "candidate_legacy_productive_workspace_cycles",
+    ) + tuple(f"{role}_{field}" for field in BEHAVIOR_METRIC_FIELDS for role in ("reference", "candidate")) \
+      + tuple(f"paired_common_success_delta_{field}" for field in BEHAVIOR_METRIC_FIELDS)
     with path.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
@@ -545,6 +665,18 @@ def write_episode_csv(data: dict[str, Any], path: Path) -> None:
                     "candidate_no_effect_rate": row["candidate"]["no_effect_rate"],
                     "reference_stall_saturation": row["reference"]["stall_saturation"],
                     "candidate_stall_saturation": row["candidate"]["stall_saturation"],
+                    "paired_common_success": row["outcome"] == "persistent success",
+                    **{f"{role}_behavior_metrics_available": row[role]["behavior_metrics_available"]
+                       for role in ("reference", "candidate")},
+                    **{f"{role}_legacy_productive_workspace_cycles": row[role]["workspace_cycles"]
+                       for role in ("reference", "candidate")},
+                    **{f"{role}_{field}": row[role][field]
+                       for field in BEHAVIOR_METRIC_FIELDS for role in ("reference", "candidate")},
+                    **{f"paired_common_success_delta_{field}": (
+                        row["candidate"][field] - row["reference"][field]
+                        if row["outcome"] == "persistent success"
+                        and row["candidate"][field] is not None and row["reference"][field] is not None else None)
+                       for field in BEHAVIOR_METRIC_FIELDS},
                 }
             )
 
@@ -602,7 +734,16 @@ code {{ overflow-wrap:anywhere; }}
 <body><main>
 <h1>{title}</h1>
 <div class="sub" id="contract"></div>
+<div class="sub" id="reward-treatment"></div>
 <div class="stats" id="stats"></div>
+<h2>Travel and excavation behavior</h2>
+<p class="sub">A productive base stance keeps base position and heading fixed; cabin swing does not split it. Legacy productive workspace cycles are a separate counter. Lateral digging metrics describe geometry, not physical safety. New target area counts newly excavated cells; lateral volume also reflects target depth.</p>
+<div class="controls">
+  <select id="behavior-scope"><option value="overall">whole panel</option></select>
+  <select id="behavior-cohort"><option value="paired_common_successes">maps both policies solved</option><option value="all_episodes">all episodes</option><option value="successes">each policy's successes</option></select>
+</div>
+<p class="sub" id="behavior-note"></p>
+<div class="table-wrap"><table><thead><tr><th>metric</th><th>observed R / C</th><th>reference mean / median / p90</th><th>candidate mean / median / p90</th><th>paired mean Δ C−R</th></tr></thead><tbody id="behavior-metrics"></tbody></table></div>
 <h2>Condition overview</h2>
 <div class="legend"><span><i class="dot-persistent-success"></i>both exact</span><span><i class="dot-conversion"></i>candidate conversion</span><span><i class="dot-regression"></i>candidate regression</span><span><i class="dot-persistent-failure"></i>both fail</span></div>
 <div class="condition-grid" id="conditions"></div>
@@ -615,30 +756,47 @@ code {{ overflow-wrap:anywhere; }}
   <select id="sort"><option value="review">review priority</option><option value="slot">slot</option><option value="terminal">candidate terminal soil</option><option value="noeffect">candidate no-effect</option></select>
   <button id="clear" type="button">clear filters</button>
 </div>
-<div class="layout"><div class="table-wrap"><table><thead><tr><th>slot</th><th>condition</th><th>outcome</th><th>issue</th><th>exact R→C</th><th>terminal R→C</th><th>no-effect R→C</th><th>steps R→C</th></tr></thead><tbody id="maps"></tbody></table></div><aside class="detail" id="detail">Select a map.</aside></div>
+<div class="layout"><div class="table-wrap"><table><thead><tr><th>slot</th><th>condition</th><th>outcome</th><th>issue</th><th>exact R→C</th><th>terminal R→C</th><th>no-effect R→C</th><th>steps R→C</th><th>travel m R→C</th><th>productive stances R→C</th><th>area/stance m² R→C</th><th>lateral volume R→C</th></tr></thead><tbody id="maps"></tbody></table></div><aside class="detail" id="detail">Select a map.</aside></div>
 <script>
 const DATA={encoded};
 const $=id=>document.getElementById(id);
-const pct=x=>(100*x).toFixed(1)+'%';
+const finiteNumber=x=>typeof x==='number'&&Number.isFinite(x);
+const number=x=>finiteNumber(x)?x.toLocaleString(undefined,{{maximumFractionDigits:3}}):'unavailable';
+const pct=x=>finiteNumber(x)?(100*x).toFixed(1)+'%':'unavailable';
 const signed=x=>(x>0?'+':'')+x;
 const reviewRank=new Map(DATA.review_selection.map((x,i)=>[x.slot,i]));
 let selectedCondition='';
 function options(id, values){{ for(const value of [...new Set(values)].sort()){{const o=document.createElement('option');o.value=value;o.textContent=value;$(id).appendChild(o);}} }}
 options('family',DATA.maps.map(x=>x.family)); options('outcome',DATA.maps.map(x=>x.outcome)); options('issue',DATA.maps.flatMap(x=>x.issue_tags));
-$('contract').textContent=`${{DATA.contract.maps}} maps · ${{DATA.contract.panel_conditions}}/${{DATA.contract.training_conditions}} training conditions · horizon ${{DATA.contract.horizon}} · seed ${{DATA.contract.seed}} · manifest ${{DATA.contract.manifest_sha256.slice(0,12)}}…${{DATA.contract.omitted_training_conditions.length?' · omitted: '+DATA.contract.omitted_training_conditions.join(', '):''}}`;
+for(const kind of ['by_family','by_primary_cell'])for(const value of Object.keys(DATA.behavior[kind])){{const o=document.createElement('option');o.value=JSON.stringify([kind,value]);o.textContent=(kind==='by_family'?'family: ':'condition: ')+value;$('behavior-scope').appendChild(o);}}
+function drawBehavior(){{
+  const selected=$('behavior-scope').value;
+  const scope=selected==='overall'?DATA.behavior.overall:(()=>{{const [kind,value]=JSON.parse(selected);return DATA.behavior[kind][value];}})();
+  const cohort=$('behavior-cohort').value;const paired=cohort==='paired_common_successes';const view=scope[cohort];
+  $('behavior-note').textContent=paired?`${{view.episodes}} maps solved by both policies. Each delta uses only paired finite observations; unavailable values are excluded.`:`Reference: ${{view.reference.episodes}} episodes (${{view.reference.available_episodes}} with behavior data); candidate: ${{view.candidate.episodes}} (${{view.candidate.available_episodes}} with behavior data). These are descriptive cohorts; deltas use maps both policies solved.`;
+  const body=$('behavior-metrics');body.innerHTML='';
+  const stats=x=>[x.mean,x.median,x.p90].map(number).join(' / ');
+  for(const [key,label] of Object.entries(DATA.behavior_labels)){{const r=paired?view.metrics[key].reference:view.reference.metrics[key];const c=paired?view.metrics[key].candidate:view.candidate.metrics[key];const delta=paired?view.metrics[key].delta.mean:null;const tr=document.createElement('tr');tr.innerHTML=`<td>${{label}}</td><td>${{r.count}} / ${{c.count}}</td><td>${{stats(r)}}</td><td>${{stats(c)}}</td><td>${{number(delta)}}</td>`;body.appendChild(tr);}}
+}}
+for(const id of ['behavior-scope','behavior-cohort'])$(id).addEventListener('change',drawBehavior);
+drawBehavior();
+const conditionCount=DATA.contract.training_conditions===null?`${{DATA.contract.panel_conditions}} panel conditions`:`${{DATA.contract.panel_conditions}}/${{DATA.contract.training_conditions}} training conditions`;
+$('contract').textContent=`${{DATA.contract.maps}} maps · ${{conditionCount}} · horizon ${{DATA.contract.horizon}} · seed ${{DATA.contract.seed}} · manifest ${{DATA.contract.manifest_sha256.slice(0,12)}}…${{DATA.contract.omitted_training_conditions.length?' · omitted: '+DATA.contract.omitted_training_conditions.join(', '):''}}`;
+if(DATA.contract.foundation_reward_comparison){{const r=DATA.contract.foundation_reward_comparison;const describe=x=>`executable affordance ${{x.executable_dig_observation?'on':'off'}}, lateral ${{x.lateral_dig_cost}}, travel/m ${{x.base_travel_cost}}, turn/rad ${{x.base_turn_cost}}`;$('reward-treatment').textContent=`Declared foundation treatment comparison · ${{DATA.labels.reference}}: ${{describe(r.reference)}} · ${{DATA.labels.candidate}}: ${{describe(r.candidate)}}`;}}
 const s=DATA.summary; const n=DATA.contract.maps;
 $('stats').innerHTML=`<div class="stat"><span>${{DATA.labels.reference}}</span><b>${{s.reference_successes}}/${{n}}</b></div><div class="stat"><span>${{DATA.labels.candidate}}</span><b>${{s.candidate_successes}}/${{n}}</b></div><div class="stat"><span>net exact</span><b class="${{s.exact_delta>=0?'good':'bad'}}">${{signed(s.exact_delta)}}</b></div><div class="stat"><span>conversions / regressions</span><b>${{s.conversion}} / ${{s.regression}}</b></div>`;
 function drawConditions(){{const root=$('conditions');root.innerHTML='';for(const c of DATA.conditions){{const card=document.createElement('div');card.className='condition-card';const b=document.createElement('button');b.type='button';b.className='condition'+(selectedCondition===c.condition?' selected':'');b.innerHTML=`<b>${{c.condition}}</b><span>${{c.candidate_exact}}/${{c.maps}} vs ${{c.reference_exact}}/${{c.maps}} · Δ ${{signed(c.exact_delta)}}</span>`;b.onclick=()=>{{selectedCondition=selectedCondition===c.condition?'':c.condition;drawConditions();drawMaps();}};card.appendChild(b);const dots=document.createElement('div');dots.className='episode-dots';for(const e of c.episode_outcomes){{const d=document.createElement('button');d.type='button';d.className='episode-dot dot-'+e.outcome.replaceAll(' ','-');d.title=`slot ${{e.slot}} · ${{e.map_id}} · ${{e.outcome}}`;d.onclick=()=>{{const row=DATA.maps.find(x=>x.slot===e.slot);if(row)drawDetail(row);}};dots.appendChild(d);}}card.appendChild(dots);root.appendChild(card);}}}}
 function filtered(){{const q=$('search').value.trim().toLowerCase();let rows=DATA.maps.filter(x=>(!selectedCondition||x.condition===selectedCondition)&&(!$('family').value||x.family===$('family').value)&&(!$('outcome').value||x.outcome===$('outcome').value)&&(!$('issue').value||x.issue_tags.includes($('issue').value))&&(!q||`${{x.slot}} ${{x.map_id}} ${{x.condition}}`.toLowerCase().includes(q)));const sort=$('sort').value;rows.sort((a,b)=>sort==='slot'?a.slot-b.slot:sort==='terminal'?a.candidate.terminal_soil-b.candidate.terminal_soil:sort==='noeffect'?b.candidate.no_effect_rate-a.candidate.no_effect_rate:(reviewRank.get(a.slot)??9999)-(reviewRank.get(b.slot)??9999)||a.slot-b.slot);return rows;}}
 function outcomeClass(x){{return x==='conversion'?'good':x==='regression'?'bad':x==='persistent failure'?'warn':'';}}
-function drawMaps(){{const body=$('maps');body.innerHTML='';for(const x of filtered()){{const tr=document.createElement('tr');tr.innerHTML=`<td>${{x.slot}}</td><td>${{x.condition}}</td><td class="${{outcomeClass(x.outcome)}}">${{x.outcome}}</td><td>${{x.issue}}</td><td>${{x.reference.success?'✓':'×'}}→${{x.candidate.success?'✓':'×'}}</td><td>${{pct(x.reference.terminal_soil)}}→${{pct(x.candidate.terminal_soil)}}</td><td>${{pct(x.reference.no_effect_rate)}}→${{pct(x.candidate.no_effect_rate)}}</td><td>${{x.reference.steps}}→${{x.candidate.steps}}</td>`;tr.onclick=()=>drawDetail(x);body.appendChild(tr);}}}}
-function metric(label,a,b,format=pct){{return `<div><span>${{label}}</span><b>${{format(a)}}</b><small>reference</small></div><div><span>${{label}}</span><b>${{format(b)}}</b><small>candidate</small></div><div><span>delta</span><b>${{format(b-a)}}</b><small>${{label}}</small></div>`;}}
+function drawMaps(){{const body=$('maps');body.innerHTML='';for(const x of filtered()){{const tr=document.createElement('tr');tr.innerHTML=`<td>${{x.slot}}</td><td>${{x.condition}}</td><td class="${{outcomeClass(x.outcome)}}">${{x.outcome}}</td><td>${{x.issue}}</td><td>${{x.reference.success?'✓':'×'}}→${{x.candidate.success?'✓':'×'}}</td><td>${{pct(x.reference.terminal_soil)}}→${{pct(x.candidate.terminal_soil)}}</td><td>${{pct(x.reference.no_effect_rate)}}→${{pct(x.candidate.no_effect_rate)}}</td><td>${{x.reference.steps}}→${{x.candidate.steps}}</td><td>${{number(x.reference.base_travel_m)}}→${{number(x.candidate.base_travel_m)}}</td><td>${{number(x.reference.productive_base_stances)}}→${{number(x.candidate.productive_base_stances)}}</td><td>${{number(x.reference.mean_workspace_dig_area_m2)}}→${{number(x.candidate.mean_workspace_dig_area_m2)}}</td><td>${{pct(x.reference.lateral_dig_volume_fraction)}}→${{pct(x.candidate.lateral_dig_volume_fraction)}}</td>`;tr.onclick=()=>drawDetail(x);body.appendChild(tr);}}}}
+function metric(label,a,b,format=pct,paired=true){{return `<div><span>${{label}}</span><b>${{format(a)}}</b><small>reference</small></div><div><span>${{label}}</span><b>${{format(b)}}</b><small>candidate</small></div><div><span>delta</span><b>${{format(paired&&finiteNumber(a)&&finiteNumber(b)?b-a:null)}}</b><small>${{label}}</small></div>`;}}
 function drawDetail(x){{
   const m=DATA.media[String(x.slot)]||{{}};
   const tags=x.issue_tags.length?x.issue_tags.map(t=>`<span class="tag">${{t}}</span>`).join(''):'<span class="tag">success</span>';
   const media=(m.reference||m.candidate)?`<div class="media">${{m.reference?`<div><b>${{DATA.labels.reference}}</b><img src="${{m.reference}}" alt="reference rollout for slot ${{x.slot}}"></div>`:''}}${{m.candidate?`<div><b>${{DATA.labels.candidate}}</b><img src="${{m.candidate}}" alt="candidate rollout for slot ${{x.slot}}"></div>`:''}}</div>`:'<p class="sub">No rendered trace yet. This slot remains in review_selection.json.</p>';
   const trace=(role,label)=>{{const t=x[role].trace;if(!t)return '';const obsCycle=t.terminal_observation_action_cycle;const stateCycle=t.terminal_recurrent_state_action_cycle;return `<p><b>${{label}} trace:</b> no-effect streak ${{t.maximum_no_effect_streak}}, repeated instantaneous inputs ${{t.repeated_instantaneous_input_decisions}}, last material change ${{t.last_material_change_step}}${{obsCycle?`, observation/action cycle p${{obsCycle.period}} for ${{obsCycle.decisions}} decisions`:''}}${{stateCycle?`, full recurrent-state cycle p${{stateCycle.period}} for ${{stateCycle.decisions}} decisions`:''}}</p>`;}};
-  $('detail').innerHTML=`<h2>slot ${{x.slot}} · ${{x.map_id}}</h2><p>${{x.condition}} · <span class="${{outcomeClass(x.outcome)}}">${{x.outcome}}</span></p><p>${{tags}}</p><div class="metrics">${{metric('terminal soil',x.reference.terminal_soil,x.candidate.terminal_soil)}}${{metric('no-effect',x.reference.no_effect_rate,x.candidate.no_effect_rate)}}${{metric('stall saturation',x.reference.stall_saturation,x.candidate.stall_saturation)}}${{metric('off-zone soil',x.reference.off_zone,x.candidate.off_zone)}}${{metric('loaded soil',x.reference.loaded,x.candidate.loaded)}}${{metric('steps',x.reference.steps,x.candidate.steps,v=>String(Math.round(v)))}}</div>${{trace('reference',DATA.labels.reference)}}${{trace('candidate',DATA.labels.candidate)}}${{media}}<p class="sub"><code>${{x.episode_id}}</code></p>`;
+  const behavior=Object.entries(DATA.behavior_labels).map(([key,label])=>metric(label,x.reference[key],x.candidate[key],key.endsWith('_fraction')?pct:number,x.outcome==='persistent success')).join('');
+  $('detail').innerHTML=`<h2>slot ${{x.slot}} · ${{x.map_id}}</h2><p>${{x.condition}} · <span class="${{outcomeClass(x.outcome)}}">${{x.outcome}}</span></p><p>${{tags}}</p><div class="metrics">${{metric('terminal soil',x.reference.terminal_soil,x.candidate.terminal_soil)}}${{metric('no-effect',x.reference.no_effect_rate,x.candidate.no_effect_rate)}}${{metric('stall saturation',x.reference.stall_saturation,x.candidate.stall_saturation)}}${{metric('off-zone soil',x.reference.off_zone,x.candidate.off_zone)}}${{metric('loaded soil',x.reference.loaded,x.candidate.loaded)}}${{metric('steps',x.reference.steps,x.candidate.steps,v=>String(Math.round(v)))}}${{metric('Legacy productive workspace cycles',x.reference.workspace_cycles,x.candidate.workspace_cycles,number,x.outcome==='persistent success')}}</div><h2>Behavior</h2><p class="sub">Behavior deltas are shown only when both policies solved this map.</p><div class="metrics">${{behavior}}</div>${{trace('reference',DATA.labels.reference)}}${{trace('candidate',DATA.labels.candidate)}}${{media}}<p class="sub"><code>${{x.episode_id}}</code></p>`;
 }}
 for(const id of ['search','family','outcome','issue','sort']) $(id).addEventListener(id==='search'?'input':'change',drawMaps);
 $('clear').onclick=()=>{{selectedCondition='';for(const id of ['search','family','outcome','issue'])$(id).value='';$('sort').value='review';drawConditions();drawMaps();}};
@@ -657,6 +815,8 @@ def main() -> None:
     parser.add_argument("--media-dir", type=Path)
     parser.add_argument("--review-limit", type=int, default=20)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--compare-foundation-rewards", action="store_true",
+                        help="Explicitly compare recorded foundation reward/affordance treatments; all other R2 and panel contracts must match.")
     args = parser.parse_args()
     if args.review_limit < 1:
         raise ValueError("--review-limit must be positive")
@@ -677,6 +837,7 @@ def main() -> None:
         media_dir=args.media_dir.resolve() if args.media_dir else None,
         output_dir=output_dir,
         review_limit=args.review_limit,
+        compare_foundation_rewards=args.compare_foundation_rewards,
     )
     output_dir.mkdir(parents=True)
     (output_dir / "dashboard_data.json").write_text(

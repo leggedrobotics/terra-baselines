@@ -18,7 +18,7 @@ Options:
   --partition NAME            Slurm partition (default from config.env)
   --account NAME              Slurm account (default from config.env)
   --run-id ID                 Stable run identifier
-  --wandb-mode online|offline W&B mode for the job (default: online)
+  --wandb-mode online|offline|disabled W&B mode for the job (default: online)
   --test-only                 Run sbatch --test-only; this is the default
   --submit                    Submit the billable job
   --no-sync                   Reuse an existing --run-id snapshot
@@ -63,12 +63,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$PROFILE" == smoke || "$PROFILE" == production ]] || cscs_die "profile must be smoke or production"
-[[ "$WANDB_MODE" == online || "$WANDB_MODE" == offline ]] || cscs_die "--wandb-mode must be online or offline"
+[[ "$WANDB_MODE" == online || "$WANDB_MODE" == offline || "$WANDB_MODE" == disabled ]] || cscs_die "--wandb-mode must be online, offline, or disabled"
 [[ -n "$DATASET_PATH" ]] || cscs_die "--dataset-path is required"
 cscs_validate_absolute_path "dataset path" "$DATASET_PATH"
 [[ "$DATASET_SIZE" =~ ^[1-9][0-9]*$ ]] || cscs_die "--dataset-size must be a positive integer"
 cscs_validate_token "partition" "$PARTITION"
 cscs_validate_token "account" "$ACCOUNT"
+if [[ -n "${JAX_COMPILATION_CACHE_DIR:-}" ]]; then
+    cscs_validate_absolute_path "JAX_COMPILATION_CACHE_DIR" "$JAX_COMPILATION_CACHE_DIR"
+fi
+JAX_ENABLE_COMPILATION_CACHE="${JAX_ENABLE_COMPILATION_CACHE:-true}"
+cscs_validate_token "JAX_ENABLE_COMPILATION_CACHE" "$JAX_ENABLE_COMPILATION_CACHE"
 JOB_TIME="${JOB_TIME:-$([[ "$PROFILE" == smoke ]] && echo 00:20:00 || echo 24:00:00)}"
 [[ "$JOB_TIME" =~ ^[0-9]{2}:[0-9]{2}:[0-9]{2}$ ]] || cscs_die "--time must use HH:MM:SS"
 [[ -z "$DEPENDENCY" || "$DEPENDENCY" =~ ^(afterany|afterok|afternotok|after):[0-9]+(:[0-9]+)*$ ]] \
@@ -79,6 +84,8 @@ RUN_ID="${RUN_ID:-$(cscs_default_run_id)}"
 cscs_validate_token "run id" "$RUN_ID"
 SNAPSHOT_ROOT="${CSCS_ROOT}/snapshots/${RUN_ID}"
 RUN_ROOT="${CSCS_ROOT}/runs/${RUN_ID}"
+JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$RUN_ROOT/jax-cache}"
+cscs_validate_absolute_path "JAX_COMPILATION_CACHE_DIR" "$JAX_COMPILATION_CACHE_DIR"
 IMAGE_PATH="${CSCS_ROOT}/images/${CSCS_IMAGE_NAME}+${CSCS_IMAGE_TAG}.sqsh"
 EDF_PATH="${RUN_ROOT}/terra.edf.toml"
 SBATCH_PATH="${RUN_ROOT}/job.sbatch"
@@ -97,6 +104,8 @@ ssh -T "$CSCS_SSH_TARGET" \
         ACCOUNT="$ACCOUNT" PARTITION="$PARTITION" JOB_TIME="$JOB_TIME" \
         CSCS_WANDB_ENTITY="$CSCS_WANDB_ENTITY" WANDB_MODE="$WANDB_MODE" \
         RESUME_LATEST="$RESUME_LATEST" DEPENDENCY="$DEPENDENCY" \
+        JAX_COMPILATION_CACHE_DIR="$JAX_COMPILATION_CACHE_DIR" \
+        JAX_ENABLE_COMPILATION_CACHE="$JAX_ENABLE_COMPILATION_CACHE" \
     bash -s <<'REMOTE'
 set -euo pipefail
 mkdir -p "$RUN_ROOT/logs" "$RUN_ROOT/checkpoints" "$RUN_ROOT/wandb" "$RUN_ROOT/work"
@@ -129,6 +138,8 @@ PYTHONUNBUFFERED = "1"
 DATASET_PATH = "${DATASET_PATH}"
 DATASET_SIZE = "${DATASET_SIZE}"
 TERRA_RUN_DIR = "${RUN_ROOT}"
+JAX_COMPILATION_CACHE_DIR = "${JAX_COMPILATION_CACHE_DIR}"
+JAX_ENABLE_COMPILATION_CACHE = "${JAX_ENABLE_COMPILATION_CACHE}"
 WANDB_DIR = "${RUN_ROOT}/wandb"
 WANDB_MODE = "${WANDB_MODE}"
 WANDB_ENTITY = "${CSCS_WANDB_ENTITY}"

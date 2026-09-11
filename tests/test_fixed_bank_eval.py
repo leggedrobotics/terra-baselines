@@ -105,6 +105,13 @@ class FixedBankEvalTest(unittest.TestCase):
         self.assertTrue(summary["integrity"]["passed"])
         self.assertFalse(summary["graded"]["available"])
         self.assertIsNone(per_map[0]["productive_workspace_cycles"])
+        self.assertFalse(per_map[0]["behavior_metrics_available"])
+        self.assertIsNone(per_map[0]["productive_base_stances"])
+        self.assertIsNone(per_map[0]["base_travel_m"])
+        legacy_behavior = summary["overall"]["behavior"]["all_episodes"]
+        self.assertEqual(legacy_behavior["available_episodes"], 0)
+        self.assertEqual(legacy_behavior["metrics"]["base_travel_m"]["count"], 0)
+        self.assertIsNone(legacy_behavior["metrics"]["base_travel_m"]["mean"])
         self.assertFalse(
             summary["overall"]["successful_efficiency"][
                 "productive_workspace_cycles_available"
@@ -136,6 +143,68 @@ class FixedBankEvalTest(unittest.TestCase):
         self.assertEqual(efficiency["productive_workspace_cycles_total"], 4)
         self.assertEqual(efficiency["steps_total"], 30)
         self.assertEqual(efficiency["lexicographic_key"], [2, -4, -30])
+
+    def test_behavior_groups_separate_successes_and_preserve_missing_values(self):
+        rows = [
+            {"slot_index": i + 1, "map_id": f"map-{i}",
+             "family": "foundation" if i < 2 else "trench",
+             "primary_cell": "easy" if i < 2 else "hard"}
+            for i in range(4)
+        ]
+        per_map, summary = grouped_results(
+            rows, np.array([True, False, True, False]), np.ones(4, dtype=bool),
+            np.array([12, 450, 20, 450]),
+            productive_workspace_cycles=np.array([3, 9, 1, 5]),
+            productive_workspace_cycles_available=np.ones(4, dtype=bool),
+            behavior_metrics={
+                "behavior_metrics_available": np.array([True, True, True, False]),
+                "base_travel_m": np.array([10.0, 100.0, 30.0, 999.0]),
+                "productive_base_stances": np.array([2, 40, 3, 99]),
+                "mean_workspace_dig_area_m2": np.array([8.0, 1.0, np.nan, 999.0]),
+                "dig_area_per_travel_m": np.array([None, 2.0, 0.0, 100.0], dtype=object),
+                "lateral_dig_volume_fraction": np.array([np.nan, 0.8, 0.2, 1.0]),
+                "newly_dug_volume_units": np.array([8, 3, 5, 999]),
+                "relifted_volume_units": np.array([0, 20, 0, 999]),
+                "longest_action_pattern_steps": np.array([0, 100, np.nan, 999]),
+            },
+        )
+        self.assertIsNone(per_map[2]["mean_workspace_dig_area_m2"])
+        self.assertIsNone(per_map[3]["base_travel_m"])
+        self.assertIsNone(per_map[0]["dig_area_per_travel_m"])
+        self.assertEqual(per_map[2]["dig_area_per_travel_m"], 0.0)
+        behavior = summary["overall"]["behavior"]
+        self.assertEqual(behavior["all_episodes"]["episodes"], 4)
+        self.assertEqual(behavior["all_episodes"]["available_episodes"], 3)
+        self.assertAlmostEqual(behavior["all_episodes"]["metrics"]["base_travel_m"]["mean"], 140 / 3)
+        successes = behavior["successes"]
+        self.assertEqual(successes["episodes"], 2)
+        self.assertEqual(successes["metrics"]["base_travel_m"],
+                         {"count": 2, "mean": 20.0, "median": 20.0, "p90": 28.0})
+        self.assertEqual(successes["metrics"]["mean_workspace_dig_area_m2"]["count"], 1)
+        failures = behavior["unsuccessful_episodes"]
+        self.assertEqual(failures["episodes"], 2)
+        self.assertEqual(failures["available_episodes"], 1)
+        self.assertEqual(failures["metrics"]["relifted_volume_units"]["mean"], 20)
+        self.assertEqual(successes["metrics"]["newly_dug_volume_units"]["mean"], 6.5)
+        self.assertIsNone(per_map[2]["longest_action_pattern_steps"])
+        self.assertIsNone(per_map[3]["newly_dug_volume_units"])
+        self.assertEqual(summary["by_family"]["foundation"]["behavior"]["successes"]["metrics"]["base_travel_m"]["mean"], 10.0)
+        self.assertEqual(summary["by_primary_cell"]["hard"]["behavior"]["all_episodes"]["available_episodes"], 1)
+        self.assertEqual(summary["overall"]["successful_efficiency"]["lexicographic_key"], [2, -4, -32])
+        self.assertNotEqual(per_map[0]["productive_base_stances"], per_map[0]["productive_workspace_cycles"])
+        json.dumps({"per_map": per_map, "summary": summary}, allow_nan=False)
+
+    def test_behavior_metrics_require_one_value_per_map_and_boolean_availability(self):
+        rows = [{"slot_index": 1, "map_id": "one", "family": "trench", "primary_cell": "easy"}]
+        for invalid in (
+            {"base_travel_m": np.array([1.0, 2.0])},
+            {"base_travel_m": np.array([[1.0]])},
+            {"behavior_metrics_available": np.array(True)},
+            {"behavior_metrics_available": np.array([1])},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                grouped_results(rows, np.ones(1, dtype=bool), np.ones(1, dtype=bool),
+                                np.ones(1, dtype=int), behavior_metrics=invalid)
 
     def test_grouping_separates_success_timeout_and_completion(self):
         rows = [

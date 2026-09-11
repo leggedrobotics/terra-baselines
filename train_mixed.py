@@ -106,6 +106,7 @@ import eval_ppo
 from datetime import datetime
 from dataclasses import asdict, dataclass
 import time
+import warnings
 from tqdm import tqdm
 from functools import partial
 from flax.jax_utils import replicate, unreplicate
@@ -145,6 +146,7 @@ from utils.pooled_sampler import (
     SamplerSettings,
 )
 from utils.wandb_human import (
+    FOUNDATION_ROLLOUT_METRICS,
     CONDITION_COLUMNS,
     LOGGING_SCHEMA,
     TRAINING_SCALAR_KEYS,
@@ -156,6 +158,7 @@ from utils.wandb_human import (
 )
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -409,7 +412,7 @@ def _assert_finite_loss_info(loss_info, update_index: int) -> None:
         if count:
             failures.append(f"{key}: {count} non-finite")
 
-    for key in _OPTIONAL_FINITE_LOSS_KEYS:
+    for key in (*_OPTIONAL_FINITE_LOSS_KEYS, *FOUNDATION_ROLLOUT_METRICS):
         if key in loss_info:
             count = _nonfinite_count(loss_info[key])
             if count:
@@ -583,6 +586,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         # (LocalMapNet fan-in) both change parameter shapes.
         "relocation_distance_observation": False,
         "admissible_dig_observation": False,
+        "executable_dig_observation": False,
         # V6 readout block: all three change parameter shapes.
         "flatten_reduce_channels": None,
         "attn_latent_queries": 4,
@@ -602,6 +606,8 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
     mismatches = []
     for field_name, default in defaults.items():
         saved = _checkpoint_config_value(checkpoint, field_name, default)
+        if field_name == "executable_dig_observation" and checkpoint.get("train_config") is not None:
+            saved = helpers.checkpoint_foundation_behavior(checkpoint)[field_name]
         current = getattr(config, field_name, default)
         if field_name == "map_encoder":
             saved = canonical_map_encoder(saved)
@@ -620,6 +626,12 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             saved = int(saved)
             current = int(current)
         if saved != current:
+            if field_name == "executable_dig_observation" and bool(
+                getattr(config, "finetune_foundation_behavior", False)
+            ):
+                # Deliberate same-width observation treatment; all parameter
+                # shape, masking, timing, and other observation checks remain.
+                continue
             mismatches.append(
                 f"{field_name}: checkpoint={saved!r}, current={current!r}"
             )
@@ -761,6 +773,44 @@ def _write_episode_aggregate_receipt(
             pass
         raise
     return output_path
+
+
+def _archive_replayed_episode_aggregate_receipts(
+    config,
+    next_update: int,
+) -> Path | None:
+    """Preserve post-checkpoint receipts before a native resume replays them."""
+    output_dir = Path(config.checkpoint_dir) / "episode_aggregates"
+    if not output_dir.is_dir():
+        return None
+
+    prefix = f"{config.name}_update_"
+    replayed_receipts = []
+    # Inspect only this directory and match names literally: run names can
+    # contain glob characters, and previous archives must remain untouched.
+    for path in output_dir.iterdir():
+        if not path.is_file() or not path.name.startswith(prefix):
+            continue
+        if path.suffix != ".json":
+            continue
+        update_text = path.stem[len(prefix):]
+        if update_text.isdecimal() and int(update_text) > next_update:
+            replayed_receipts.append(path)
+
+    if not replayed_receipts:
+        return None
+
+    archive_dir = Path(
+        tempfile.mkdtemp(prefix=f"replayed_from_{next_update:06d}_", dir=output_dir)
+    )
+    for path in sorted(replayed_receipts):
+        path.rename(archive_dir / path.name)
+    print(
+        f"Archived {len(replayed_receipts)} post-checkpoint episode receipts "
+        f"for {config.name} under {archive_dir}.",
+        flush=True,
+    )
+    return archive_dir
 
 
 def _sorted_map_indices(images_dir: Path) -> list[int]:
@@ -971,6 +1021,70 @@ REWARD_ANNEAL_SCHEMA = "terra_reward_anneal_v1"
 REWARD_ANNEAL_DURATION_UPDATES = 5_000
 
 
+def _foundation_behavior_settings(config) -> dict:
+    return {
+        "lateral_dig_cost": float(getattr(config, "lateral_dig_cost", 0.0)),
+        "base_travel_cost": float(getattr(config, "base_travel_cost", 0.0)),
+        "base_turn_cost": float(getattr(config, "base_turn_cost", 0.0)),
+        "executable_dig_observation": bool(
+            getattr(config, "executable_dig_observation", False)
+        ),
+    }
+
+
+def _validate_foundation_behavior_config(config) -> None:
+    settings = _foundation_behavior_settings(config)
+    for name in ("lateral_dig_cost", "base_travel_cost", "base_turn_cost"):
+        if not np.isfinite(settings[name]) or settings[name] < 0:
+            raise ValueError(f"{name} must be finite and nonnegative")
+        if settings[name] > 0 and config.reward_stage != "reward_v2":
+            raise ValueError(f"{name} applies only to reward_v2")
+    if settings["executable_dig_observation"] and not getattr(
+        config, "admissible_dig_observation", False
+    ):
+        raise ValueError("executable_dig_observation requires admissible_dig_observation")
+    if getattr(config, "finetune_foundation_behavior", False):
+        if not getattr(config, "resume_from", None) or getattr(config, "warm_start_from", None):
+            raise ValueError("finetune_foundation_behavior requires a native resume_from")
+        if config.reward_stage != "reward_v2":
+            raise ValueError("finetune_foundation_behavior requires reward_v2")
+
+
+def _validate_task_bank_transfer(config, checkpoint=None) -> None:
+    """A declared bank transfer keeps native Adam but starts a fresh task env."""
+    if not getattr(config, "finetune_task_bank", False):
+        return
+    if (
+        config.reward_stage != "reward_v2"
+        or not getattr(config, "resume_from", None)
+        or getattr(config, "warm_start_from", None)
+        or getattr(config, "resume_update", None) is not None
+    ):
+        raise ValueError("finetune_task_bank requires native reward_v2 resume_from")
+    if getattr(config, "load_env_from_checkpoint", True):
+        raise ValueError("finetune_task_bank requires --no-load-env-from-checkpoint")
+    configs = [("current", config)]
+    if checkpoint is not None:
+        saved = checkpoint.get("train_config")
+        if saved is None or _checkpoint_config_value(checkpoint, "reward_stage", None) != "reward_v2":
+            raise ValueError("finetune_task_bank requires a recorded reward_v2 parent")
+        configs.append(("saved", saved))
+        for name in ("pooled_sampler_state", "partial_reset_curriculum"):
+            if checkpoint.get(name) is not None:
+                raise ValueError(f"finetune_task_bank cannot carry over {name}")
+    for label, settings in configs:
+        def field(name, default=None):
+            return settings.get(name, default) if isinstance(settings, dict) else getattr(settings, name, default)
+        sampler = field("pooled_sampler")
+        if sampler is not None and (
+            sampler.get("enabled", False) if isinstance(sampler, dict)
+            else getattr(sampler, "enabled", False)
+        ):
+            raise ValueError(f"finetune_task_bank does not support {label} pooled_sampler")
+        if field("partial_reset_root") is not None or field("partial_reset_bank_sha256") is not None:
+            raise ValueError(f"finetune_task_bank does not support {label} partial resets")
+
+
 def _r2_protocol_receipt(config) -> dict | None:
     if config.reward_stage != "reward_v2":
         return None
@@ -1025,7 +1139,7 @@ def _r2_protocol_receipt(config) -> dict | None:
         or any(char not in "0123456789abcdef" for char in sidecar_sha)
     ):
         raise ValueError("R2 requires a lowercase 64-character sidecar SHA-256")
-    return {
+    receipt = {
         "schema": "terra_v8_r2_reward_protocol_v1",
         "reward_stage": config.reward_stage,
         "reward_protocol_id": reward_protocol_id,
@@ -1055,6 +1169,10 @@ def _r2_protocol_receipt(config) -> dict | None:
             "shaping_weight": float(REWARD_V2_SHAPING_WEIGHT),
         },
     }
+    behavior = _foundation_behavior_settings(config)
+    if any(behavior.values()):
+        receipt["foundation_behavior"] = behavior
+    return receipt
 
 
 def _r2_receipt_with_baseline_timing(saved: dict, current: dict) -> dict:
@@ -1090,15 +1208,54 @@ def _validate_r2_resume_checkpoint(
     checkpoint: dict, current_receipt: dict | None, config
 ) -> None:
     """Fail if an R2 continuation would change its protocol or optimizer clock."""
+    _validate_task_bank_transfer(config, checkpoint)
     if current_receipt is None:
+        if getattr(config, "finetune_task_bank", False):
+            raise ValueError("finetune_task_bank requires a current R2 protocol receipt")
         return
     saved_receipt = checkpoint.get("r2_protocol_receipt")
     if isinstance(saved_receipt, dict):
         saved_receipt = _r2_receipt_with_baseline_timing(saved_receipt, current_receipt)
-    if saved_receipt != current_receipt:
+    # This is a declared change of objective/affordance, not an ordinary
+    # continuation. Each opt-in permits only its named receipt fields; timing,
+    # shaping, distance semantics and the optimizer clock still have to match.
+    behavior_finetune = bool(getattr(config, "finetune_foundation_behavior", False))
+    ignored_fields = set()
+    if behavior_finetune and isinstance(saved_receipt, dict):
+        for receipt in (saved_receipt, current_receipt):
+            settings = receipt.get("foundation_behavior")
+            if settings is not None and (
+                not isinstance(settings, dict)
+                or set(settings) != set(_foundation_behavior_settings(config))
+            ):
+                raise ValueError("unknown foundation behavior fields in R2 receipt")
+        ignored_fields.add("foundation_behavior")
+    if getattr(config, "finetune_task_bank", False):
+        for receipt in (saved_receipt, current_receipt):
+            if not isinstance(receipt, dict) or receipt.get("schema") != "terra_v8_r2_reward_protocol_v1":
+                raise ValueError("finetune_task_bank requires native R2 protocol receipts")
+            sidecar_sha = receipt.get("distance_sidecar_sha256")
+            if not isinstance(sidecar_sha, str) or re.fullmatch(r"[0-9a-f]{64}", sidecar_sha) is None:
+                raise ValueError("finetune_task_bank requires recorded distance sidecar hashes")
+        ignored_fields.add("distance_sidecar_sha256")
+    receipts_match = saved_receipt == current_receipt
+    if ignored_fields and isinstance(saved_receipt, dict):
+        receipts_match = (
+            {k: v for k, v in saved_receipt.items() if k not in ignored_fields}
+            == {k: v for k, v in current_receipt.items() if k not in ignored_fields}
+        )
+    if not receipts_match:
         raise ValueError(
             "R2 resume checkpoint protocol receipt does not match this run"
         )
+    if not behavior_finetune and checkpoint.get("train_config") is not None:
+        saved_behavior = helpers.checkpoint_foundation_behavior(checkpoint)
+        for name, current in _foundation_behavior_settings(config).items():
+            if not np.isclose(saved_behavior[name], current, rtol=1e-6, atol=0.0):
+                raise ValueError(
+                    f"R2 resume {name} mismatch: checkpoint={saved_behavior[name]}, "
+                    f"current={current}"
+                )
     for field in ("optimizer_state", "train_state_step", "next_update"):
         if field not in checkpoint:
             raise ValueError(f"R2 resume checkpoint is missing {field!r}")
@@ -1520,7 +1677,8 @@ class MixedAgentTrainConfig:
     loaded_max: int = 100
     local_map_area_scale: float = 1.0
     num_rollouts_eval: int = 200
-    cache_clear_interval: int = 1000
+    # Retained for old commands/configs; clearing live JIT caches forces recompilation.
+    cache_clear_interval: int = 0
     # Entropy scheduler (cosine decay)
     ent_schedule_start: float = 0.15
     ent_schedule_end: float = 0.005
@@ -1559,6 +1717,18 @@ class MixedAgentTrainConfig:
     # Reward-v2.1 timing (terra REWARD_V2_TIMING_*): 0 is the frozen reward_v2,
     # 1 shapes undiscounted and pays the pace through step_cost_total 3.6.
     reward_v2_timing_variant: int = 0
+    # Optional costs in reward-v2. Lateral cost applies only to fresh target
+    # excavation; loose-soil pickup and dumping are exempt.
+    lateral_dig_cost: float = 0.0
+    base_travel_cost: float = 0.0  # per executed metre
+    base_turn_cost: float = 0.0  # per executed radian, excluding cabin swing
+    executable_dig_observation: bool = False
+    # Preserve Adam and absolute update while explicitly changing only the
+    # four foundation behavior fields recorded in the R2 receipt.
+    finetune_foundation_behavior: bool = False
+    # A new dataset may replace only the R2 sidecar identity, with a fresh env.
+    # Reward/affordance changes require finetune_foundation_behavior separately.
+    finetune_task_bank: bool = False
     carry_work_observation: bool = False
     stall_age_observation: bool = False
     movement_feasibility_observation: bool = False
@@ -1677,7 +1847,17 @@ class MixedAgentTrainConfig:
     teacher_obs_downsample: int = 1
 
     def __post_init__(self):
+        if self.cache_clear_interval != 0:
+            warnings.warn(
+                "cache_clear_interval is deprecated and ignored; keeping JAX "
+                "executables cached throughout training (effective interval: 0).",
+                FutureWarning,
+                stacklevel=2,
+            )
+            self.cache_clear_interval = 0
         _checkpoint_load_mode(self)
+        _validate_foundation_behavior_config(self)
+        _validate_task_bank_transfer(self)
         if self.actor_core not in ("mlp", "gru"):
             raise ValueError("actor_core must be 'mlp' or 'gru'")
         if int(self.actor_gru_hidden_dim) < 1:
@@ -1959,6 +2139,19 @@ def _overlay_env_reward_stage(
     ):
         raise RuntimeError("failed to apply the selected reward timing variant")
     return updated
+
+
+def _overlay_env_foundation_behavior(env_params: EnvConfig, config) -> EnvConfig:
+    settings = _foundation_behavior_settings(config)
+    missing = set(settings) - set(env_params._fields)
+    if missing and any(settings.values()):
+        raise ValueError(
+            "selected Terra runtime lacks foundation behavior fields: "
+            + ", ".join(sorted(missing))
+        )
+    return env_params._replace(
+        **{key: value for key, value in settings.items() if key not in missing}
+    )
 
 
 def create_mixed_agent_env_config(
@@ -2350,6 +2543,7 @@ def make_mixed_agent_states(
         config.previous_outcome_observation
     )
     env = TerraEnvBatch(
+        executable_dig_observation=bool(config.executable_dig_observation),
         batch_cfg=batch_cfg,
         shuffle_maps=False,
         single_map_path=single_map_path,
@@ -2470,6 +2664,8 @@ def make_mixed_agent_states(
     env_params = _overlay_env_reward_stage(
         env_params, config.reward_stage, config.reward_v2_timing_variant
     )
+    env_params = _overlay_env_foundation_behavior(env_params, config)
+    print(f"Foundation behavior settings: {_foundation_behavior_settings(config)}")
     env_params = env_params._replace(terminal_reward_mix=0.0)
 
     if config.require_trench_alignment_metadata:
@@ -2895,6 +3091,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
     # Optionally load checkpoint before creating states
     checkpoint = None
+    optimizer_restored = False
     stall_age_prepared_receipt = None
     env_params_override = None
     resume_update = 0
@@ -2913,6 +3110,22 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 raise KeyError("checkpoint has no 'model' parameters")
             if checkpoint_mode == "resume":
                 _validate_r2_resume_checkpoint(checkpoint, r2_protocol_receipt, config)
+                if config.finetune_foundation_behavior:
+                    print(
+                        "Foundation behavior fine-tune: preserving model, Adam, "
+                        "and absolute update; replacing only the declared costs "
+                        "and digging affordance semantics. "
+                        f"Parent: {checkpoint_path}; "
+                        f"settings: {_foundation_behavior_settings(config)}"
+                    )
+                if config.finetune_task_bank:
+                    print(
+                        "Task bank transfer: preserving model, Adam, and absolute "
+                        "update; rebuilding the environment from the new bank. "
+                        f"Parent: {checkpoint_path}; distance sidecar: "
+                        f"{checkpoint['r2_protocol_receipt']['distance_sidecar_sha256']} "
+                        f"-> {config.distance_sidecar_sha256}"
+                    )
                 stall_age_prepared_receipt = _stall_age_resume_receipt(
                     checkpoint, config
                 )
@@ -2988,6 +3201,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     opt_state=checkpoint["optimizer_state"],
                     step=checkpoint.get("train_state_step", train_state.step),
                 )
+                optimizer_restored = True
                 print(
                     "Restored optimizer state from checkpoint "
                     f"(next_update={resume_update})."
@@ -3396,6 +3610,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 pending_aggregate_single,
             )
 
+            if optimizer_restored:
+                # Validate checkpoint/configuration and complete environment
+                # initialization before moving this run's replayed receipts.
+                jax.block_until_ready(timestep)
+                _archive_replayed_episode_aggregate_receipts(config, resume_update)
+
             # TRAIN LOOP
             @partial(jax.pmap, axis_name="devices", donate_argnums=(0,))
             def _update_step(
@@ -3586,10 +3806,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         pending_aggregate,
                         actor_hidden,
                     )
-                    return runner_state, transition
+                    behavior_components = jnp.stack(
+                        [reward_components[name] for name in FOUNDATION_ROLLOUT_METRICS],
+                        axis=-1,
+                    )
+                    return runner_state, (transition, behavior_components)
 
                 # transitions: [seq_len, batch_size, ...]
-                runner_state, transitions = jax.lax.scan(
+                runner_state, (transitions, behavior_components) = jax.lax.scan(
                     _env_step, runner_state, None, config.num_steps
                 )
                 transition_integrity = {
@@ -3881,6 +4105,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 # Attach to loss_info for logging
                 loss_info = dict(loss_info)
                 loss_info["explained_variance"] = explained_var
+                for component_index, component_name in enumerate(FOUNDATION_ROLLOUT_METRICS):
+                    loss_info[component_name] = jax.lax.pmean(
+                        behavior_components[..., component_index].mean(), "devices"
+                    )
 
                 rng, train_state = update_state[:2]
                 # EVALUATE AGENT
@@ -4493,16 +4721,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         }
                     )
 
-                # Clear JAX caches and run garbage collection to stabilize memory use
-                if (
-                    config.cache_clear_interval > 0
-                    and (i + 1) % config.cache_clear_interval == 0
-                ):
-                    jax.clear_caches()
-                    import gc
-
-                    gc.collect()
-
             return {
                 "runner_state": runner_state_single,
                 "loss_info": loss_info_single,
@@ -4741,8 +4959,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--cache_clear_interval",
         type=int,
-        default=1000,
-        help="JAX cache-clear interval in updates; set 0 to disable.",
+        default=0,
+        help="Deprecated and ignored; JAX executables remain cached during training.",
     )
     parser.add_argument(
         "--ent_schedule_start",
@@ -5294,6 +5512,36 @@ if __name__ == "__main__":
         "admitted to dig per cabin angle from the current base pose "
         "(trench gate folded in) as the tenth local map.",
     )
+    for name, help_text in (
+        ("lateral_dig_cost", "Reward-v2 cost for a task excavated fully sideways, "
+         "weighted by fresh target volume and sin squared of relative cabin yaw; "
+         "dumping and loose-soil pickup are exempt."),
+        ("base_travel_cost", "Reward-v2 cost per metre of executed base travel."),
+        ("base_turn_cost", "Reward-v2 cost per radian of executed base rotation; "
+         "does not charge cabin swing."),
+    ):
+        parser.add_argument(f"--{name}", type=float, default=0.0, help=help_text)
+    parser.add_argument(
+        "--executable_dig_observation",
+        action="store_true",
+        help="Use actual executable fresh target volume in the existing width-12 "
+        "digging vector; requires --admissible_dig_observation.",
+    )
+    parser.add_argument(
+        "--finetune_foundation_behavior",
+        action="store_true",
+        help="With --resume_from, deliberately change only the foundation behavior "
+        "costs and executable-dig semantics while preserving Adam and the update clock. "
+        "Omit for ordinary continuation of the same treatment.",
+    )
+    parser.add_argument(
+        "--finetune_task_bank",
+        action="store_true",
+        help="Native R2 task transfer: allow a new bank's distance-sidecar identity "
+        "while retaining Adam and the absolute update; requires "
+        "--no-load-env-from-checkpoint and no adaptive/partial-reset state. "
+        "Reward changes require --finetune_foundation_behavior separately.",
+    )
     parser.add_argument(
         "--action_logit_masking",
         action="store_true",
@@ -5769,6 +6017,12 @@ if __name__ == "__main__":
         dump_rewards_enabled=dump_rewards_enabled,
         reward_stage=args.reward_stage,
         reward_v2_timing_variant=args.reward_v2_timing_variant,
+        lateral_dig_cost=args.lateral_dig_cost,
+        base_travel_cost=args.base_travel_cost,
+        base_turn_cost=args.base_turn_cost,
+        executable_dig_observation=args.executable_dig_observation,
+        finetune_foundation_behavior=args.finetune_foundation_behavior,
+        finetune_task_bank=args.finetune_task_bank,
         carry_work_observation=args.carry_work_observation,
         stall_age_observation=args.stall_age_observation,
         movement_feasibility_observation=(

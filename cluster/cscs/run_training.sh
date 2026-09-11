@@ -9,7 +9,9 @@ shift
 
 NUM_DEVICES="${NUM_DEVICES:-4}"
 RUN_DIR="${TERRA_RUN_DIR:?TERRA_RUN_DIR is required}"
-mkdir -p "$RUN_DIR" "$RUN_DIR/checkpoints" "$RUN_DIR/wandb"
+export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$RUN_DIR/jax-cache}"
+export JAX_ENABLE_COMPILATION_CACHE="${JAX_ENABLE_COMPILATION_CACHE:-true}"
+mkdir -p "$RUN_DIR" "$RUN_DIR/checkpoints" "$RUN_DIR/wandb" "$JAX_COMPILATION_CACHE_DIR"
 cd "$RUN_DIR"
 
 export PYTHONPATH="/workspace/terra:/workspace/terra-baselines${PYTHONPATH:+:${PYTHONPATH}}"
@@ -27,6 +29,8 @@ echo "dataset_path=${DATASET_PATH:?DATASET_PATH is required}"
 echo "dataset_size=${DATASET_SIZE:?DATASET_SIZE is required}"
 echo "profile=$PROFILE"
 echo "xla_flags=$XLA_FLAGS"
+echo "jax_compilation_cache_dir=$JAX_COMPILATION_CACHE_DIR"
+echo "jax_enable_compilation_cache=$JAX_ENABLE_COMPILATION_CACHE"
 echo "host=$(hostname)"
 echo "started_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv,noheader

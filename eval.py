@@ -2,7 +2,14 @@ import numpy as np
 import jax
 import math
 from utils.models import load_neural_network_for_checkpoint
-from utils.helpers import load_pkl_object
+from utils.helpers import (
+    checkpoint_evaluation_config,
+    checkpoint_foundation_behavior,
+    load_pkl_object,
+    overlay_foundation_behavior,
+    replicate_checkpoint_env_config,
+    validate_foundation_behavior_env,
+)
 from terra.env import TerraEnvBatch
 from terra.actions import (
     WheeledAction,
@@ -43,6 +50,7 @@ def rollout_episode(
     """
     NOTE: this function assumes it's a tracked agent in the way it computes the stats.
     """
+    validate_foundation_behavior_env(rl_config, env_cfgs, env=env)
     print(f"Using {seed=}")
     rng = jax.random.PRNGKey(seed)
     rng, _rng = jax.random.split(rng)
@@ -265,7 +273,7 @@ if __name__ == "__main__":
     n_envs = args.n_envs
 
     log = load_pkl_object(f"{args.run_name}")
-    config = log["train_config"]
+    config = checkpoint_evaluation_config(log)
     # from utils.helpers import load_config
     # config = load_config("agents/Terra/ppo.yaml", 22333, 33222, 5e-04, True, "")["train_config"]
 
@@ -274,12 +282,16 @@ if __name__ == "__main__":
 
     # curriculum = Curriculum(rl_config=config, n_devices=n_devices)
     # env_cfgs, dofs_count_dict = curriculum.get_cfgs_eval()
-    env_cfgs = log["env_config"]
-    env_cfgs = jax.tree_map(
-        lambda x: x[0][None, ...].repeat(n_envs, 0), env_cfgs
-    )  # take first config and replicate
+    env_cfgs = overlay_foundation_behavior(
+        log["env_config"], checkpoint_foundation_behavior(log)
+    )
+    env_cfgs = replicate_checkpoint_env_config(env_cfgs, n_envs)
     shuffle_maps = True
-    env = TerraEnvBatch(rendering=False, shuffle_maps=shuffle_maps)
+    env = TerraEnvBatch(
+        rendering=False,
+        shuffle_maps=shuffle_maps,
+        executable_dig_observation=config.executable_dig_observation,
+    )
     config.num_embeddings_agent_min = 60
 
     model_params = log["model"]

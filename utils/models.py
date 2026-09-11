@@ -7,6 +7,7 @@ from terra.actions import TrackedAction, WheeledAction
 from terra.config import REWARD_V2_DISTANCE_BOUND
 from terra.env import TerraEnvBatch
 from functools import partial
+from utils.helpers import validate_executable_dig_observation
 
 
 MAP_ENCODER_ALIASES = {
@@ -81,6 +82,7 @@ def _scaled_lecun_normal(scale: float):
 
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     """Instantiate a model according to obs shape of environment."""
+    validate_executable_dig_observation(config, env=env)
     init_batch_size = 1
     num_embeddings_agent = jnp.max(
         jnp.array(
@@ -460,7 +462,9 @@ def validate_model_params_match(rebuilt_params, checkpoint_params, context: str)
     architecture flags such as ``trench_alignment_observation``. Any flag the
     rebuild fails to pick up changes the parameter tree (here: the two
     ``trench_alignment_*_embedding`` (3, 704) leaves), so comparing the trees
-    turns a silently different policy into an error at load time.
+    turns a silently different policy into an error at load time. The
+    executable-dig treatment reuses the width-12 input, so its semantics must
+    also be checked against EnvConfig before evaluation; shapes cannot prove it.
     """
     rebuilt = _params_shape_index(rebuilt_params)
     saved = _params_shape_index(checkpoint_params)

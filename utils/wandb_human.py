@@ -10,6 +10,14 @@ import numpy as np
 from utils.pooled_sampler import effective_sample_size, entropy
 
 LOGGING_SCHEMA = "terra_wandb_human_v1"
+FOUNDATION_ROLLOUT_METRICS = {
+    "reward_v2_lateral_dig": "reward/lateral_dig_per_step",
+    "reward_v2_base_travel": "reward/base_travel_per_step",
+    "reward_v2_base_turn": "reward/base_turn_per_step",
+    "reward_v2_fresh_dig_volume": "behavior/fresh_dig_volume_per_step",
+    "reward_v2_base_travel_m": "behavior/base_travel_m_per_step",
+    "reward_v2_base_turn_rad": "behavior/base_turn_rad_per_step",
+}
 FAMILIES = ("foundation", "trench")
 BRANCH_DEPTHS = ("Anchor", "Nearby core", "One-axis", "Composed")
 ACTION_NAMES = (
@@ -47,6 +55,7 @@ EVAL_CONDITION_COLUMNS = (
 
 TRAINING_SCALAR_KEYS = frozenset(
     {
+        *FOUNDATION_ROLLOUT_METRICS.values(),
         "train/episode_success_rate",
         "train/episode_timeout_rate",
         "train/ended_episodes",
@@ -213,6 +222,9 @@ def loss_metrics(
     }
     if "aux_loss" in loss_info:
         metrics["ppo/aux_loss"] = scalar("aux_loss")
+    for source, name in FOUNDATION_ROLLOUT_METRICS.items():
+        if source in loss_info:
+            metrics[name] = scalar(source)
     if teacher_enabled:
         metrics.update(
             {

@@ -1,5 +1,32 @@
 # Experiments — completed log
 
+## 2026-09-07 local pipeline correctness smoke
+
+Validated the junction observation, native checkpoint replay, and JAX cache
+fixes on starship's single RTX 4090 with W&B disabled. Paired Terra is
+`46b140f8373e098ad832e4968d8136a5ba861bf6`; the trainer changes are on
+`fix-training-continuation-cache`, based on `d410062b`. No Slurm job was launched.
+
+The current v2 encoder (2,311,701 parameters) completed four updates at 8
+environments × 4 steps, 2 epochs, and 2 minibatches. A separate process then
+resumed checkpoint 2 with receipts 3/4 already present and completed absolute
+update 5. All 431 optimizer leaves were restored exactly at step 8; final Adam
+count and train-state step were 20. Model, optimizer, and stored losses were
+finite. Replayed receipts 3/4 were archived unchanged and canonical receipts
+1–5 remained available.
+
+Both processes had one stable update signature and an explicit persistent-cache
+hit for `pmap__update_step`. The original reset counter's weak-to-strong int32
+change had caused a second full compile; its two reset initializers are now
+explicit int32. Periodic cache eviction is removed. Process startup still traces
+and lowers the graph; this small-batch smoke is not a production throughput,
+multi-GPU, or learning-quality benchmark.
+
+CPU validation passed junction/DO parity, reward and counter regressions, and
+39 trainer/launcher tests. Four edited launchers passed shellcheck. Full local
+commands, logs, checkpoints, and independent review are under
+`/home/lorenzo/moleworks/.artifacts/terra_pipeline_fixes_20260907/`.
+
 The first table is the historical spatial-encoder line. Metrics:
 eval/positive_terminations /
 eval/rewards (final), swhr = eval/success_within_horizon_rate, ep_len =
@@ -130,3 +157,204 @@ absolute update target; an admitted checkpoint continues with true resume
 state on the 120-hour queue. See
 [`research/P5_ACCEPTED_BANK_EXPERIMENTS.md`](research/P5_ACCEPTED_BANK_EXPERIMENTS.md)
 section 12.
+
+
+## September 9, 2026: excavation reliability submission preparation
+
+Status: local gates passed; Euler inputs staged; no job submitted. Terra
+`ba9cc214` supplies strict occupied footprints, eligible-soil selection and
+short tracked maneuvers. Baselines `9354b89` adds retained work-pose metrics and
+a one-RTX4090, 24-hour full-bank 2x recipe. Four local native updates including
+an ordinary process restart pass finite and transition-integrity checks; the
+PPO executable cache is reused. The specialist regression screen is 175/224
+versus 188/224. The mixed-bank generalist u5000 remains the initializer: it
+completes 32/608 full-panel cases under the repaired environment, versus 0/608
+for the easy-foundation 2x u15000 checkpoint. Both remain weak on foundations.
+Independent review and Slurm test-only validation pass. Ready for one bounded
+training allocation; see the [current readiness report](../../../../.artifacts/terra_excavation_reliability_20260909/SUBMISSION_READINESS.md)
+for the selected checkpoint, exact source/runtime/bank identities and launch.
+Canonical checkouts and unrelated running/queued jobs are preserved.
+
+## September 9, 2026: scratch foundation comparison on CSCS
+
+The user replaced the proposed Euler continuation with scratch initialization
+on the four-GPU CSCS node. The prepared comparison is control versus 2x costs,
+each at seeds 20260909 and 20260910, using the same repaired Terra `ba9cc214`
+and easy-foundation bank. One 24-hour node is at most 96 GPU-hours. No generalist
+or Euler duplicate is included. No job has been submitted: the CSCS certificate
+expired at 15:10:46 CEST and SSH currently rejects authentication.
+
+The scratch launcher passes 43 focused recipe tests and shellcheck. A local
+512x32 two-update scratch smoke passes: next update 2, Adam step 128, finite
+model/optimizer/loss and zero transition-integrity counters. Independent code
+review found no actionable issues; actual Daint binding/runtime still needs
+the in-allocation checks. See the [current plan and evidence](../../../../.artifacts/terra_foundation_scratch_cscs_20260909/PLAN.md).
+
+
+## September 10, 2026: paired foundation and trench scratch comparison
+
+The user approved foundation control/2x and trench control/2x as four independent
+one-GPU policies on one 24-hour CSCS node (at most 96 GPU-hours). All use seed
+20260909 and repaired Terra `ba9cc214`; no historical initializer is imported.
+This replaces the two-seed foundation-only proposal above. Foundation uses the
+existing 256-map easy bank, trench the existing 1,440-map/15-condition pooled
+bank including junctions. Comparisons are within task, with one paired seed.
+Job **4634548** was submitted September 10 at 00:29:56 CEST and is
+**PENDING (Priority)** at 00:31:34. The provisional Slurm start estimate is
+22:55 CEST September10 and can change. ReqTRES: 256 CPUs, one node, four GPUs;
+normal/d130, 24 hours. Staged source is baselines `30f5f97` with Terra `ba9cc214`.
+The 44 focused tests, independent review, both local family scratch smokes and
+Slurm test-only passed. The new trench smoke completed u1/u2 with finite
+model/optimizer/loss and zero integrity counters. Its local log retains a cuDNN
+bf16 autotuning mismatch warning. Daint has not allocated a node or run its
+numerical gates yet. See the [current plan and execution evidence](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/PLAN.md)
+for current submission/runtime status. No generalist or Euler duplicate is
+included. Evaluate matched checkpoints separately on the 64 easy-foundation
+validation cases and 224 trench rows of the unchanged 608 development panel.
+
+
+### September 10, 09:46 CEST: all four scratch gates passed
+
+Job 4634548 is RUNNING on nid005895, started 09:32:30 with four distinct GH200s;
+end time is September 11 09:32:30. Node-level conv backward/NCCL and each arm's
+own conv backward/u1/u2 gates passed. All four checkpoints have finite model,
+optimizer and loss, Adam 128 and zero transition-integrity counters. Each arm
+restored its own new u2 optimizer state for production; first-update compilation
+was still running at 09:46:18. No production checkpoint or matched behavioral
+evaluation exists yet. This is a numerical-startup result only.
+
+The fixed environment's random-transition and recorded-state probes support
+mass/occupancy correctness and restored short moves. Frozen specialist replay
+regressed 188→175/224; generalist trench replay improved 30→32/224 with foundations
+still 0/384. Thus there is no demonstrated overall learned-policy improvement.
+The scratch comparison holds the fixes constant and tests zero versus 2x costs
+within each task, with one paired seed. See the [status and interpretation](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260910_MORNING.md)
+and its per-arm live evidence. No jobs or training settings changed during the
+status check.
+
+At 09:48:15, both foundation arms had production receipts through u31 and steady
+updates at roughly 7,150 transitions/s (2.3 s/update); both trench arms were still
+compiling their first resumed production update. The foundation u31 batch had
+512 timeouts and no successes in each arm; this is too early to rank costs or
+claim saturation. The linked morning status retains the exact observations.
+
+
+### September 10, 13:35 CEST: all arms past u5000; cost concern
+
+CSCS 4634548 remains RUNNING on four GH200s, with recorded updates F0=5500,
+F2=5921, T0=5381, T2=5861. Latest saved checkpoints are 5500/5500/5000/5500.
+All four retrieved u5000 checkpoints have finite model/optimizer/loss, zero
+transition integrity and Adam 320000; native continuation is working. No
+execution/cuDNN/nonfinite error was found. Rates are around 6100-7200
+transitions/s/GPU. No training settings or jobs changed.
+
+The matched online update 4000-5000 window raises concern about early cost
+suppression: foundation mean excavation 68.9% control vs 15.4% 2x; trench 48.3%
+vs 0.32%. These are sampled training episodes, not a held-out efficiency result.
+The authorized 24-hour screen continues. Four matched u5000 evaluations are
+running locally; the completed foundation control is 0/64 success and 48.9%
+excavated, with zero integrity failures. Other results are pending; comparison
+is scheduled after all four finish. See the [afternoon evidence report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260910_AFTERNOON.md).
+
+
+### September 10, 15:31 CEST: completed u5000 comparison
+
+Job 4634548 remains healthy at about six hours: updates F0=8171, F2=8901,
+T0=8041, T2=8891; no execution/cuDNN/nonfinite errors. All four u5000 fixed
+results are complete. Foundation control/2x: 0/64 successes each and 48.91% versus
+15.49% excavation. Trench control/2x: 3/224 versus 0/224 and 46.71% versus 0.178%
+excavation. Trench 2x digs no fresh soil on 220/224 maps. There are no common
+successes within either pair; reduced travel cannot be promoted as efficiency.
+All 1344 evaluated episodes have zero integrity failures/unavailable counters.
+Independent review checked matching identities, reset receipts, hashes and
+settings; all result counts reproduce. The newer sampled online u7000-8000
+window still shows large 2x progress suppression. These are early one-seed
+cost-treatment results, not convergence or an environment-fix ablation.
+Continue the authorized 24-hour screen; the next planned evaluation is u10000.
+See the [completed comparison report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260910_1530.md).
+
+At 15:41 CEST, a reviewed local helper started waiting for all four u10000
+checkpoints and u10001 receipts (managed session 88723, PID 3052299). It has a
+three-hour readiness deadline, checks the actual Adam count and local GPU
+availability, then runs the unchanged matched evaluations and summary inline.
+No u10000 result is available yet; no Slurm job or training setting changed.
+
+
+### September 11, 00:30 CEST: component arms submitted; evaluation recovery
+
+Original CSCS 4634548 remains RUNNING (last live check 00:18), about 14h46m into
+its 24-hour allocation. Recorded updates are F0=20201, F2=22291, T0=19911, T2=22501.
+The sampled online u18000-19000 window gives exact success 4.84%/0% foundations
+and 25.69%/0% trenches (control/combined 2x). Excavation is 86.66%/5.48% and
+70.36%/0.135%. No runtime failure or physical/per-step integrity violation was
+found; one small informational accumulated reward-drift count is documented.
+These online results are separate from the fixed held-out evaluation.
+
+The old automatic u10000 evaluation had stopped before downloading checkpoints
+on SSH exit 255. All four checkpoints were retrieved and passed finite checks
+and actual Adam 640000 today; recovery evaluation began 00:08:59 locally.
+Foundation results are complete: control 0/64 exact, 66.64% dug; combined 2x 0/64,
+14.76% dug. Both integrity checks pass. The trench evaluations are still running.
+
+Lorenzo authorized four additional overnight experiments. Submitted CSCS 4642631
+at 00:18:13 for one additional 24-hour four-GPU node (at most 96 GPU-hours), with
+foundation/trench lateral-only (0.5,0,0) and relocation-only (0,0.01,0.04), same
+scratch seed 20260909, data, model, PPO and repaired environment. Original jobs
+are unchanged. New immutable source: Terra ba9cc214 and baselines 275571b;
+changes are launcher/verifier wiring and docs only. The 38 existing launch tests,
+CLI comparison, shellcheck, known finite checkpoint verifier and independent
+review passed. Each new arm still requires its actual per-GPU finite-u2 gate.
+
+New job state at 00:18:41 was PENDING(Resources), with an estimated 16:35 start
+that may change. The SSH certificate expired 00:19:13 after submission. Two
+read-only shorter-segment queries failed authentication; no walltime change or
+extra submission occurred. Root requested renewal if Lorenzo was still awake.
+Submitted/running jobs do not require continued SSH access.
+
+At 00:29:41 the reviewed serial evaluation driver started in local tmux
+terra-components-eval-20260911 (worker 3821255), waiting for current u10000 before
+original u15000/u25000 and new component u5000/u10000. Retrieval requires renewed
+authentication; each helper has a 12-hour bounded readiness/download window.
+No new generalist, recipe promotion, or saturation claim is made.
+See the [current status](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260911_0025.md)
+and [component plan](../../../../.artifacts/terra_excavation_cost_components_cscs_20260911/PLAN.md).
+
+
+### September 11, 09:03 CEST: completed u10000 comparison; live status blocked
+
+The four original u10000 evaluations completed at 00:46:14. Foundation
+control/2x have 0/64 exact each and 66.64%/14.76% excavation. Trench control
+reaches 14/224 exact and 52.05% excavation; trench 2x has 0/224 and no fresh
+digging on any of the 224 cases. Both pairs still have no common successes, so
+no comparative efficiency result is available. All 1344 episodes pass integrity
+checks. Independent review confirmed hashes, update/Adam 640000, fixed settings,
+per-map/reset identities and the result counts.
+
+Against u5000, control foundation excavation improves 48.91%→66.64%; trench
+success 3→14/224 comprises one retained, thirteen new and two lost successes.
+All 14 current trench successes are straight-trench conditions; segmented,
+network and T-junction conditions remain unsolved. This is an early checkpoint
+trend, not the end-of-allocation or convergence result.
+
+SSH still fails authentication at 09:03. The last confirmed scheduler states
+remain original 4634548 RUNNING and additional 4642631 PENDING(Resources) at
+00:18:41; do not report these as current. New-arm startup and later checkpoints
+are unverified. The persistent local evaluation driver is alive, waiting at
+original u15000 retrieval within a 12-hour deadline until about 12:46:56. No
+u15000/u25000 or component u5000/u10000 results exist yet. Lorenzo was asked to
+renew authentication. No jobs, training settings or runtime source changed.
+See the [morning report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260911_MORNING.md).
+
+### September 11: frozen foundation regression traced to intermediate rounding
+
+Corrected Terra 7fb30402 restores 12/13 lost frozen-2x completions on the same
+64-map easy validation panel: 51/64 -> 63/64, zero new losses, 95.274% ->
+99.938% mean excavation. The earlier original-environment result was 64/64.
+Intermediate grid rounding introduced sideways chassis excursions and false
+collisions; the correction checks the entire straight sweep to each candidate
+endpoint and retains all soil protections. Eighteen focused CPU tests, 384
+independent endpoint comparisons and thirteen exact GPU probes pass. Independent
+review confirms matched metadata and result counts. This is frozen-policy
+replay evidence, not a scratch-learning or reward-cost result. No cluster job
+or training setting changed; the original ba9cc214 cohort remains separate.
+See the [diagnosis, corrected replay and tests](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/foundation_regression_diagnosis_20260911/REPORT.md).
