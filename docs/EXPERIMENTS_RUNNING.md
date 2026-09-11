@@ -813,3 +813,29 @@ authentication; each helper has a 12-hour bounded readiness/download window.
 No new generalist, recipe promotion, or saturation claim is made.
 See the [current status](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260911_0025.md)
 and [component plan](../../../../.artifacts/terra_excavation_cost_components_cscs_20260911/PLAN.md).
+
+
+### September 11, 09:03 CEST: completed u10000 comparison; live status blocked
+
+The four original u10000 evaluations completed at 00:46:14. Foundation
+control/2x have 0/64 exact each and 66.64%/14.76% excavation. Trench control
+reaches 14/224 exact and 52.05% excavation; trench 2x has 0/224 and no fresh
+digging on any of the 224 cases. Both pairs still have no common successes, so
+no comparative efficiency result is available. All 1344 episodes pass integrity
+checks. Independent review confirmed hashes, update/Adam 640000, fixed settings,
+per-map/reset identities and the result counts.
+
+Against u5000, control foundation excavation improves 48.91%→66.64%; trench
+success 3→14/224 comprises one retained, thirteen new and two lost successes.
+All 14 current trench successes are straight-trench conditions; segmented,
+network and T-junction conditions remain unsolved. This is an early checkpoint
+trend, not the end-of-allocation or convergence result.
+
+SSH still fails authentication at 09:03. The last confirmed scheduler states
+remain original 4634548 RUNNING and additional 4642631 PENDING(Resources) at
+00:18:41; do not report these as current. New-arm startup and later checkpoints
+are unverified. The persistent local evaluation driver is alive, waiting at
+original u15000 retrieval within a 12-hour deadline until about 12:46:56. No
+u15000/u25000 or component u5000/u10000 results exist yet. Lorenzo was asked to
+renew authentication. No jobs, training settings or runtime source changed.
+See the [morning report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260911_MORNING.md).
