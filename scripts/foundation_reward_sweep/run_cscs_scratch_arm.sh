@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Four one-GPU policies: foundation/trench, each lateral-only/relocation-only.
+# Four one-GPU policies: foundation/trench, with the selected pair of costs.
 set -euo pipefail
-: "${CAMPAIGN_ROOT:?}" "${BASELINES_ROOT:?}" "${TERRA_ROOT:?}"
+: "${CAMPAIGN_ROOT:?}" "${BASELINES_ROOT:?}" "${TERRA_ROOT:?}" "${COST_SUITE:?paired or components required}"
+case "$COST_SUITE" in
+    paired) COMPONENTS=(control combined) ;;
+    components) COMPONENTS=(lateral relocation) ;;
+    *) echo 'COST_SUITE must be paired or components' >&2; exit 2 ;;
+esac
 case "${SLURM_PROCID:?}" in
-    0) TASK_FAMILY=foundation; COST_COMPONENT=lateral ;;
-    1) TASK_FAMILY=foundation; COST_COMPONENT=relocation ;;
-    2) TASK_FAMILY=trench; COST_COMPONENT=lateral ;;
-    3) TASK_FAMILY=trench; COST_COMPONENT=relocation ;;
+    0|1) TASK_FAMILY=foundation ;;
+    2|3) TASK_FAMILY=trench ;;
     *) exit 2 ;;
 esac
+COST_COMPONENT="${COMPONENTS[$((SLURM_PROCID % 2))]}"
 export TASK_FAMILY SEED=20260909
 export RUN_NAME="${TASK_FAMILY}-scratch-${COST_COMPONENT}-s${SEED}"
 ARM_DIR="$CAMPAIGN_ROOT/segments/$SLURM_JOB_ID/$RUN_NAME"
@@ -23,9 +27,10 @@ else
 fi
 export EXECUTABLE_DIG_OBSERVATION=1 BANK_TRANSFER=0
 export LATERAL_DIG_COST=0 BASE_TRAVEL_COST=0 BASE_TURN_COST=0
-if [[ "$COST_COMPONENT" == lateral ]]; then
+if [[ "$COST_COMPONENT" == lateral || "$COST_COMPONENT" == combined ]]; then
     export LATERAL_DIG_COST=0.5
-else
+fi
+if [[ "$COST_COMPONENT" == relocation || "$COST_COMPONENT" == combined ]]; then
     export BASE_TRAVEL_COST=0.01 BASE_TURN_COST=0.04
 fi
 export PYTHONPATH="$TERRA_ROOT:$BASELINES_ROOT"

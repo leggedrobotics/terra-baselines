@@ -1,19 +1,28 @@
 # Foundation and trench reward training
 
-The current launcher adds four independent scratch policies on one CSCS Daint
-node: foundation and trench, each with lateral-only or relocation-only costs.
-Lateral-only uses 0.5 lateral cost and zero travel/turn costs. Relocation-only
-uses zero lateral cost, 0.01 per metre and 0.04 per radian. All use seed 20260909
-and a 24-hour allocation, at most 96 additional GPU-hours including startup.
-The [component experiment plan](../../../../../.artifacts/terra_excavation_cost_components_cscs_20260911/PLAN.md)
-records the paired contracts and launch status.
+The launcher runs four independent scratch policies on one CSCS Daint node,
+one GPU each. Set `COST_SUITE` explicitly in the container environment:
 
-The existing [control and combined-2x experiment](../../../../../.artifacts/terra_excavation_scratch_cscs_20260910/PLAN.md)
-continues from its separate immutable source snapshot. It provides the zero-cost
-and combined-cost references within each task. The new arms identify component
-effects at one seed; job/node differences limit factorial interaction claims.
-The repaired environment, executable fresh-dig observation, data and PPO
-settings are shared. No generalist training is included in this component test.
+| Suite | Foundation arms | Trench arms |
+| --- | --- | --- |
+| `paired` | control and combined 2x costs | control and combined 2x costs |
+| `components` | lateral-only and relocation-only | lateral-only and relocation-only |
+
+Control uses zero behavior costs. Lateral-only uses 0.5 lateral cost and zero
+travel/turn costs. Relocation-only uses zero lateral cost, 0.01 per metre and
+0.04 per radian. Combined uses all three nonzero costs. All arms use seed
+20260909 and a 24-hour allocation: at most 96 GPU-hours per suite, or 192 for
+the eight-arm comparison including startup. Node differences limit factorial
+interaction claims.
+
+The September 11 replacement restarts both suites with the corrected straight
+movement environment. The old ba9cc214 control/2x allocation timed out; its
+checkpoints remain historical evidence. Its never-started component job was
+cancelled so it cannot train on the known movement bug. The fixed environment,
+executable fresh-dig observation, data and PPO settings are shared within the
+new comparison. No generalist training is included. The
+[restart plan](../../../../../.artifacts/terra_movement_restart_cscs_20260911/PLAN.md)
+records the source pair, smoke checks and submissions.
 
 `train.sh` supports explicit `INITIALIZATION=scratch`. It requires update zero,
 no `RESUME_FROM`, and `BANK_TRANSFER=0`; model, Adam and exploration start fresh.
