@@ -269,3 +269,33 @@ Compare the optional executable observation separately from the reward treatment
 before combining them; movement-primitive and support-envelope changes remain
 later treatments. A changed reward must be recorded and must not silently
 overwrite the receipt of an ordinary native continuation.
+
+## September 11: historical comparison and repaired-environment replay
+
+The earlier foundation sweep was a native continuation, not a scratch test.
+After 10,000 additional easy-bank updates (old u15000), control/2x solved
+63/64 and 64/64 of the same validation panel; current scratch u10000 solves
+0/64 each, with 66.64% and 14.76% mean target excavation. The old parent had
+327.68M prior generalist transitions, verified back to its original scratch
+u1000 checkpoint. Total exposure is therefore 491.52M versus 163.84M, and the
+optimizer/entropy clocks also differ. No matched historical easy-bank scratch
+comparison was found; older constrained-bank scratch runs also had zero exact
+foundation successes around this sample budget.
+
+Replaying the exact old u15000 weights under repaired Terra ba9cc214 changes
+control from 63/64 to 62/64 (99.67% to 99.56% dug), and 2x from 64/64 to
+51/64 (100% to 95.27% dug). Both use the same local GPU runtime, 64 map/reset
+identities, greedy decisions and 450-action horizon as their archived local
+replays. All 128 new episodes pass integrity checks. The 2x loss spans all
+three shapes; ten of its thirteen failures contain at least 300 no-effect
+actions. Its earlier completion result does not transfer unchanged to the
+repaired dynamics, although the frozen policy still works far more than the
+scratch 2x policy. This replay does not isolate the effect on scratch learning
+or identify the responsible transition change in each failure.
+
+Keep initialization, total transitions, environment epoch and completion visible
+when judging reward efficiency. Delaying behavior costs until basic competence
+is a next-test hypothesis; the old 2x failure tails also require diagnosis.
+Neither stronger penalties nor policy promotion follows from these results.
+The [historical comparison and raw replay evidence](../../../../../.artifacts/terra_excavation_scratch_cscs_20260910/historical_foundation_comparison_20260911/REPORT.md)
+record the matched panels, lineage, limits and independent checks.

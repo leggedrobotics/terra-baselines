@@ -839,3 +839,30 @@ original u15000 retrieval within a 12-hour deadline until about 12:46:56. No
 u15000/u25000 or component u5000/u10000 results exist yet. Lorenzo was asked to
 renew authentication. No jobs, training settings or runtime source changed.
 See the [morning report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/STATUS_20260911_MORNING.md).
+
+
+### September 11, 09:33 CEST: historical foundation comparison
+
+Recomputed all eight archived CSCS control/2x foundation panels at u7000,
+u10000, u15000 and u25000. At 10,000 additional easy-bank updates, old u15000
+solves 63/64 and 64/64 versus current scratch u10000 at 0/64 each. Evaluation
+maps, resets and settings match. Initialization and environment source differ:
+the old policies inherited 327.68M generalist transitions, for 491.52M total
+versus current 163.84M. The actual original u1000 predecessor confirms scratch
+initialization and the unchanged four-device pretraining batch shape. Older
+scratch experiments do not provide a matched easy-bank learning-speed control.
+
+Two bounded local frozen-policy replays under current Terra ba9cc214 completed.
+Compared with their old local replays, control changes 63→62/64 exact and
+99.67%→99.56% excavation; 2x changes 64→51/64 and 100%→95.27%. All 128 new
+episodes pass integrity checks and retain the same checkpoint/reset identities.
+The thirteen lost 2x successes are a material behavior regression under fixed
+dynamics, distinct from the current scratch 2x policy's early work suppression.
+No claim about the environment's causal effect on scratch learning is made.
+
+The waiting local automatic evaluator was paused for the serial replays and
+restarted at 09:32:28 in tmux terra-components-eval-20260911. It is alive and
+waiting for original u15000 retrieval; CSCS SSH still fails authentication.
+The previous retrieval log is preserved and the helper has a fresh bounded
+12-hour readiness window. No Slurm jobs or training settings changed, and no
+live scheduler update is available. See the [historical report](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/historical_foundation_comparison_20260911/REPORT.md).
