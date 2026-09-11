@@ -1,4 +1,10 @@
-# Experiments — current state (updated 2026-08-24)
+# Experiments — current state (updated 2026-09-11)
+
+Latest CSCS submission: corrected scratch jobs **4645193** (control/combined)
+and **4645194** (lateral/relocation), both PENDING(Priority) at September 11,
+11:48 CEST. Each contains separate foundation and trench policies, one GPU per
+policy. See the September 11 restart entry at the end of this file. Earlier
+RUNNING or authentication-blocked entries below are historical observations.
 
 ## 2026-09-07 local pipeline maintenance
 
@@ -897,3 +903,68 @@ u15000 retrieval; there is no refreshed scheduler result after the recorded
 authentication failure. Use the correction for subsequent submissions and
 re-evaluate scratch checkpoints before attributing old failures to reward
 weights. See the [diagnosis and complete evidence](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/foundation_regression_diagnosis_20260911/REPORT.md).
+
+### September 11, 11:48 CEST: corrected scratch comparison submitted
+
+CSCS authentication was refreshed and verified as lterenzi. Original job
+4634548 reached its 24-hour limit with numbered checkpoints F0=u33000,
+F2=u36500, T0=u32500 and T2=u37000. All four are preserved on CSCS and copied
+locally under the restart artifacts. Pending component job 4642631 had never
+started; it was cancelled before submitting replacements. The old local
+evaluation driver was stopped because it waited on that cancelled cohort.
+
+Both replacement jobs use clean published Terra main **46738cde** (movement
+fix 7fb30402) and terra-baselines main **2fb7863**, staged once under
+`/capstor/scratch/cscs/lterenzi/terra-training/snapshots/excavation-straight-scratch-20260911`.
+
+| Job | Suite | Independent policies | State at submission |
+| --- | --- | --- | --- |
+| 4645193 | paired | foundation/trench × control/combined 2x | PENDING(Priority) |
+| 4645194 | components | foundation/trench × lateral-only/relocation-only | PENDING(Priority) |
+
+Each requests one four-GH200 node for 24 hours, four processes with one GPU
+each: at most 192 GPU-hours total including startup. Campaign directories are
+`runs/excavation-straight-paired-20260911` and
+`runs/excavation-straight-components-20260911` beneath the same CSCS root.
+There is no Euler duplicate or full-bank generalist in this comparison.
+
+Every policy starts at update zero with seed 20260909, fresh parameters,
+Adam and exploration. Costs are control=(0,0,0), lateral=(0.5,0,0),
+relocation=(0,0.01,0.04), combined=(0.5,0.01,0.04). PPO remains one device ×
+512 environments × 32 steps, two epochs and 32 minibatches. Data, executable
+fresh-dig observations and the corrected environment are shared within each
+task family. Only each arm's own newly trained u2 checkpoint is continued.
+
+Local foundation and trench smokes each completed two fresh updates with
+finite model/optimizer/loss, Adam 64→128, 32,768 transitions and zero recorded
+transition-integrity errors. CUDA convolution-backward passed. Independent
+review resolved all eight actual launch mappings and both phases (16 argument
+sets), checked fresh initialization and reviewed explicit EDF suite selection.
+Shell syntax, shellcheck and both Slurm dry submissions passed. Local cuDNN
+autotuning emitted algorithm-comparison warnings, including one already seen
+in the preceding foundation smoke; both finite-update checks completed.
+
+No CSCS allocation or learning result is established by this submission.
+Each allocation must pass four-GPU convolution/NCCL, one-GH200 binding per arm,
+and all four fresh u2 checks before production. Numbered checkpoints remain
+every 500 updates and the absolute target remains 500,000; walltime bounds
+this segment. W&B is offline per job/arm, with no new online history yet.
+
+Evaluate equal updates u5000/u10000 before ranking behavior costs. Foundation
+uses its 64 validation episodes (seed 20260907, forward chunk 32); trench uses
+the original 608 development reset cohort (seed 20260724, chunk 120), reporting
+224 trench rows separately. Both use greedy decoding and a 450-step horizon.
+Completion and excavation come first; compare productive setups, workspace
+area, retained-pose travel and adjacency on common successes. Keep the old
+ba9cc214 training cohort separate. One seed and separate nodes limit variance
+and factorial-interaction claims. The [restart plan and artifacts](../../../../.artifacts/terra_movement_restart_cscs_20260911/PLAN.md)
+contain source revisions, smoke checks, launch review and submission records.
+
+At 11:52 CEST, both jobs remain pending; Slurm estimates September 12 at 01:10
+CEST on nid005875/nid005885. These are scheduler estimates, not allocations.
+Local tmux `terra-straight-eval-20260911` runs the corrected-cohort retrieval
+and evaluation driver with a 72-hour deadline. It retrieves u5000/u10000 only
+after the following rollout receipt exists, saves the per-arm smoke results,
+and evaluates serially when the local GPU is free. Scheduler snapshots and
+driver output live in the restart artifact directory. This replaces the old
+driver waiting on the cancelled component job; no new metrics exist yet.

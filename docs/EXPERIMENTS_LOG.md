@@ -358,3 +358,25 @@ review confirms matched metadata and result counts. This is frozen-policy
 replay evidence, not a scratch-learning or reward-cost result. No cluster job
 or training setting changed; the original ba9cc214 cohort remains separate.
 See the [diagnosis, corrected replay and tests](../../../../.artifacts/terra_excavation_scratch_cscs_20260910/foundation_regression_diagnosis_20260911/REPORT.md).
+
+### September 11: corrected eight-arm scratch comparison submitted
+
+Submitted CSCS **4645193** (foundation/trench × control/combined 2x) and
+**4645194** (foundation/trench × lateral/relocation), both pending for priority
+at 11:48 CEST. Each is one four-GH200, 24-hour allocation with four independent
+one-GPU policies. The shared clean source snapshot is Terra main 46738cde and
+terra-baselines main 2fb7863. Each policy starts from zero; the production
+phase continues only its own two fresh smoke updates.
+
+Local corrected-environment foundation and trench smokes passed u1/u2,
+finite model/Adam/loss and recorded integrity checks. Independent launch/EDF
+review, shell checks and Slurm dry submissions passed. On-node runtime,
+binding and per-arm smoke checks remain unverified while pending. This is a
+submission result, not evidence that scratch learning or behavior improved.
+
+Original 4634548 timed out at 24 hours. Its saved checkpoints F0=u33000,
+F2=u36500, T0=u32500 and T2=u37000 are also preserved locally. Never-started
+component job 4642631 was cancelled before replacement; the old local driver
+waiting for it was stopped. No other jobs changed. The 192-GPU-hour replacement
+budget, fixed PPO/cost matrix and equal-update evaluation contracts are in the
+[restart plan](../../../../.artifacts/terra_movement_restart_cscs_20260911/PLAN.md).
