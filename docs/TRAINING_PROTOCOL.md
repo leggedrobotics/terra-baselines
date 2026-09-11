@@ -1,6 +1,7 @@
 # Terra training and evaluation protocol
 
-Source audit: 8 September 2026. This is the local methods reference for PPO,
+Source audit: 8 September 2026; scratch-initialization scope updated on
+11 September. This is the local methods reference for PPO,
 policy inputs, curricula, evaluation and continuation. The sibling
 [environment reference](https://github.com/leggedrobotics/terra/blob/main/docs/ENVIRONMENT.md) owns dynamics, rewards
 and termination; the [dataset reference](https://github.com/leggedrobotics/terra/blob/main/docs/DATASET.md) defines
@@ -10,8 +11,8 @@ budgets belong to their experiment records.
 Source links identify public code where available. References marked **local**
 are paths relative to the original `/home/lorenzo/moleworks` workspace. Input
 banks and unpublished experiment snapshots are separate from this documentation.
-The September optional behaviors describe those recorded snapshots and may not
-be implemented in the published main branch.
+The September behaviors and scratch-comparison path are now implemented in
+main; optional costs and observations still require their resolved settings.
 
 ## Which experiment this describes
 
@@ -26,6 +27,7 @@ does not make their outcomes interchangeable.
 | August V8 recurrent relay pilot, concat-skip v2 | Same full-start and partial banks | Actor-only GRU64, fresh initialization, seed 20260817 | [GRU launcher](../scripts/run_v8_relay_gru_v2.sh), [recurrent implementation record](research/V8_RECURRENT_ACTOR_GRU_20260817.md) |
 | September v2 generalist and trench specialist | Generalist: 3,840 maps, 25 foundation + 15 trench conditions; specialist: 1,440 maps, the same 15 trench conditions | Feed-forward actor; seed 20260901; native continuations of their own earlier checkpoints | generalist resolved parent config (local: `.artifacts/terra_foundation_sweep_20260907/parent_recipe_comparison.json`), specialist restart command (local: `.artifacts/terra_training_restart_20260907/launches/cscs.sh`) |
 | September foundation behavior screen | New, separate bank: 256 train / 64 validation / 64 test foundations; squares, rectangles and L shapes; no obstacles and broad legal dumping | Feed-forward actor; all arms transfer the same generalist u5000 parameters and Adam state; seed 20260907, plus E repeat 20260908 | resolved parent/recipe comparison (local: `.artifacts/terra_foundation_sweep_20260907/parent_recipe_comparison.json`), frozen training wrapper (local: `.worktrees/terra_foundation_sweep_20260907/terra-baselines/scripts/foundation_reward_sweep/train.sh`) |
+| September scratch foundation/trench comparisons | Separate family-specific banks and held-out panels; one GPU per arm | Fresh parameters, Adam state and schedules; control and behavior-cost arms use the same initialization contract | [scratch comparison recipe](../scripts/foundation_reward_sweep/README.md), [experiment ledger](EXPERIMENTS_RUNNING.md) |
 
 The original training bank's 4,512 slots contain 4,509 unique scenario IDs:
 three duplicate pairs are confined to its all-free trench control. The dataset
@@ -181,7 +183,7 @@ budget. The September generalist and specialist target 100,000 updates
 (`6,553,600,000` transitions at their unchanged four-GPU shape). This is a
 configured ceiling, not evidence that either completed that budget.
 
-Every foundation screen starts from the same u5000 parent, which already
+Every September 7–8 foundation transfer screen starts from the same u5000 parent, which already
 contains `5,000 × 65,536 = 327,680,000` transitions of generalist training and
 Adam step 320,000. Its subsequent batch is four times smaller. For a saved
 foundation checkpoint whose `next_update` is `U`:
@@ -198,6 +200,16 @@ Its u7000/u10000/u15000 endpoints add 32,768,000 / 81,920,000 / 163,840,000
 foundation transitions. Report completed checkpoint budgets and allocated
 GPU-hours separately from requested targets. The upper-screen plan (local: `.artifacts/terra_foundation_sweep_20260908_upper/PLAN.md`)
 preserves the concrete limits.
+
+The later scratch comparison uses a different initialization contract:
+`INITIALIZATION=scratch`, `START_UPDATE=0`, no `RESUME_FROM`, and
+`BANK_TRANSFER=0`. It initializes parameters, Adam state and schedules from
+scratch. At the same `1 × 512 × 32` shape, a scratch checkpoint at `next_update=U`
+represents `U × 16,384` transitions and Adam step `U × 64`; the u5000 transfer
+offset above does not apply. Subsequent segments resume natively from that
+arm's own checkpoints. The environment revision remains part of each run's
+identity: the original ba9cc214 cohort must be distinguished from runs using
+the corrected 7fb30402 movement semantics.
 
 ## Policy architecture and observations
 
