@@ -5,7 +5,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TERRA_ROOT="${TERRA_ROOT:-$(dirname "$REPO")/terra}"
 # shellcheck disable=SC1091
 source "$REPO/cluster/euler_account.sh"
-terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
+terra_euler_configure "${TERRA_EULER_USER:-lterenzi}"
 REMOTE_HOST="${REMOTE_HOST:-euler-$TERRA_EULER_USER}"
 VENV="${TERRA_REMOTE_VENV:-/cluster/project/rsl/lterenzi/terra_runtime/terra_jax0433_cuda126_cudnn950_20260903}"
 SUBMIT="${SUBMIT:-0}"

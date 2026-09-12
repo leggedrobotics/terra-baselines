@@ -33,7 +33,7 @@ SAMPLER_PROFILE=continuous_banded_v3
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=cluster/euler_account.sh
 source "$REPO/cluster/euler_account.sh"
-terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
+terra_euler_configure "${TERRA_EULER_USER:-lterenzi}"
 TERRA_REPO="${TERRA_REPO:-$TERRA_REPO_DEFAULT}"
 ARTIFACT_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_training_inputs_20260810
 ADMISSION_ROOT=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_admission_20260810

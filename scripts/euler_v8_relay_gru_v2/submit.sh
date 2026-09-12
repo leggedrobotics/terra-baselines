@@ -10,7 +10,7 @@ esac
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=/dev/null
 source "$REPO/cluster/euler_account.sh"
-terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
+terra_euler_configure "${TERRA_EULER_USER:-lterenzi}"
 
 TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_relay_main_integration_20260815}"
 FULL_BANK_ARCHIVE=/home/lorenzo/moleworks/.artifacts/terra_v8_r2_training_inputs_20260810/treatment_bank.tar.zst

@@ -13,7 +13,7 @@ esac
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=/dev/null
 source "$REPO/cluster/euler_account.sh"
-terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
+terra_euler_configure "${TERRA_EULER_USER:-lterenzi}"
 
 TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_trench_fresh_dig_alignment_20260818}"
 

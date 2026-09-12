@@ -8,7 +8,7 @@ case "$SUBMIT" in 0|stage|smoke|1) ;; *) echo "SUBMIT must be 0, stage, smoke, o
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=/dev/null
 source "$REPO/cluster/euler_account.sh"
-terra_euler_configure "${TERRA_EULER_USER:-alesweber}"
+terra_euler_configure "${TERRA_EULER_USER:-lterenzi}"
 
 TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_trench_fresh_dig_alignment_20260818}"
 BANK_ARCHIVE=/media/lorenzo/T7/codex/terra_trench_alignment_u30000_20260822/terra_v8_trench_aligned_generalist_37cond_20260822.tar.zst

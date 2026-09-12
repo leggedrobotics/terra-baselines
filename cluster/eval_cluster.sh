@@ -7,6 +7,13 @@
 #SBATCH --job-name="eval"
 #SBATCH --output=%j_eval.out
 
+set -euo pipefail
+: "${CONDA_ROOT:?Set CONDA_ROOT to the selected account runtime installation}"
+: "${TERRA_BASELINES_ROOT:?Set TERRA_BASELINES_ROOT to the staged terra-baselines checkout}"
+: "${DATASET_PATH:?Set DATASET_PATH to the selected readable map bank}"
+: "${CHECKPOINT:?Set CHECKPOINT to the selected policy checkpoint}"
+
+
 # Disable audio and set dummy display for cluster nodes
 export SDL_AUDIODRIVER=dummy
 export SDL_VIDEODRIVER=dummy
@@ -17,17 +24,16 @@ module load eth_proxy
 module load stack/2024 cuda/12.1.1
 
 # Set paths to conda
-CONDA_ROOT=/cluster/home/alesweber/miniconda3
 CONDA_ENV=terra
 
 # Activate conda environment properly for batch jobs
-eval "$($CONDA_ROOT/bin/conda shell.bash hook)"
-conda activate $CONDA_ENV
+eval "$("$CONDA_ROOT/bin/conda" shell.bash hook)"
+conda activate "$CONDA_ENV"
 
 # Set environment variables and run evaluation
-export DATASET_PATH=/cluster/project/rsl/alesweber/TerraProject/terra/data/terra/train/
+export DATASET_PATH
 export DATASET_SIZE=200
 
 # Change to the directory containing eval_mixed.py
-cd /cluster/project/rsl/alesweber/TerraProject/terra-baselines
-python eval_mixed.py --run_name /cluster/project/rsl/alesweber/TerraProject/terra-baselines/checkpoints/mixed-agents-skidsteer-skidsteer-local-2026-07-20-15-11-52.pkl --map_name map_13 -n 100
+cd "$TERRA_BASELINES_ROOT"
+python eval_mixed.py --run_name "$CHECKPOINT" --map_name map_13 -n 100

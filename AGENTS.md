@@ -65,9 +65,9 @@ local lockfiles or run artifacts untouched.
 ## Euler Storage Contract
 
 Euler launchers must select the execution account explicitly and derive
-account-owned storage through `cluster/euler_account.sh`. The current default
-is `alesweber`; `lterenzi` remains a supported fallback. Never infer the
-storage owner from a historical path embedded in an experiment receipt.
+account-owned storage through `cluster/euler_account.sh`. Use `lterenzi` with
+SSH alias `euler-lterenzi`; the former Weber account is closed. Never infer
+the storage owner from a historical path embedded in an experiment receipt.
 
 - Reproducible code snapshots go under
   `$TERRA_EULER_SCRATCH_ROOT/codex_terra_edge_validation/`.
@@ -81,8 +81,10 @@ storage owner from a historical path embedded in an experiment receipt.
   long-term must be copied to writable project/work storage or be rebuildable.
   A venv left on scratch was already corrupted by the purge (empty `jax`
   namespace package).
-- The dataset stays read-only at
-  `/cluster/project/rsl/alesweber/TerraProject/...`; do not copy it into home.
+- Select the dataset from the campaign and verify readability as `lterenzi`.
+  Historical shared banks may retain
+  `/cluster/project/rsl/alesweber/TerraProject/...` paths; those paths do not
+  select the execution account. Do not copy datasets into home.
 - Launchers MUST verify `id -un`, `$HOME`, scratch writability, and the selected
   runtime before staging or submission. Smoke gates parse the selected
   account's `lquota` row and abort above 45 GB of the 50 GB hard home quota.

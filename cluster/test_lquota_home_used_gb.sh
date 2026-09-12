@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARSER="$ROOT/lquota_home_used_gb.sh"
-HOME_ROOT=/cluster/home/alesweber
+HOME_ROOT=/cluster/home/lterenzi
 
 row() {
     printf '| %s | space | %s | 45.00 GB | 50.00 GB |\n' "$HOME_ROOT" "$1"
@@ -22,7 +22,7 @@ if { row '37.36 GB'; row '37.36 GB'; } | "$PARSER" "$HOME_ROOT"; then
     echo "duplicate quota rows unexpectedly accepted" >&2
     exit 1
 fi
-if row '37.36 GB' | "$PARSER" /cluster/home/lterenzi; then
+if row '37.36 GB' | "$PARSER" /cluster/home/other-user; then
     echo "wrong home row unexpectedly accepted" >&2
     exit 1
 fi

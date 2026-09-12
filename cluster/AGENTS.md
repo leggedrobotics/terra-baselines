@@ -9,8 +9,9 @@ rules in `../AGENTS.md` apply here.
 
 ## Identity and secrets
 
-- Select the Unix account explicitly with `TERRA_EULER_USER` and use a matching
-  named SSH alias. Verify `ssh -o BatchMode=yes HOST id -un` before writes.
+- Use `TERRA_EULER_USER=lterenzi` and the matching `euler-lterenzi` SSH alias.
+  The former Weber account is closed. Verify
+  `ssh -o BatchMode=yes euler-lterenzi id -un` before writes.
 - Keep passwords, private keys, W&B API keys, `.netrc`, and environment files
   containing secrets out of the repository, Slurm exports, and logs.
 - Never pass credentials or secret-bearing files, environment values, logs, or

@@ -7,6 +7,10 @@ terra_euler_configure() {
     local account="${1-${TERRA_EULER_USER:-}}"
 
     case "$account" in
+        alesweber)
+            echo "Euler account alesweber is closed; use lterenzi" >&2
+            return 2
+            ;;
         ''|*[!a-zA-Z0-9_-]*)
             echo "invalid or missing Euler account '$account'" >&2
             return 2
@@ -23,6 +27,14 @@ terra_euler_configure() {
         "$home_root" \
         "$scratch_root" \
         "$project_root"; do
+        case "$path" in
+            /cluster/home/alesweber|/cluster/home/alesweber/*|\
+            /cluster/scratch/alesweber|/cluster/scratch/alesweber/*|\
+            /cluster/project/rsl/alesweber|/cluster/project/rsl/alesweber/*)
+                echo "Euler output root belongs to the closed account: $path" >&2
+                return 2
+                ;;
+        esac
         case "$path" in
             /cluster/*) ;;
             *)
