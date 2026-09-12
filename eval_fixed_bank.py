@@ -2001,6 +2001,7 @@ def main() -> None:
                 "checkpoint_update": int(checkpoint.get("next_update", 0)),
                 "treatment_fingerprint": reference_treatment,
                 "r2_protocol_receipt": checkpoints[0][1].get("r2_protocol_receipt"),
+                "behavior_cost_ramp_state": checkpoint.get("behavior_cost_ramp_state"),
                 "bank_root": str(bank_root),
                 "accepted_bank": (
                     None

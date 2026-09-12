@@ -161,7 +161,8 @@ def launch_env(tmp_path):
                RUN_DIR=str(tmp_path / "run"), RUN_NAME="B_exec", RESUME_FROM=str(tmp_path / "parent.pkl"),
                START_UPDATE="5000", TARGET_UPDATE="7000", EXECUTABLE_DIG_OBSERVATION="1",
                SEED="20260907", BANK_TRANSFER="1", LATERAL_DIG_COST="0", BASE_TRAVEL_COST="0",
-               BASE_TURN_COST="0")
+               BASE_TURN_COST="0", NUM_DEVICES="1", BEHAVIOR_COST_RAMP_UPDATES="0",
+               BEHAVIOR_FINETUNE="0")
     return env
 
 
@@ -261,6 +262,45 @@ def test_continuation_wrapper_drops_transfer_flags_and_restores_env(launch_env):
     assert "--finetune_task_bank" not in args
     assert "--finetune_foundation_behavior" not in args
     assert "--no-load-env-from-checkpoint" not in args
+
+
+@pytest.mark.parametrize("devices,envs", [(1, 512), (2, 256), (4, 128)])
+def test_gpu_layout_keeps_global_batch_and_optimizer_work(launch_env, devices, envs):
+    launch_env["NUM_DEVICES"] = str(devices)
+    args = script_args(launch_env)
+    assert args[args.index("--num_devices") + 1] == str(devices)
+    assert args[args.index("--num_envs_per_device") + 1] == str(envs)
+    assert devices * envs * int(args[args.index("--num_steps") + 1]) == 16384
+    assert args[args.index("--total_timesteps") + 1] == str(7000 * 16384)
+    assert int(args[args.index("--update_epochs") + 1]) * int(args[args.index("--num_minibatches") + 1]) == 64
+
+
+@pytest.mark.parametrize("devices", ["0", "3", "8", "1.5", "many"])
+def test_gpu_layout_rejects_unsupported_values(launch_env, devices):
+    result = subprocess.run(["bash", str(SCRIPT), "--print-args"], env=launch_env | {"NUM_DEVICES": devices},
+                            capture_output=True, text=True)
+    assert result.returncode == 2 and "NUM_DEVICES must be 1, 2 or 4" in result.stderr
+
+
+def test_behavior_ramp_uses_native_same_bank_resume_and_can_restore_when_omitted(launch_env):
+    launch_env.update(BANK_TRANSFER="0", BEHAVIOR_FINETUNE="1", BEHAVIOR_COST_RAMP_UPDATES="2500")
+    args = script_args(launch_env)
+    assert args[args.index("--behavior_cost_ramp_updates") + 1] == "2500"
+    assert "--finetune_foundation_behavior" in args and "--load_env_from_checkpoint" in args
+    assert "--finetune_task_bank" not in args and "--resume_update" not in args
+    launch_env.update(BEHAVIOR_COST_RAMP_UPDATES="0", BEHAVIOR_FINETUNE="0")
+    assert "--behavior_cost_ramp_updates" not in script_args(launch_env)
+
+
+@pytest.mark.parametrize("changes", [
+    {"BEHAVIOR_COST_RAMP_UPDATES": "-1"}, {"BEHAVIOR_COST_RAMP_UPDATES": "1.5"},
+    {"BEHAVIOR_COST_RAMP_UPDATES": "2500", "BEHAVIOR_FINETUNE": "0", "BANK_TRANSFER": "0"},
+    {"BEHAVIOR_COST_RAMP_UPDATES": "2500", "BEHAVIOR_FINETUNE": "1", "BANK_TRANSFER": "1"},
+])
+def test_behavior_ramp_rejects_invalid_duration_or_transfer(launch_env, changes):
+    result = subprocess.run(["bash", str(SCRIPT), "--print-args"], env=launch_env | changes,
+                            capture_output=True, text=True)
+    assert result.returncode == 2 and ("RAMP_UPDATES" in result.stderr or "behavior-cost ramp requires" in result.stderr)
 
 
 def test_checkpoint_interval_override_supports_callback_smoke(launch_env):

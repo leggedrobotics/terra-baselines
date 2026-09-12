@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# One GPU per process. Source this file to reuse FOUNDATION_TRAIN_ARGS without
+# One training process on 1, 2 or 4 GPUs, preserving a global batch of 512 envs.
+# Source this file to reuse FOUNDATION_TRAIN_ARGS without
 # executing Python, or run `bash train.sh --print-args` for a local CLI review.
 set -euo pipefail
 
@@ -15,6 +16,13 @@ MACHINE="${MACHINE:-euler}"
 SEED="${SEED:-20260907}"
 INITIALIZATION="${INITIALIZATION:-resume}"
 BEHAVIOR_FINETUNE="${BEHAVIOR_FINETUNE:-0}"
+BEHAVIOR_COST_RAMP_UPDATES="${BEHAVIOR_COST_RAMP_UPDATES:-0}"
+NUM_DEVICES="${NUM_DEVICES:-1}"
+[[ "$NUM_DEVICES" =~ ^(1|2|4)$ ]] || { echo "NUM_DEVICES must be 1, 2 or 4" >&2; exit 2; }
+NUM_ENVS_PER_DEVICE="$((512 / NUM_DEVICES))"
+[[ "$BEHAVIOR_COST_RAMP_UPDATES" =~ ^(0|[1-9][0-9]*)$ ]] || {
+    echo "BEHAVIOR_COST_RAMP_UPDATES must be a nonnegative integer" >&2; exit 2;
+}
 [[ "$BEHAVIOR_FINETUNE" =~ ^[01]$ ]] || { echo "BEHAVIOR_FINETUNE must be 0 or 1" >&2; exit 2; }
 [[ "$BEHAVIOR_FINETUNE" == 0 || "$INITIALIZATION" == resume ]] || {
     echo "BEHAVIOR_FINETUNE requires INITIALIZATION=resume" >&2; exit 2;
@@ -34,6 +42,9 @@ case "$INITIALIZATION" in
         ;;
     *) echo "INITIALIZATION must be scratch or resume" >&2; exit 2 ;;
 esac
+[[ "$BEHAVIOR_COST_RAMP_UPDATES" == 0 || ( "$BEHAVIOR_FINETUNE" == 1 && "$BANK_TRANSFER" == 0 ) ]] || {
+    echo "Starting a behavior-cost ramp requires BEHAVIOR_FINETUNE=1 and BANK_TRANSFER=0" >&2; exit 2;
+}
 CHECKPOINT_INTERVAL="${CHECKPOINT_INTERVAL:-500}"
 LATERAL_DIG_COST="${LATERAL_DIG_COST:-0}"
 BASE_TRAVEL_COST="${BASE_TRAVEL_COST:-0}"
@@ -71,7 +82,7 @@ done
 FOUNDATION_TRAIN_ARGS=(
     --config "$TRAIN_CONFIG" --machine "$MACHINE"
     --name "$RUN_NAME" --exact_run_name --seed "$SEED"
-    --num_devices 1 --num_envs_per_device 512 --num_steps 32
+    --num_devices "$NUM_DEVICES" --num_envs_per_device "$NUM_ENVS_PER_DEVICE" --num_steps 32
     --total_timesteps "$((TARGET_UPDATE * 16384))"
     --update_epochs 2 --num_minibatches 32
     --lr 3e-4 --model_size medium --model_core mlp
@@ -94,6 +105,9 @@ FOUNDATION_TRAIN_ARGS=(
     --checkpoint_interval "$CHECKPOINT_INTERVAL" --cache_clear_interval 0
     --keep_checkpoint_history --checkpoint_dir "$RUN_DIR/checkpoints"
 )
+if [[ "$BEHAVIOR_COST_RAMP_UPDATES" != 0 ]]; then
+    FOUNDATION_TRAIN_ARGS+=(--behavior_cost_ramp_updates "$BEHAVIOR_COST_RAMP_UPDATES")
+fi
 if [[ "$EXECUTABLE_DIG_OBSERVATION" == 1 ]]; then
     FOUNDATION_TRAIN_ARGS+=(--executable_dig_observation)
 fi
@@ -129,6 +143,8 @@ export MPLBACKEND=Agg SDL_VIDEODRIVER=dummy PYTHONUNBUFFERED=1
 mkdir -p "$RUN_DIR/checkpoints" "$WANDB_DIR" "$JAX_COMPILATION_CACHE_DIR"
 printf '%s\n' "task_family=$TASK_FAMILY" "initialization=$INITIALIZATION" "parent_checkpoint=${RESUME_FROM:-none}" "start_update=$START_UPDATE" \
     "target_update=$TARGET_UPDATE" "transitions_per_update=16384" \
+    "num_devices=$NUM_DEVICES" "num_envs_per_device=$NUM_ENVS_PER_DEVICE" \
+    "behavior_cost_ramp_updates=$BEHAVIOR_COST_RAMP_UPDATES" \
     "additional_transitions=$(((TARGET_UPDATE - START_UPDATE) * 16384))" \
     "adam_steps_per_update=64" > "$RUN_DIR/training_budget.env"
 cd "$RUN_DIR"

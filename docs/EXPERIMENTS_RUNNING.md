@@ -3,16 +3,17 @@
 Corrected scratch jobs **4645193** (control/combined) and **4645194**
 (lateral/relocation) completed their retained u5000/u10000 comparisons.
 At u10000, control leads both task families; travel/turn-cost policies have
-zero exact completions and zero trench excavation. Live scheduler status is
-unverified after the CSCS certificate expired September 12 at 11:32 CEST.
+zero exact completions and zero trench excavation. CSCS access was restored September 12 at 15:52 CEST; both original jobs
+were still running near their 24-hour limit at that check.
 See the September 12 entry at the end of this file. Earlier scheduler states
 below are timestamped historical observations.
 
 The approved next recipe continues the two corrected zero-cost controls and
 introduces behavior costs only after sustained 90% exact fixed-panel
 completion. Neither family qualifies at the saved u10000 checkpoint. The
-offline stage launcher is prepared; no continuation or delayed-cost job has
-been submitted. See the final entry and
+offline stage launcher now uses a linear ramp and hold. No production
+continuation or delayed-cost stage has been submitted; Euler diagnostic
+13935300 is queued under lterenzi. See the final entry and
 [recipe](../scripts/foundation_reward_sweep/README.md).
 
 ## 2026-09-07 local pipeline maintenance
@@ -1060,3 +1061,58 @@ u10000 native parents and their existing bank identities pass CPU inspection;
 wrong update/Adam metadata, partial resets and nonfinite model data are rejected.
 Both real completion gates stay closed. See
 `.artifacts/terra_delayed_penalties_20260912/` at the workspace root for evidence.
+
+## 2026-09-12 smooth behavior-cost ramp and GPU-layout validation
+
+The approved recipe now ramps linearly for 2,500 updates and holds for 2,500
+before the next offline promotion decision. Two canonical full-start greedy
+evaluations, sustained 90% exact completion, and the frozen original-reference
+loss guard remain required. Failed stages are rejected; no automatic rollback
+or automatic promotion is implemented. The wrapper supports 1/2/4 GPUs while
+retaining 512 global environments, 16,384 transitions and 64 Adam steps per
+update. Device-local advantage normalization changes PPO numerics on a GPU
+layout change; qualify both zero-cost reports on the new layout before a cost
+fork, and keep that layout across subsequent stages.
+
+Local CUDA convolution preflight and a 32-environment functional smoke passed.
+The real zero-cost foundation u10000 checkpoint continued to u10002, saved
+halfway through a four-update test ramp, and a new process resumed through
+u10005. All seven periodic/FINAL artifacts have finite model/Adam/loss data,
+zero transition-integrity counters, and Adam=64*next_update. Effective costs
+reached the exact target at u10004 and remained fixed at u10005. There was one
+PPO update signature per process; the resumed process hit the persistent
+`pmap__update_step` cache. This is a small runtime check, not a throughput or
+behavior comparison. Focused CPU validation passed 122 tests and 22 subtests;
+independent source review has no remaining findings.
+
+Euler diagnostic **13935300**, account **lterenzi**, requests four RTX4090s,
+12 CPUs, 6 GB/CPU and at most 45 minutes. It measures 1-vs-4 GPU throughput
+from the same u10000 parent/global batch, then verifies a native mid-ramp
+resume at the full global batch. At 15:52 CEST it was PENDING/Priority, with
+no runtime acceptance yet. Scheduler remapped the short request to gpuhe.4h.
+The immutable snapshot is
+`/cluster/scratch/lterenzi/codex_terra_edge_validation/terra_smooth_ramp_20260912_1345`;
+run root is
+`/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_smooth_ramp_20260912`.
+The snapshot contains baselines 555ed53 plus the recorded ramp patch and
+Terra 46738cde; archive SHA-256 is
+`87c89c8eaf6800dc30ed0476503d4aaa20ca330b299483a2fda66515174a645f`.
+
+At 15:53 CEST, corrected CSCS control checkpoints were foundation u32500
+(SHA 04dcca21cdf7fac2e2053d46099709b75bb36dc358c7d3d8ae4160eb06463f43)
+and trench u32000
+(SHA e3cf178099ea09451527cd5df010405139a8de00712f4ef2fde71fe868d8a5b4).
+Both were downloaded and verified finite with exact Adam clocks and zero
+added costs. Final parent selection and fixed-panel evaluation follow the old
+allocation's end; do not use the old local u10000 diagnostic parent for a
+production restart. A CSCS diagnostic is being prepared while Euler queues.
+
+The closed Weber account was removed from active SSH configuration and
+installed workflow defaults by an independent agent. Commit c2df04a updates
+28 Terra routing/helper/launcher files to lterenzi and rejects retired output
+roots. Historical records and shared read-only input identities remain.
+
+Artifacts: `/home/lorenzo/moleworks/.artifacts/terra_delayed_penalties_20260912/smooth_ramp/`
+(`focused_tests.log`, `local_verification.json`, local GPU logs, launch files,
+source archive/diff, and `latest_controls/native_validation.json`). Account
+cleanup evidence is in `.artifacts/retire_euler_weber_20260912/STATUS.md`.

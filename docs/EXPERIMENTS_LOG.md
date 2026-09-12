@@ -431,3 +431,23 @@ Evidence is in `.artifacts/terra_delayed_penalties_20260912/` at the workspace r
 No new training, submission or cancellation occurred. CSCS authentication still
 fails; latest control checkpoints, live scheduler state and the required next
 allocation's runtime/native continuation smoke remain pending.
+
+## 2026-09-12 native smooth-cost ramp runtime check
+
+Implemented an optional checkpointed linear behavior-cost ramp. TrainConfig
+and the R2 receipt retain declared target costs; saved EnvConfig contains
+effective last-rollout costs. Checkpoint loading verifies these against the
+absolute schedule, and evaluation uses effective costs. Ordinary native resume
+restores the ramp and optimizer clock, while parameters-only warm starts
+discard the schedule. Values change only between PPO rollouts with stable
+array shapes and dtypes. Fixed-cost training and Terra legality are unchanged.
+
+Validation: 122 focused CPU tests plus 22 subtests, shell checks, independent
+review, and a real local RTX4090 convolution/native-resume smoke passed. Seven
+checkpoints spanning u10001..u10005 preserve finite model/Adam/loss values,
+zero integrity counters and Adam640064..640320. The u10002 checkpoint resumes
+from half weight, reaches full weight at u10004, and holds through u10005.
+The resumed PPO executable was a persistent-cache hit, with one signature
+per process. The 32-environment run is a functional check; multi-GPU scaling
+remains pending in Euler diagnostic13935300 and the prepared CSCS diagnostic.
+Full evidence: `.artifacts/terra_delayed_penalties_20260912/smooth_ramp/`.

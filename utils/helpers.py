@@ -6,6 +6,7 @@ from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
+from utils.behavior_cost_ramp import declared_costs, ramp_costs, validate_ramp_state
 
 
 FOUNDATION_BEHAVIOR_DEFAULTS = {
@@ -71,6 +72,18 @@ def checkpoint_foundation_behavior(checkpoint):
     if config is None:
         raise ValueError("checkpoint has no train_config")
     saved_config = config if isinstance(config, dict) else vars(config)
+    ramp = checkpoint.get("behavior_cost_ramp_state")
+    if ramp is not None:
+        validate_ramp_state(ramp, checkpoint["next_update"], declared_costs(config))
+        if saved_config.get("behavior_cost_ramp_updates", 0) != ramp["duration_updates"]:
+            raise ValueError("Saved behavior ramp duration differs from train_config")
+        if checkpoint.get("env_config") is None:
+            raise ValueError("Ramped checkpoint requires its effective saved environment")
+        # Costs in TrainConfig are targets; EnvConfig records the actual last
+        # rollout. Evaluation uses the latter, including at mid-ramp checkpoints.
+        saved_config = {**saved_config, **ramp_costs(ramp, checkpoint["next_update"])}
+    elif saved_config.get("behavior_cost_ramp_updates", 0):
+        raise ValueError("Ramped checkpoint is missing behavior_cost_ramp_state")
     env_config = checkpoint.get("env_config")
     missing = object()
     settings = {}

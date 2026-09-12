@@ -213,8 +213,8 @@ def test_bounded_logging_schema_and_manual_workspace():
     assert metrics["behavior/base_turn_rad_per_step"] == pytest.approx(0.8)
     assert not any(key.startswith("diagnostics/") for key in metrics)
 
-    # Six per-transition cost/physical diagnostics support the foundation treatment.
-    assert len(TRAINING_SCALAR_KEYS) <= 73
+    # Cost/physical diagnostics plus four effective ramp coefficient metrics.
+    assert len(TRAINING_SCALAR_KEYS) <= 77
     assert "reward/terminal_objective_mix" in TRAINING_SCALAR_KEYS
     assert "train/full_start_episode_success_rate" in TRAINING_SCALAR_KEYS
     assert {

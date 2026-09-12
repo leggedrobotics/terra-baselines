@@ -404,12 +404,32 @@ this completion criterion.
 Freeze the latest qualifying zero-cost checkpoint and evaluation. Introduce
 25%, then 50%, then 100% of the previous combined 2x costs: lateral/travel/turn
 are respectively `(0.125, 0.0025, 0.01)`, `(0.25, 0.005, 0.02)` and
-`(0.5, 0.01, 0.04)`. Travel and turn units remain metres and radians. Hold each
-stage for 5,000 additional updates and evaluate at +2,500 and +5,000. Both
+`(0.5, 0.01, 0.04)`. Travel and turn units remain metres and radians. Each stage
+ramps linearly from the parent's costs to these targets over 2,500 additional
+updates, then holds the targets for another 2,500 updates. Evaluate at +2,500
+and +5,000; mid-ramp checkpoints cannot qualify a further increase. Both
 evaluations must retain at least 90% exact completion and stay within three
 percentage points of the frozen zero-cost reference: at most one fewer
 foundation success or six fewer trench successes. Failure prevents a further
-cost increase. The reference does not move between stages.
+cost increase. The reference does not move between stages. A failed stage is
+rejected; operations can resume the accepted parent. Neither rollback nor
+stage advancement happens automatically.
+
+The rationale is to learn the task before imposing strong secondary costs.
+Hwangbo et al. report that large motion costs can induce standing behavior and
+use increasing ancillary costs to learn locomotion before refining its
+efficiency. Their curriculum supports this ordering; our 2,500-update linear
+ramp and completion threshold are choices to test, not results established by
+that paper. See [Learning Agile and Dynamic Motor Skills for Legged Robots,
+p. 11](https://arxiv.org/pdf/1901.08652#page=11).
+
+The continuation wrapper supports one, two or four GPUs while holding the
+global batch at 512 environments × 32 steps and 64 Adam steps per update.
+Changing GPU count still changes the per-device advantage-normalization
+statistics. Therefore migrate at zero added costs first, then obtain both
+qualifying reports and the original zero-cost reference on the new layout.
+Penalty forks and their matched zero-cost siblings must keep that layout; the
+gate does not normalize away device-count differences.
 
 Keep a zero-cost sibling from each accepted parent to compare equal additional
 training. First compare exact completion, then productive base poses, unique
@@ -422,10 +442,14 @@ score without completed excavation is not an improvement.
 
 The offline launcher and invocation are documented in
 [the reward-training recipe](../../scripts/foundation_reward_sweep/README.md).
-It preserves native model/Adam/update clocks and the trainer loop, checks the
-evaluated parent and bank, and records `penalty_stage.json` for each stage.
-Later increases require the preceding stage record to keep the original
-reference. Focused CPU checks and independent review passed; the first native
-GPU continuation smoke remains required before submission. This is an
-implemented experiment recipe, not a demonstrated improvement; no delayed-cost
-training has run yet.
+It preserves native model/Adam/update clocks, checks the evaluated parent and
+bank, and records `penalty_stage.json` and its child's planned ramp for each
+stage. The checkpoint saves the ramp's original start, duration and endpoints
+so continuation retains its progress. Evaluation fingerprints report effective
+costs, while R2 receipts keep the declared targets. Later increases require
+the preceding stage record to keep the original reference and verify that both
+evaluations reached their scheduled targets. The two focused helper/recipe
+suites pass 65 CPU tests. Integrated trainer validation and the first native
+GPU continuation smoke remain required before full training in the allocation.
+This is an implemented experiment recipe, not a demonstrated improvement; no
+delayed-cost training has run yet.

@@ -84,6 +84,7 @@ Reward Multipliers:
 """
 
 import copy
+from utils.behavior_cost_ramp import ramp_costs, ramp_progress, restore_behavior_cost_ramp
 
 import jax
 import jax.numpy as jnp
@@ -1033,6 +1034,12 @@ def _foundation_behavior_settings(config) -> dict:
 
 
 def _validate_foundation_behavior_config(config) -> None:
+    duration = getattr(config, "behavior_cost_ramp_updates", 0)
+    if type(duration) is not int or duration < 0:
+        raise ValueError("behavior_cost_ramp_updates must be a nonnegative integer")
+    if duration and (not getattr(config, "resume_from", None)
+                     or config.reward_stage != "reward_v2"):
+        raise ValueError("behavior_cost_ramp_updates requires native reward_v2 resume")
     settings = _foundation_behavior_settings(config)
     for name in ("lateral_dig_cost", "base_travel_cost", "base_turn_cost"):
         if not np.isfinite(settings[name]) or settings[name] < 0:
@@ -1250,6 +1257,10 @@ def _validate_r2_resume_checkpoint(
         )
     if not behavior_finetune and checkpoint.get("train_config") is not None:
         saved_behavior = helpers.checkpoint_foundation_behavior(checkpoint)
+        if checkpoint.get("behavior_cost_ramp_state") is not None:
+            # The helper verifies the effective saved reward. Ordinary resume
+            # must also keep the declared ramp target, not freeze at that reward.
+            saved_behavior.update(checkpoint["behavior_cost_ramp_state"]["target_costs"])
         for name, current in _foundation_behavior_settings(config).items():
             if not np.isclose(saved_behavior[name], current, rtol=1e-6, atol=0.0):
                 raise ValueError(
@@ -1722,6 +1733,7 @@ class MixedAgentTrainConfig:
     lateral_dig_cost: float = 0.0
     base_travel_cost: float = 0.0  # per executed metre
     base_turn_cost: float = 0.0  # per executed radian, excluding cabin swing
+    behavior_cost_ramp_updates: int = 0  # new ramp duration; saved ramps restore automatically
     executable_dig_observation: bool = False
     # Preserve Adam and absolute update while explicitly changing only the
     # four foundation behavior fields recorded in the R2 receipt.
@@ -3167,10 +3179,25 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             config,
             resume_update,
         )
+    behavior_cost_ramp_state = restore_behavior_cost_ramp(
+        config, checkpoint, checkpoint_mode, resume_update,
+        helpers.checkpoint_foundation_behavior(checkpoint)
+        if checkpoint_mode == "resume" and checkpoint is not None and (config.behavior_cost_ramp_updates
+                                      or checkpoint.get("behavior_cost_ramp_state") is not None)
+        else None,
+    )
     # Initialize training components (optionally with env override)
     rng, env, env_params, train_state = make_mixed_agent_states(
         config, env_params_override=env_params_override
     )
+    if behavior_cost_ramp_state is not None:
+        config.behavior_cost_ramp_updates = behavior_cost_ramp_state["duration_updates"]
+        env_params = helpers.overlay_foundation_behavior(env_params, {
+            **_foundation_behavior_settings(config),
+            **ramp_costs(behavior_cost_ramp_state, resume_update),
+        })
+        print(f"Behavior-cost ramp: {behavior_cost_ramp_state}; continuing at {resume_update}.", flush=True)
+        wandb.config.update({"behavior_cost_ramp_state": behavior_cost_ramp_state}, allow_val_change=True)
     resolved_map_edge_px = int(env.batch_cfg.maps_dims.maps_edge_length)
     resolved_edge_length_m = float(env.batch_cfg.maps.edge_length_m)
     resolved_meters_per_tile = resolved_edge_length_m / resolved_map_edge_px
@@ -4309,6 +4336,20 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         *runner_state[3:],
                     )
                 start_time = time.time()
+                if behavior_cost_ramp_state is not None:
+                    # Update only array values between PPO rollouts. Terra's
+                    # step copies this live config into State before rewards.
+                    ramped_env_cfg = helpers.overlay_foundation_behavior(
+                        runner_state[2].env_cfg, {
+                            **_foundation_behavior_settings(config),
+                            **ramp_costs(behavior_cost_ramp_state, i + 1),
+                        },
+                    )
+                    runner_state = (
+                        runner_state[0], runner_state[1],
+                        runner_state[2]._replace(env_cfg=ramped_env_cfg),
+                        *runner_state[3:],
+                    )
                 (
                     runner_state,
                     loss_info,
@@ -4542,6 +4583,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         )
 
                     scalar_keys = set(log_dict) - {"curriculum/conditions"}
+                    if behavior_cost_ramp_state is not None:
+                        log_dict.update({
+                            "reward/behavior_cost_ramp_progress": ramp_progress(behavior_cost_ramp_state, i + 1),
+                            **{f"reward/{key}": value for key, value in
+                               ramp_costs(behavior_cost_ramp_state, i + 1).items()},
+                        })
+                        scalar_keys = set(log_dict) - {"curriculum/conditions"}
                     unexpected = scalar_keys - TRAINING_SCALAR_KEYS
                     if unexpected or len(scalar_keys) > len(TRAINING_SCALAR_KEYS):
                         raise RuntimeError(
@@ -4582,6 +4630,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         checkpoint["pooled_sampler_state"] = pooled_sampler.state_dict()
                     if reward_anneal_state is not None:
                         checkpoint["reward_anneal_state"] = dict(reward_anneal_state)
+                    if behavior_cost_ramp_state is not None:
+                        checkpoint["behavior_cost_ramp_state"] = copy.deepcopy(behavior_cost_ramp_state)
                     partial_reset_receipt = partial_reset_curriculum_receipt(
                         config, i + 1
                     )
@@ -4842,6 +4892,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             ]
         if train_info["reward_anneal_state"] is not None:
             final_checkpoint["reward_anneal_state"] = train_info["reward_anneal_state"]
+        if behavior_cost_ramp_state is not None:
+            final_checkpoint["behavior_cost_ramp_state"] = copy.deepcopy(behavior_cost_ramp_state)
         partial_reset_receipt = partial_reset_curriculum_receipt(
             config, config.num_updates
         )
@@ -5522,6 +5574,12 @@ if __name__ == "__main__":
     ):
         parser.add_argument(f"--{name}", type=float, default=0.0, help=help_text)
     parser.add_argument(
+        "--behavior_cost_ramp_updates", type=int, default=0,
+        help="Linearly increase behavior costs from a native parent over this many "
+        "updates, then hold. Requires --finetune_foundation_behavior for a new "
+        "ramp; saved ramps resume automatically, even when this option is omitted.",
+    )
+    parser.add_argument(
         "--executable_dig_observation",
         action="store_true",
         help="Use actual executable fresh target volume in the existing width-12 "
@@ -6020,6 +6078,7 @@ if __name__ == "__main__":
         lateral_dig_cost=args.lateral_dig_cost,
         base_travel_cost=args.base_travel_cost,
         base_turn_cost=args.base_turn_cost,
+        behavior_cost_ramp_updates=args.behavior_cost_ramp_updates,
         executable_dig_observation=args.executable_dig_observation,
         finetune_foundation_behavior=args.finetune_foundation_behavior,
         finetune_task_bank=args.finetune_task_bank,

@@ -14,13 +14,15 @@ from pathlib import Path
 import subprocess
 import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from utils.behavior_cost_ramp import COST_KEYS, SCHEMA, validate_ramp_state
 
-COST_KEYS = ("lateral_dig_cost", "base_travel_cost", "base_turn_cost")
 FULL_COSTS = (0.5, 0.01, 0.04)  # Previously called combined 2x.
 FRACTIONS = (0.0, 0.25, 0.5, 1.0)
 MIN_SUCCESS = 0.90
 MAX_SUCCESS_LOSS = 0.03
 EVALUATION_INTERVAL = 2500
+RAMP_UPDATES = EVALUATION_INTERVAL
 STAGE_UPDATES = 2 * EVALUATION_INTERVAL
 COUNTS = {"foundation": (64, 64), "trench": (608, 224)}
 EVALUATION_PANELS = {
@@ -65,6 +67,29 @@ def normalized_training(report):
     return contract, receipt
 
 
+def checked_ramp_state(report):
+    """A qualifying cost-stage evaluation must have reached its target costs."""
+    state = report.get("behavior_cost_ramp_state")
+    if state is None:
+        return None
+    declared = {key: report["r2_protocol_receipt"]["foundation_behavior"][key] for key in COST_KEYS}
+    validate_ramp_state(state, report["checkpoint_update"], declared)
+    require(report["checkpoint_update"] >= state["start_update"] + state["duration_updates"],
+            "Cost-stage evaluation is still mid-ramp; evaluate after the target costs are reached")
+    effective = report["treatment_fingerprint"]["contract"]["foundation_behavior"]
+    require(all(math.isclose(effective[key], state["target_costs"][key], rel_tol=1e-6, abs_tol=1e-9)
+                for key in COST_KEYS), "Evaluation effective costs differ from the completed ramp target")
+    return state
+
+
+def stage_ramp(start_update, start_fraction, target_fraction):
+    return {
+        "schema": SCHEMA, "start_update": start_update, "duration_updates": RAMP_UPDATES,
+        "start_costs": {key: value * start_fraction for key, value in zip(COST_KEYS, FULL_COSTS)},
+        "target_costs": {key: value * target_fraction for key, value in zip(COST_KEYS, FULL_COSTS)},
+    }
+
+
 def checked_rows(report, family):
     full_count, family_count = COUNTS[family]
     require(report["deterministic"] is True and report["horizon"] == 450,
@@ -94,6 +119,7 @@ def checked_rows(report, family):
 def completion_gate(family, previous, latest, reference, parent_stage=None):
     """Reference is the frozen, accepted zero-cost parent of the first stage."""
     selected = [checked_rows(r, family) for r in (previous, latest, reference)]
+    ramps = [checked_ramp_state(r) for r in (previous, latest, reference)]
     current = stage(latest)
     require(stage(previous) == current, "Both evaluations must be from the same cost stage")
     require(stage(reference) == 0, "The completion reference must have zero added costs")
@@ -104,7 +130,9 @@ def completion_gate(family, previous, latest, reference, parent_stage=None):
     require(latest["checkpoint_update"] - previous["checkpoint_update"] >= EVALUATION_INTERVAL,
             "Use successive retained evaluations at least 2500 updates apart")
     require(previous["checkpoint_sha256"] != latest["checkpoint_sha256"], "Repeated checkpoint")
+    require(ramps[2] is None, "The zero-cost reference must precede any behavior-cost ramp")
     if current == 0:
+        require(ramps[:2] == [None, None], "Qualify zero-cost learning before starting any behavior-cost ramp")
         require(reference["checkpoint_sha256"] == latest["checkpoint_sha256"],
                 "Freeze the latest zero-cost checkpoint as the initial reference")
     else:
@@ -117,6 +145,10 @@ def completion_gate(family, previous, latest, reference, parent_stage=None):
                 and parent_stage["next_fraction_of_combined_2x"] == FRACTIONS[current]
                 and parent_stage["run_name"] == latest["treatment_fingerprint"]["contract"]["run"]["name"],
                 "Parent stage record does not belong to this cost stage/run")
+        expected_ramp = stage_ramp(parent_stage["parent_update"], FRACTIONS[current - 1], FRACTIONS[current])
+        require(parent_stage.get("next_behavior_cost_ramp_state") == expected_ramp
+                and ramps[0] == ramps[1] == expected_ramp,
+                "Both evaluation ramps must match the parent stage start, duration and cost targets")
         require(previous["checkpoint_update"] >= parent_stage["parent_update"] + EVALUATION_INTERVAL,
                 "Both evaluations must follow training under the current costs")
         require(reference["checkpoint_update"] < previous["checkpoint_update"],
@@ -142,6 +174,7 @@ def completion_gate(family, previous, latest, reference, parent_stage=None):
         "current_fraction_of_combined_2x": FRACTIONS[current],
         "next_fraction_of_combined_2x": fraction,
         "next_costs": {key: value * fraction for key, value in zip(COST_KEYS, FULL_COSTS)},
+        "next_behavior_cost_ramp_state": stage_ramp(latest["checkpoint_update"], FRACTIONS[current], fraction),
         "target_update": latest["checkpoint_update"] + STAGE_UPDATES,
         "evaluate_at_updates": [latest["checkpoint_update"] + EVALUATION_INTERVAL,
                                 latest["checkpoint_update"] + STAGE_UPDATES],
@@ -195,6 +228,8 @@ def check_native_parent(checkpoint, decision, latest):
     require(counts == [adam], "Actual Adam count differs from the native checkpoint clock")
     require(checkpoint["r2_protocol_receipt"] == latest["r2_protocol_receipt"],
             "Native checkpoint reward protocol differs from evaluation")
+    require(checkpoint.get("behavior_cost_ramp_state") == latest.get("behavior_cost_ramp_state"),
+            "Native checkpoint behavior-cost ramp differs from evaluation")
     behavior = checkpoint_foundation_behavior(checkpoint)
     expected = latest["treatment_fingerprint"]["contract"]["foundation_behavior"]
     require(all(math.isclose(behavior[k], expected[k], rel_tol=1e-6, abs_tol=1e-9) for k in expected),
@@ -216,6 +251,7 @@ def check_native_parent(checkpoint, decision, latest):
     _assert_finite_loss_info(checkpoint["loss_info"], update - 1)
     cfg.finetune_foundation_behavior = True
     cfg.finetune_task_bank = False
+    cfg.behavior_cost_ramp_updates = RAMP_UPDATES
     for key, value in decision["next_costs"].items():
         setattr(cfg, key, value)
     _validate_r2_resume_checkpoint(checkpoint, _r2_protocol_receipt(cfg), cfg)
@@ -248,11 +284,13 @@ def launch_environment(decision, latest, checkpoint, run_dir, dataset_root):
         require(hashlib.file_digest(stream, "sha256").hexdigest() == decision["parent_sha256"],
                 "Resume checkpoint differs from the latest evaluated checkpoint")
     contract = latest["treatment_fingerprint"]["contract"]
+    devices = contract["ppo"]["num_devices"]
+    require(type(devices) is int and devices in (1, 2, 4), "Use a supported 1, 2 or 4 GPU parent layout")
     require(contract["ppo"] == {
         "clip_eps": 0.2, "ent_schedule_end": 0.02, "ent_schedule_start": 0.15,
         "ent_schedule_steps": 20000, "flat_minibatch_shuffle": False, "gae_lambda": 0.95,
-        "gamma": 0.9984, "lr": 0.0003, "max_grad_norm": 0.5, "num_devices": 1,
-        "num_envs_per_device": 512, "num_minibatches": 32, "num_steps": 32,
+        "gamma": 0.9984, "lr": 0.0003, "max_grad_norm": 0.5, "num_devices": devices,
+        "num_envs_per_device": 512 // devices, "num_minibatches": 32, "num_steps": 32,
         "update_epochs": 2, "use_value_clip": False, "vf_coef": 2.0,
     }, "Parent PPO settings differ from the supported scratch recipe")
     family = decision["family"]
@@ -262,9 +300,12 @@ def launch_environment(decision, latest, checkpoint, run_dir, dataset_root):
     seed = contract["run"]["seed"]
     fraction = int(100 * decision["next_fraction_of_combined_2x"])
     env = os.environ.copy()
+    require(env.get("NUM_DEVICES", str(devices)) == str(devices),
+            "A cost-stage fork must keep its parent's GPU layout; migrate and qualify at zero costs first")
     env.update(
         MACHINE=env.get("MACHINE", "cscs"), TERRA_PYTHON=env.get("TERRA_PYTHON", sys.executable),
         INITIALIZATION="resume", BANK_TRANSFER="0", BEHAVIOR_FINETUNE="1",
+        BEHAVIOR_COST_RAMP_UPDATES=str(RAMP_UPDATES), NUM_DEVICES=str(devices),
         RESUME_FROM=str(checkpoint), START_UPDATE=str(decision["parent_update"]),
         TARGET_UPDATE=str(decision["target_update"]), SEED=str(seed), TASK_FAMILY=family,
         EXECUTABLE_DIG_OBSERVATION="1", CHECKPOINT_INTERVAL="500",

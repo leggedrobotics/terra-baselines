@@ -33,13 +33,26 @@ the original zero-cost reference, so successive stages cannot accumulate losses.
 | 50% | 0.25 | 0.005 | 0.02 |
 | 100% | 0.5 | 0.01 | 0.04 |
 
-Each cost stage holds its costs constant for 5,000 additional updates, with
-evaluations after +2,500 and +5,000. Increase only after both pass the same
-completion criterion; if they fail, do not increase. The two task families
-qualify independently. Retain a zero-cost sibling from each accepted parent
-and compare at equal additional updates before claiming an efficiency benefit.
-Check native resume for two finite updates and complete the CSCS runtime check
-before the first full stage. The trainer's PPO loop is unchanged.
+Each stage increases its costs linearly from the accepted parent's values to
+the next table row over 2,500 additional updates, then holds those target costs
+for another 2,500 updates. Evaluate at +2,500 and +5,000, once the target costs
+are reached. Both reports must pass the completion criterion before another
+increase. An evaluation taken during the ramp cannot qualify a stage. The two
+task families qualify independently. Retain a zero-cost sibling from each
+accepted parent and compare at equal additional updates before claiming an
+efficiency benefit. A failed stage is rejected; operations can resume the
+accepted parent. There is no automatic rollback or automatic stage advance.
+Complete the CSCS runtime check and verify two finite native resume updates
+before full training in the allocation.
+
+`train.sh` supports `NUM_DEVICES=1`, `2` or `4` and derives respectively 512,
+256 or 128 environments per device. The global rollout remains 512 × 32 =
+16,384 transitions and 64 Adam steps per update. Advantage normalization is
+local to each GPU, so a layout change still changes PPO statistics. Migrate a
+control to the desired layout while costs remain zero, then collect both
+qualifying evaluations and the frozen reference on that layout. The cost-stage
+launcher rejects changing the parent's GPU layout; each comparison retains
+its own zero-cost baseline on the same layout.
 
 `finetune_after_completion.py` checks the reports, the native parent checkpoint,
 its actual optimizer count and the existing training bank. Without `--execute`
@@ -66,10 +79,20 @@ from the current cost stage, and add
 command with `--execute` only inside the assigned GPU allocation. It creates
 the fresh output directory and `penalty_stage.json` before invoking the normal
 trainer. Copy that file with the checkpoint when moving or continuing a stage.
-The launcher sets `INITIALIZATION=resume`, `BANK_TRANSFER=0` and
-`BEHAVIOR_FINETUNE=1`; the launcher keeps the digging observation fixed and
-permits the cost change through the existing native continuation interface. A same-stage walltime
-continuation uses `train.sh` with the same costs and actual checkpoint update.
+The launcher sets `INITIALIZATION=resume`, `BANK_TRANSFER=0`,
+`BEHAVIOR_FINETUNE=1` and `BEHAVIOR_COST_RAMP_UPDATES=2500`; it keeps the digging
+observation fixed and starts the ramp through the native continuation
+interface. A same-stage walltime continuation uses `train.sh` with the same
+declared target costs and actual checkpoint update. Omit the ramp override
+(default 0) to restore the saved ramp and its original start update.
+
+`penalty_stage.json` records `next_behavior_cost_ramp_state` for its child.
+Checkpoints and evaluations expose `behavior_cost_ramp_state` with the schema
+`terra_behavior_cost_ramp_v1`, start update, duration, start costs and target
+costs. The evaluation treatment fingerprint reports effective checkpoint
+costs; the R2 receipt retains the declared targets. Both plateau evaluations
+must match the schedule recorded by their parent stage. This separates a
+partially completed ramp from training at the target costs after resume.
 
 Judge completion first, then compare productive base poses, unique required
 area per setup, retained pose-to-pose distance, workspace edge adjacency,
