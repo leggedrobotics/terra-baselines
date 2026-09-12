@@ -8,6 +8,13 @@ unverified after the CSCS certificate expired September 12 at 11:32 CEST.
 See the September 12 entry at the end of this file. Earlier scheduler states
 below are timestamped historical observations.
 
+The approved next recipe continues the two corrected zero-cost controls and
+introduces behavior costs only after sustained 90% exact fixed-panel
+completion. Neither family qualifies at the saved u10000 checkpoint. The
+offline stage launcher is prepared; no continuation or delayed-cost job has
+been submitted. See the final entry and
+[recipe](../scripts/foundation_reward_sweep/README.md).
+
 ## 2026-09-07 local pipeline maintenance
 
 Junction/continuation/compilation fixes passed local CPU checks and a one-GPU
@@ -1017,3 +1024,39 @@ policy learns reliable completion. It has not been tested, and no new run is
 submitted. Finish the existing bounded screen and examine later held-out
 checkpoints before a convergence or saturation conclusion. See the
 [complete comparison and raw evidence](../../../../.artifacts/terra_movement_restart_cscs_20260911/REPORT_20260912.md).
+
+### September 12: delayed behavior-cost recipe approved and prepared
+
+Continue the corrected zero-cost foundation and trench controls, preserving
+their native model/Adam/update clocks, Terra 46738cde environment, existing banks,
+observations and PPO configuration. No fresh initialization or generalist is
+planned. Do not renew the cost arms that suppress early digging.
+
+Each family must independently reach at least 90% exact completion on two
+successive fixed-panel evaluations at least 2,500 updates apart: 58/64
+foundations or 202/224 trenches. Keep greedy decoding, 450 steps and verified
+resets; evaluate all 608 trench-panel rows. The saved u10000 controls have
+1/64 and 20/224 successes, so both remain at zero added costs. Those native
+parents have finite parameters/optimizer state and actual Adam count 640,000.
+
+After eligibility, freeze the accepted zero-cost reference and retain a
+zero-cost sibling. Add 25%, then 50%, then 100% of the previous combined 2x
+costs, holding each stage for 5,000 additional updates. Evaluate at +2,500 and
++5,000; both must stay above 90% completion and within three percentage points
+of the original reference before another increase. Preserve completion before
+ranking work-pose efficiency and adjacency. The
+[stage launcher](../scripts/foundation_reward_sweep/README.md) defaults to an
+evidence check and prints the native training command; `--execute` belongs
+inside a checked GPU allocation. Copy `penalty_stage.json` with each parent
+checkpoint and provide it for later increases.
+
+CSCS SSH still failed after certificate expiry at the 12:46 CEST check, so jobs
+4645193/4645194 have no refreshed live state. Latest checkpoint retrieval,
+evaluation, the next allocation's runtime check and a two-update native
+continuation smoke remain pending. No new training, submission or cancellation
+has occurred for this recipe. The implementation passed 72 focused CPU tests
+and 22 subtests, shellcheck, syntax checks and independent review. Both real
+u10000 native parents and their existing bank identities pass CPU inspection;
+wrong update/Adam metadata, partial resets and nonfinite model data are rejected.
+Both real completion gates stay closed. See
+`.artifacts/terra_delayed_penalties_20260912/` at the workspace root for evidence.

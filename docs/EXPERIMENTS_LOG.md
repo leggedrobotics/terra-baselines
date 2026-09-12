@@ -401,3 +401,33 @@ convergence or frozen-policy environment-fix result.
 CSCS authentication expired September 12 at 11:32 CEST; live scheduler state
 and later checkpoints could not be refreshed in the morning. No training
 settings or jobs changed. See the [complete comparison](../../../../.artifacts/terra_movement_restart_cscs_20260911/REPORT_20260912.md).
+
+### September 12: prepare completion-first behavior-cost continuation
+
+The user approved introducing penalties after the policies complete most maps.
+Continue the corrected zero-cost controls separately for foundations and
+trenches; preserve native Adam/update/entropy clocks, banks, PPO settings and
+the fixed environment. The first cost stage requires two successive greedy
+450-step fixed-panel evaluations at least 2,500 updates apart with at least
+58/64 foundation or 202/224 trench exact successes. Saved u10000 results of
+1/64 and 20/224 do not qualify.
+
+The prepared offline launcher advances through 25%, 50% and 100% of the old
+combined 2x costs in 5,000-update stages. Each subsequent pair of evaluations
+must retain 90% completion and remain within three percentage points of the
+original accepted zero-cost reference. It validates the native parent and
+bank, uses the existing trainer and records each stage for later continuation.
+Retain a zero-cost sibling and compare efficiency on common successes at equal
+additional updates. The
+[recipe](../scripts/foundation_reward_sweep/README.md) supersedes applying the
+costs from scratch; it is not evidence of improved behavior yet.
+
+Validation: 72 focused CPU tests and 22 subtests pass, together with shellcheck
+and syntax checks. Both actual u10000 control checkpoints pass native finite
+model/Adam/loss and bank checks at Adam 640000. Each rejects deliberately wrong
+update/Adam metadata, partial-reset state and nonfinite model values; the real
+completion gates remain false. Independent review has no remaining findings.
+Evidence is in `.artifacts/terra_delayed_penalties_20260912/` at the workspace root.
+No new training, submission or cancellation occurred. CSCS authentication still
+fails; latest control checkpoints, live scheduler state and the required next
+allocation's runtime/native continuation smoke remain pending.

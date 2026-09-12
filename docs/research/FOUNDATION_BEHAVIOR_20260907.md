@@ -381,3 +381,51 @@ Full-panel reset identities, treatment compatibility and recorded integrity
 checks pass; all u5000/u10000 checkpoint checks include finite parameters,
 optimizer/loss, actual Adam counts and hashes. See the
 [matched comparison and evidence](../../../../../.artifacts/terra_movement_restart_cscs_20260911/REPORT_20260912.md).
+
+## September 12 decision: introduce costs after reliable completion
+
+The user approved delaying the added behavior costs until the policies have
+learned to complete most maps. Continue the corrected zero-cost foundation and
+trench controls separately. Preserve the banks, PPO settings, native optimizer
+state, absolute entropy schedule and Terra 46738cde environment. The hard
+fresh-trench alignment rule and chassis-soil protections remain enabled during
+this zero-cost learning phase. Neither a scratch restart nor a new generalist
+is part of this recipe. Do not renew the early cost arms that suppress digging.
+
+The eligibility criterion is at least 90% exact completion in two successive
+fixed-panel evaluations at least 2,500 updates apart: 58/64 foundations or
+202/224 trenches. Use greedy decoding, the existing 450-step horizon and the
+same verified initial resets. The trench report must retain the full 608-row
+development panel; only its 224 trench episodes determine trench eligibility.
+At the saved u10000 comparisons, the controls achieve 1/64 and 20/224, so
+neither has qualified. Excavation percentage and online success do not replace
+this completion criterion.
+
+Freeze the latest qualifying zero-cost checkpoint and evaluation. Introduce
+25%, then 50%, then 100% of the previous combined 2x costs: lateral/travel/turn
+are respectively `(0.125, 0.0025, 0.01)`, `(0.25, 0.005, 0.02)` and
+`(0.5, 0.01, 0.04)`. Travel and turn units remain metres and radians. Hold each
+stage for 5,000 additional updates and evaluate at +2,500 and +5,000. Both
+evaluations must retain at least 90% exact completion and stay within three
+percentage points of the frozen zero-cost reference: at most one fewer
+foundation success or six fewer trench successes. Failure prevents a further
+cost increase. The reference does not move between stages.
+
+Keep a zero-cost sibling from each accepted parent to compare equal additional
+training. First compare exact completion, then productive base poses, unique
+required area per setup, retained pose-to-pose distance, workspace edge
+adjacency, lateral fresh excavation and loose-soil relifts on common successes.
+Deployment executes the retained base poses/workspaces and uses its own
+navigation stack between them; raw Terra navigation counts remain secondary,
+while continuity between workspaces remains a required behavior. A lower cost
+score without completed excavation is not an improvement.
+
+The offline launcher and invocation are documented in
+[the reward-training recipe](../../scripts/foundation_reward_sweep/README.md).
+It preserves native model/Adam/update clocks and the trainer loop, checks the
+evaluated parent and bank, and records `penalty_stage.json` for each stage.
+Later increases require the preceding stage record to keep the original
+reference. Focused CPU checks and independent review passed; the first native
+GPU continuation smoke remains required before submission. This is an
+implemented experiment recipe, not a demonstrated improvement; no delayed-cost
+training has run yet.

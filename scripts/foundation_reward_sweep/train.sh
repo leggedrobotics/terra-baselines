@@ -14,6 +14,11 @@ MACHINE="${MACHINE:-euler}"
 : "${EXECUTABLE_DIG_OBSERVATION:?Set 0 for legacy or 1 for executable affordance}"
 SEED="${SEED:-20260907}"
 INITIALIZATION="${INITIALIZATION:-resume}"
+BEHAVIOR_FINETUNE="${BEHAVIOR_FINETUNE:-0}"
+[[ "$BEHAVIOR_FINETUNE" =~ ^[01]$ ]] || { echo "BEHAVIOR_FINETUNE must be 0 or 1" >&2; exit 2; }
+[[ "$BEHAVIOR_FINETUNE" == 0 || "$INITIALIZATION" == resume ]] || {
+    echo "BEHAVIOR_FINETUNE requires INITIALIZATION=resume" >&2; exit 2;
+}
 case "$INITIALIZATION" in
     scratch)
         START_UPDATE="${START_UPDATE:-0}"
@@ -98,6 +103,9 @@ if [[ "$INITIALIZATION" == resume ]]; then
         FOUNDATION_TRAIN_ARGS+=(--finetune_task_bank --finetune_foundation_behavior --no-load-env-from-checkpoint)
     else
         FOUNDATION_TRAIN_ARGS+=(--load_env_from_checkpoint)
+        if [[ "$BEHAVIOR_FINETUNE" == 1 ]]; then
+            FOUNDATION_TRAIN_ARGS+=(--finetune_foundation_behavior)
+        fi
     fi
 fi
 
