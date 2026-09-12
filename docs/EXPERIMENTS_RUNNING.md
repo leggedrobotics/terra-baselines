@@ -1,20 +1,17 @@
 # Experiments — current state (updated 2026-09-12)
 
-Latest zero-cost controls reach **8/64** foundation completions at u33000 and
-**36/224** trench completions at u32000. Both remain below the threshold for
-adding penalties. Original CSCS jobs **4645193/4645194** ended at their
-24-hour limits (`TIMEOUT`, exit 0:0).
+At September 12, 23:41 CEST, zero-cost trench continuation **4652918** is
+**RUNNING** on four GH200s at nid005935, around u50831 with a u50500 checkpoint.
+Retained u48500 passed native checks and completes **147/224 trenches (65.6%)**,
+up from **36/224 at u32000**; mean excavation rose from 65.9% to **91.3%**.
+Diagnostic **4652857** completed successfully and measured **2.29x**
+foundation throughput on four versus one GPU before triggering this bounded
+24-hour continuation.
 
-CSCS diagnostic **4652857** started at 16:35:10 CEST on **nid005780**. By
-16:44, its four-GH200 foundation test passed 16 native updates and all 17
-checkpoint checks, with median throughput 15,936 transitions/s after the
-first two updates. The matched one-GPU test is running; scaling and trench
-resume acceptance remain pending. Euler replacement **13939497** is
-PENDING with no allocated GPU or reliable start estimate; pending 13935300 was
-cancelled. Successful runtime and scaling checks trigger the already-authorized
-24-hour zero-cost continuation for each family: foundations on Euler
-and trenches on CSCS. No production child or penalty stage has been submitted
-yet. See the final entry and [recipe](../scripts/foundation_reward_sweep/README.md);
+Euler foundation diagnostic **13939497** remains **PENDING/Priority**, with no
+reliable start estimate or foundation production job. Foundation remains
+**8/64 at u33000**. Both families are below the threshold for penalties;
+added costs remain zero. See the final entry and [recipe](../scripts/foundation_reward_sweep/README.md);
 earlier scheduler observations below are historical.
 
 ## 2026-09-07 local pipeline maintenance
@@ -1198,3 +1195,71 @@ with clean b6754540 plus the portable hash patch matching b6d1597. Current
 routing uses lterenzi; historical dataset and W&B names remain. The
 [current artifact status](../../../../.artifacts/terra_delayed_penalties_20260912/STATUS.md)
 tracks diagnostic results and conditional submission receipts.
+
+## September 12, 23:03 CEST: trench continuation running; foundation queued
+
+CSCS diagnostic **4652857** completed with exit 0:0 from 16:35:10 to 17:07:07
+CEST (31m57s). All four diagnostic phases passed, including the trench native
+resume. Median foundation throughput after the first two updates was
+15,935.585 transitions/s on four GPUs versus 6,961.24 on one GPU: **2.2892x**.
+The four-GPU trench resume reached 15,778.96 transitions/s. These short samples
+establish runtime acceptance and throughput, not faster policy learning.
+Its resumed PPO executable hit the persistent cache: the XLA compilation
+stage took 4.153 seconds versus 65.402 seconds initially. Tracing/lowering
+still occur when a training process restarts.
+
+The accepted scaling result triggered the already-authorized zero-cost trench
+continuation **4652918**. It started at 17:10:25 on **nid005935**, using four
+GH200s. CPU parent checks, cuDNN/NCCL preflight and two finite native updates
+passed from u32016 to u32018. At 23:03 the production run is RUNNING after
+about 5h52m, near u48919: 16,901 updates beyond the production start. Recent
+training logs report roughly 13.5–13.9k global transitions/s. The one 24-hour
+allocation is scheduled to end September 13 at 17:10 CEST; no further
+allocation is automatically submitted.
+
+Training retains zero lateral/travel/turn costs, 512 global environments
+(4 × 128), 32-step rollouts, 64 Adam steps per update and checkpoints every
+500 updates. W&B is offline under
+`terra-trench-control-4gpu-after-4652857-4652918`. The native run directory is
+`/capstor/scratch/cscs/lterenzi/terra-training/runs/terra-smooth-ramp-20260912/continuations/4652918`.
+
+Retained **u48500** was copied locally and checked: Adam **3,104,000**, finite
+model/optimizer/loss, zero effective behavior costs and zero recorded
+transition-integrity counters. Its SHA-256 is
+`a0cba3c9fd4889a84de3d699e60880d5887899df64412e1a3b7d0eb0c73ef82f`.
+The full 608-row greedy 450-step development evaluation completed at 23:40;
+the 224 trench rows improve from **36/224 to 147/224 exact** (16.1% to 65.6%),
+**65.9106% to 91.3255% dug**, and **62.8468% to 87.0979% disposed**. All 608
+rows have zero recorded integrity failures, nonfinite states, map mutations,
+termination disagreements and mass residual. Reset, bank, R2 and normalized
+treatment checks match; only the intended training GPU layout and run name
+differ. There are 115 newly solved episodes and four formerly solved episodes
+that now fail. Foundation u33000 remains 8/64 exact.
+
+| Trench layout | u32000 exact | u48500 exact |
+| --- | ---: | ---: |
+| Straight | 35/64 | 48/64 |
+| T-junction | 1/32 | 25/32 |
+| Multiple segments | 0/32 | 23/32 |
+| Two-sided network | 0/64 | 51/64 |
+| Road-constrained network | 0/32 | 0/32 |
+
+On the 32 common successes, efficiency is almost unchanged: productive base
+poses 7.406 to 7.375, unique area per productive setup 2.948 to 2.951 m2,
+retained-work straight-line travel 28.578 to 28.398 m, and edge-adjacent
+workspace transfers 100% in both. This supports continued completion learning;
+it does not establish a workspace-efficiency gain. Keep costs at zero because
+147/224 remains below the 202/224 threshold and a second qualifying checkpoint
+would still be required.
+
+At 23:41, CSCS4652918 is still running around u50831, with u50500 saved and
+recent median throughput 13,681.645 transitions/s. Euler **13939497** remains
+PENDING/Priority with no reliable start estimate; the earlier September 13
+20:25 estimate is no longer available. No
+foundation production continuation has started or been submitted by its hook.
+Changing GPU count preserves global batch size but changes per-device
+advantage normalization; qualifying evaluations and the accepted zero-cost
+reference must use the selected training layout before a later penalty fork.
+No jobs or training settings were changed during this status check. Local
+checkpoint/evaluation evidence is in
+[status_2302](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/status_2302/).

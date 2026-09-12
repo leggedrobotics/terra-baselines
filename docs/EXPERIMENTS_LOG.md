@@ -498,3 +498,45 @@ end, zero integrity counters and no added costs. Median global throughput
 after the first two updates is 15,935.585 transitions/s; elapsed process time
 including startup/compilation is 455 seconds. The one-GPU comparison is
 running. Scaling and trench resume checks still precede any production child.
+
+## September 12, 23:03 CEST: accepted CSCS scaling and live trench continuation
+
+Diagnostic **4652857** completed 16:35:10–17:07:07 CEST with exit 0:0. All four
+phases passed. Matched foundation median throughput is 15,935.585 versus
+6,961.24 transitions/s on four versus one GPU (**2.2892x**); four-GPU trench
+resume reaches 15,778.96 transitions/s. This supports the allocation choice;
+it is not a measured learning improvement.
+
+The resumed trench diagnostic reports a persistent cache hit for the same
+`pmap__update_step` executable. Its XLA compilation stage took 4.153 seconds,
+versus 65.402 seconds in the first process. Python tracing and lowering still
+run on restart; this does not eliminate all startup overhead.
+
+Its hook submitted the authorized zero-cost trench continuation **4652918**,
+which started at 17:10:25 on nid005935 with four GH200s. CPU parent checks,
+CUDA/NCCL preflight and native u32016→u32018 startup checks passed. At 23:03
+the job is RUNNING around u48919, with recent throughput around 13.5–13.9k
+transitions/s. It keeps 512 global environments, 64 Adam steps per update and
+500-update checkpoints; the single 24-hour allocation ends around September
+13 at 17:10 CEST. W&B remains offline as
+`terra-trench-control-4gpu-after-4652857-4652918`.
+
+Retrieved u48500 passes finite model/optimizer/loss and zero-cost/integrity
+checks at Adam 3,104,000. Its 608-row greedy 450-step evaluation completed at
+23:40. The 224 trench rows improve from **36/224 to 147/224 exact**, 65.9106%
+to **91.3255% dug**, and 62.8468% to **87.0979% disposed**. All full-panel
+integrity checks pass. Reset/bank/R2 and normalized treatment checks match,
+allowing only the training GPU layout and linked run name. T-junctions improve
+1/32 to 25/32, two-sided networks 0/64 to 51/64, and multi-segment trenches
+0/32 to 23/32. Road-constrained networks remain 0/32. There are 115 gained and
+four lost successes; efficiency on 32 common successes is almost unchanged.
+No penalty stage is active: 147/224 is below 202/224, and a second qualifying
+checkpoint would still be required. Foundation remains 8/64 at u33000.
+
+At 23:41, CSCS4652918 remains RUNNING around u50831, with u50500 saved and
+recent median throughput 13,681.645 transitions/s. Euler **13939497** is still
+PENDING/Priority, with no reliable start estimate or foundation production job.
+Device-local advantage
+normalization changes after layout migration, so completion qualification
+must use the selected layout. No job or training-setting mutations occurred in
+this status check. Evidence: [status_2302](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/status_2302/).
