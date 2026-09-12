@@ -1,10 +1,12 @@
-# Experiments — current state (updated 2026-09-11)
+# Experiments — current state (updated 2026-09-12)
 
-Latest CSCS submission: corrected scratch jobs **4645193** (control/combined)
-and **4645194** (lateral/relocation), both PENDING(Priority) at September 11,
-11:48 CEST. Each contains separate foundation and trench policies, one GPU per
-policy. See the September 11 restart entry at the end of this file. Earlier
-RUNNING or authentication-blocked entries below are historical observations.
+Corrected scratch jobs **4645193** (control/combined) and **4645194**
+(lateral/relocation) completed their retained u5000/u10000 comparisons.
+At u10000, control leads both task families; travel/turn-cost policies have
+zero exact completions and zero trench excavation. Live scheduler status is
+unverified after the CSCS certificate expired September 12 at 11:32 CEST.
+See the September 12 entry at the end of this file. Earlier scheduler states
+below are timestamped historical observations.
 
 ## 2026-09-07 local pipeline maintenance
 
@@ -968,3 +970,50 @@ after the following rollout receipt exists, saves the per-arm smoke results,
 and evaluates serially when the local GPU is free. Scheduler snapshots and
 driver output live in the restart artifact directory. This replaces the old
 driver waiting on the cancelled component job; no new metrics exist yet.
+
+### September 12: all eight u5000/u10000 comparisons completed
+
+The bounded local evaluator finished successfully at 01:51:17 CEST. A prior
+summary error (`KeyError: 'geometry'`) was caused by optional metadata missing
+from trench rows. Required identities remain strict; optional geometry now
+requires matching presence and values. Saved component rollouts were reused
+and validated, then paired u5000 and both u10000 suites completed. All four
+milestone/suite directories contain their summaries and completion markers.
+The driver exited after its planned work; it is no longer a live monitor.
+
+| Costs | Foundation exact at u10000 | Foundation dug | Trench exact at u10000 | Trench dug |
+| --- | ---: | ---: | ---: | ---: |
+| control | 1/64 | 71.03% | 20/224 | 47.26% |
+| lateral only | 1/64 | 55.00% | 2/224 | 43.36% |
+| travel/turn only | 0/64 | 12.47% | 0/224 | 0% |
+| combined 2x | 0/64 | 8.28% | 0/224 | 0% |
+
+Control foundation excavation improves 45.09%→71.03% from u5000→u10000;
+trench completions improve 2→20/224. Lateral-only improves 48.49%→55.00%
+foundation excavation and 0→2/224 trench completions. Both travel-cost
+policies make zero fresh excavation in all 224 trench cases at both milestones.
+No foundation successes are common between control and lateral-only; their
+trench overlap is only one success. There is no supported comparative
+efficiency benefit or policy promotion.
+
+All 5,376 saved full-panel episode rows pass the recorded integrity and reset
+checks. All checkpoint checks retain finite model/Adam/loss validation, exact
+updates, actual Adam counts and hashes. Within-family comparisons verify the
+same full reset identities and matching treatment/reward contracts after
+removing run name and the three cost fields. One seed and separate nodes limit
+variance and factorial-interaction claims. These results concern early scratch
+learning, not the later trained policies or convergence.
+
+At the September 12 morning check, SSH failed with `Permission denied
+(publickey)`; certificate validity ended at 11:32:17 CEST. Last live manual
+scheduler verification was 00:02:55, both RUNNING; successful later checkpoint
+retrieval does not establish present scheduler state. The 24-hour allocations
+were scheduled to end around 16:07 CEST today. Authentication renewal is needed
+for a fresh status and later checkpoints. No jobs, costs, PPO settings or
+allocation limits changed in this check.
+
+The next-recipe hypothesis is to reduce or delay travel/turn costs until the
+policy learns reliable completion. It has not been tested, and no new run is
+submitted. Finish the existing bounded screen and examine later held-out
+checkpoints before a convergence or saturation conclusion. See the
+[complete comparison and raw evidence](../../../../.artifacts/terra_movement_restart_cscs_20260911/REPORT_20260912.md).

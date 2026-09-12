@@ -345,3 +345,39 @@ The original CSCS cohort and automatic evaluator still use ba9cc214; no weights,
 PPO settings, reward costs or observations changed. The
 [diagnosis, correction tests and replay evidence](../../../../../.artifacts/terra_excavation_scratch_cscs_20260910/foundation_regression_diagnosis_20260911/REPORT.md)
 include the recorded geometry and independent review.
+
+## September 12: corrected scratch cost comparison at u10000
+
+Both task families now have the four cost combinations on the corrected
+movement environment: zero costs, lateral-only, travel/turn-only and combined
+2x. Seed, observations, architecture, PPO and task-specific banks are shared;
+each policy starts from scratch. At u10000, each has 163.84M fresh training
+transitions. This separates the cost components from the previously confirmed
+movement bug, which is fixed in every new arm.
+
+Foundation control/lateral/relocation/combined excavation is respectively
+71.03%/55.00%/12.47%/8.28%, with 1/1/0/0 exact successes out of 64. Trench
+success is 20/2/0/0 out of 224, with 47.26%/43.36%/0%/0% excavation. All
+travel-cost trench episodes perform zero fresh excavation at both u5000 and
+u10000. The control continues improving while the travel-cost arms suppress
+productive work. Lateral-only also trails control, especially in trench
+completion.
+
+There is no foundation common-success set between control and lateral-only,
+and their trench intersection contains only one episode. Comparisons against
+travel-cost policies have no common successes. Lower travel, fewer work poses
+or different workspace averages on failed episodes cannot establish improved
+excavation efficiency. The raw reports retain all deployment-relevant work-pose
+travel, workspace-area and adjacency metrics.
+
+These results argue against increasing behavior penalties during early scratch
+training. Reducing or introducing travel/turn costs after reliable completion
+is a next-test hypothesis; it is not yet a demonstrated training strategy.
+Finish the existing 24-hour screen and evaluate later checkpoints before a
+convergence or saturation claim. One training seed and the two-node grouping
+limit variance and factorial-interaction conclusions. No policy is promoted.
+
+Full-panel reset identities, treatment compatibility and recorded integrity
+checks pass; all u5000/u10000 checkpoint checks include finite parameters,
+optimizer/loss, actual Adam counts and hashes. See the
+[matched comparison and evidence](../../../../../.artifacts/terra_movement_restart_cscs_20260911/REPORT_20260912.md).

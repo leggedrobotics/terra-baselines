@@ -380,3 +380,24 @@ component job 4642631 was cancelled before replacement; the old local driver
 waiting for it was stopped. No other jobs changed. The 192-GPU-hour replacement
 budget, fixed PPO/cost matrix and equal-update evaluation contracts are in the
 [restart plan](../../../../.artifacts/terra_movement_restart_cscs_20260911/PLAN.md).
+
+### September 12: corrected u10000 comparison favors zero behavior costs
+
+All eight policies have retained u5000/u10000 held-out evaluations; the local
+driver completed at 01:51:17 CEST. At u10000, foundation control/lateral/
+relocation/combined exact success is 1/1/0/0 out of 64, with mean excavation
+71.03%/55.00%/12.47%/8.28%. Trench success is 20/2/0/0 out of 224, with
+47.26%/43.36%/0%/0% excavation. Control trench successes increased from 2 at
+u5000 to 20 at u10000; both travel-cost policies still perform no fresh trench
+excavation. There are too few common successes to establish an efficiency gain.
+
+The full 5,376 episode rows across both milestones pass recorded integrity and
+reset checks. A missing optional trench geometry field had stopped summary
+generation; fixing the presence/value comparison recovered saved rollouts
+without repeating them. Checkpoint update/Adam/hash and matched treatment
+contracts remain verified. This is an early scratch-cost result, not a
+convergence or frozen-policy environment-fix result.
+
+CSCS authentication expired September 12 at 11:32 CEST; live scheduler state
+and later checkpoints could not be refreshed in the morning. No training
+settings or jobs changed. See the [complete comparison](../../../../.artifacts/terra_movement_restart_cscs_20260911/REPORT_20260912.md).
