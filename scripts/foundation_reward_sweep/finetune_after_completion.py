@@ -41,6 +41,15 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def sha256_file(path):
+    # CSCS runtimes can predate hashlib.file_digest (Python 3.11).
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def load_report(path):
     value = json.loads(Path(path).read_text())
     require(isinstance(value, list) and len(value) == 1, "Expected one fixed-panel evaluation")
@@ -205,9 +214,8 @@ def check_training_bank(root, family, expected_sidecar):
             and metadata["source_registry_sha256"] == registry_sha
             and metadata["distance_protocol_id"] == "obstacle_geodesic_8_physical_global_v1",
             "Training subset does not match the supported bank")
-    with (root / "source_registry.jsonl").open("rb") as stream:
-        require(hashlib.file_digest(stream, "sha256").hexdigest() == registry_sha,
-                "Training source registry differs from bank metadata")
+    require(sha256_file(root / "source_registry.jsonl") == registry_sha,
+            "Training source registry differs from bank metadata")
     return root
 
 
@@ -280,9 +288,8 @@ def load_native_parent(path, decision, latest):
 def launch_environment(decision, latest, checkpoint, run_dir, dataset_root):
     require(decision["ready"], "Completion gate has not passed; keep added costs at zero/current stage")
     checkpoint = Path(checkpoint).resolve()
-    with checkpoint.open("rb") as stream:
-        require(hashlib.file_digest(stream, "sha256").hexdigest() == decision["parent_sha256"],
-                "Resume checkpoint differs from the latest evaluated checkpoint")
+    require(sha256_file(checkpoint) == decision["parent_sha256"],
+            "Resume checkpoint differs from the latest evaluated checkpoint")
     contract = latest["treatment_fingerprint"]["contract"]
     devices = contract["ppo"]["num_devices"]
     require(type(devices) is int and devices in (1, 2, 4), "Use a supported 1, 2 or 4 GPU parent layout")
