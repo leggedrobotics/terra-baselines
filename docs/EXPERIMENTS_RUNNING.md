@@ -1,20 +1,21 @@
 # Experiments — current state (updated 2026-09-12)
 
-Corrected scratch jobs **4645193** (control/combined) and **4645194**
-(lateral/relocation) completed their retained u5000/u10000 comparisons.
-At u10000, control leads both task families; travel/turn-cost policies have
-zero exact completions and zero trench excavation. CSCS access was restored September 12 at 15:52 CEST; both original jobs
-were still running near their 24-hour limit at that check.
-See the September 12 entry at the end of this file. Earlier scheduler states
-below are timestamped historical observations.
+Latest zero-cost controls reach **8/64** foundation completions at u33000 and
+**36/224** trench completions at u32000. Both remain below the threshold for
+adding penalties. Original CSCS jobs **4645193/4645194** ended at their
+24-hour limits (`TIMEOUT`, exit 0:0).
 
-The approved next recipe continues the two corrected zero-cost controls and
-introduces behavior costs only after sustained 90% exact fixed-panel
-completion. Neither family qualifies at the saved u10000 checkpoint. The
-offline stage launcher now uses a linear ramp and hold. No production
-continuation or delayed-cost stage has been submitted; Euler diagnostic
-13935300 is queued under lterenzi. See the final entry and
-[recipe](../scripts/foundation_reward_sweep/README.md).
+CSCS diagnostic **4652857** started at 16:35:10 CEST on **nid005780**. By
+16:44, its four-GH200 foundation test passed 16 native updates and all 17
+checkpoint checks, with median throughput 15,936 transitions/s after the
+first two updates. The matched one-GPU test is running; scaling and trench
+resume acceptance remain pending. Euler replacement **13939497** is
+PENDING with no allocated GPU or reliable start estimate; pending 13935300 was
+cancelled. Successful runtime and scaling checks trigger the already-authorized
+24-hour zero-cost continuation for each family: foundations on Euler
+and trenches on CSCS. No production child or penalty stage has been submitted
+yet. See the final entry and [recipe](../scripts/foundation_reward_sweep/README.md);
+earlier scheduler observations below are historical.
 
 ## 2026-09-07 local pipeline maintenance
 
@@ -1116,3 +1117,84 @@ Artifacts: `/home/lorenzo/moleworks/.artifacts/terra_delayed_penalties_20260912/
 (`focused_tests.log`, `local_verification.json`, local GPU logs, launch files,
 source archive/diff, and `latest_controls/native_validation.json`). Account
 cleanup evidence is in `.artifacts/retire_euler_weber_20260912/STATUS.md`.
+
+## 2026-09-12 latest control evaluations and conditional continuations
+
+Both corrected scratch allocations, 4645193 and 4645194, ended after 24 hours
+with `TIMEOUT`, exit 0:0. CSCS access is restored under lterenzi. Selected
+zero-cost parents are foundation u33000 and trench u32000; native CPU checks
+verify finite model/Adam/loss, exact optimizer clocks and zero costs. Their
+hashes and paths are in
+[parent_selection_local.json](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/parent_selection_local.json).
+
+Local greedy evaluation uses the unchanged 450-step horizon, baselines 866e8e
+and Terra 46738cde. Foundation has 64 validation episodes; the trench evaluation
+retains all 608 development episodes and reports its 224 trench episodes.
+
+| Control checkpoint | Exact completion | Excavated | Disposed |
+| --- | ---: | ---: | ---: |
+| Foundation u33000 | 8/64 | 93.2860% | 90.9650% |
+| Trench u32000 | 36/224 | 65.9106% | 62.8468% |
+
+The earlier matched u10000 controls achieved 1/64 and 71.033% excavation for
+foundations, and 20/224 and 47.257% for trenches. All 672 new full-panel rows
+have zero recorded integrity failures, nonfinite states, target/obstacle
+mutations, termination disagreements, unavailable integrity and mass residual.
+Progress improved, but neither family reaches 58/64 or 202/224. Keep added
+costs at zero. See the [evaluation artifacts](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/evaluation/).
+
+CSCS diagnostic **4652857** started at 16:35:10 CEST on nid005780. The 16:37
+check confirms four GH200s, actual parent/bank checks, cuDNN backward and NCCL
+preflight. By 16:44 its foundation four-GPU test advanced u33000 to u33016;
+all 17 periodic/FINAL checkpoints pass finite model/Adam/loss and integrity
+checks. Median throughput after the first two updates is 15,935.585 global
+transitions/s; the process took 455 seconds including startup and compilation.
+The matched one-GPU test is running, so scaling and trench native-resume
+acceptance remain pending. This one-hour diagnostic compares 16 foundation updates on four versus one GPU
+from the same parent, then checks
+four-GPU trench continuation across a 2+14-update resume.
+
+Its `--continue-trench` hook submits one 24-hour four-GPU trench continuation after all
+diagnostic checks pass and foundation speedup reaches at least 1.5x. That is an
+allocation guard, not evidence of better trench learning. A failed speed guard
+records a reason and submits no job. The accepted parent would be the verified
+diagnostic trench u32016 FINAL. Production repeats runtime checks and two
+finite native updates, then continues at zero costs to absolute target 500000
+with checkpoints every 500 updates, bounded by one 24-hour allocation. There
+is no further allocation chain or automatic penalty promotion. No production
+child is submitted at this check.
+
+Euler replacement **13939497** is submitted under lterenzi for four RTX4090s
+and at most 45 minutes, with `AUTO_CONTINUE_FOUNDATION=1`. At 16:40 it is
+PENDING because nodes are down, drained or reserved, with no allocated GPU or
+reliable start estimate. Old 13935300 was cancelled only while pending under
+that user. After runtime acceptance, the
+hook selects four GPUs at speedup >=1.5x, otherwise one, and submits one
+24-hour zero-cost foundation continuation from the actual u33000 parent. It
+checks two finite native updates before production; the diagnostic u10000
+parent is used only for its runtime comparison. No replacement runtime result
+is available yet. Both recipes retain 512 global environments and 64 Adam
+steps per update. GPU-local advantage normalization changes with layout, so
+collect both qualifying zero-cost reports and the reference on the selected
+layout before any cost fork.
+
+Training source published to baselines main is
+b6d1597e96e63aeaef40373d0909e31a1d28ed0d, including
+smooth ramp b6754540, lterenzi routing c2df04a and the portable hash fix; Terra
+remains 46738cde. Validation includes 122 CPU tests plus 22 subtests, 65 tests
+after the Python 3.10 compatibility fix, shell checks, independent review and
+bounded submission-stub checks. The real local RTX4090/32-env ramp/resume test
+produced seven finite checkpoints, retained Adam clocks and crossed the ramp
+endpoint with a persistent executable cache hit. CSCS four-GPU foundation
+native updates now pass; the remaining runtime and scaling checks are pending.
+
+Euler source:
+`/cluster/scratch/lterenzi/codex_terra_edge_validation/terra_smooth_ramp_20260912_b6d1597`.
+The `source_b6d1597.tar.gz` SHA-256 is
+`6d304c995a04ef002ff96ba850845baa567ab83016a76d65f54c613122b629b6`.
+CSCS source:
+`/capstor/scratch/cscs/lterenzi/terra-training/snapshots/terra-smooth-ramp-20260912`,
+with clean b6754540 plus the portable hash patch matching b6d1597. Current
+routing uses lterenzi; historical dataset and W&B names remain. The
+[current artifact status](../../../../.artifacts/terra_delayed_penalties_20260912/STATUS.md)
+tracks diagnostic results and conditional submission receipts.

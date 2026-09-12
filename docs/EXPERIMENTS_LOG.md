@@ -451,3 +451,50 @@ The resumed PPO executable was a persistent-cache hit, with one signature
 per process. The 32-environment run is a functional check; multi-GPU scaling
 remains pending in Euler diagnostic13935300 and the prepared CSCS diagnostic.
 Full evidence: `.artifacts/terra_delayed_penalties_20260912/smooth_ramp/`.
+
+## 2026-09-12 latest zero-cost controls and bounded automatic continuation
+
+Corrected CSCS allocations 4645193/4645194 ended after 24 hours with `TIMEOUT`,
+exit 0:0. Under restored lterenzi access, foundation u33000 and trench u32000
+parents passed native finite-state, Adam-clock and zero-cost checks. Fixed
+greedy 450-step evaluation, using baselines 866e8e and Terra 46738cde, gives
+foundation **8/64 exact**, **93.2860% dug**, **90.9650% disposed**; trench
+**36/224 exact**, **65.9106% dug**, **62.8468% disposed**. All 672 full-panel rows
+(64 foundation plus the original 608-row development panel) have zero recorded
+integrity/nonfinite/mass-residual failures. Neither family reaches 58/64 or
+202/224, so no penalties are introduced.
+
+CSCS diagnostic **4652857** started at 16:35:10 CEST on nid005780. At 16:37,
+four-GH200 binding, CPU parent/bank checks and cuDNN/NCCL preflight passed.
+At 16:40 it remains RUNNING, tracing its first graph with no native checkpoint.
+Its hook submits one 24-hour
+zero-cost four-GPU trench continuation after all diagnostic checks pass and matched
+foundation speedup reaches >=1.5x. Its parent is the verified diagnostic
+trench u32016 FINAL; production repeats runtime and two native-update checks.
+No child is submitted yet.
+
+Euler replacement **13939497** is submitted under lterenzi with four RTX4090s,
+a 45-minute limit and `AUTO_CONTINUE_FOUNDATION=1`. At 16:40 it is PENDING
+(nodes down, drained or reserved), with no allocated GPU or reliable start
+estimate. Old 13935300 was cancelled
+only while pending under lterenzi. The hook chooses four GPUs at speedup
+>=1.5x, otherwise one, and continues the actual u33000 parent for one 24-hour
+allocation after runtime acceptance. The older diagnostic parent is not used
+for production. Both recipes preserve 512 global environments and 64 Adam
+steps per update. No further allocation chain or automatic penalty promotion
+is configured; a new layout needs its own qualifying zero-cost evaluation pair.
+
+Training source b6d1597, published to baselines main, includes smooth ramp
+b6754540, account cleanup
+c2df04a and the portable Python 3.10 hash fix; Terra remains 46738cde. Checks:
+122 CPU tests plus 22 subtests, 65 post-compatibility tests, independent review,
+shell/submission-stub checks and seven finite real local RTX4090/32-env ramp
+checkpoints with persistent-cache reuse. Four-GPU native training acceptance
+remains pending. See the [current status and evidence](../../../../.artifacts/terra_delayed_penalties_20260912/STATUS.md).
+
+At 16:44 CEST, CSCS4652857 passed the foundation four-GPU segment from
+u33000 to u33016: 17 finite periodic/FINAL checkpoints, Adam2113024 at the
+end, zero integrity counters and no added costs. Median global throughput
+after the first two updates is 15,935.585 transitions/s; elapsed process time
+including startup/compilation is 455 seconds. The one-GPU comparison is
+running. Scaling and trench resume checks still precede any production child.
