@@ -1,17 +1,20 @@
-# Experiments — current state (updated 2026-09-12)
+# Experiments — current state (updated 2026-09-13)
 
-At September 12, 23:41 CEST, zero-cost trench continuation **4652918** is
-**RUNNING** on four GH200s at nid005935, around u50831 with a u50500 checkpoint.
-Retained u48500 passed native checks and completes **147/224 trenches (65.6%)**,
-up from **36/224 at u32000**; mean excavation rose from 65.9% to **91.3%**.
-Diagnostic **4652857** completed successfully and measured **2.29x**
-foundation throughput on four versus one GPU before triggering this bounded
-24-hour continuation.
+At September 13, 09:01 CEST, zero-cost trench continuation **4652918** is
+**RUNNING**, with u77000 locally verified and evaluated. Exact held-out trench
+completion improved **147/224 → 161/224 (71.9%)**, with mean excavation
+**91.3255% → 94.4698%**. The allocation ends today at **17:10 CEST**.
 
-Euler foundation diagnostic **13939497** remains **PENDING/Priority**, with no
-reliable start estimate or foundation production job. Foundation remains
-**8/64 at u33000**. Both families are below the threshold for penalties;
-added costs remain zero. See the final entry and [recipe](../scripts/foundation_reward_sweep/README.md);
+Foundation recovery **4655350** started on CSCS at **09:00:11 CEST**, on four
+GH200s at nid005799. Parent/bank checks and cuDNN-backward/NCCL preflight
+passed. Native startup updates are in progress; production is not yet verified. It resumes native u33016 and is bounded to one 24-hour
+allocation. The failed Euler diagnostic's zero-cost controls passed, but its
+650-second ramp startup timeout prevented the original continuation hook.
+No duplicate Euler foundation production was submitted.
+
+Foundation's latest held-out result remains **8/64 at u33000**. Added penalties
+remain zero; the trench result is below 202/224 and road-constrained networks
+remain 0/32. See the final entry and [recipe](../scripts/foundation_reward_sweep/README.md);
 earlier scheduler observations below are historical.
 
 ## 2026-09-07 local pipeline maintenance
@@ -1263,3 +1266,76 @@ reference must use the selected training layout before a later penalty fork.
 No jobs or training settings were changed during this status check. Local
 checkpoint/evaluation evidence is in
 [status_2302](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/status_2302/).
+
+## September 13, 08:43 CEST: trench u77000; foundation continuation recovery
+
+CSCS **4652918** is RUNNING after about 15h33m near u77361, with u77000 saved
+and recent throughput 13,618.59 global transitions/s. Its existing allocation
+ends today at 17:10 CEST. Downloaded u77000 passes native finite model/Adam/loss
+checks at Adam **4,928,000**, with all added costs and integrity counters zero.
+Its SHA-256 is
+`b19836680aebbae7924c9efe96d020fcf0c2e1059d13b9f45f72b74e1b16d110`.
+The same greedy 450-step, full 608-episode development evaluation completed
+at 08:59 CEST with EVAL_DONE and its complete JSON report. The 224 trench rows
+improve **147/224 → 161/224 exact (65.6% → 71.9%)**, **91.3255% → 94.4698%
+dug**, and **87.0979% → 89.8239% disposed**. There are 24 gained and 10 lost
+successes. All 608 rows have zero recorded integrity failures, nonfinite states,
+map mutations, termination disagreements and mass residual. Reset, bank,
+source, treatment and four-GPU layout identities match.
+
+| Trench layout | u48500 exact | u77000 exact |
+| --- | ---: | ---: |
+| Straight | 48/64 | 52/64 |
+| T-junction | 25/32 | 27/32 |
+| Multiple segments | 23/32 | 22/32 |
+| Two-sided network | 51/64 | 60/64 |
+| Road-constrained network | 0/32 | 0/32 |
+
+Among 137 common successes, productive poses change 9.358 → 9.314, unique
+area per setup 2.712 → 2.724 m2, retained-work travel 40.754 → 40.705 m and
+edge adjacency 89.58% → 89.45%. These are essentially unchanged. Raw Terra
+travel falls 58.196 → 53.625 m and steps 67.52 → 63.88; these are secondary
+to deployed workspace transfers. Completion is improving unevenly, without
+an established workspace-efficiency gain. No penalty stage is active.
+
+Euler diagnostic **13939497** ran 00:38:02–01:13:23 CEST (35m21s) and ended
+`FAILED`, exit 124:0. Both zero-cost one/four-GPU controls completed all 16
+updates and 17 checkpoints each. Recovered verification confirms all 34 are
+finite, preserve native Adam clocks, retain 512 global environments and have
+zero added costs/integrity counters. Matched median throughput was 13,503.175
+versus 4,585.225 transitions/s: **2.9449x** four-GPU speedup. The separate ramp
+phase hit its 650-second startup timeout before writing any checkpoint; this
+is not evidence of numerical failure, and it does not qualify the full ramp.
+The recovered receipt explicitly accepts only zero-cost continuation.
+
+Requiring the unused ramp test before zero-cost production prevented the
+foundation hook from submitting. To recover the already-authorized one-day
+continuation, it is being moved to CSCS. At this check, resource estimates are
+September 13 at 12:13 CEST on CSCS versus September 14 at 11:45 on Euler;
+these are volatile estimates. No Euler production job was submitted, so this
+move creates no duplicate or extra trial. Actual replacement **4655350** was
+submitted at 09:00:10 and started at 09:00:11 CEST on nid005799, ahead of the
+test-only estimate. Slurm confirms four GPUs, account lterenzi/d130, no
+dependency, no requeue and a 24-hour limit ending September 14 at 09:00.
+Parent/bank and cuDNN-backward/NCCL runtime checks passed. Native startup
+updates are in progress; production is not yet verified.
+
+The submitted four-GPU foundation job uses diagnostic 4652857's accepted
+u33016 FINAL (Adam 2,113,024), SHA-256
+`51bb2905a689e8202ba78ef1e7eb3e15fd1a1dc8849b6843b4f880aa2f930e24`.
+It keeps the existing 256-map foundation bank, training source b6d1597 and
+Terra 46738cde, 512 global environments (4 × 128) and 64 Adam steps per update.
+The new allocation must repeat CPU parent/bank checks, CUDA/NCCL preflight and
+two finite native updates u33016→u33018 before zero-cost production. It then
+targets absolute u500000 with checkpoints every 500 updates, bounded by one
+24-hour allocation, with a unique offline W&B history and no automatic
+follow-on allocation. It does not depend on the failed Euler job. GPU-local
+advantage normalization changes with layout, so later penalty qualification
+still needs matching zero-cost reports on the selected layout. Evidence is in
+[status_20260913_0843](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/status_20260913_0843/).
+
+At 09:04 CEST, the trench worker has reached approximately u78310. An
+independent review reproduced all u77000 evaluation counts, grouped results,
+matched identities and common-success metrics from the raw reports, with no
+remaining findings. Foundation runtime checks have passed; its first native
+training updates are still compiling at this observation.

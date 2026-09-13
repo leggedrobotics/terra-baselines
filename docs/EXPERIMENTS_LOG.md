@@ -540,3 +540,49 @@ Device-local advantage
 normalization changes after layout migration, so completion qualification
 must use the selected layout. No job or training-setting mutations occurred in
 this status check. Evidence: [status_2302](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/status_2302/).
+
+## September 13, 08:43 CEST: recover foundation continuation after ramp timeout
+
+CSCS trench **4652918** remains RUNNING near u77361, with u77000 saved and
+13,618.59 transitions/s. The allocation ends today at 17:10 CEST. Local u77000
+inspection passes finite model/Adam/loss at Adam 4,928,000, zero costs and zero
+integrity counters. Its complete full 608-row greedy 450-step evaluation
+finished at 08:59 CEST: **161/224 exact trench completions**, up from 147/224
+at u48500; mean dug 91.3255% → 94.4698%, disposed 87.0979% → 89.8239%.
+There are 24 gained and 10 lost successes; all 608 integrity checks are zero.
+Straight improves 48/64 → 52/64, T-junction 25/32 → 27/32, two-sided networks
+51/64 → 60/64, multi-segment falls 23/32 → 22/32, and road networks stay 0/32.
+Matched resets, bank, source, treatment and four-GPU layout pass comparison.
+On 137 common successes, productive poses (9.358 → 9.314), unique area/setup
+(2.712 → 2.724 m2), retained-work travel (40.754 → 40.705 m) and edge adjacency
+(89.58% → 89.45%) are essentially unchanged. Added penalties stay zero.
+
+Euler diagnostic **13939497** ended `FAILED`, exit 124:0, after
+00:38:02–01:13:23 CEST. Its ramp startup exceeded 650 seconds before producing
+a checkpoint. The two completed zero-cost controls were recovered and checked:
+all 34 periodic/FINAL checkpoints pass finite/native/Adam/global-batch and
+zero-cost/integrity checks. Matched throughput is 13,503.175 versus 4,585.225
+transitions/s on four versus one GPU (**2.9449x**). That evidence accepts
+zero-cost continuation only; the separate ramp remains unqualified.
+
+The unused ramp gate prevented the foundation continuation from submitting.
+The already-authorized single 24-hour foundation run is therefore being moved
+to CSCS, whose current resource estimate is September 13 at 12:13 CEST versus
+September 14 at 11:45 on Euler. No Euler production job exists and no extra
+trial is added. Actual replacement **4655350** started at 09:00:11 CEST on
+nid005799 with four GH200s, with no dependency or requeue and a 24-hour limit
+ending September 14 at 09:00. Parent/bank checks and cuDNN-backward/NCCL
+preflight passed. Native startup updates are in progress; production is not yet
+verified. The submitted job resumes the accepted CSCS diagnostic
+foundation u33016 FINAL and must repeat runtime/parent/bank checks plus two
+finite native updates before production. It preserves b6d1597/Terra46738cde,
+the 256-map bank, zero costs, 512 global environments and 64 Adam steps per
+update; it is bounded to one 24-hour allocation without another job chain.
+Foundation's last evaluated result remains 8/64 at u33000. Evidence:
+[status_20260913_0843](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/status_20260913_0843/).
+
+At 09:04 CEST, the trench worker has reached approximately u78310. An
+independent review reproduced all u77000 evaluation counts, grouped results,
+matched identities and common-success metrics from the raw reports, with no
+remaining findings. Foundation runtime checks have passed; its first native
+training updates are still compiling at this observation.
