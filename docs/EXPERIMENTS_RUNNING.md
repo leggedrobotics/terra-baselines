@@ -1,21 +1,18 @@
 # Experiments — current state (updated 2026-09-13)
 
-At September 13, 09:01 CEST, zero-cost trench continuation **4652918** is
-**RUNNING**, with u77000 locally verified and evaluated. Exact held-out trench
-completion improved **147/224 → 161/224 (71.9%)**, with mean excavation
-**91.3255% → 94.4698%**. The allocation ends today at **17:10 CEST**.
+At September 13, **11:44 CEST**, both four-GPU CSCS continuations are training:
+**foundation 4655350 near u41113** and **trench 4652918 near u85992**.
+Saved foundation u41000 and trench u85500 pass finite model/Adam/loss,
+training-bank, global-batch and zero-cost/integrity validation. Foundation
+has passed startup and is sustaining production updates.
 
-Foundation recovery **4655350** started on CSCS at **09:00:11 CEST**, on four
-GH200s at nid005799. Parent/bank checks and cuDNN-backward/NCCL preflight
-passed. Native startup updates are in progress; production is not yet verified. It resumes native u33016 and is bounded to one 24-hour
-allocation. The failed Euler diagnostic's zero-cost controls passed, but its
-650-second ramp startup timeout prevented the original continuation hook.
-No duplicate Euler foundation production was submitted.
-
-Foundation's latest held-out result remains **8/64 at u33000**. Added penalties
-remain zero; the trench result is below 202/224 and road-constrained networks
-remain 0/32. See the final entry and [recipe](../scripts/foundation_reward_sweep/README.md);
-earlier scheduler observations below are historical.
+Trench ends today at **17:10 CEST**; foundation ends September 14 at
+**09:00 CEST**. No duplicate Euler foundation production exists.
+The latest completed evaluations remain **161/224 trench maps at u77000**
+and **8/64 foundation maps at u33000**; newer checkpoints are not yet evaluated.
+Added penalties remain zero. See the final entry and
+[recipe](../scripts/foundation_reward_sweep/README.md); earlier observations
+below are historical.
 
 ## 2026-09-07 local pipeline maintenance
 
@@ -1339,3 +1336,26 @@ independent review reproduced all u77000 evaluation counts, grouped results,
 matched identities and common-success metrics from the raw reports, with no
 remaining findings. Foundation runtime checks have passed; its first native
 training updates are still compiling at this observation.
+
+## September 13, 11:44 CEST: both continuations training; native checkpoints pass
+
+CSCS foundation **4655350** is RUNNING on nid005799 after 2h44m, around
+u41113 (8095 production updates beyond u33018). Its startup smoke passed
+all three finite native checkpoints through u33018 in 425 seconds, and
+production is now sustained at roughly 14.7–15.3k global transitions/s.
+The saved u41000 checkpoint passes finite model, optimizer and loss checks
+at Adam 2,624,000. Allocation ends September 14 at 09:00 CEST.
+
+CSCS trench **4652918** is RUNNING on nid005935 after 18h33m, near u85992.
+Recent log samples report 13.1–13.3k transitions/s. Saved u85500 passes the
+same native checks at Adam 5,472,000. Allocation ends today at 17:10 CEST.
+Both checkpoints preserve four devices × 128 environments, training-bank
+identity, native parent/clock, zero added behavior costs and zero recorded
+transition-integrity counters. No jobs or training settings changed.
+
+No new held-out evaluation was run during this status check. The latest
+complete results remain trench u77000 at 161/224 exact (71.9%), 94.4698% dug,
+and foundation u33000 at 8/64. These are not evaluations of the newer
+checkpoints. Workspace efficiency and road-network completion have no new
+measurement; the completion gate remains unmet and penalties stay off.
+Evidence: [status_20260913_1144](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/status_20260913_1144/native_validation.json).
