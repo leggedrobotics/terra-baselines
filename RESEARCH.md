@@ -14,6 +14,8 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [September 13 overnight recovery screens](docs/EXPERIMENTS_RUNNING.md#september-13-2349-cest-two-authorized-overnight-recovery-screens-submitted)
+
 - [September 13 completion regression and manual behavior audit](docs/research/COMPLETION_REGRESSION_20260913.md)
 
 - [Audited training, PPO, curriculum, and evaluation protocol](docs/TRAINING_PROTOCOL.md)

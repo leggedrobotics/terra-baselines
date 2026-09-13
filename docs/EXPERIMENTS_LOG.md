@@ -684,3 +684,55 @@ remains unverified after certificate expiry; these are morning checkpoints.
 
 See [completion regression audit](research/COMPLETION_REGRESSION_20260913.md)
 and the [manual rollout viewer](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/status_20260913_2222/qualitative/index.html).
+
+
+## September 13, 23:49 CEST: two authorized overnight recovery screens submitted
+
+The user explicitly authorized new overnight training. Two distinct 24-hour
+Euler allocations were submitted as lterenzi, each requesting four RTX 4090 GPUs:
+
+| Arm | Job | Native parent | Batch | Treatment | Fixed evaluation |
+| --- | ---: | ---: | --- | --- | --- |
+| Foundation screen |14055215|u33000|4×128env|Global minibatch advantage normalization|u41000,64-map greedy validation|
+| Old trench recovery |14055463|u83500|4×512env|Original local normalization and legacy observation, current physics|u86000,224 trench rows of608-map greedy development|
+
+Foundation was confirmed PENDING (Priority); neither job has passed its remote
+startup gate at this submission observation. Trench's sbatch receipt is valid;
+queue queries are intermittently timing out. Do not call submitted jobs healthy
+training. Existing CSCS state is still unverified after certificate expiry.
+No duplicate local-normalization foundation control or CSCS run was submitted.
+
+Both local actual-parent GPU smokes passed two updates and three saved native
+checkpoints at 1×32 environments. Model/Adam/loss are finite, actual clocks advance
+128 Adam steps, and restored environment/bank/zero-cost contracts pass. This is
+functional evidence only; the allocation requires CUDA convolution backward,
+NCCL and two validated updates at the exact production shape before proceeding.
+Startup failure ends the allocation without silently shrinking the batch.
+
+The normalization change is opt-in, preserves the default arithmetic, records
+its mode in checkpoints/W&B/evaluation fingerprints, and rejects native resumes
+that would silently drop it. 26 CPU tests pass, including four-device versus
+merged-minibatch equivalence through 64 real PPO/Adam steps. Independent review
+found no remaining source, native-validator or watcher findings. Training source
+is baselines 46adaec50ed4dd225117b2fb8b721ee85649efa7 paired with
+Terra 46738cde28e455da7c466fc0a2cb64f677d86401; remote files pass SHA verification.
+
+All added behavior penalties remain zero. Both runs target absolute u500000,
+save every 500 updates and are bounded by 24 hours, with no automatic next job.
+The old trench arm preserves seed 20260901, 65,536 transitions/update, 64 Adam steps,
+entropy floor 0.02 and executable_dig_observation=False. Foundation preserves
+seed 20260909, 16,384 transitions/update and 64 Adam steps, opting into global rather
+than per-device normalization. Its existing CSCS control differs in hardware,
+RNG and restart boundaries; this is a screen, not a causal A/B claim.
+
+A 26-hour local tmux watcher, terra_recovery_overnight_20260913, monitors both
+jobs, downloads only the selected milestones, verifies native checkpoint SHA/
+mode and serializes fixed greedy evaluation on an idle local GPU. It reuses
+completed reports after restart, kills its evaluation process group on timeout,
+and neither submits jobs nor enables penalties. The evaluator stays frozen at
+baselines 866e8e2/Terra 46738cde; a separate native SHA/mode receipt accounts for
+its historical treatment fingerprint, which predates the normalization flag.
+
+[Campaign plan and evidence](../../../../.artifacts/terra_regression_recovery_20260913/PLAN.md) ·
+[Submission manifest](../../../../.artifacts/terra_regression_recovery_20260913/manifest.json) ·
+[Overnight status](../../../../.artifacts/terra_regression_recovery_20260913/overnight_status.json).
