@@ -11,6 +11,16 @@ These distinguish stored dataset counts, actual sampling, source versions, and
 resolved run settings. The older `TrainConfig` example below is an API example,
 not the PPO configuration of the current generalist or specialist experiments.
 
+PPO advantage normalization defaults to each device's current minibatch. The
+experimental `--global_minibatch_advantage_norm` flag pools mean and centered
+variance across equal-sized device shards of **each minibatch**. It keeps the
+existing sample grouping, averaged gradients, and optimizer-step count; two
+epochs with 32 minibatches still make 64 Adam steps. The flag is stored in the
+checkpoint/W&B config and the enabled fixed-evaluation treatment fingerprint.
+Repeat it on native continuation: a checkpoint trained with global normalization
+cannot silently resume in the default local mode. An explicit local-to-global
+opt-in preserves the native optimizer and update clocks.
+
 ## Features
 - Train on multiple devices using PPO with `train.py` (based on [XLand-MiniGrid](https://github.com/corl-team/xland-minigrid))
 - Generate metrics for your checkpoint with `eval.py`

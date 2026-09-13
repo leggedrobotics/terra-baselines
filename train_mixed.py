@@ -516,6 +516,18 @@ def _checkpoint_config_value(checkpoint, field_name: str, default):
     return getattr(saved_config, field_name, default)
 
 
+def _validate_advantage_normalization_resume(checkpoint, config):
+    """Local-to-global opt-in is allowed; native continuation cannot drop it."""
+    saved_global = _checkpoint_config_value(
+        checkpoint, "global_minibatch_advantage_norm", False
+    )
+    if saved_global and not getattr(config, "global_minibatch_advantage_norm", False):
+        raise ValueError(
+            "checkpoint used global minibatch advantage normalization; native "
+            "resume must retain --global_minibatch_advantage_norm"
+        )
+
+
 def _teacher_maps_edge_length(checkpoint):
     """Best-effort read of a teacher checkpoint's native map edge length (F15).
 
@@ -1669,6 +1681,7 @@ class MixedAgentTrainConfig:
     clip_eps: float = 0.2
     gamma: float = 0.9984
     gae_lambda: float = 0.95
+    global_minibatch_advantage_norm: bool = False
     ent_coef: float = 0.06
     vf_coef: float = 2.0
     max_grad_norm: float = 0.5
@@ -3058,6 +3071,10 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
 def train_mixed_agents(config: MixedAgentTrainConfig):
     """Main training function for mixed agents - with full feature parity to original train.py"""
 
+    print("PPO advantage normalization: " + (
+        "global minibatch across devices" if config.global_minibatch_advantage_norm
+        else "per-device minibatch (default)"
+    ))
     r2_protocol_receipt = _r2_protocol_receipt(config)
     wandb_config = asdict(config)
     wandb_config["logging_schema"] = LOGGING_SCHEMA
@@ -3121,6 +3138,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             if "model" not in checkpoint:
                 raise KeyError("checkpoint has no 'model' parameters")
             if checkpoint_mode == "resume":
+                _validate_advantage_normalization_resume(checkpoint, config)
                 _validate_r2_resume_checkpoint(checkpoint, r2_protocol_receipt, config)
                 if config.finetune_foundation_behavior:
                     print(
@@ -4974,6 +4992,15 @@ if __name__ == "__main__":
         help="Number of minibatches per PPO epoch",
     )
     parser.add_argument(
+        "--global_minibatch_advantage_norm",
+        action="store_true",
+        help=(
+            "Normalize advantages across device shards of each PPO minibatch. "
+            "Default normalizes per device. Repeat this flag for native resumes "
+            "of a checkpoint trained with it."
+        ),
+    )
+    parser.add_argument(
         "--log_train_interval",
         type=int,
         default=1,
@@ -6047,6 +6074,7 @@ if __name__ == "__main__":
         num_steps=args.num_steps,
         update_epochs=args.update_epochs,
         num_minibatches=args.num_minibatches,
+        global_minibatch_advantage_norm=args.global_minibatch_advantage_norm,
         total_timesteps=args.total_timesteps,
         eval_episodes=args.eval_episodes,
         log_train_interval=args.log_train_interval,

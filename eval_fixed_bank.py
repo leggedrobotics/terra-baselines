@@ -169,6 +169,9 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             )
         },
     }
+    if bool(_field(config, "global_minibatch_advantage_norm", False)):
+        # Missing/False retain the historical per-device treatment fingerprint.
+        contract["ppo"]["global_minibatch_advantage_norm"] = True
     condition_profile = _field(bank, "condition_profile", "full")
     if condition_profile != "full":
         # Preserve historical fingerprints while binding any narrowed V8 view.

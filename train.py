@@ -49,6 +49,7 @@ class TrainConfig:
     clip_eps: float = 0.5
     gamma: float = 0.9984
     gae_lambda: float = 0.95
+    global_minibatch_advantage_norm: bool = False
     ent_coef: float = 0.015
     vf_coef: float = 5.0
     max_grad_norm: float = 0.5
@@ -324,6 +325,19 @@ def aux_decoder_loss(aux_logits, obs):
     return jnp.sum(losses * valid) / (jnp.sum(valid) * targets.shape[-1] + 1e-8)
 
 
+def _normalize_ppo_advantages(advantages, across_devices=False):
+    """Standardize this minibatch; pmap shards contain equal sample counts."""
+    if not across_devices:
+        # Keep historical per-device arithmetic unchanged, including epsilon.
+        return (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    advantages = advantages.astype(jnp.float32)
+    mean = jax.lax.pmean(advantages.mean(), axis_name="devices")
+    centered = advantages - mean
+    # A second centered reduction avoids cancellation in E[x²] - E[x]².
+    variance = jax.lax.pmean(jnp.square(centered).mean(), axis_name="devices")
+    return centered / (jnp.sqrt(variance) + 1e-8)
+
+
 def ppo_update_networks(
     train_state: TrainState,
     transitions: Transition,
@@ -383,7 +397,10 @@ def ppo_update_networks(
     raw_targets_abs_max = _nan_safe_abs_max(targets)
 
     # NORMALIZE ADVANTAGES
-    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    advantages = _normalize_ppo_advantages(
+        advantages,
+        across_devices=bool(_config_option(config, "global_minibatch_advantage_norm", False)),
+    )
 
     def _loss_fn(params):
         # Terra feed-forward path flattens [env,time]. Recurrent PPO preserves
@@ -1359,7 +1376,9 @@ if __name__ == "__main__":
         default=0,
         help="Number of devices to use. If 0, uses all available devices.",
     )
+    parser.add_argument("--global_minibatch_advantage_norm", action="store_true")
     args, _ = parser.parse_known_args()
 
     name = f"{args.name}-{args.machine}-{DT}"
-    train(TrainConfig(name=name, num_devices=args.num_devices))
+    train(TrainConfig(name=name, num_devices=args.num_devices,
+                      global_minibatch_advantage_norm=args.global_minibatch_advantage_norm))

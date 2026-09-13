@@ -522,6 +522,13 @@ class FixedBankEvalTest(unittest.TestCase):
         same = checkpoint_treatment_fingerprint({"train_config": config})
         self.assertEqual(baseline, same)
 
+        normalization = SimpleNamespace(**vars(config), global_minibatch_advantage_norm=False)
+        self.assertEqual(baseline, checkpoint_treatment_fingerprint({"train_config": normalization}))
+        normalization.global_minibatch_advantage_norm = True
+        global_fingerprint = checkpoint_treatment_fingerprint({"train_config": normalization})
+        self.assertTrue(global_fingerprint["contract"]["ppo"]["global_minibatch_advantage_norm"])
+        self.assertNotEqual(baseline["sha256"], global_fingerprint["sha256"])
+
         changed_run = SimpleNamespace(**vars(config))
         changed_run.seed = 8
         self.assertNotEqual(
