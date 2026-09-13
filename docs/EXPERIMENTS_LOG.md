@@ -609,3 +609,78 @@ and foundation u33000 at 8/64. These are not evaluations of the newer
 checkpoints. Workspace efficiency and road-network completion have no new
 measurement; the completion gate remains unmet and penalties stay off.
 Evidence: [status_20260913_1144](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/status_20260913_1144/native_validation.json).
+
+## September 13 evening: CSCS auth expired; retained foundation u41000 regresses
+
+At 22:22 CEST, live CSCS status could not be refreshed: lterenzi's SSH
+certificate expired at 15:52:28 and retry returned `Permission denied
+(publickey)`. Last verified scheduler/runtime observations remain those at
+11:44. Trench4652918 was scheduled to end September13 17:10; foundation4655350
+was scheduled to end September14 09:00. These scheduled times do not establish
+current job state. No further jobs or reward changes were made.
+
+The already-downloaded, native-validated foundation u41000 and trench u85500
+checkpoints were evaluated locally in persistent tmux using the frozen source
+and unchanged respective panels. These checkpoints predate training later in
+the day. Foundation's complete64-row greedy450 evaluation gives **3/64 exact**
+versus **8/64 at u33000**, **79.4091% versus93.2860% dug**, and **77.1420%
+versus90.9650% disposed**. All64 reset identities and integrity checks pass;
+checkpoint hashes and effective zero-cost treatment match. Independent review
+reproduced the counts from raw rows.
+
+All8 earlier successes are lost and3 new successes appear. Square drops8/21
+to1/21, rectangle rises0/22 to2/22, L remains0/21. Average excavation decreases
+in all three shape groups. On each checkpoint's failing rows, longest material
+stall rises387.18 to 408.87steps; failure sets differ. No common-success
+intersection exists, so no success-conditioned workspace-efficiency comparison
+is available. Raw travel across all64 rows rises54.54 to 104.74m while average
+excavation falls. Fewer productive poses here cannot establish efficiency.
+
+This establishes regression at the retained u41000 checkpoint, not a cause
+or the latest remote model's behavior. Continued learning and layout migration
+from1x512 to4x128 are confounded; per-device advantage normalization changes
+while the global batch is preserved. The added penalties remainzero. Retrieve
+and evaluate the latest native checkpoint after authentication renewal before
+deciding how to continue or change the foundation recipe.
+
+
+## September 13, late evening: historical trench replay and manual regression audit
+
+Fresh matched trench u85500 evaluation gives **162/224 exact** versus 161/224
+at u77000, with mean excavation 93.53% versus 94.47%. The 151 common successes
+show essentially unchanged productive-pose, area-per-setup, retained-work travel
+and workspace-adjacency metrics. Road-constrained completion remains 0/32.
+
+Historical fixed reports confirm 196/224 at u51500 and 188/224 at u83500.
+The latter completed 25/32 road maps; non-road completion is almost unchanged
+at 163/192 historically versus 162/192 now. A fresh replay of old u83500 weights
+under the current repaired environment completes **179/224**, including
+**20/32 roads**, with matched resets and zero integrity failures. Thus the
+current environment still permits successful road behavior. This comparison
+retains each policy's trained observation interface and different training
+histories; it does not isolate the cause of the new policy's deficit.
+
+Manually inspected trajectories show the current policy repeating blocked
+base movements, ineffective cabin/dig cycles and WAIT despite legal productive
+alternatives. The old policy completes the two selected road cases in 95 and
+231 actions under current physics. For foundations, old u33000 completes a
+selected square in 63 actions while u41000 waits 448 actions after two setup
+actions. Same-input inference confirms a changed learned action preference.
+Sampled u41000 diagnostic completes 6/64 versus greedy 3/64; this is not a
+qualified deployment improvement.
+
+Native clocks, optimizer state and effective environment settings pass audit;
+63 focused CPU environment tests pass. No hidden added penalties or positive
+WAIT reward were found. Relevant differences still requiring controlled tests
+are per-device PPO advantage normalization (512 to 128 local samples) and the
+historical trench run's four-times-larger transition budget per update and
+entropy-decay experience budget. Current loose-soil observations remain present.
+
+Foundation greedy replay endpoints match all 64 rows. The current trench trace
+replay differs on eight unselected episodes; all five selected clips match
+checked endpoints. The full-panel parity failure is retained and not presented
+as a pass. No production source, reward or job changes were made. CSCS state
+remains unverified after certificate expiry; these are morning checkpoints.
+
+See [completion regression audit](research/COMPLETION_REGRESSION_20260913.md)
+and the [manual rollout viewer](../../../../.artifacts/terra_delayed_penalties_20260912/smooth_ramp/status_20260913_2222/qualitative/index.html).

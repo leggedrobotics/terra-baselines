@@ -14,6 +14,8 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [September 13 completion regression and manual behavior audit](docs/research/COMPLETION_REGRESSION_20260913.md)
+
 - [Audited training, PPO, curriculum, and evaluation protocol](docs/TRAINING_PROTOCOL.md)
 - [Dataset categories, splits, and terrain figures](https://github.com/leggedrobotics/terra/blob/main/docs/DATASET.md)
 - [Environment, reward equations, and exact termination](https://github.com/leggedrobotics/terra/blob/main/docs/ENVIRONMENT.md)
