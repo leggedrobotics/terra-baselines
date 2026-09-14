@@ -1683,3 +1683,32 @@ Euler jobs are unchanged. The old native-only proposal is explicitly disabled.
 [Current design](research/FOUNDATION_TEACHER_KL_RECOVERY_20260914.md) ·
 [Campaign manifest](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/manifest.json) ·
 [Paired local qualification](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/local/paired_checks.json).
+
+
+## September14,16:32CEST: CSCS foundation teacher-KL initialization pair submitted
+
+Authentication now succeeds as lterenzi on daint-ln004. Submitted one reviewed
+24-hour d130/normal job, **4665916**, at16:28:16CEST. It requests one node with
+two tasks, each two GH200GPUs and32CPU cores; Slurm confirms totalfourGPUs and
+per-task binding. Scratch+KL is the primary arm; pretrained full-model weights
+with the same teacherKL are the comparison. Both retain fresh Adam and clocks0,
+global512 environments each, identical schedules/maps and zero behavior costs.
+
+Pinned training sources are baselinesa3a2119af014f9afe018ed69b023a2e9c1acc4dc
+and Terra46738cde28e455da7c466fc0a2cb64f677d86401. Remote source, launch, bank,
+teacher and container hashes match the reviewed staging receipts. There are
+no other Terra jobs in the lterenzi CSCS queue at the authentication check;
+unrelated running Newton job4663069 was left unchanged.
+
+At16:31CEST job4665916 is PENDING/Priority. The provisional start estimate is
+September15 at06:03CEST, not a reservation or proof of startup. There are no
+new training updates/checkpoints or evaluations. Both full2x256 startup gates
+must pass before production. The queue-aware runtime coordinator is running in tmux
+terra_foundation_kl_init_runtime_20260914. Its live pending-state probe passed;
+it starts the reviewed26-hour evaluation window when the allocation begins
+and captures both full-size startup receipts. Pending time does not reduce
+evaluation coverage. No second allocation or penalty phase is automatic.
+
+[Submission receipt](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/submission_receipt.json) ·
+[Scheduler receipt](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/scheduler_after_submission.txt) ·
+[Live manifest](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/manifest.json).

@@ -6,7 +6,26 @@ with a matched pair on the same easy foundation bank. This supersedes the
 unsubmitted single native-continuation proposal prepared earlier today. The
 primary arm is scratch plus KL; the comparison initializes the full model from
 the old control and uses the same KL teacher, fresh Adam and clocks starting at
-zero. No new CSCS job has been submitted while authentication is unavailable.
+zero. CSCS job **4665916** was submitted on September14 at16:28CEST after
+authentication was renewed. It is queued; the full production-shape runtime
+gates have not run yet.
+
+## September14 submission status
+
+Job4665916 requests one24-hour d130 normal allocation as lterenzi, with two tasks,
+two GH200 GPUs and32CPU cores per task. Slurm confirms totalfourGPUs and
+`gres/gpu:per_task:2` binding. At16:31CEST it is PENDING/Priority, with a provisional
+start estimate of September15 around06:03CEST; scheduler estimates can change.
+Training has no completed updates yet. Full2x256-per-arm CUDA, convolution,
+NCCL, finite-checkpoint and paired-initialization checks remain mandatory.
+
+The reviewed trainer uses baselinesa3a2119 and Terra46738cde. The frozen teacher,
+source, launch files, bank and image hashes passed remote verification before
+submission. The evaluation window will start with the allocation, so queue
+waiting does not consume its26-hour coverage. Evaluation remains bounded to
+both arms at2500/5000/10000/20000updates; no further training jobs are automatic.
+See the [live manifest](../../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/manifest.json)
+for current scheduler and monitoring evidence.
 
 ## Question and arms
 
