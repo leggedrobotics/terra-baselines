@@ -1,4 +1,11 @@
-# Experiments — current state (updated 2026-09-13 evening)
+# Experiments — current state (updated 2026-09-14 12:54 CEST)
+
+Both overnight Euler jobs are now training with full startup gates passed.
+Completed fixed evaluations: **trench recovery 192/224 (roads 24/32)**;
+**foundation global normalization 11/64**. The milestone watcher finished
+normally. Penalties remain zero. See the final entry for today's live status
+and comparisons; preceding September 13 observations are historical.
+
 
 Two new overnight Euler recovery screens are submitted: foundation **14055215**
 and old-trench recovery **14055463**, four RTX4090s and24hours each. Both local
@@ -1496,3 +1503,55 @@ its historical treatment fingerprint, which predates the normalization flag.
 [Campaign plan and evidence](../../../../.artifacts/terra_regression_recovery_20260913/PLAN.md) ·
 [Submission manifest](../../../../.artifacts/terra_regression_recovery_20260913/manifest.json) ·
 [Overnight status](../../../../.artifacts/terra_regression_recovery_20260913/overnight_status.json).
+
+
+## September 14, 12:54 CEST: recovery evaluations complete; both Euler jobs training
+
+Both Euler jobs are RUNNING and have passed their full production-workload
+startup gates: four RTX4090 GPUs, CUDA convolution backward, NCCL, two finite
+native updates and checkpoint/environment/bank/integrity validation.
+
+| Run | Approximate live update | Saved checkpoint | Recent global transitions/s | Scheduled end (CEST) |
+| --- | ---: | ---: | ---: | --- |
+| Foundation global normalization 14055215 |57,686|57,500|12,594|September 15 03:37|
+| Old trench recovery 14055463 |87,591|87,500|16,923|September 15 08:05|
+
+Latest saved checkpoints above are located, not evaluated or independently
+loaded during this update. The completed milestone evaluations below use
+validated earlier checkpoints, fixed greedy 450-step panels and zero added costs.
+
+| Evaluation | Exact completion | Mean dug | Accepted disposal |
+| --- | ---: | ---: | ---: |
+| Foundation global u41000 |11/64 (17.2%)|91.09%|90.61%|
+| Foundation prior local u41000 |3/64 (4.7%)|79.41%|77.14%|
+| Foundation common parent u33000 |8/64 (12.5%)|93.29%|90.97%|
+| Trench recovery u86000 |192/224 (85.7%)|96.78%|95.97%|
+| Old trench parent u83500 under current physics |179/224 (79.9%)|94.71%|93.66%|
+
+Trench road completion rises 20/32→24/32; non-road 159/192→168/192.
+There are 22 gained and 9 lost successes. On 170 common successes, productive
+poses 9.524→9.553, unique area/setup 2.808→2.803m², retained-work travel 44.03→
+44.48m and workspace adjacency 88.97%→88.49% show no efficiency improvement.
+The main gain is completing more maps and disposing more spoil correctly.
+
+Foundation completes 8/21 squares,3/22 rectangles and 0/21 L maps. It improves over
+the regressed local-normalization run but remains weak and does not exceed the
+parent's average excavated fraction. Hardware/RNG/restart differences mean the
+normalization comparison is a screen, not proof that normalization alone caused
+the improvement.
+
+Both reports finished with their EVAL_DONE markers. All 672 rows have zero
+recorded integrity failures; reset identities and actual checkpoint hashes pass.
+The bounded overnight watcher completed both planned evaluations and exited
+normally at 11:27. It is no longer a live monitor. Training continues within the
+existing 24-hour allocations; no new jobs or reward changes were made today.
+Penalties remain off: neither 58/64 foundation nor 202/224 trench qualifying
+completion threshold has been met. Let the existing allocations continue.
+
+CSCS SSH access was checked again at 12:54 and still returns Permission denied(publickey);
+its older jobs' final states and checkpoints remain unverified.
+
+[Live runtime receipt](../../../../.artifacts/terra_regression_recovery_20260913/status_20260914_1253/live_runtime.json) ·
+[Foundation evaluation](../../../../.artifacts/terra_regression_recovery_20260913/evaluation/foundation_global/fixed.json) ·
+[Trench evaluation](../../../../.artifacts/terra_regression_recovery_20260913/evaluation/trench_recovery/fixed.json) ·
+[Watcher completion](../../../../.artifacts/terra_regression_recovery_20260913/watcher_finished.json)
