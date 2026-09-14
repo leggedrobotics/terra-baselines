@@ -113,6 +113,7 @@ from functools import partial
 from flax.jax_utils import replicate, unreplicate
 from flax import struct
 import utils.helpers as helpers
+from utils.initialization_receipt import write_initialization_receipt
 from utils.utils_ppo import (
     initial_actor_hidden,
     is_recurrent_actor,
@@ -1796,6 +1797,8 @@ class MixedAgentTrainConfig:
     # writes. Default off preserves historical runs; E9+ smoke/prod jobs enable it.
     fail_on_nonfinite: bool = False
     finite_check_interval: int = 0
+    # Optional write-once provenance of the actual first-rollout state.
+    initialization_receipt: str | None = None
     # Checkpoint loading
     resume_from: str | None = None  # Path to a checkpoint .pkl to resume from
     # Load only model parameters. Optimizer, update counter, environment,
@@ -4256,6 +4259,26 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             # Setup runner state for multiple devices
             rng, rng_rollout = jax.random.split(rng)
             rng = jax.random.split(rng, num=config.num_devices)
+            if config.initialization_receipt is not None:
+                write_initialization_receipt(
+                    config.initialization_receipt,
+                    config=config,
+                    checkpoint_mode=checkpoint_mode,
+                    checkpoint_path=checkpoint_path,
+                    optimizer_restored=optimizer_restored,
+                    next_update=resume_update,
+                    train_state=train_state,
+                    timestep=timestep,
+                    rollout_rng=rng,
+                    reset_rng=reset_rng,
+                    teacher_params=teacher_params,
+                    initial_history={
+                        "prev_actions": prev_actions,
+                        "prev_reward": prev_reward,
+                        "actor_hidden": actor_hidden,
+                    },
+                )
+                print(f"Saved initialization receipt: {config.initialization_receipt}", flush=True)
             train_state = replicate(
                 train_state, jax.local_devices()[: config.num_devices]
             )
@@ -5603,6 +5626,12 @@ if __name__ == "__main__":
         help="Path to a checkpoint .pkl to resume training from.",
     )
     parser.add_argument(
+        "--initialization_receipt",
+        type=str,
+        default=None,
+        help="Write-once JSON fingerprints of actual state before the first PPO rollout.",
+    )
+    parser.add_argument(
         "--warm_start_from",
         type=str,
         default=None,
@@ -6153,6 +6182,7 @@ if __name__ == "__main__":
         ent_schedule_steps=args.ent_schedule_steps,
         resume_from=args.resume_from,
         warm_start_from=args.warm_start_from,
+        initialization_receipt=args.initialization_receipt,
         resume_update=args.resume_update,
         load_env_from_checkpoint=args.load_env_from_checkpoint,
         agent_types_override=agent_types_override,

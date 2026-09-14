@@ -1,105 +1,149 @@
-# Foundation recovery with a frozen policy teacher — September 14, 2026
+# Foundation teacher-KL initialization comparison — September 14, 2026
 
-The user requested using the strong old policies to restart learning, then
-specified a foundation-only teacher-KL run on CSCS. Prepare one bounded
-24-hour Daint allocation, four GH200 GPUs, using lterenzi. This replaces the
-unsubmitted plain-recovery proposal; no new Euler recovery was submitted.
-CSCS SSH currently rejects the certificate. Local implementation and validation
-can proceed while authentication is renewed.
+The user reports that a randomly initialized student with teacher KL has worked
+better than initializing directly from a strong policy. Test that observation
+with a matched pair on the same easy foundation bank. This supersedes the
+unsubmitted single native-continuation proposal prepared earlier today. The
+primary arm is scratch plus KL; the comparison initializes the full model from
+the old control and uses the same KL teacher, fresh Adam and clocks starting at
+zero. No new CSCS job has been submitted while authentication is unavailable.
 
-## Scientific question
+## Question and arms
 
-Can PPO adapt an already capable foundation policy to corrected physical rules
-while retaining its completion behavior? The old zero-added-cost control u15000
-is both native student initialization and the frozen policy teacher. Its fresh
-current-environment result is 62/64; old 2× scores 63/64. The zero-cost control
-keeps the completion-first reward treatment consistent.
+Does a randomly initialized student learn better completion or digging behavior
+than a pretrained student when both receive the same policy-KL guidance?
 
-Teacher-guided RL with a policy-distribution loss is supported by the
-[Kickstarting Deep Reinforcement Learning paper](https://arxiv.org/abs/1803.03835).
-That supports trying the method, not this particular coefficient or a predicted
-Terra improvement. A matched no-KL continuation would be needed to attribute
-retention specifically to KL; this single run is a recovery screen.
+| Arm | Initial model | Optimizer and clocks | Teacher |
+| --- | --- | --- | --- |
+| `scratch_kl` (primary) | Random full model | Fresh Adam; update 0 | Frozen old zero-cost control u15000 |
+| `pretrained_kl` | Old control full model parameters | Fresh Adam; update 0 | Same frozen old control u15000 |
 
-The selected initial bank is the same 256 easy-foundation training maps, with
-64 held-out validation resets. Full-foundation coverage was presented to the
-user as an alternative scope; do not quietly change the bank after staging.
-The teacher's 62/64 result applies to the easy bank, not to all foundation
-categories in the full dataset.
+The pretrained treatment copies the actor, critic and shared encoder. It does
+not isolate actor-only initialization. Both arms benefit from a pretrained
+teacher; “scratch” describes the student's initial parameters. The same KL
+coefficient produces stronger initial imitation pressure on the random student,
+while the pretrained student initially matches the teacher. That is a mechanism
+of this comparison, not evidence of an unmatched hyperparameter.
 
-## Run contract
+Use the existing parameters-only `--warm_start_from` for the pretrained arm's
+first process. Once initialized, continue each arm from its own native
+checkpoint with `--resume_from`, preserving its model, Adam and schedule origin.
+The old control's Adam state and its u15000 clock are never imported into either
+arm. Environment, RNG and live histories restart at a native segment boundary
+as in the existing trainer; continuation is not bit-exact.
+
+## Fixed run contract
 
 | Setting | Value |
 | --- | --- |
-| Native student parent and frozen teacher | Old control u15000, SHA d1a6c07d9d8a40b7b7b60bd0b54313aa46a9b50fb09c789ed4ebffddb2b488b3 |
-| Environment | Terra 46738cde; corrected swept movement and soil-free chassis protections |
-| Initialization | Native weights, Adam state and absolute clocks; environment/RNG/action history restart as usual |
-| Seed | 20260907 |
-| GPU layout | 4 × 128 environments; global batch 512 |
-| Rollout / PPO | 32 steps, two epochs, 32 minibatches; 16,384 transitions and 64 Adam steps per update |
-| Advantage normalization | Global minibatch moments, matching merged one-GPU mathematics |
+| Allocation | One CSCS Daint d130 normal node, 24 hours, account lterenzi |
+| GPU layout | Two concurrent processes, two GH200 GPUs each; four GPUs total |
+| Per-arm batch | 2 × 256 environments = 512 global environments |
+| Bank | Same 256 easy-foundation train maps; 64 held-out validation resets |
+| Seed | 20260907 for both arms |
+| Environment | Terra 46738cde; corrected movement and soil-free chassis protections |
+| Frozen teacher | Old zero-cost control u15000, SHA d1a6c07d9d8a40b7b7b60bd0b54313aa46a9b50fb09c789ed4ebffddb2b488b3 |
+| PPO workload | 32 rollout steps, two epochs, 32 minibatches; 16,384 transitions and 64 Adam steps per update |
+| Advantage normalization | Global minibatch moments across each arm's two GPUs |
 | Policy loss | PPO plus beta × KL(teacher || student) on student-visited observations |
-| Teacher policy | Frozen parameters; same observation interface and current environment inputs |
-| KL schedule | beta starts at 1 at absolute u15000 and cosine-decays to 0 at u35000 |
-| Value distillation | Disabled; critic learns returns under the current physical rules |
-| LR and entropy | Native 3e-4 constant LR; no fresh-optimizer warmup; existing absolute entropy schedule retained |
-| Added behavior costs / cost ramp | All zero / disabled |
-| Checkpoints / budget | Every 500 updates; absolute target u500000, bounded by one 24-hour allocation |
-| Fixed evaluations | u17500, u20000 and u25000; same 64-map greedy 450-step panel |
+| Teacher interface | Frozen parameters; matching executable-dig and other observation selectors |
+| KL schedule | beta 1 at update 0, cosine decay to 0 at update 20,000 |
+| Value distillation | Disabled |
+| Learning rate | Constant 3e-4 in both arms; zero warmup |
+| Entropy | Constant 0.02 in both arms |
+| Added behavior penalties and ramp | All zero; disabled |
+| Checkpoints and target | Every 500 updates, absolute target 500,000, one bounded allocation |
+| Evaluation | Both arms at updates 2,500, 5,000, 10,000 and 20,000 |
 
-Changing from the original one-GPU run to four GH200s changes arithmetic and RNG
-streams. Global advantage moments preserve the intended global minibatch
-normalization but do not make the trajectories bit-identical. Teacher guidance
-may constrain useful departures from the teacher; its annealing schedule is an
-explicit pilot choice. No automatic penalty promotion or further allocation is
-part of this run.
+The common entropy value is a conservative pilot choice that avoids the old
+scratch recipe's high initial entropy competing with imitation. It is not an
+established Terra optimum. There is no separate entropy or KL-coefficient sweep
+in this pair. A single paired seed can screen these two recipes; it cannot
+establish general superiority or confirm a historical result.
 
-Report exact completion, mean excavated/accepted material, productive base poses,
-unique area per productive setup, retained-work travel and workspace adjacency.
-Compare efficiency on common successful episodes and retain failures separately
-so lost coverage cannot masquerade as more efficient digging.
+Teacher-guided policy KL is described in
+[Kickstarting Deep Reinforcement Learning](https://arxiv.org/abs/1803.03835).
+That motivates trying the method, not a prediction that either initialization
+or these coefficients will win. Without a matched no-KL arm, the comparison
+cannot isolate the contribution of KL itself.
 
-## Why trench development can affect foundation learning
+## Acceptance and evaluation
 
-The inspected foundation launcher samples only train/all. It has one curriculum
-level, no trench rewards, no mixed-task pool and no cross-process gradients.
-The trench alignment gate is inactive on these maps. Shared soil/chassis,
-dumping, relaxation and movement repairs still change exploration and can make
-skills harder to discover from scratch. Successful frozen old-policy execution
-proves completion remains possible; it does not establish equal learning
-difficulty. See [the isolation audit](../../../../../.artifacts/terra_foundation_strong_recovery_20260914/foundation_isolation_audit.md).
+Before expensive training, each arm must independently complete finite local
+updates 1 and 2, with Adam steps 64 and 128, then resume its own u2 checkpoint
+through u3 with Adam 192. The actual initialization receipt records model,
+optimizer, initial reset and RNG hashes. At startup, require matching optimizer,
+reset and RNG hashes, zero clocks, a common teacher hash, random student weights
+different from the teacher, and pretrained student weights equal to the teacher.
+These checks establish the intended treatment; two updates are not policy
+quality evidence.
 
-## Implementation and validation
+Inside the CSCS allocation, verify two GH200s per process, disjoint physical GPU
+identities, JAX/container versions, convolution backward and NCCL, then repeat
+two finite updates at the full 2×256 shape. Both arms must pass the startup and
+paired initialization checks before either enters production. A failure stops
+the allocation; do not shrink one arm's batch. Sources, teacher, bank, launchers
+and image are pinned and hashed. There is no automatic second allocation.
 
-The existing teacher path required three fixes before this native continuation:
+Evaluate matching updates on the same 64-map, greedy, 450-step panel, corresponding
+to 40.96M, 81.92M, 163.84M and 327.68M new training transitions. A bounded watcher
+can serialize the eight completed evaluations on an idle local GPU; it does not
+submit training. Record exact completion, dug and accepted material, productive
+base poses, unique area per productive setup, retained-work travel and workspace
+adjacency. Compare efficiency on common successful episodes and retain failures
+separately, so losing coverage cannot appear to improve efficiency. Wait for
+matched complete reports; do not rank from startup or online scalars alone.
 
-- Its original annealing clock used absolute update zero, which would disable
-  the default KL term before a u15000 resume. An explicit checkpointed origin
-  now supports a new teacher phase without resetting the PPO/Adam clock, and
-  native continuation rejects dropping or changing the teacher schedule.
-- Setting teacher LR warmup to zero still constructed a different Optax state
-  tree. Zero now preserves the old constant-LR Adam structure; positive warmup
-  keeps existing behavior.
-- The teacher model's minimal environment stub omitted the executable-dig
-  observation selector. It now preserves and checks that interface. Fixed-bank
-  inference clears the new schedule origin when disabling the teacher.
+The frozen old zero-cost control freshly solves 62/64 under the current rules;
+old 2× solves 63/64. Those are easy-bank reference results, not performance on
+the full foundation dataset. Keep behavior penalties off until the existing
+completion gate passes: two evaluations at least 2,500 updates apart, at least
+90% exact completion, and within three percentage points of the zero-cost
+reference. Promotion is a separate decision.
 
-Seven focused native-teacher tests and 47 existing training-utility tests pass.
-The first actual-parent GPU attempt caught the observation-stub error before
-training; that failure is retained under failed_smoke_observation_selector.
-After correction, two local 1×32 updates pass finite model/Adam/loss/teacher,
-R2/environment/bank/integrity and checkpoint checks. The second native checkpoint boundary also passes at u15003: Adam is 960192,
-teacher KL is 0.0516, and its coefficient retains the u15000 origin. These are
-functional gates, not full-size throughput or policy-quality evidence. The
-second process still incurred about 206 seconds before its first update;
-compilation-cache reuse across that boundary is not established by this smoke.
+## Foundation isolation and previous implementation evidence
 
-The CSCS allocation must independently pass four-GH200 identity, convolution
-backward, NCCL and two finite native updates at the full 4×128 production shape
-before continuing. A failure stops that allocation; the batch is not shrunk.
-Source, inputs, immutable teacher and container image are hashed. A local
-26-hour watcher can download and verify the three milestones and serialize
-complete fixed evaluations on an idle GPU; it never submits jobs.
+The inspected foundation launcher samples only train/all: one curriculum level,
+no trench rewards, no mixed-task pool and no cross-process gradients. Trench
+alignment is inactive. Shared soil/chassis, dumping, relaxation and movement
+repairs still change exploration. Old-policy success proves completion remains
+possible, not that random exploration has equal learning difficulty. See the
+[foundation isolation audit](../../../../../.artifacts/terra_foundation_strong_recovery_20260914/foundation_isolation_audit.md).
 
-[Manifest](../../../../../.artifacts/terra_foundation_strong_recovery_20260914/manifest.json) · [Local startup checks](../../../../../.artifacts/terra_foundation_strong_recovery_20260914/local/startup_checks.json) ·
-[Launch scripts](../../../../../.artifacts/terra_foundation_strong_recovery_20260914/launch/) · [Independent submission review](../../../../../.artifacts/terra_foundation_strong_recovery_20260914/submission_review.md).
+Earlier preparation fixed teacher continuation's coefficient origin, zero-warmup
+Optax structure, and executable-dig observation stub. Seven native-teacher tests
+and 47 training utility tests passed, along with native u15001/u15002/u15003 GPU
+checks. Those remain useful implementation evidence but do not qualify the new
+scratch and parameters-only startup paths or the new 2×256 production layout.
+The earlier local resume still needed about 206 seconds before its first update;
+compilation-cache reuse was not established. New matched initialization gates
+and a small opt-in provenance receipt are required for this revised campaign.
+
+## September 14 local qualification
+
+All 57 CPU checks pass: three startup-receipt tests, seven native-teacher tests
+and 47 training utility tests. Both actual GPU arms complete updates 1 and 2
+with Adam 64/128, then resume their own u2 through u3 with Adam 192. All model,
+optimizer, loss and teacher values pass finite checks; material transition
+integrity counters are zero, and the bank/environment/R2 contracts match.
+Actual initial optimizer, reset, RNG, history and teacher hashes match across
+the arms; the pretrained model equals the teacher and the random model differs.
+Each resume preserves its own exact model and Adam-moment hashes.
+
+The paired evaluation helper was checked against strong historical policies and
+an actual weak 11/64 policy. Maps with no productive digging can have undefined
+workspace metrics. These remain unavailable, with explicit matched per-metric
+counts; they never become zero or invalidate all-64 coverage. Independent review
+reproduces all 14 metrics and missing-value/rejection cases. Wrong-arm checkpoint
+labeling is rejected. The new checkpoint also loads and configures successfully
+under the pinned historical evaluator 866e8e2.
+
+These are functional local1x32 gates. Each process still spends roughly
+196–253 seconds before its first update; compilation reuse and full-size
+throughput improvements are not established. Full2x256-per-arm GH200 qualification
+is enforced inside the allocation. CSCS SSH last checked at14:40 still rejects
+lterenzi with Permission denied(publickey); no paired job has been submitted.
+
+[Current manifest](../../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/manifest.json) ·
+[Current launchers](../../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/launch/) ·
+[Superseded, never-submitted proposal](../../../../../.artifacts/terra_foundation_strong_recovery_20260914/manifest.json).

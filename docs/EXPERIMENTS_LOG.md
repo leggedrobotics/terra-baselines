@@ -871,3 +871,39 @@ the outstanding submission dependency.
 [Teacher-KL run design](research/FOUNDATION_TEACHER_KL_RECOVERY_20260914.md) ·
 [Native resume smoke](../../../../.artifacts/terra_foundation_strong_recovery_20260914/local/resume_checks.json) ·
 [Manifest](../../../../.artifacts/terra_foundation_strong_recovery_20260914/manifest.json).
+
+
+## September 14, 14:54 CEST: matched scratch versus pretrained teacher-KL pair ready locally
+
+The user reports better past results from random student initialization with
+teacher KL and requested checking that against direct strong-policy initialization.
+The unsubmitted single native-recovery proposal is superseded. Prepare one
+24-hour CSCS d130/lterenzi node with four GH200s total: two independent2-GPU
+arms, scratch_kl(primary) and pretrained_kl(full-model parameters only).
+Both start with fresh Adam and clocks0, the same old zero-cost u15000 teacher,
+seed20260907, easy foundation bank, current Terra46738cde physics and zero
+added behavior penalties. Each arm keeps global512envs, 16,384transitions and
+64Adamsteps/update. Constant LR3e-4/entropy0.02 and teacherKL1 cosine-to0 over
+20,000newupdates are identical; value distillation and LR warmup are0.
+
+The optional initialization receipt verifies actual first-rollout model, Adam,
+reset and RNG states. All57CPUtests pass. Both local1x32 arms complete finite
+u1/u2 plus nativeu3, with Adam64/128/192 and zero integrity failures. Initial
+reset/RNG/history/teacher and fresh-optimizer hashes match; pretrained model
+matches the teacher, scratch differs; both resumes preserve their own u2 state.
+Independent review covers arm/parent binding, immutable source/launch/input
+hashes and paired metrics. Actual weak-policy fixtures exposed legitimate
+missing workspace metrics; aggregation now retains missingness and matched
+per-metric sample counts. These are runtime gates, not learning results.
+
+Fixed evaluations will compare both arms atu2500/5000/10000/20000 on the same
+64-map greedy450-step panel. Report all-map coverage, common-success workspace
+and retained-pose continuity metrics, and secondary raw Terra travel. No
+additional allocation or penalty stage is automatic. The full2x256-per-arm
+CUDA/conv/NCCL/startup and paired-state gates are mandatory in the allocation.
+CSCS still rejects SSH authentication; no new job was submitted. Existing
+Euler jobs are unchanged. The old native-only proposal is explicitly disabled.
+
+[Current design](research/FOUNDATION_TEACHER_KL_RECOVERY_20260914.md) ·
+[Campaign manifest](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/manifest.json) ·
+[Paired local qualification](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/local/paired_checks.json).
