@@ -1,4 +1,9 @@
-# Experiments — current state (updated 2026-09-14 12:54 CEST)
+# Experiments — current state (updated 2026-09-14 13:49 CEST)
+
+Fresh historical foundation replay: **old control 62/64, old 2× 63/64 under
+current rules**, versus new global-normalization u41000 at 11/64. See the final
+entry and foundation regression analysis. The live scheduler snapshot below
+remains from 12:54 CEST; no jobs changed during this audit.
 
 Both overnight Euler jobs are now training with full startup gates passed.
 Completed fixed evaluations: **trench recovery 192/224 (roads 24/32)**;
@@ -1555,3 +1560,42 @@ its older jobs' final states and checkpoints remain unverified.
 [Foundation evaluation](../../../../.artifacts/terra_regression_recovery_20260913/evaluation/foundation_global/fixed.json) ·
 [Trench evaluation](../../../../.artifacts/terra_regression_recovery_20260913/evaluation/trench_recovery/fixed.json) ·
 [Watcher completion](../../../../.artifacts/terra_regression_recovery_20260913/watcher_finished.json)
+
+
+## September 14, 13:49 CEST: old foundation policies still solve 62–63/64 under current rules
+
+Fresh complete frozen-weight replays under Terra 46738cde and evaluator 866e8e2
+solve **62/64 for old zero-cost control u15000** and **63/64 for old 2× u15000**,
+versus **11/64 for new global-normalization u41000**. The same old weights had
+solved 63/64 and 64/64 in their original reports. The current comparison uses
+identical 64-map resets, greedy inference, seed 20260907 and horizon 450. Both
+replays have EVAL_DONE markers; independent review validates all 448 rows across
+seven historical/current reports and the five actual retained checkpoint hashes.
+
+Old control excavates 99.56% and correctly disposes 99.55%; old 2× achieves
+99.94% for both. Each completes every map solved by new u41000, plus 51 and 52
+additional maps. The old zero-cost control is the primary foundation reference.
+
+The foundation bank has no trench metadata and receives no trench-yaw restriction.
+All 70 native environment fields agree except live episode counters, and all
+1,280 local training reset arrays match their manifest. Global soil/chassis and
+movement repairs do affect foundations; the known intermediate-rounding collision
+bug is fixed. Current Terra has the exact corrected 7fb30402 runtime tree.
+
+The old runs adapted a pretrained generalist with native Adam/clock state; new
+foundation learning started from random initialization. Old u15000 had 491.52M
+total transitions versus 671.744M for new u41000. The new scratch u33000 already
+scored 8/64 at the old 1×512 layout, before four-GPU normalization changed.
+Neither fewer total samples nor later GPU scaling alone explains the large gap.
+Initialization, optimizer state, experience distribution, entropy schedule history
+and physical-rule training history remain confounded. Successful old-policy
+execution does not prove unchanged difficulty of scratch learning.
+
+Keep soil-free chassis protections and zero added costs. The old control is a
+stronger recovery-parent candidate; no training jobs, source code or rewards were
+changed in this audit. This entry adds historical comparison, not a new live
+scheduler check or an evaluation of checkpoints newer than u41000.
+
+[Foundation regression analysis](research/FOUNDATION_LEARNING_REGRESSION_20260914.md) ·
+[Fresh report comparison](../../../../.artifacts/terra_foundation_lineage_audit_20260914/current_environment_comparison.json) ·
+[Independent review](../../../../.artifacts/terra_foundation_lineage_audit_20260914/independent_review.md).

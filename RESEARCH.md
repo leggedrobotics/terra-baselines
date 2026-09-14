@@ -14,6 +14,8 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Foundation historical competence and scratch-learning regression](docs/research/FOUNDATION_LEARNING_REGRESSION_20260914.md)
+
 - [September 13 overnight recovery screens](docs/EXPERIMENTS_RUNNING.md#september-13-2349-cest-two-authorized-overnight-recovery-screens-submitted)
 
 - [September 13 completion regression and manual behavior audit](docs/research/COMPLETION_REGRESSION_20260913.md)

@@ -1,5 +1,11 @@
 # Completion regression investigation — September 13, 2026
 
+September 14 follow-up: fresh old-foundation replays under the current environment
+score 62/64 (zero-cost control) and 63/64 (2×), far above the new 11/64 screen.
+The large scratch-learning deficit predates the four-GPU change. See the
+[historical foundation audit](FOUNDATION_LEARNING_REGRESSION_20260914.md) before
+interpreting the within-scratch comparison below.
+
 The retained foundation checkpoint regresses on an unchanged held-out panel.
 Manual replay and executed legal-action witnesses identify avoidable waiting
 and loss of task focus. The historical trench deficit is concentrated in
