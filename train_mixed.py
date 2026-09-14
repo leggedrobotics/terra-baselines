@@ -172,21 +172,58 @@ jax.config.update("jax_threefry_partitionable", True)
 
 
 def kickstart_coef_schedule(
-    update_index: int, initial_coef: float, anneal_updates: float
+    update_index: int, initial_coef: float, anneal_updates: float, start_update: int = 0
 ) -> float:
     """Cosine-anneal a kickstart coefficient from ``initial_coef`` to 0.
 
-    Returns ``initial_coef`` at update 0, ``0.5*initial_coef`` at the midpoint,
-    and exactly 0 at (and after) ``anneal_updates`` (clamped past the window).
+    Returns ``initial_coef`` at (and before) ``start_update``, half at the
+    window midpoint, and zero at/after ``start_update + anneal_updates``.
     """
     import math
 
+    update_index = max(0, update_index - start_update)
     if anneal_updates <= 0:
         return 0.0
     if update_index >= anneal_updates:
         return 0.0
     fraction = update_index / anneal_updates
     return float(initial_coef * 0.5 * (1.0 + math.cos(math.pi * fraction)))
+
+
+def _make_training_optimizer(config):
+    """Retain constant-LR Adam state shape when teacher warmup is disabled.
+
+    Positive warmup retains the historical optimizer-local schedule and state,
+    including its saved step counter when resuming an existing teacher run.
+    """
+    warmup_updates = int(getattr(config, "kickstart_lr_warmup_updates", 0))
+    if getattr(config, "teacher_checkpoint", None) is not None and warmup_updates > 0:
+        grad_steps_per_update = config.update_epochs * config.num_minibatches
+        warmup_steps = max(1, warmup_updates * grad_steps_per_update)
+        lr_schedule = optax.join_schedules(
+            schedules=[
+                optax.linear_schedule(
+                    init_value=config.lr / 3.0,
+                    end_value=config.lr,
+                    transition_steps=warmup_steps,
+                ),
+                optax.constant_schedule(config.lr),
+            ],
+            boundaries=[warmup_steps],
+        )
+        adam_learning_rate = lr_schedule
+        print(
+            "🔥 Fresh-optimizer LR warmup: "
+            f"{config.lr / 3.0:.2e} -> {config.lr:.2e} over "
+            f"{warmup_updates} updates ({warmup_steps} optax steps)",
+            flush=True,
+        )
+    else:
+        adam_learning_rate = config.lr
+    return optax.chain(
+        optax.clip_by_global_norm(config.max_grad_norm),
+        optax.adam(learning_rate=adam_learning_rate, eps=1e-5),
+    )
 
 
 PARTIAL_RESET_CURRICULUM_SCHEMA = "terra_partial_reset_curriculum_v1"
@@ -528,6 +565,33 @@ def _validate_advantage_normalization_resume(checkpoint, config):
         )
 
 
+def _validate_teacher_resume(checkpoint, config):
+    """An existing native teacher run retains its coefficient and optimizer clocks.
+
+    Adding a teacher to a teacher-free parent is allowed. Teacher file identity
+    is validated by the campaign, since local and cluster paths can differ.
+    """
+    if _checkpoint_config_value(checkpoint, "teacher_checkpoint", None) is None:
+        return
+    if getattr(config, "teacher_checkpoint", None) is None:
+        raise ValueError("teacher checkpoint native resume must retain --teacher_checkpoint")
+    defaults = {
+        "kickstart_start_update": 0,
+        "kickstart_kl_coef": 1.0,
+        "kickstart_kl_anneal_updates": 1500,
+        "kickstart_value_coef": 0.5,
+        "kickstart_value_anneal_updates": 500,
+        "kickstart_lr_warmup_updates": 100,
+        "teacher_obs_downsample": 1,
+    }
+    for field, default in defaults.items():
+        saved = _checkpoint_config_value(checkpoint, field, default)
+        if saved != getattr(config, field, default):
+            raise ValueError(
+                f"teacher checkpoint native resume must retain --{field}={saved}"
+            )
+
+
 def _teacher_maps_edge_length(checkpoint):
     """Best-effort read of a teacher checkpoint's native map edge length (F15).
 
@@ -563,6 +627,16 @@ def _teacher_model_env_from_checkpoint(checkpoint, student_env):
     edge length even though the student rollout env is larger.
     """
 
+    teacher_executable = bool(
+        _checkpoint_config_value(checkpoint, "executable_dig_observation", False)
+    )
+    student_executable = bool(getattr(student_env, "executable_dig_observation", False))
+    if teacher_executable != student_executable:
+        raise ValueError(
+            "Teacher/student executable_dig_observation mismatch: teacher "
+            f"{teacher_executable}, student {student_executable}. The teacher "
+            "receives the student's observation values."
+        )
     teacher_edge = _teacher_maps_edge_length(checkpoint)
     if teacher_edge is None:
         return student_env
@@ -572,7 +646,9 @@ def _teacher_model_env_from_checkpoint(checkpoint, student_env):
             maps_edge_length=int(teacher_edge)
         )
     )
-    return SimpleNamespace(batch_cfg=batch_cfg)
+    return SimpleNamespace(
+        batch_cfg=batch_cfg, executable_dig_observation=teacher_executable
+    )
 
 
 def _validate_checkpoint_architecture(checkpoint, config) -> None:
@@ -1844,6 +1920,7 @@ class MixedAgentTrainConfig:
     # F7: kickstart distillation. teacher_checkpoint=None disables the feature
     # entirely; everything below is inert while it is None.
     teacher_checkpoint: str | None = None
+    kickstart_start_update: int = 0
     kickstart_kl_coef: float = 1.0
     kickstart_kl_anneal_updates: int = 1500
     kickstart_value_coef: float = 0.5
@@ -1880,6 +1957,12 @@ class MixedAgentTrainConfig:
                 stacklevel=2,
             )
             self.cache_clear_interval = 0
+        if self.kickstart_start_update < 0:
+            raise ValueError("kickstart_start_update must be nonnegative")
+        if self.kickstart_start_update and self.teacher_checkpoint is None:
+            raise ValueError("kickstart_start_update requires teacher_checkpoint")
+        if self.kickstart_lr_warmup_updates < 0:
+            raise ValueError("kickstart_lr_warmup_updates must be nonnegative")
         _checkpoint_load_mode(self)
         _validate_foundation_behavior_config(self)
         _validate_task_bank_transfer(self)
@@ -2884,35 +2967,7 @@ def make_mixed_agent_states(
     except Exception as e:
         print(f"🛠️ Debug: Failed to read number of actions: {e}", flush=True)
 
-    # A teacher warm start restarts Adam and warms from optimizer-local step zero.
-    if getattr(config, "teacher_checkpoint", None) is not None:
-        warmup_updates = int(getattr(config, "kickstart_lr_warmup_updates", 0))
-        grad_steps_per_update = config.update_epochs * config.num_minibatches
-        warmup_steps = max(1, warmup_updates * grad_steps_per_update)
-        lr_schedule = optax.join_schedules(
-            schedules=[
-                optax.linear_schedule(
-                    init_value=config.lr / 3.0,
-                    end_value=config.lr,
-                    transition_steps=warmup_steps,
-                ),
-                optax.constant_schedule(config.lr),
-            ],
-            boundaries=[warmup_steps],
-        )
-        adam_learning_rate = lr_schedule
-        print(
-            "🔥 Fresh-optimizer LR warmup: "
-            f"{config.lr / 3.0:.2e} -> {config.lr:.2e} over "
-            f"{warmup_updates} updates ({warmup_steps} optax steps)",
-            flush=True,
-        )
-    else:
-        adam_learning_rate = config.lr
-    tx = optax.chain(
-        optax.clip_by_global_norm(config.max_grad_norm),
-        optax.adam(learning_rate=adam_learning_rate, eps=1e-5),
-    )
+    tx = _make_training_optimizer(config)
 
     train_state = TrainState.create(
         apply_fn=network.apply, params=network_params, tx=tx
@@ -3139,6 +3194,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 raise KeyError("checkpoint has no 'model' parameters")
             if checkpoint_mode == "resume":
                 _validate_advantage_normalization_resume(checkpoint, config)
+                _validate_teacher_resume(checkpoint, config)
                 _validate_r2_resume_checkpoint(checkpoint, r2_protocol_receipt, config)
                 if config.finetune_foundation_behavior:
                     print(
@@ -4259,12 +4315,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 # inert) whenever no teacher is configured.
                 if teacher_apply_fn is not None:
                     kickstart_kl_coef_current = kickstart_coef_schedule(
-                        i, config.kickstart_kl_coef, config.kickstart_kl_anneal_updates
+                        i, config.kickstart_kl_coef, config.kickstart_kl_anneal_updates,
+                        start_update=getattr(config, "kickstart_start_update", 0),
                     )
                     kickstart_value_coef_current = kickstart_coef_schedule(
                         i,
                         config.kickstart_value_coef,
                         config.kickstart_value_anneal_updates,
+                        start_update=getattr(config, "kickstart_start_update", 0),
                     )
                 else:
                     kickstart_kl_coef_current = 0.0
@@ -5206,6 +5264,12 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--kickstart_start_update",
+        type=int,
+        default=0,
+        help="Absolute update origin for teacher KL/value annealing; retain on native resume.",
+    )
+    parser.add_argument(
         "--kickstart_kl_coef",
         type=float,
         default=1.0,
@@ -5235,7 +5299,8 @@ if __name__ == "__main__":
         default=100,
         help=(
             "Linear LR warmup from lr/3 to lr over this many updates, applied "
-            "only when --teacher_checkpoint is set."
+            "only when --teacher_checkpoint is set. Zero disables warmup and preserves "
+            "constant-LR optimizer state for native continuation."
         ),
     )
     # F15: 128x128 resolution scaling. All default None/1 = no change.
@@ -6160,6 +6225,7 @@ if __name__ == "__main__":
         use_value_clip=args.use_value_clip,
         flat_minibatch_shuffle=args.flat_minibatch_shuffle,
         teacher_checkpoint=args.teacher_checkpoint,
+        kickstart_start_update=args.kickstart_start_update,
         kickstart_kl_coef=args.kickstart_kl_coef,
         kickstart_kl_anneal_updates=args.kickstart_kl_anneal_updates,
         kickstart_value_coef=args.kickstart_value_coef,

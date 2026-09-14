@@ -1,4 +1,8 @@
-# Experiments — current state (updated 2026-09-14 13:49 CEST)
+# Experiments — current state (updated 2026-09-14 14:21 CEST)
+
+Foundation teacher-KL recovery is prepared and passes local finite/native-resume
+checks. **CSCS authentication blocks submission; no new job is queued.** See
+the final entry. Earlier scheduler snapshots retain their original timestamps.
 
 Fresh historical foundation replay: **old control 62/64, old 2× 63/64 under
 current rules**, versus new global-normalization u41000 at 11/64. See the final
@@ -1599,3 +1603,47 @@ scheduler check or an evaluation of checkpoints newer than u41000.
 [Foundation regression analysis](research/FOUNDATION_LEARNING_REGRESSION_20260914.md) ·
 [Fresh report comparison](../../../../.artifacts/terra_foundation_lineage_audit_20260914/current_environment_comparison.json) ·
 [Independent review](../../../../.artifacts/terra_foundation_lineage_audit_20260914/independent_review.md).
+
+
+## September 14, 14:21 CEST: foundation teacher-KL recovery ready locally; CSCS auth blocks submission
+
+The user requested a foundation-only CSCS run initialized from a strong policy
+with KL guidance from a frozen teacher. Prepared one 24-hour, four-GH200 Daint
+allocation using lterenzi. No new job has been submitted. CSCS SSH again rejects
+the certificate with Permission denied(publickey); Euler jobs are unchanged by
+this preparation.
+
+Student and teacher use old zero-cost foundation control u15000, SHA
+`d1a6c07d9d8a40b7b7b60bd0b54313aa46a9b50fb09c789ed4ebffddb2b488b3`,
+which freshly solves 62/64 under current Terra 46738cde. Keep the same easy bank,
+seed20260907, current soil/chassis physics, native Adam and entropy clock. The
+4×128 layout keeps global512 environments and64 Adam steps/update; global
+advantage moments match merged minibatch mathematics. Teacher KL is1.0 at
+u15000, cosine-annealing to0 at u35000; value distillation and LR warmup are0.
+All added behavior penalties and their ramp remain disabled. Evaluate u17500,
+u20000 and u25000 on the same64-map greedy450-step panel, including workspace
+and retained-work travel metrics. This is retention/adaptation, not a causal
+KL A/B or proof of full-foundation generalization.
+
+Teacher continuation needed fixes for its absolute coefficient origin and
+constant-LR optimizer structure. The actual-parent GPU smoke also caught a
+missing executable-dig observation selector in the teacher model stub; that
+interface is now preserved and validated. Inference clears the teacher origin
+when disabling distillation. Seven focused native-teacher and47 existing
+training-utility tests pass; independent source/launch review has no findings.
+
+The corrected local1×32 run completes two finite updates and a further native
+resume: u15001/u15002/u15003, Adam960064/960128/960192. Teacher KL measures
+0.0264/0.0444/0.0516 with a coefficient near1, immutable teacher SHA, finite
+student/teacher/Adam/loss and unchanged environment/bank/R2/zero-cost contracts.
+The original failed smoke is preserved. The second process still spent about
+206 seconds before its first update; cache reuse is not claimed. Full4×128
+CUDA/conv/NCCL plus two-update qualification remains an in-allocation gate.
+
+Source and input staging, duplicate-safe submission, and the bounded milestone
+watcher are prepared. They are not running remotely. Authentication renewal is
+the outstanding submission dependency.
+
+[Teacher-KL run design](research/FOUNDATION_TEACHER_KL_RECOVERY_20260914.md) ·
+[Native resume smoke](../../../../.artifacts/terra_foundation_strong_recovery_20260914/local/resume_checks.json) ·
+[Manifest](../../../../.artifacts/terra_foundation_strong_recovery_20260914/manifest.json).

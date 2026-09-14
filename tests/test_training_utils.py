@@ -961,6 +961,35 @@ class AttentionConfigTest(unittest.TestCase):
 
 
 class TeacherObsDownsampleTest(unittest.TestCase):
+    def test_executable_teacher_stub_builds_and_rejects_selector_mismatch(self):
+        env = SimpleNamespace(
+            batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=64)),
+            executable_dig_observation=True,
+        )
+        config = _model_config()
+        config["executable_dig_observation"] = True
+        config["admissible_dig_observation"] = True
+        env_config = EnvConfig()
+        checkpoint = {
+            "train_config": config,
+            "env_config": env_config._replace(
+                maps=env_config.maps._replace(edge_length_px=64),
+                executable_dig_observation=True,
+            ),
+        }
+        stub = _teacher_model_env_from_checkpoint(checkpoint, env)
+        self.assertTrue(stub.executable_dig_observation)
+        # Exercise the actual model constructor and its selector validation,
+        # rather than checking only that the namespace contains a flag.
+        native_model, native_params = get_model_ready(jax.random.PRNGKey(0), config, env)
+        teacher_model, teacher_params = get_model_ready(jax.random.PRNGKey(0), config, stub)
+        for x, y in zip(jtu.tree_leaves(native_params), jtu.tree_leaves(teacher_params)):
+            np.testing.assert_array_equal(x, y)
+        self.assertEqual(type(native_model), type(teacher_model))
+        env.executable_dig_observation = False
+        with self.assertRaisesRegex(ValueError, "Teacher/student executable"):
+            _teacher_model_env_from_checkpoint(checkpoint, env)
+
     """F15: the teacher-forward-only obs subsample transform."""
 
     def _crafted_obs(self):
