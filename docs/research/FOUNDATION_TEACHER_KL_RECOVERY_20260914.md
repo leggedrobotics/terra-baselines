@@ -224,3 +224,36 @@ lterenzi with Permission denied(publickey); no paired job has been submitted.
 [Current manifest](../../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/manifest.json) ·
 [Current launchers](../../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/launch/) ·
 [Superseded, never-submitted proposal](../../../../../.artifacts/terra_foundation_strong_recovery_20260914/manifest.json).
+
+## September 15, 23:55 CEST: comparison stopped and checkpoints preserved
+
+The user authorized ending the unchanged easy-foundation comparison. CSCS job
+**4665916** was canceled at **23:55:43 CEST** on September 15. The follow-up
+scheduler/accounting check at 23:57:56 CEST confirmed that it had left the queue
+and was canceled. Earlier running and recommendation-only entries above are
+historical snapshots. The separate broad-generalist job was not canceled.
+
+Both arms' update 20,000 completion checkpoints and update 30,000 diagnostic
+checkpoints were retained locally and their SHA-256 hashes verified before
+cancellation. Each policy completed 64/64 at update 20,000 and 63/64 at update
+30,000. On the 62 maps solved by both policies at both checkpoints, workspace
+yield improved by 2.4% for scratch and 1.3% for pretrained, while retained
+inter-setup distance fell by 2.4% and 1.0%, respectively. These modest gains
+with one lost success per policy do not establish a clear initialization winner
+or the benefit of another unchanged allocation.
+
+The preservation and stop evidence are in
+[preservation.json](../../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/stop_20260915/preservation.json),
+[cancellation.json](../../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/stop_20260915/cancellation.json),
+and [verification_after.json](../../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/stop_20260915/verification_after.json).
+The observed completion loss after the KL fade does not identify its cause and
+does not establish a long-run plasticity result.
+
+The next planned question is whether a small, delayed behavior-cost stage can
+improve excavation efficiency after completion has been learned. The
+[September 16 matched design](FOUNDATION_DELAYED_COSTS_20260916.md) forks the
+same scratch update 20,000 model and Adam state into a zero-cost control and
+a combined 25% penalty stage. It keeps the current physics and bank, retains
+the expired teacher schedule, and evaluates completion and behavior at matched
+updates. That design is a separate bounded experiment; it does not automatically
+continue this initialization comparison or select stronger costs.

@@ -14,6 +14,8 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Foundation efficiency with delayed behavior costs](docs/research/FOUNDATION_DELAYED_COSTS_20260916.md)
+
 - [Full generalist using recovered broad teachers](docs/research/GENERALIST_BROAD_TEACHERS_20260915.md)
 
 - [Fresh mixed generalist with separate foundation and trench teachers](docs/research/GENERALIST_TASK_TEACHERS_20260915.md)

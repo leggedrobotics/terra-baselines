@@ -1118,3 +1118,58 @@ completion gates now pass, but promotion is separate: all added behavior costs
 remain zero and no new allocation or penalty phase has been started.
 
 [Live evidence](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/live_status_20260915.json) · [Paired u5000 report](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/evaluation/paired/5000.json).
+
+
+## September 15, 23:57 CEST: approved foundation comparison stopped
+
+Canceled CSCS 4665916 as lterenzi after the user approved ending the unchanged
+easy-foundation scratch-versus-pretrained comparison. The scheduler no longer
+lists it, and accounting reports cancellation at 23:55:43 with elapsed time
+19:45:11. Both arms' u20000 and u30000 checkpoints were verified and preserved
+before cancellation. The separate broad generalist 4672272 remains running;
+no other allocation was changed. Stop and preservation receipts are under
+`.artifacts/terra_foundation_kl_init_comparison_20260914/stop_20260915/`.
+
+The practical decision follows complete same-panel results: both arms solved
+64/64 at u20000 and 63/64 at u30000 after 10k teacher-free updates. Common-success
+workspace and retained-travel gains were small. This does not establish an
+asymptotic plateau or a causal effect of removing KL; it ends this unchanged
+comparison and preserves the stronger completion checkpoint for the next test.
+
+
+## September 16, 00:43 CEST: one delayed-cost comparison queued
+
+Submitted CSCS **4675576** at 00:35 as one four-GPU node with two matched 2-GPU
+arms. Both resume the successful scratch u20000 parent and native Adam. Control
+keeps costs zero; treatment ramps over 2,500 updates to lateral 0.125, travel
+0.0025 and turn 0.01, then holds for 2,500. The u25000 target is 81.92M new
+transitions per arm. Teacher coefficient remains zero. The source, bank, PPO,
+architecture, physical rules and observation contract are unchanged.
+
+Both local CUDA startup/native-resume gates pass, with exact matching initial
+parameters and Adam/reset/RNG/history. The actual penalty ramp continues from
+u20002 instead of restarting. The current evaluator reproduces 64/64 frozen
+parent completions. Independent review passes and all staged source, launch,
+input, checkpoint and container hashes match. Full 2x256 GH200 startup remains
+mandatory inside the allocation; no cluster learning or quality result is claimed.
+
+The first scheduler estimate was 02:07, too late for a five-hour request to
+finish before the explicit 06:55 deadline. The same unstarted job was held at
+00:37, changed to a four-hour ceiling with a matching 02:55 start cutoff,
+independently reviewed, and released at 00:42. Original and adjusted payload
+receipts are archived under admission_adjustment/. Slurm TimeLimit is the
+authority for the cached submitted batch. At release the job remains PENDING.
+No second allocation was submitted and the update budget is unchanged.
+
+The allocation will replay the parent and both u22500/u25000 milestones on the
+same 64-map panel, then write paired coverage/efficiency and stage-gate receipts.
+At least 63/64 at both treatment milestones is necessary for considering the
+behavior gains. No automatic next stage or continuation is permitted by this
+campaign. Four hours is a ceiling; incomplete work is reported as incomplete.
+
+The separate broad generalist **4672272** continues unchanged. Its u2500/u5000
+checkpoints are downloaded with matching hashes and pass CPU native validation.
+A finite local GPU batch started at 00:35 for those exact two checkpoints, each
+on the easy 64 and full 608 panels. Source/launcher/checkpoint/panel receipts
+are captured before inference; complete final validation is required. No
+quality comparison is available at this snapshot.

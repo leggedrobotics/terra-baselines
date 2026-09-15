@@ -1,4 +1,60 @@
-# Experiments — post-teacher comparison complete (2026-09-15 21:50 CEST)
+# Experiments — delayed-cost pair queued (2026-09-16 00:43 CEST)
+
+**CSCS 4675576 is submitted and released, PENDING; cluster startup is unverified.**
+This is one four-GPU Daint node split 2+2, comparing the same native scratch
+u20000 parent with zero behavior costs versus a gradual first penalty stage.
+The job has a four-hour limit and explicit September 16 06:55 CEST completion
+deadline. It must start by 02:55 to fit that full allowance before maintenance.
+The original five-hour request was held before its first start and shortened
+because its estimated 02:07 start would have ended after the deadline. No second
+job or allocation was created; the 5,000-update scientific budget is unchanged.
+
+Local CUDA/conv-backward, both actual finite u20001/u20002 startup gates and
+u20002-to-u20003 native resumes pass. Initial model, Adam, reset state, RNG,
+history and teacher hashes match across arms. The ramp retains its original
+u20000 start and 2,500-update duration; measured rollout penalties match the
+effective weights. A fresh local replay with the current evaluator reproduces
+64/64 parent completions. Independent review and remote source/input/launch/
+container byte checks pass. Each arm still must pass full 2x256 GH200/NCCL/native
+startup in the allocation before production; queue acceptance is not that proof.
+
+The penalty targets are lateral fresh-dig 0.125, base travel 0.0025 and base turn
+0.01: 25% of the prior combined2x recipe. Costs ramp for 2,500 updates and hold
+for 2,500, stopping at absolute u25000. Teacher influence is zero throughout.
+The allocation evaluates both arms at u22500/u25000 on the same full 64-map
+panel, plus a same-runtime frozen-parent replay. Reports compare completion,
+workspace yield, retained work-pose travel, adjacency and lateral digging on
+matched successful cohorts. The completion gate is at least 63/64 at both
+milestones, subject to reproducing the 64/64 parent. No automatic escalation,
+additional allocation or continuation is configured. A timeout means an
+incomplete stage, not a negative behavioral result.
+
+**The old foundation comparison 4665916 was canceled at September 15
+23:55:43 CEST**, after approval. Both arms' u20000 and u30000 checkpoints were
+preserved with matching hashes, finite/native checks and complete fixed reports.
+Its allocation is released; cancellation SIGTERM accounting is expected.
+
+**Broad generalist 4672272 remains RUNNING** on nid005475 at 00:42, unchanged.
+Its actual u2500 and u5000 checkpoints are now locally downloaded, hash matched
+and native validated: Adam 160000/320000, finite model/optimizer/loss, zero
+integrity failures, correct source/teachers/physics/PPO and zero behavior costs.
+A finite local GPU batch is evaluating exactly those two checkpoints on the
+64 easy foundations and full 608-map panel; final paired panels are pending.
+This is not a future-checkpoint watcher and creates no cluster allocation.
+The generalist allocation ends at 05:51:55 CEST before 07:00 maintenance.
+
+Evidence and design:
+- `.artifacts/terra_foundation_delayed_costs_20260916/{job.json,HANDOFF.md,admission_adjustment/,reviews/}`
+- [Delayed-cost experiment](research/FOUNDATION_DELAYED_COSTS_20260916.md)
+- `.artifacts/terra_generalist_broad_teachers_20260915/status_20260916/`
+- `.artifacts/terra_foundation_kl_init_comparison_20260914/stop_20260915/`
+
+Next recommended manual check: September 16 at 03:00 CEST (01:00 UTC), to
+resolve admission/full startup and the first scheduled production save. Morning
+review should use completed native/evaluation receipts. No external polling
+worker or scheduled check was added. Earlier snapshots retain their timestamps.
+
+# Earlier decision — post-teacher comparison complete (2026-09-15 21:50 CEST)
 
 The existing u30000 foundation checkpoints were evaluated on the same 64 fixed
 easy maps after 10,000 updates without teacher guidance. **Both complete 63/64,
