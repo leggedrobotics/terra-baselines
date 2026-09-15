@@ -116,6 +116,11 @@ def write_initialization_receipt(
             tree_fingerprint(teacher_params) if teacher_params is not None else None
         ),
     }
+    if getattr(config, "trench_teacher_checkpoint", None) is not None:
+        payload.update({field: getattr(config, field) for field in (
+            "trench_teacher_checkpoint", "teacher_checkpoint_sha256",
+            "trench_teacher_checkpoint_sha256", "task_teacher_family_ids",
+        )})
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)

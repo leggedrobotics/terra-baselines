@@ -1,5 +1,25 @@
 # Experiments — completed log
 
+## 2026-09-15 task-specific teacher generalist preparation
+
+Implemented two frozen policy teachers routed by the student's pre-action map
+family, preserving each teacher's native digging observation semantics. Added
+per-task KL/exposure diagnostics and native continuation binding to teacher
+bytes and family roles. Evaluation clears both teacher flags.
+
+The current-rules easy-foundation control screen completed all608development
+cases:0/384 harder foundations and0/224 trenches, zero integrity failures.
+Together with its62/64 easy-map result and the recovered trench teacher's
+192/224 result, this motivates a first mixed run on easy foundations plus the
+fifteen broad trench training conditions. The qualified2976-slot bank is
+source/scenario/map disjoint from all eleven checked held-out manifests.
+
+43CPU tests and15subtests pass, with two existing skips. Local RTX4090 startup
+u1/u2 and native u3 pass actual teacher, fresh/native initialization,
+model/optimizer/loss, checkpoint-clock and transition-integrity gates.
+The staged one-node CSCS campaign has not yet been submitted at this entry.
+See [design and evidence](research/GENERALIST_TASK_TEACHERS_20260915.md).
+
 ## 2026-09-07 local pipeline correctness smoke
 
 Validated the junction observation, native checkpoint replay, and JAX cache
@@ -936,3 +956,38 @@ evaluation coverage. No second allocation or penalty phase is automatic.
 [Submission receipt](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/submission_receipt.json) ·
 [Scheduler receipt](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/scheduler_after_submission.txt) ·
 [Live manifest](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/manifest.json).
+
+
+## September 15, 08:44 CEST: both arms recover strong easy-foundation completion
+
+CSCS job **4665916** is RUNNING on nid005694, started at04:10:32CEST,
+with walltime ending September16 at04:10:32CEST. Both full2x256 startup and
+paired initialization gates passed. Live production logs have reached about
+7,700 updates per arm; both have u7500 checkpoint files. The latest checkpoints
+independently downloaded and native-validated for evaluation are u5000.
+Training currently takes about2seconds/update per arm (about8,200 transitions/s).
+
+| Arm | u2500 exact completion | u5000 exact completion | u5000 mean dug |
+| --- | --- | --- | --- |
+| Random student + teacher KL | 62/64 | 63/64 | 99.740% |
+| Pretrained student + teacher KL | 62/64 | 63/64 | 99.933% |
+
+All four fixed evaluations are complete:64 identical validation resets each,
+greedy450steps, verified checkpoint hashes, Adam counters and pinned sources.
+An independent agent checked all256 rows and transition integrity. On the62
+common successful maps at u5000, scratch/pretrained productive poses are
+6.839/6.823, unique area per productive setup6.136/6.132m², retained straight-line
+travel26.574/26.579m, and fresh-workspace adjacency97.480% for both. There are
+no exact-pose revisits or ABA returns in this cohort. Retained straight-line
+travel is a geometric lower bound, not a Nav2 path measurement.
+
+Scratch fails slot43/mapL00300 at83.33%dug; pretrained fails slot33/mapL00290
+at95.72%dug. There is no clear completion or efficiency winner. Both match or
+slightly exceed the frozen control's62/64 on this easy panel. This is one paired
+seed with a shared teacher, not a no-KL ablation or full-dataset result.
+Teacher KL is still active (coefficient about0.854 at u5000); the bounded watcher
+is alive and will evaluate both arms at u10000 and u20000. Both numerical
+completion gates now pass, but promotion is separate: all added behavior costs
+remain zero and no new allocation or penalty phase has been started.
+
+[Live evidence](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/live_status_20260915.json) · [Paired u5000 report](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/evaluation/paired/5000.json).

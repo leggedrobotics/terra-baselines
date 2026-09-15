@@ -1,4 +1,17 @@
-# Experiments — current state (updated 2026-09-14 14:21 CEST)
+# Experiments — current state (updated 2026-09-15 10:40 CEST)
+
+The additional CSCS mixed generalist is **preparing; not submitted yet**.
+It uses a fresh student with task-specific frozen foundation/trench teachers,
+easy foundations plus all15trench training conditions, and zero added behavior
+costs. CPU routing/gradient/native-resume tests, the bank loader, and local
+finite GPU u1/u2/FINAL plus native u3 checks pass. Immutable staging and
+independent submission review are next. See
+[the campaign design](research/GENERALIST_TASK_TEACHERS_20260915.md).
+
+CSCS authentication and account `lterenzi` were verified at10:10CEST.
+Foundation comparison4665916 remains RUNNING on nid005694; it is not changed
+by this additional campaign. All older authentication/status paragraphs below
+are historical snapshots with their stated dates.
 
 Foundation teacher-KL recovery is prepared and passes local finite/native-resume
 checks. **CSCS authentication blocks submission; no new job is queued.** See
@@ -1712,3 +1725,38 @@ evaluation coverage. No second allocation or penalty phase is automatic.
 [Submission receipt](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/submission_receipt.json) ·
 [Scheduler receipt](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/scheduler_after_submission.txt) ·
 [Live manifest](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/manifest.json).
+
+
+## September 15, 08:44 CEST: both arms recover strong easy-foundation completion
+
+CSCS job **4665916** is RUNNING on nid005694, started at04:10:32CEST,
+with walltime ending September16 at04:10:32CEST. Both full2x256 startup and
+paired initialization gates passed. Live production logs have reached about
+7,700 updates per arm; both have u7500 checkpoint files. The latest checkpoints
+independently downloaded and native-validated for evaluation are u5000.
+Training currently takes about2seconds/update per arm (about8,200 transitions/s).
+
+| Arm | u2500 exact completion | u5000 exact completion | u5000 mean dug |
+| --- | --- | --- | --- |
+| Random student + teacher KL | 62/64 | 63/64 | 99.740% |
+| Pretrained student + teacher KL | 62/64 | 63/64 | 99.933% |
+
+All four fixed evaluations are complete:64 identical validation resets each,
+greedy450steps, verified checkpoint hashes, Adam counters and pinned sources.
+An independent agent checked all256 rows and transition integrity. On the62
+common successful maps at u5000, scratch/pretrained productive poses are
+6.839/6.823, unique area per productive setup6.136/6.132m², retained straight-line
+travel26.574/26.579m, and fresh-workspace adjacency97.480% for both. There are
+no exact-pose revisits or ABA returns in this cohort. Retained straight-line
+travel is a geometric lower bound, not a Nav2 path measurement.
+
+Scratch fails slot43/mapL00300 at83.33%dug; pretrained fails slot33/mapL00290
+at95.72%dug. There is no clear completion or efficiency winner. Both match or
+slightly exceed the frozen control's62/64 on this easy panel. This is one paired
+seed with a shared teacher, not a no-KL ablation or full-dataset result.
+Teacher KL is still active (coefficient about0.854 at u5000); the bounded watcher
+is alive and will evaluate both arms at u10000 and u20000. Both numerical
+completion gates now pass, but promotion is separate: all added behavior costs
+remain zero and no new allocation or penalty phase has been started.
+
+[Live evidence](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/live_status_20260915.json) · [Paired u5000 report](../../../../.artifacts/terra_foundation_kl_init_comparison_20260914/evaluation/paired/5000.json).

@@ -389,6 +389,8 @@ def configure_for_bank(train_config, relative_path: str, count: int):
     config.replay_map_count = 0
     config.target_map_repeat = 0
     config.teacher_checkpoint = None
+    from utils.task_teachers import clear_task_teacher_config
+    clear_task_teacher_config(config)
     config.kickstart_start_update = 0
     config.teacher_obs_downsample = 1
     config.resume_from = None

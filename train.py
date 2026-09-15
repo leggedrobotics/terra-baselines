@@ -25,6 +25,7 @@ from utils.utils_ppo import (
     policy_with_intermediates,
     recurrent_policy_sequence,
 )
+from utils.task_teachers import FAMILY_KEY, task_teacher_kl_stats
 import os
 
 jax.config.update("jax_threefry_partitionable", True)
@@ -367,6 +368,7 @@ def ppo_update_networks(
     # off (teacher sees the student obs unchanged, historical behavior). This is
     # a Python-static int, so the transform is traced/specialized at compile.
     teacher_obs_downsample = int(getattr(config, "teacher_obs_downsample", 1))
+    task_teachers = getattr(config, "trench_teacher_checkpoint", None) is not None
     # V6 dense per-cell auxiliary supervision. 0.0 = off, and the branch is
     # Python-static so the traced loss graph of existing runs is unchanged.
     aux_coef = float(_config_option(config, "aux_coef", 0.0))
@@ -486,21 +488,31 @@ def ppo_update_networks(
 
         if teacher_apply_fn is not None:
             def _compute_kickstart(_):
-                teacher_obs = downsample_teacher_obs(obs, teacher_obs_downsample)
-                teacher_value, teacher_dist = policy(
-                    teacher_apply_fn, teacher_params, teacher_obs
-                )
+                if task_teachers:
+                    teacher_value, teacher_logits = teacher_apply_fn(
+                        teacher_params, transitions_obs_reshaped,
+                        transitions_prev_actions_flat,
+                    )
+                else:
+                    teacher_obs = downsample_teacher_obs(obs, teacher_obs_downsample)
+                    teacher_value, teacher_dist = policy(
+                        teacher_apply_fn, teacher_params, teacher_obs
+                    )
+                    teacher_logits = teacher_dist.logits_parameter()
                 teacher_value = jax.lax.stop_gradient(teacher_value[:, 0])
-                teacher_logits = jax.lax.stop_gradient(
-                    teacher_dist.logits_parameter()
-                )
+                teacher_logits = jax.lax.stop_gradient(teacher_logits)
                 teacher_logp = jax.nn.log_softmax(teacher_logits, axis=-1)
                 student_logp = jax.nn.log_softmax(student_logits, axis=-1)
                 teacher_p = jnp.exp(teacher_logp)
-                kl = jnp.sum(
+                per_row_kl = jnp.sum(
                     teacher_p * (teacher_logp - student_logp), axis=-1
-                ).mean()
+                )
+                kl = per_row_kl.mean()
                 vmse = jnp.mean((value - teacher_value) ** 2)
+                task_stats = task_teacher_kl_stats(
+                    per_row_kl, transitions_obs_reshaped[FAMILY_KEY],
+                    config.task_teacher_family_ids,
+                ) if task_teachers else {}
                 return (
                     kl,
                     vmse,
@@ -508,9 +520,14 @@ def ppo_update_networks(
                     _finite_fraction(teacher_logits),
                     _nan_safe_abs_max(teacher_value),
                     _nan_safe_abs_max(teacher_logits),
+                    task_stats,
                 )
 
             def _zero_kickstart(_):
+                task_stats = task_teacher_kl_stats(
+                    jnp.zeros_like(transitions_obs_reshaped[FAMILY_KEY], dtype=jnp.float32),
+                    transitions_obs_reshaped[FAMILY_KEY], config.task_teacher_family_ids,
+                ) if task_teachers else {}
                 return (
                     jnp.zeros((), dtype=jnp.float32),
                     jnp.zeros((), dtype=jnp.float32),
@@ -518,6 +535,7 @@ def ppo_update_networks(
                     jnp.ones((), dtype=jnp.float32),
                     jnp.zeros((), dtype=jnp.float32),
                     jnp.zeros((), dtype=jnp.float32),
+                    task_stats,
                 )
 
             (
@@ -527,6 +545,7 @@ def ppo_update_networks(
                 teacher_logits_finite,
                 teacher_value_abs_max,
                 teacher_logits_abs_max,
+                task_teacher_stats,
             ) = jax.lax.cond(
                 (kickstart_kl_coef + kickstart_value_coef) > 0,
                 _compute_kickstart,
@@ -540,6 +559,7 @@ def ppo_update_networks(
             teacher_logits_finite = jnp.ones((), dtype=jnp.float32)
             teacher_value_abs_max = jnp.zeros((), dtype=jnp.float32)
             teacher_logits_abs_max = jnp.zeros((), dtype=jnp.float32)
+            task_teacher_stats = {}
 
         value = jnp.reshape(value, transitions.value.shape)
         log_prob = jnp.reshape(log_prob, transitions.log_prob.shape)
@@ -613,6 +633,7 @@ def ppo_update_networks(
             teacher_logits_finite,
             teacher_value_abs_max,
             teacher_logits_abs_max,
+            task_teacher_stats,
         )
 
     (
@@ -653,6 +674,7 @@ def ppo_update_networks(
             teacher_logits_finite,
             teacher_value_abs_max,
             teacher_logits_abs_max,
+            task_teacher_stats,
         ),
     ), grads = jax.value_and_grad(_loss_fn, has_aux=True)(train_state.params)
     (
@@ -777,6 +799,10 @@ def ppo_update_networks(
         "diagnostics/teacher_value_abs_max": teacher_value_abs_max,
         "diagnostics/teacher_logits_abs_max": teacher_logits_abs_max,
     }
+    if task_teachers:
+        # Global unnormalized statistics survive variable family proportions
+        # between devices/minibatches. The caller forms the weighted means.
+        update_info.update(jax.lax.psum(task_teacher_stats, axis_name="devices"))
     if teacher_apply_fn is not None:
         update_info["kickstart/kl"] = k_kl
         update_info["kickstart/value_mse"] = k_vmse

@@ -124,6 +124,17 @@ from utils.utils_ppo import (
     value_ppo,
     wrap_action,
 )
+from utils.task_teachers import (
+    bind_task_teacher_checkpoints,
+    finalize_task_teacher_metrics,
+    load_task_teacher_checkpoint,
+    make_task_teacher_apply_fn,
+    resolve_task_teacher_families,
+    task_teacher_rollout_observation,
+    validate_task_teacher_configs,
+    validate_task_teacher_mode,
+    validate_task_teacher_resume,
+)
 from utils.episode_aggregates import (
     aggregate_to_payload,
     assert_aggregate_integrity,
@@ -380,6 +391,8 @@ _OPTIONAL_FINITE_LOSS_KEYS = (
     "clip_fraction",
     "kickstart/kl",
     "kickstart/value_mse",
+    "kickstart/foundation_kl",
+    "kickstart/trench_kl",
     "aux_loss",
     "diagnostics/grad_global_norm",
 )
@@ -569,9 +582,11 @@ def _validate_advantage_normalization_resume(checkpoint, config):
 def _validate_teacher_resume(checkpoint, config):
     """An existing native teacher run retains its coefficient and optimizer clocks.
 
-    Adding a teacher to a teacher-free parent is allowed. Teacher file identity
-    is validated by the campaign, since local and cluster paths can differ.
+    Adding a teacher to a teacher-free parent is allowed. The legacy single
+    teacher keeps campaign-owned identity checks; dual teachers bind both file
+    contents and family roles while allowing relocated checkpoint paths.
     """
+    validate_task_teacher_resume(checkpoint, config)
     if _checkpoint_config_value(checkpoint, "teacher_checkpoint", None) is None:
         return
     if getattr(config, "teacher_checkpoint", None) is None:
@@ -1923,6 +1938,12 @@ class MixedAgentTrainConfig:
     # F7: kickstart distillation. teacher_checkpoint=None disables the feature
     # entirely; everything below is inert while it is None.
     teacher_checkpoint: str | None = None
+    # Optional second teacher. In this mode the primary teacher is foundation
+    # only; map provenance routes the trench teacher to trench transitions.
+    trench_teacher_checkpoint: str | None = None
+    teacher_checkpoint_sha256: str | None = None
+    trench_teacher_checkpoint_sha256: str | None = None
+    task_teacher_family_ids: dict | None = None
     kickstart_start_update: int = 0
     kickstart_kl_coef: float = 1.0
     kickstart_kl_anneal_updates: int = 1500
@@ -1966,6 +1987,7 @@ class MixedAgentTrainConfig:
             raise ValueError("kickstart_start_update requires teacher_checkpoint")
         if self.kickstart_lr_warmup_updates < 0:
             raise ValueError("kickstart_lr_warmup_updates must be nonnegative")
+        validate_task_teacher_mode(self)
         _checkpoint_load_mode(self)
         _validate_foundation_behavior_config(self)
         _validate_task_bank_transfer(self)
@@ -3126,9 +3148,82 @@ def _wandb_tags_for_config(config: MixedAgentTrainConfig) -> list[str]:
     return list(dict.fromkeys(tags))
 
 
+def _load_task_teachers(config, env, env_params, rng, checkpoint=None):
+    """Build frozen native teachers without changing the student's environment."""
+    from utils.models import validate_model_params_match
+
+    if _num_agents_from_env_params(env_params) != 1:
+        raise ValueError("task teachers require one tracked excavator")
+    for field in ("agent_types", "action_types"):
+        if not np.all(np.asarray(getattr(env_params, field)) == 0):
+            raise ValueError(f"task teachers require {field}=(0,)")
+    route = resolve_task_teacher_families(
+        env.maps_buffer.family_names, env.maps_buffer.family_ids,
+    )
+    if config.task_teacher_family_ids is not None and config.task_teacher_family_ids != route:
+        raise ValueError("task teacher family IDs differ from the recorded routing")
+    config.task_teacher_family_ids = route
+    if checkpoint is not None:
+        validate_task_teacher_resume(checkpoint, config, require_families=True)
+
+    helpers.register_checkpoint_config_classes()
+    checkpoints = {
+        "foundation": load_task_teacher_checkpoint(
+            config.teacher_checkpoint, config.teacher_checkpoint_sha256,
+        ),
+        "trench": load_task_teacher_checkpoint(
+            config.trench_teacher_checkpoint, config.trench_teacher_checkpoint_sha256,
+        ),
+    }
+    teacher_configs = {
+        role: helpers.checkpoint_evaluation_config(saved)
+        for role, saved in checkpoints.items()
+    }
+    validate_task_teacher_configs(config, teacher_configs["foundation"], teacher_configs["trench"])
+    apply_fns, params = {}, {}
+    student_edge = int(env.batch_cfg.maps_dims.maps_edge_length)
+    for role, saved in checkpoints.items():
+        if _teacher_maps_edge_length(saved) != student_edge:
+            raise ValueError(f"{role} teacher must share the student's native map resolution")
+        teacher_env_cfg = saved.get("env_config")
+        if teacher_env_cfg is None or _num_agents_from_env_params(teacher_env_cfg) != 1:
+            raise ValueError(f"{role} teacher requires a saved single-agent environment")
+        for field in ("agent_types", "action_types"):
+            if not np.all(np.asarray(getattr(teacher_env_cfg, field)) == 0):
+                raise ValueError(f"{role} teacher requires {field}=(0,)")
+        if not np.allclose(
+            np.asarray(teacher_env_cfg.maps.edge_length_m),
+            float(env.batch_cfg.maps.edge_length_m), rtol=1e-6, atol=0,
+        ):
+            raise ValueError(f"{role} teacher physical map size differs from the student")
+        teacher_config = teacher_configs[role]
+        # This explicit native view is the only dual-mode exception to the
+        # single teacher's executable-observation equality requirement.
+        teacher_env = SimpleNamespace(
+            batch_cfg=env.batch_cfg,
+            executable_dig_observation=bool(
+                teacher_config.get("executable_dig_observation", False)
+                if isinstance(teacher_config, dict)
+                else getattr(teacher_config, "executable_dig_observation", False)
+            ),
+        )
+        rng, rng_teacher = jax.random.split(rng)
+        model, initialized = get_model_ready(rng_teacher, teacher_config, teacher_env)
+        validate_model_params_match(initialized, saved["model"], f"{role} teacher")
+        _assert_finite_tree(saved["model"], f"{role} teacher params")
+        apply_fns[role], params[role] = model.apply, saved["model"]
+    teacher_apply_fn = make_task_teacher_apply_fn(
+        apply_fns["foundation"], apply_fns["trench"],
+        teacher_configs["foundation"], teacher_configs["trench"], route,
+    )
+    print(f"Frozen task teachers loaded; pre-action family routing: {route}", flush=True)
+    return rng, teacher_apply_fn, params
+
+
 def train_mixed_agents(config: MixedAgentTrainConfig):
     """Main training function for mixed agents - with full feature parity to original train.py"""
 
+    bind_task_teacher_checkpoints(config)
     print("PPO advantage normalization: " + (
         "global minibatch across devices" if config.global_minibatch_advantage_norm
         else "per-device minibatch (default)"
@@ -3346,7 +3441,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     # pmapped update below (~1M params replicated per device).
     teacher_apply_fn = None
     teacher_params = None
-    if config.teacher_checkpoint is not None:
+    if config.trench_teacher_checkpoint is not None:
+        rng, teacher_apply_fn, teacher_params = _load_task_teachers(
+            config, env, env_params, rng,
+            checkpoint if checkpoint_mode == "resume" else None,
+        )
+        wandb.config.update({
+            "teacher_checkpoint_sha256": config.teacher_checkpoint_sha256,
+            "trench_teacher_checkpoint_sha256": config.trench_teacher_checkpoint_sha256,
+            "task_teacher_family_ids": config.task_teacher_family_ids,
+        }, allow_val_change=True)
+    elif config.teacher_checkpoint is not None:
         if not os.path.exists(config.teacher_checkpoint):
             raise FileNotFoundError(
                 f"Teacher checkpoint does not exist: {config.teacher_checkpoint}"
@@ -3744,6 +3849,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         actor_hidden,
                     ) = runner_state
 
+                    # Preserve pre-action provenance and geometry, before an
+                    # ending episode is replaced by env.step's auto-reset.
+                    rollout_observation = prev_timestep.observation
+                    if config.trench_teacher_checkpoint is not None:
+                        rollout_observation = task_teacher_rollout_observation(
+                            rollout_observation, prev_timestep.state,
+                            episode_accumulator.family_id,
+                        )
+
                     # SELECT ACTION
                     rng, _rng_model, _rng_env = jax.random.split(rng, 3)
                     if is_recurrent_actor(config):
@@ -3881,7 +3995,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         target_mutation=timestep.info["target_mutation"],
                         obstacle_mutation=timestep.info["obstacle_mutation"],
                         log_prob=log_prob,
-                        obs=prev_timestep.observation,
+                        obs=rollout_observation,
                         prev_actions=prev_actions,
                         prev_reward=prev_reward,
                     )
@@ -4196,6 +4310,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
                 # averaging over minibatches then over epochs
                 loss_info = jtu.tree_map(lambda x: x.mean(-1).mean(-1), loss_info)
+                if config.trench_teacher_checkpoint is not None:
+                    loss_info = finalize_task_teacher_metrics(loss_info, config.num_minibatches)
 
                 # Explained variance between value predictions and returns
                 # Use transitions and targets from current update_state (first device in pmap)
@@ -5287,6 +5403,14 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--trench_teacher_checkpoint",
+        type=str,
+        default=None,
+        help=("Second frozen teacher, routed only to trench transitions; "
+              "--teacher_checkpoint then supervises foundations only. Requires "
+              "one tracked excavator, executable observations and value coefficient zero."),
+    )
+    parser.add_argument(
         "--kickstart_start_update",
         type=int,
         default=0,
@@ -6255,6 +6379,7 @@ if __name__ == "__main__":
         use_value_clip=args.use_value_clip,
         flat_minibatch_shuffle=args.flat_minibatch_shuffle,
         teacher_checkpoint=args.teacher_checkpoint,
+        trench_teacher_checkpoint=args.trench_teacher_checkpoint,
         kickstart_start_update=args.kickstart_start_update,
         kickstart_kl_coef=args.kickstart_kl_coef,
         kickstart_kl_anneal_updates=args.kickstart_kl_anneal_updates,
