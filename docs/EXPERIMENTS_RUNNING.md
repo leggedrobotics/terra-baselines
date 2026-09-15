@@ -1,18 +1,42 @@
-# Experiments — current correction (2026-09-15 12:40 CEST)
+# Experiments — broad teacher selected (2026-09-15 13:41 CEST)
 
-**4670716 is held with `JobHeldUser`; it never started.** Lorenzo clarified
-that the mixed generalist should use all foundations and a teacher trained on
-the broad dataset. The earlier teacher selection missed the mature V8 policies.
-Recovered FF u86000 completed341/384 foundations and670/720 promotion maps;
-GRU u40000 completed343/384 foundations and677/720. Those are legacy Terra
-results, with checkpoints present locally. The FF policy is now being replayed
-under current Terra46738cde and the current trench gate on608development cases.
+**4670716 remains PENDING(JobHeldUser), held before it ever started.** The user
+correctly recalled strong broad V8 policies: FF u86000 completed 341/384
+foundations and 670/720 promotion maps; GRU u40000 completed 343/384 and 677/720.
+The proposed replacement includes all 2,400 current foundation training maps
+and 1,440 finite-metadata trenches, with no easy-map repetition.
 
-Correction artifacts and full3840-map bank qualification are in
-`/home/lorenzo/moleworks/.artifacts/terra_generalist_broad_teachers_20260915/`.
-The existing foundation pair4665916 is untouched. No replacement training job
-has been submitted. The paragraphs below preserve earlier status snapshots.
+All three frozen FF replays are complete on the same 608 development cases:
+historical runtime **332/384 foundations, 218/224 trenches**; current runtime
+**140/384, 1/224**; current physics with the old traversability observation
+**113/384, 4/224**. Zero integrity failures. Mean foundation excavation is
+94.0%, 65.5% and 54.2%, respectively. Restoring that old input worsens transfer
+and is excluded from training. No throughput comparison is intended.
 
+The source audit identified a global footprint/traversability change, not only
+trench-rule changes. CPU checks found different initial Agents on 24/384
+foundation cases despite the same reset seeds; at identical Agent states,
+only the traversability channel differs among the 23 native policy inputs.
+On the 360 foundations with unchanged initial Agents, success counts are
+312/132/106. Changed starting poses do not account for the regression; the
+runtime comparison does not isolate a single physical rule.
+See [the corrected design](research/GENERALIST_BROAD_TEACHERS_20260915.md) and
+`.artifacts/terra_generalist_broad_teachers_20260915/qualification/`.
+
+Proceed with the broad FF as a temporary foundation prior and the updated
+trench specialist. This does not promote the FF as a strong current expert.
+Fresh student/Adam, KL1 cosine to zero by u20000, current observations and zero
+added costs are retained. The first four-GPU segment requests 16 hours before
+September 16 CSCS maintenance; further allocations are not automatic.
+
+Helper source and 28 CPU tests plus 10 subtests are committed in `2f19995`.
+Corrected local CUDA u1/u2 and native u3 pass, with finite model/teacher/Adam/loss,
+Adam64/128/192 and zero transition integrity failures. This 1x32 diagnostic does
+not replace the mandatory four-GPU production-size qualification.
+The current frozen replay used baselines `a80fe8b` and Terra `46738cde`; the old
+replay uses baselines `74f72a6` and Terra `25f855db`. The existing foundation
+comparison 4665916 is untouched. No replacement allocation, automatic further
+submission or new polling monitor has been created. Earlier snapshots follow.
 
 The new CSCS generalist **4670716 is queued**; no training update has run there
 yet. One node, four GPUs, account `lterenzi`/`d130`. The original 24-hour request
