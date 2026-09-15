@@ -1,4 +1,46 @@
-# Experiments — broad teacher generalist submitted (2026-09-15 14:09 CEST)
+# Experiments — generalist running; foundation pair solves 64/64 (2026-09-15 21:30 CEST)
+
+**CSCS 4672272 is RUNNING on nid005475 with four GPUs.** The existing pending
+job's time limit was reduced from 16 hours to 9 hours at 20:51:49; it started at
+20:51:55 and ends September 16 at 05:51:55, before maintenance at 07:00. No new
+allocation was submitted. Training source, all 3,840 maps, both frozen teachers,
+PPO, the absolute update target and zero added behavior costs are unchanged.
+
+Four-GPU CUDA, convolution backward and NCCL pass. Actual full 4x256 startup
+u1/u2/FINAL validation passes with finite model/teacher/Adam/loss and zero soil
+integrity failures. Production restored the exact u2 model and Adam (step 128)
+and progressed beyond u500 at approximately 15–16k transitions/s. The actual
+u500 checkpoint was downloaded with matching remote SHA256 and passes finite
+model/Adam/loss, Adam 32,000, teacher/physics/protocol and zero integrity checks.
+No fixed generalist evaluation exists yet.
+Receipts: `.artifacts/terra_generalist_broad_teachers_20260915/status_20260915_evening/`.
+
+**Foundation comparison 4665916 remains RUNNING on nid005694**, about 31.4k
+updates per arm at 9.2k transitions/s each. Latest observed saves are u31000;
+downloaded u30000 checkpoints match remote hashes and pass finite/native checks
+with Adam 1,920,000, zero integrity failures and teacher coefficient zero.
+
+All eight planned fixed evaluations finished. At u20000, both scratch+KL and
+pretrained+KL complete **64/64 easy held-out foundations**, versus frozen control
+62/64. On all 64 successful cases, unique area per productive base pose is
+6.207/6.349 m², retained work inter-setup distance 16.349/15.895 m and workspace
+edge adjacency 96.81/96.21% (scratch/pretrained). Small tradeoffs; no overall
+initialization winner or broad-foundation conclusion. Independent review of
+checkpoint bindings, all 576 student/reference rows and matched resets passes.
+
+Actual u30000 training entropy is 0.1220/0.1192 (scratch/pretrained). Teacher
+weight has been zero for 10k updates; sustained fixed-panel completion after
+removal is not yet measured because the latest replay is at the u20000 boundary.
+No penalties are enabled. The original eight-report watcher finished normally
+at 15:46; no new watcher or continuation allocation was created.
+Foundation evidence: `.artifacts/terra_foundation_kl_init_comparison_20260914/status_20260915_evening/STATUS.md`.
+
+Next suggested manual check: September 15 at 22:45 CEST, near the first full
+generalist evaluation milestone. CSCS also lists all-node maintenance September
+17 at 14:00 through September 18 at 14:00; recheck admission before continuations.
+Earlier snapshots below retain their original timestamps.
+
+## Earlier submission snapshot — 2026-09-15 14:09 CEST
 
 **CSCS 4672272 is PENDING/Priority**, submitted14:08:09CEST. Slurm confirms
 one node, fourGPUs,64CPUs, lterenzi/d130 and a16-hour limit. There is no estimated

@@ -1,5 +1,38 @@
 # Experiments — completed log
 
+## 2026-09-15 21:30 CEST: generalist starts; both foundation students solve 64/64
+
+Reduced the existing pending generalist 4672272 from 16 hours to 9 hours at
+20:51:49, with owner/account/job/state guards and unchanged requested resources,
+source, teachers, bank and training recipe. Slurm admitted it at 20:51:55 on
+nid005475; the segment ends September 16 at 05:51:55 before 07:00 maintenance.
+Full four-GPU CUDA/conv-backward/NCCL and finite 4x256 u1/u2/FINAL gates pass.
+Production restored the exact u2 model/Adam (step 128), then exceeded u500 at
+approximately 15–16k transitions/s. Actual downloaded u500 passes SHA, finite
+model/Adam/loss, Adam 32,000, current physics/teacher/protocol and zero integrity
+checks. There is no generalist held-out result yet. No new allocation or
+monitor was created.
+
+Foundation pair 4665916 remains healthy at approximately 31.4k updates each,
+with latest observed u31000 saves. Actual downloaded u30000 checkpoints pass
+hash/native/finite checks, Adam 1,920,000 and zero integrity failures. Teacher
+coefficient is zero; added behavior costs remain zero. Training entropy is
+0.1220 scratch versus 0.1192 pretrained, a single-batch comparison.
+
+The eight planned fixed evaluations completed normally at 15:46. Paired exact
+successes at u2500/u5000/u10000/u20000 are 62/62, 63/63, 64/63 and 64/64 out of
+64 (scratch/pretrained). Frozen reference: 62/64. At u20000, area per productive
+base pose is 6.207/6.349 m², retained inter-setup distance 16.349/15.895 m and
+workspace edge adjacency 96.81/96.21%. Independent review verifies all 576
+student/reference rows, actual checkpoint hashes, native clocks and fixed
+identities. No overall initialization winner or broad-foundation claim.
+The latest replay is at the teacher fade boundary, so sustained completion
+after guidance removal is still untested despite healthy subsequent PPO.
+
+Evidence: both campaigns' `status_20260915_evening/` folders. Suggested next
+manual generalist check: 22:45 CEST. Maintenance additionally covers September
+17 14:00–September 18 14:00; refresh scheduling before further continuations.
+
 ## 2026-09-15 14:09 CEST: broad-teacher replacement submitted after full qualification
 
 Recovered mature V8 broad policies, confirming FF670/720 and GRU677/720

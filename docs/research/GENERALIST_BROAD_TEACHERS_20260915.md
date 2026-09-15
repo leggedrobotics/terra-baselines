@@ -85,9 +85,11 @@ reward-v2 task progress, completion and step rewards remain. Efficiency costs
 require repeated strong fixed-panel completion before a later stage.
 
 Checkpoint every 500 updates, with absolute target 500,000 beyond one allocation.
-The first segment requests 16 hours to fit before CSCS maintenance on September
-16, 07:00–19:00 CEST. The nominal continuation segment is 24 hours; no further
-allocation or continuation is automatic.
+The first segment originally requested 16 hours. At 20:51 CEST on September 15,
+its existing controller limit was reduced to 9 hours and Slurm admitted it at
+20:51:55. It ends at 05:51:55 before September 16 maintenance, 07:00–19:00 CEST.
+The nominal continuation segment is 24 hours; no further allocation or
+continuation is automatic. Refresh maintenance reservations before submitting.
 The first allocation repeats four-GPU CUDA, convolution-backward and NCCL
 checks, then validates finite u1/u2 checkpoints at the full batch before native
 continuation. Before submission, require local native teacher-logit parity,
@@ -166,6 +168,24 @@ student evaluation; the teacher is not selected by omitting difficult maps.
 
 ## Submission and current limits
 
+At 21:30 CEST, job4672272 is RUNNING on nid005475. The 9-hour controller change
+and immediate admission are recorded in the campaign's
+`status_20260915_evening/maintenance_limit_change.json` and `runtime_receipts.json`.
+Full four-GPU CUDA, convolution backward and NCCL pass, along with finite 4x256
+u1/u2/FINAL checkpoints, expected teachers/sources and zero material-integrity
+failures. Production restored the exact u2 model and Adam (step128), reaching
+beyond u500 at approximately 15–16k transitions/s. Actual downloaded u500
+passes SHA, finite model/Adam/loss, Adam 32,000, current physics/teacher/protocol
+and zero integrity checks. There is no generalist held-out result yet. The frozen preparation
+manifest remains immutable; job.json records the actual 9-hour controller limit.
+
+The separate foundation pair reaches approximately 31.4k updates. Both u20000
+students complete 64/64 easy maps, with small workspace/travel tradeoffs. Actual
+u30000 states are finite with teacher weight zero; sustained post-teacher fixed
+completion remains unmeasured. These results do not qualify the broad bank.
+Next suggested manual check:22:45CEST. No new monitor, allocation, continuation
+or behavior-cost stage was created. Earlier submission evidence follows.
+
 CSCS job4672272 was submitted at14:08:09CEST on September15. At14:09:04 Slurm
 confirms PENDING/Priority, one node/fourGPUs,16hours and lterenzi/d130, with no
 estimated start or runtime proof. Narrow job4670716 was canceled before starting;
@@ -179,10 +199,11 @@ All remote bytes pass. The serial verification timeout was repaired with an
 pinned in the launch manifest and executes before GPU preflight. No training
 source or recipe changed in that repair, so the existing local smoke applies.
 
-The next recommended manual check is14:30CEST. No automatic monitor, further
+The original recommended manual check was14:30CEST. No automatic monitor, further
 allocation or behavior-cost stage has been created. The frozen manifest retains
 its preparation status; campaign job.json and scheduler receipts describe live
-state. The first segment can fit before maintenance only if admitted by15:00.
+state. The original 16-hour segment required admission by15:00; the actual
+9-hour allocation and subsequent admission are recorded above.
 
 Evidence: `qualification/{runtime_comparison.json,teacher_selection.json,summary.json,protocol.json,legacy_protocol.json,legacy_marker_protocol.json}`
 and `qualification/initial_state_audit/comparison.json` in the campaign.
