@@ -157,8 +157,32 @@ teacher preprocessing, including exact values and logits from the actual broad
 checkpoint. Corrected CUDA u1/u2 and native u3 pass with finite student, teacher,
 optimizer and loss state, Adam steps 64/128/192 and zero transition integrity
 failures. This is a 1x32 diagnostic; four-GPU production-size qualification
-remains mandatory in the allocation. No replacement job is submitted at this
-snapshot.
+remains mandatory in the allocation.
+
+Completion regresses in all24 evaluated foundation conditions. The largest
+drops include slab apron-d16 (13/16 to0/16), adjacent bearing walls (14/16
+to1/16) and adjacent slabs (13/16 to0/16). Preserve every condition for the
+student evaluation; the teacher is not selected by omitting difficult maps.
+
+## Submission and current limits
+
+CSCS job4672272 was submitted at14:08:09CEST on September15. At14:09:04 Slurm
+confirms PENDING/Priority, one node/fourGPUs,16hours and lterenzi/d130, with no
+estimated start or runtime proof. Narrow job4670716 was canceled before starting;
+the existing foundation comparison4665916 remains running.
+
+Source baseline96fcd811e194050323a90018a676c476ebacceee and Terra46738cde are
+pinned. Final independent review covers local CUDA/native-resume gates, both
+teacher roles/hashes, all3840 bank slots, zero costs and the16-hour override.
+All remote bytes pass. The serial verification timeout was repaired with an
+8-thread hash helper that preserves every source/input/container check; it is
+pinned in the launch manifest and executes before GPU preflight. No training
+source or recipe changed in that repair, so the existing local smoke applies.
+
+The next recommended manual check is14:30CEST. No automatic monitor, further
+allocation or behavior-cost stage has been created. The frozen manifest retains
+its preparation status; campaign job.json and scheduler receipts describe live
+state. The first segment can fit before maintenance only if admitted by15:00.
 
 Evidence: `qualification/{runtime_comparison.json,teacher_selection.json,summary.json,protocol.json,legacy_protocol.json,legacy_marker_protocol.json}`
 and `qualification/initial_state_audit/comparison.json` in the campaign.

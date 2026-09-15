@@ -1,4 +1,34 @@
-# Experiments — broad teacher selected (2026-09-15 13:41 CEST)
+# Experiments — broad teacher generalist submitted (2026-09-15 14:09 CEST)
+
+**CSCS 4672272 is PENDING/Priority**, submitted14:08:09CEST. Slurm confirms
+one node, fourGPUs,64CPUs, lterenzi/d130 and a16-hour limit. There is no estimated
+start or allocated node yet. No cluster startup, PPO update or checkpoint is
+claimed. The in-allocation four-GH200 CUDA/conv-backward/NCCL and finite full
+4x256 u1/u2 gates remain mandatory before production continuation.
+
+The earlier narrow job4670716 was canceled before starting at14:07CEST.
+Existing foundation comparison4665916 remains RUNNING on nid005694 at14:09.
+The new campaign uses all3840 current training maps (2400foundations plus1440
+finite-metadata trenches), a fresh student/Adam, the broad FF foundation prior
+and current trench specialist, fading KL and zero added behavior costs.
+
+All local CPU/CUDA/native-resume gates and final independent review pass.
+Every remote source, launch, bank, teacher and container hash was checked.
+The original serial small-file scan exceeded300seconds; a reviewed8-thread
+verification helper preserves every check and verifies the final payload in
+36.2seconds. Cache effects are not controlled; this is not PPO throughput.
+Source remains baselines96fcd811e194050323a90018a676c476ebacceee and Terra46738cde;
+the launcher repair changes only verification before startup. The frozen source
+matches the Python bytes used for the qualified local smoke.
+
+Receipts and live status:
+`/home/lorenzo/moleworks/.artifacts/terra_generalist_broad_teachers_20260915/{job.json,submission_review.json,staging_receipt.json,HANDOFF.md}`.
+Next recommended check14:30CEST, to resolve admission/startup before the next
+day's maintenance. No new polling worker, automatic continuation or extra
+allocation is scheduled. The16-hour segment must start by15:00 to finish by
+the September16 07:00 maintenance boundary; scheduler admission is unconfirmed.
+
+## Earlier qualification snapshot — 13:41 CEST
 
 **4670716 remains PENDING(JobHeldUser), held before it ever started.** The user
 correctly recalled strong broad V8 policies: FF u86000 completed 341/384

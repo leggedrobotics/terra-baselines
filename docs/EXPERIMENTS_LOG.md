@@ -1,5 +1,38 @@
 # Experiments — completed log
 
+## 2026-09-15 14:09 CEST: broad-teacher replacement submitted after full qualification
+
+Recovered mature V8 broad policies, confirming FF670/720 and GRU677/720
+historical promotion completion. Their bank included2400foundations among4512
+maps. Completed FFu86000 replays on the same608development panel give legacy
+332/384foundations+218/224trenches, current140/384+1/224, and current physics with
+historical traversability113/384+4/224. All integrity checks pass. On the360
+foundations with unchanged initial Agents, old/current successes are312/132;
+all24 foundation conditions regress. The runtime bundles differ, so no single
+physical rule is established as the cause. Observation rollback is rejected.
+
+Select the broad FF only as a fading foundation prior, alongside the updated
+trench specialist192/224. Full3840-map training bank passes current metadata/R2
+loading and disjointness against all9 broad held-out manifests. Native teacher
+adapter/routing tests28+10subtests and actual CUDAu1/u2/nativeu3 pass, with finite
+model/teacher/Adam/loss, Adam64/128/192 and zero transition integrity failures.
+
+Canceled held narrow4670716 before starting at14:07, then submitted one four-GPU
+replacement4672272 at14:08:09, after final independent pinned-payload review.
+At14:09:04 it is PENDING/Priority,16hours, lterenzi/d130, no node/start estimate.
+Existing foundation comparison4665916 remains RUNNING. Fresh student/Adam,
+KL1 cosine to0 at20k, all current maps and zero added behavior costs are retained.
+Full4x256 CUDA/conv/NCCL and finiteu1/u2 remain in-allocation gates.
+
+The original serial remote hash scan timed out at300seconds. All original
+payload bytes were subsequently verified; an isolated8-thread verification
+helper preserves every hash and the final source/launch/input/container scan
+passes in36.2seconds. This is not a controlled throughput comparison. Training
+source/inputs/recipe did not change. Pinned source: baselines96fcd811 and Terra
+46738cde; repair/source/smoke/bank/review/submission receipts are in
+`.artifacts/terra_generalist_broad_teachers_20260915/`. No automatic continuation,
+new monitoring worker or penalty stage was scheduled; next check14:30CEST.
+
 ## 2026-09-15 12:40 CEST: hold narrow campaign; recover broad teachers
 
 Held pending job4670716 after the user corrected the teacher and dataset scope.
