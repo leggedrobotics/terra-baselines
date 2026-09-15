@@ -1,17 +1,35 @@
-# Experiments — current state (updated 2026-09-15 10:40 CEST)
+# Experiments — current state (updated 2026-09-15 11:03 CEST)
 
-The additional CSCS mixed generalist is **preparing; not submitted yet**.
-It uses a fresh student with task-specific frozen foundation/trench teachers,
-easy foundations plus all15trench training conditions, and zero added behavior
-costs. CPU routing/gradient/native-resume tests, the bank loader, and local
-finite GPU u1/u2/FINAL plus native u3 checks pass. Immutable staging and
-independent submission review are next. See
+The new CSCS generalist **4670716 is queued**; no training update has run there
+yet. One node, four GPUs, account `lterenzi`/`d130`. The original 24-hour request
+was shortened to **18 hours** because CSCS maintenance covers September 16,
+07:00–19:00 CEST. Its maintenance blockage cleared; at 11:03:26 CEST the scheduler
+reported `PENDING`, reason `Priority`, with no assigned start time or node.
+
+It uses a fresh student with separate frozen foundation/trench teachers,
+easy foundations plus all 15 trench training conditions, and zero added behavior
+costs. CPU routing/gradient/resume tests, bank validation, local finite GPU
+u1/u2/FINAL plus native u3, and independent source/submission reviews pass.
+Four-GH200 runtime, NCCL, production-size startup and the first production
+checkpoint remain unverified until the allocation starts. See
 [the campaign design](research/GENERALIST_TASK_TEACHERS_20260915.md).
 
-CSCS authentication and account `lterenzi` were verified at10:10CEST.
-Foundation comparison4665916 remains RUNNING on nid005694; it is not changed
-by this additional campaign. All older authentication/status paragraphs below
-are historical snapshots with their stated dates.
+The pinned training source is baselines `a80fe8bfe14ac4b26cdcd8f306e54cfd97e5fca9`
+and Terra `46738cde28e455da7c466fc0a2cb64f677d86401`; follow-up documentation
+commits do not change that immutable snapshot. Campaign receipts and handoff:
+`/home/lorenzo/moleworks/.artifacts/terra_generalist_teachers_20260915/`.
+W&B ID `terra-generalist-teachers-4670716` is reserved for offline logging once
+production starts; no online history is claimed yet.
+
+Next recommended check: **2026-09-15 10:00 UTC (12:00 CEST)**, to resolve queue
+admission, actual four-GPU startup, and the first save if due. This is a
+recommendation; no new polling worker or scheduled follow-up was created.
+No automatic continuation is queued. A finite checkpoint can continue after
+maintenance; an 18-hour first segment alone is not a negative learning verdict.
+
+The existing foundation comparison **4665916** is unchanged. Last independently
+checked at 10:43:46 CEST: RUNNING on `nid005694`, elapsed 6:33:14. All older
+authentication/status paragraphs below are historical snapshots.
 
 Foundation teacher-KL recovery is prepared and passes local finite/native-resume
 checks. **CSCS authentication blocks submission; no new job is queued.** See

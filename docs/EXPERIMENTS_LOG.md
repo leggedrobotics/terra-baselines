@@ -1,5 +1,28 @@
 # Experiments — completed log
 
+## 2026-09-15 10:57 CEST: additional mixed generalist submitted on CSCS
+
+Job **4670716**, one node/four GPUs, `lterenzi`/`d130`. Submission and all staged
+source/input checks succeeded. At 11:00 CEST its wall time was reduced from
+24 to 18 hours so it can fit before the September 16, 07:00–19:00 CEST maintenance.
+At 11:03:26 it remained PENDING with reason Priority; startup is unverified.
+The change affects the first allocation length, not PPO, the bank, teachers,
+reward costs or the absolute 500,000-update target. No continuation is queued.
+
+The fresh student uses task-specific KL teachers on the qualified easy
+foundation plus 15-condition trench bank. Frozen teacher influence fades to
+zero by update 20,000. Existing foundation comparison 4665916 is unchanged.
+Baselines source `a80fe8bfe14ac4b26cdcd8f306e54cfd97e5fca9` and Terra `46738cde`
+are immutable; local/source/runtime/evidence hashes passed independent review.
+Local CUDA u1/u2 and native u3 pass, with model/Adam/teacher/clock/soil-integrity
+checks. Full four-GH200 runtime evidence remains pending in the allocation.
+
+Receipts: `.artifacts/terra_generalist_teachers_20260915/{job.json,submission_review.json,maintenance_walltime_receipt.json}`.
+See the [design](research/GENERALIST_TASK_TEACHERS_20260915.md) for the
+stage-one distribution, teacher qualification and continuous behavior metrics.
+Next recommended queue/startup check: September 15 at 10:00 UTC; no automatic
+monitoring or additional allocation was scheduled.
+
 ## 2026-09-15 task-specific teacher generalist preparation
 
 Implemented two frozen policy teachers routed by the student's pre-action map

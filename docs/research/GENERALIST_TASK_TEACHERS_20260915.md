@@ -20,7 +20,7 @@ does transfer well to the current trench environment.
 | Easy foundation control | foundation-b_control_cscs-s20260907, u15000 | 62/64 easy foundations; 0/384 broader foundations | Executable fresh volume |
 | Recovered trench specialist | trench_recovery-14055463, u86000 | 192/224 trenches, including24/32 roads; 0/384 foundations | Legacy admitted cell counts |
 
-All reported panels are complete greedy450-step replays under current Terra
+All reported panels are complete greedy 450-step replays under current Terra
 `46738cde28e455da7c466fc0a2cb64f677d86401`, with zero transition-integrity
 failures. These are development/validation results. The teacher file hashes,
 reports, bank builder and launch receipts live in
@@ -45,7 +45,7 @@ student's model input.
 
 Both teachers are frozen. Add forward KL from the selected teacher to the
 student's normal PPO objective; no teacher value target is used. Cosine weight
-starts at1 and reaches0 after20000updates. At that point PPO and constant0.02
+starts at 1 and reaches 0 after 20000 updates. At that point PPO and constant0.02
 entropy continue without teacher guidance. Native continuation preserves the
 student weights, Adam state, global update and schedule. It reinitializes live
 environments, RNG and history, as the existing Terra continuation does; it is
@@ -59,14 +59,14 @@ teacher flags; inference needs only the student.
 
 ## Training distribution and scale
 
-The pooled bank retains256easy foundation training maps and1440existing trench
-map identities. Repeat each foundation map six times, retaining1536foundation
-and1440trench reset slots:2976total. This yields51.61%/48.39% reset sampling
+The pooled bank retains256 easy foundation training maps and1440 existing trench
+map identities. Repeat each foundation map six times, retaining1536 foundation
+and1440 trench reset slots:2976 total. This yields51.61%/48.39% reset sampling
 probabilities. It does **not** guarantee the same PPO transition proportions;
 episode lengths change the active-state mixture. Log per-task selected counts
 and KL to measure actual exposure.
 
-The bank has1696map identities and1693unique reset-array scenarios: three
+The bank has1696 map identities and1693 unique reset-array scenarios: three
 scenario pairs already occur in the trench source bank. Preserve them and their
 provenance. All arrays and metadata are copied unchanged. Current Terra's full
 loader, finite R2 distances, file hashes and disjoint map/source/scenario checks
@@ -74,20 +74,20 @@ against eleven held-out manifests pass. No held-out arrays are staged for
 training. Distance sidecar SHA:
 `8d13b77b38598979129b2be88a1e32188f22352c51f9d5a00679a7446ab785d9`.
 
-One d130 normal allocation uses four GH200 GPUs for24hours. Each GPU has256
-environments; rollout32 gives32768global transitions/update. Two PPO epochs and
-32minibatches give64Adam updates per rollout,1024global samples/minibatch.
+One d130 normal allocation uses four GH200 GPUs for 24 hours. Each GPU has 256
+environments; rollout 32 gives 32768 global transitions/update. Two PPO epochs and
+32 minibatches give 64 Adam updates per rollout,1024 global samples/minibatch.
 Use global minibatch advantage normalization, constant LR3e-4, constant
-entropy0.02 and the existing2,311,701-parameter spatial residual model. KL fades
-over655.36M total transitions; per-family exposure is measured separately.
+entropy 0.02 and the existing 2,311,701-parameter spatial residual model. KL fades
+over 655.36M total transitions; per-family exposure is measured separately.
 
 This four-GPU mixed run is not a matched causal comparison against either
 two-GPU foundation arm. Task distribution and global batch differ. Compare
 held-out competence and behavior, reporting both updates and transitions.
 
-Absolute target500000 safely exceeds one allocation; checkpoint every500.
-Resume only from this run's native checkpoint. The local diagnostic uses1GPU
-and32environments; the allocation repeats finite startup qualification at the
+Absolute target 500000 safely exceeds one allocation; checkpoint every 500.
+Resume only from this run's native checkpoint. The local diagnostic uses 1 GPU
+and 32 environments; the allocation repeats finite startup qualification at the
 actual4x256shape before entering the long phase. The two teacher forwards add
 work while KL is active. The existing conditional skips them after KL expires;
 the legacy feature still incurs rollout work. Measure throughput here rather
@@ -102,21 +102,21 @@ CSCS also require four GH200 devices and NCCL all-reduce. Independent review
 binds the staged source, launch files, teacher/bank inputs and local evidence.
 Scheduler RUNNING alone is not a training-health or learning-quality result.
 
-Local qualification completed September15at10:47CEST:43CPU tests and15subtests
+Local qualification completed September 15 at  10:47 CEST:43 CPU tests and15 subtests
 passed, with two existing skips. The RTX4090 CUDA backward gate passed; actual
 u1/u2/FINAL checkpoints and native u3 pass finite model/Adam/loss and zero
-integrity checks. Actual per-update routing counted448foundation and576trench
+integrity checks. Actual per-update routing counted448 foundation and576 trench
 transitions in this small diagnostic. The native initialization restored u2
-and Adam128 exactly; final u3 has Adam192. Diagnostic u2 throughput was1385.55
+and Adam 128 exactly; final u3 has Adam 192. Diagnostic u2 throughput was 1385.55
 transitions/s. Fresh and native processes each paid roughly four minutes of
 compilation; this does not establish a cross-process cache hit or production
 throughput. All receipts are retained under the campaign's `local/` directory.
 
-Evaluate checkpoints2500,5000,10000,20000 and the last complete saved checkpoint
-as available. Use the fixed64easy-foundation validation panel and full608
-development panel, reporting its224trench cases and road subset separately.
-Its384harder foundations are an out-of-distribution diagnostic for this stage.
-No sealed-policy selection is permitted. Keep450steps, greedy actions, fixed
+Evaluate checkpoints 2500,5000,10000,20000 and the last complete saved checkpoint
+as available. Use the fixed64 easy-foundation validation panel and full 608
+development panel, reporting its 224 trench cases and road subset separately.
+Its 384 harder foundations are an out-of-distribution diagnostic for this stage.
+No sealed-policy selection is permitted. Keep 450 steps, greedy actions, fixed
 reset keys and exact visible-dump completion unchanged.
 
 Report completion plus excavation fraction, terminal/loaded/off-zone soil,
@@ -133,3 +133,13 @@ strong. Do not promote the foundation distribution solely on online reward,
 entropy or easy-map completion. The next scope decision needs stable trench
 competence alongside retained easy-foundation skill and an explicit curriculum
 for the harder foundation conditions.
+
+## Submitted allocation
+
+CSCS job **4670716** was submitted September 15 at 10:57 CEST from pinned
+baselines `a80fe8bfe14ac4b26cdcd8f306e54cfd97e5fca9`. The reviewed 24-hour upper
+request could not fit before maintenance on September 16, 07:00–19:00 CEST, so
+the controller time limit was reduced to **18 hours** at 11:00 CEST. The same
+job, source, inputs, four-GPU batch and checkpoint protocol are retained.
+This first segment is continuable; no post-maintenance allocation has been
+submitted. At 11:03 CEST it remained queued for priority; full-size startup is unverified.
