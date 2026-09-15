@@ -2,6 +2,7 @@
 
 import copy
 from dataclasses import asdict
+import os
 import pickle
 from types import SimpleNamespace
 from unittest import mock
@@ -122,6 +123,26 @@ def test_native_config_checks_history_and_uses_each_teachers_preprocessing():
     teacher.num_prev_actions = 10
     with pytest.raises(ValueError, match="num_prev_actions"):
         validate_task_teacher_configs(_config(), _teacher_config(True), teacher)
+
+
+def test_teacher_without_admissible_uses_its_native_reset_context_and_carry():
+    teacher = _teacher_config(False, admissible_dig_observation=False,
+                              carry_work_observation=True,
+                              reward_v2_reset_context_observation=True)
+    validate_task_teacher_configs(_config(), teacher, _teacher_config(False))
+    raw = _raw_obs(2)
+    del raw[LEGACY_DIG_KEY]
+    del raw["local_map_admissible_dig"]
+    raw["reward_v2_reset_context"] = jnp.array([[0., .82], [.25, .64]])
+    raw["agent_states"] = raw["agent_states"].at[:, 0, 8].set(jnp.array([.03, .07]))
+    actual = native_task_teacher_obs(raw, jnp.zeros((2, 5)), teacher)
+    assert len(actual) == 23
+    np.testing.assert_array_equal(actual[22], raw["reward_v2_reset_context"])
+    np.testing.assert_array_equal(actual[0][..., 8], raw["agent_states"][..., 8])
+    missing = dict(raw)
+    del missing["reward_v2_reset_context"]
+    with pytest.raises(ValueError, match="reward_v2_reset_context"):
+        native_task_teacher_obs(missing, jnp.zeros((2, 5)), teacher)
 
 
 @pytest.mark.parametrize("flat", [False, True])
@@ -297,7 +318,98 @@ def test_real_state_legacy_feature_matches_native_wrapper_and_differs_from_execu
     expected = obs_to_model_input(expected_raw, history, _teacher_config(False))
     for x, y in zip(actual, expected):
         np.testing.assert_array_equal(x, y)
+
     # The student input remains its original executable observation list.
     for x, y in zip(obs_to_model_input(recorded, history, _teacher_config(True)),
                     obs_to_model_input(batched_raw, history, _teacher_config(True))):
         np.testing.assert_array_equal(x, y)
+
+
+@pytest.mark.skipif(not os.environ.get("TERRA_LEGACY_FF_TEACHER_CHECKPOINT"),
+                    reason="optional recovered native FF checkpoint is not installed")
+def test_recovered_native_ff_logits_match_evaluation_with_real_reset_and_carry_context():
+    from terra.config import BatchConfig, MapsDimsConfig
+    from terra.env import TerraEnv
+    from terra.state import State
+    from terra.tests.test_foundation_behavior import foundation
+    from terra.wrappers import LocalMapWrapper
+    from utils import helpers
+    from utils.models import get_model_ready, validate_model_params_match
+
+    helpers.register_checkpoint_config_classes()
+    saved = load_task_teacher_checkpoint(
+        os.environ["TERRA_LEGACY_FF_TEACHER_CHECKPOINT"],
+        "2fe5d23c86cc7702b188d33ca1ca9a42066a9a2515150e8795f8c640bbbeb4af",
+    )
+    teacher = helpers.checkpoint_evaluation_config(saved)
+    assert teacher.carry_work_observation and teacher.reward_v2_reset_context_observation
+    assert not teacher.admissible_dig_observation
+    assert not teacher.executable_dig_observation
+    assert not teacher.relocation_distance_observation
+    assert not teacher.trench_alignment_observation
+    validate_task_teacher_configs(_config(), teacher, _teacher_config(False))
+
+    full = foundation.__wrapped__()
+    target = np.asarray(full.world.target_map.map)
+    action = np.zeros_like(target)
+    # A mass-balanced partial start: 20 dug units, 17 accepted, 3 carried.
+    dug = np.argwhere(target < 0)[:20]
+    accepted = np.argwhere(target > 0)[:17]
+    action[dug[:, 0], dug[:, 1]] = -1
+    action[accepted[:, 0], accepted[:, 1]] = 1
+    agent_state = full._get_current_agent_state()._replace(
+        loaded=jnp.array([3], dtype=jnp.int8), carry_relocation_credit=jnp.float32(3),
+    )
+    partial = State.new(
+        jax.random.PRNGKey(17), full.env_cfg._replace(reset_tier=jnp.int32(1)),
+        target, np.zeros_like(target),
+        -97.0 * np.ones((4, 8), np.float32), np.int32(-1),
+        -97.0 * np.ones((64, 3), np.float32), np.int32(-1),
+        np.ones_like(target, dtype=bool), action,
+        distance_map_override=np.ones_like(target, dtype=np.float32),
+        initial_agent=full._set_current_agent_state(agent_state).agent,
+    )
+    states = jax.tree_util.tree_map(lambda x, y: jnp.stack([x, y]), full, partial)
+    def observations(state, executable):
+        return TerraEnv._state_to_obs_dict(TerraEnv.wrap_state(
+            state, executable_dig_observation=executable,
+        ))
+    native_raw = jax.jit(jax.vmap(lambda s: observations(s, False)))(states)
+    student_raw = jax.jit(jax.vmap(lambda s: observations(s, True)))(states)
+    v0 = float(full._required_excavation_volume())
+    np.testing.assert_allclose(native_raw["reward_v2_reset_context"],
+                               [[0, 1], [20/v0, (v0-17)/v0]], rtol=1e-6)
+    np.testing.assert_allclose(native_raw["agent_states"][:, 0, 8], [0, 3/v0], rtol=1e-6)
+    # These values are produced even though the student does not request the
+    # carry/reset-context model features. Never replace a full-start H/V0 by 0.
+    assert not _config().reward_v2_reset_context_observation
+    history = jnp.array([[0, 0, 0, 0, 0], [7, 0, 6, 4, 2]], dtype=jnp.int32)
+    native_input = obs_to_model_input(native_raw, history, teacher)
+    teacher_input = native_task_teacher_obs(student_raw, history, teacher)
+    assert len(native_input) == len(teacher_input) == 23
+    for actual, expected in zip(teacher_input, native_input):
+        np.testing.assert_array_equal(actual, expected)
+
+    model_env = SimpleNamespace(
+        batch_cfg=BatchConfig()._replace(maps_dims=MapsDimsConfig(maps_edge_length=64)),
+        executable_dig_observation=False,
+    )
+    model, initialized = get_model_ready(jax.random.PRNGKey(8), teacher, model_env)
+    validate_model_params_match(initialized, saved["model"], "recovered FF teacher")
+    native_apply = jax.jit(model.apply)
+    native_value, native_logits = native_apply(saved["model"], native_input)
+    adapted_value, adapted_logits = native_apply(saved["model"], teacher_input)
+    np.testing.assert_array_equal(adapted_value, native_value)
+    np.testing.assert_array_equal(adapted_logits, native_logits)
+    assert np.isfinite(np.asarray(native_logits)).all()
+
+    student_raw[FAMILY_KEY] = jnp.array([ROUTE["foundation"]] * 2, jnp.int32)
+    student_raw[LEGACY_DIG_KEY] = native_raw["local_map_admissible_dig"]
+    def other_teacher(params, obs):
+        return jnp.zeros((2, 1)), jnp.zeros((2, 8))
+    routed = make_task_teacher_apply_fn(native_apply, other_teacher,
+                                       teacher, _teacher_config(False), ROUTE)
+    routed_value, routed_logits = routed({"foundation": saved["model"], "trench": {}},
+                                        student_raw, history)
+    np.testing.assert_array_equal(routed_value, native_value)
+    np.testing.assert_array_equal(routed_logits, native_logits)

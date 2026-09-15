@@ -1,5 +1,18 @@
 # Experiments — completed log
 
+## 2026-09-15 12:40 CEST: hold narrow campaign; recover broad teachers
+
+Held pending job4670716 after the user corrected the teacher and dataset scope.
+Verified scheduler receipt: PENDING(JobHeldUser), no allocation or training.
+The actual local V8FFu86000 checkpoint matchesSHA2fe5d23c86cc7702b188d33ca1ca9a42066a9a2515150e8795f8c640bbbeb4af.
+Historical completed promotion results:341/384foundations,329/336trenches,
+670/720total. GRUu40k reached343/384foundations and677/720total. Both trained
+on4512maps, including2400foundations. The previous0/384 result applies only
+to the easy-map control and does not characterize these broad policies.
+Current-runtime qualification and corrected full3840-map bank preparation are
+in `.artifacts/terra_generalist_broad_teachers_20260915/`. Existing4665916 unchanged.
+
+
 ## 2026-09-15 10:57 CEST: additional mixed generalist submitted on CSCS
 
 Job **4670716**, one node/four GPUs, `lterenzi`/`d130`. Submission and all staged

@@ -14,6 +14,8 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Full generalist using recovered broad teachers](docs/research/GENERALIST_BROAD_TEACHERS_20260915.md)
+
 - [Fresh mixed generalist with separate foundation and trench teachers](docs/research/GENERALIST_TASK_TEACHERS_20260915.md)
 
 - [Foundation scratch versus pretrained initialization with teacher KL](docs/research/FOUNDATION_TEACHER_KL_RECOVERY_20260914.md)

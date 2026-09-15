@@ -1,5 +1,14 @@
 # Mixed foundations and trenches with separate teachers
 
+> **Superseded scope, September15:** the easy-foundation restriction below was
+> based on an incomplete teacher search. Lorenzo correctly recalled strong
+> broad policies: FFu86k341/384foundations and670/720total; GRUu40k343/384 and677/720.
+> Queued job4670716 was held before starting. A corrected full-bank campaign
+> is being qualified under `.artifacts/terra_generalist_broad_teachers_20260915/`.
+> Historical scores are on720promotion cases with old Terra; current608case
+> replay is separate. The original narrow campaign below remains historical.
+
+
 ## Decision and scope
 
 Lorenzo requested one additional CSCS node for a generalist with teacher

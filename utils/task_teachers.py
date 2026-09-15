@@ -134,8 +134,6 @@ def validate_task_teacher_configs(student_config, foundation_config, trench_conf
             raise ValueError(f"{role} teacher must use actor_core='mlp'")
         if option(config, "action_logit_masking", False):
             raise ValueError(f"{role} teacher action_logit_masking is unsupported")
-        if not option(config, "admissible_dig_observation", False):
-            raise ValueError(f"{role} teacher must have admissible_dig_observation")
         if option(config, "num_prev_actions") != option(student_config, "num_prev_actions"):
             raise ValueError(f"{role} teacher num_prev_actions mismatch")
         for field in ("agent_types_override", "action_types_override"):
@@ -148,8 +146,12 @@ def native_task_teacher_obs(raw_obs, prev_actions, teacher_config):
     # Reconstruct the teacher's semantics BEFORE its own clipping/area scaling
     # and optional-input ordering. No hard-coded model-list feature index.
     obs = dict(raw_obs)
-    if not option(teacher_config, "executable_dig_observation", False):
+    if (option(teacher_config, "admissible_dig_observation", False)
+            and not option(teacher_config, "executable_dig_observation", False)):
         obs["local_map_admissible_dig"] = raw_obs[LEGACY_DIG_KEY]
+    # Earlier teachers use nine local maps, plus carry credit in agent_states
+    # and the environment's latched reset context. Those raw values are always
+    # exported by Terra, even when the student model does not consume them.
     return obs_to_model_input(obs, prev_actions, teacher_config)
 
 

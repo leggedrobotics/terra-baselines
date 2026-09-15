@@ -1,0 +1,110 @@
+# Generalist with broad foundation and trench teachers
+
+## Corrected teacher selection
+
+The mixed run should cover all current foundation and trench conditions.
+The first candidate foundation teacher was an easy-map specialist. Its 0/384
+broad replay did not describe the mature V8 policies. Lorenzo correctly
+recalled their broad competence. Pending job 4670716 was held before starting
+while those checkpoints were recovered and qualified.
+
+Completed historical promotion results, greedy actions and a 450-step horizon:
+
+| Policy | Foundations | Trenches | Overall |
+| --- | ---: | ---: | ---: |
+| Feed-forward u86000 | 341/384 | 329/336 | 670/720 |
+| GRU u40000 | 343/384 | 334/336 | 677/720 |
+| GRU u44000 | 341/384 | 333/336 | 674/720 |
+
+These checkpoints trained on 4,512 maps: 2,400 foundations and 2,112 trenches,
+across 25 foundation and 22 trench conditions. The 720 evaluation maps are a
+separate promotion panel. Raw reports and actual checkpoint hashes have been
+checked under `.artifacts/terra_v8_gru_benchmark_20260820/`.
+
+Use feed-forward u86000 as the first broad foundation candidate. Its historical
+foundation result is close to the GRU result, and its feed-forward interface
+supports guidance on shuffled student states without reconstructing recurrent
+teacher history. Its checkpoint SHA is
+`2fe5d23c86cc7702b188d33ca1ca9a42066a9a2515150e8795f8c640bbbeb4af`.
+The proposed trench teacher remains the recovered u86000 specialist,
+SHA `de39133d70bb60e716a3ff72966d8efec931874f694eeaf81e402750f7e8d4bf`,
+which completed 192/224 current development trenches, including 24/32 roads.
+
+Historical broad results used Terra `25f855db`; the intended runtime is
+`46738cde28e455da7c466fc0a2cb64f677d86401`. Therefore qualification replays the
+unchanged feed-forward policy on the current 608-map development panel,
+explicitly enforcing the current trench gate. It preserves the native policy
+inputs, including reset context and carry credit. The 608 development and 720
+promotion results are not a paired comparison of environment revisions.
+
+## Full training distribution and native observations
+
+Use the complete finite-metadata training pool: **3,840 original maps**, with
+2,400 foundations and 1,440 trenches. Each of the 40 conditions has 96 maps.
+Uniform slot sampling gives 62.5% foundation and 37.5% trench resets; actual PPO
+transition exposure is measured separately because episode lengths differ.
+No easy-map repetition, new map generation or partial-reset curriculum is used.
+
+This includes all 25 foundation conditions and all 15 trench conditions with
+persisted finite-section metadata. The seven historical V7 trench conditions
+still lack that metadata and cannot enter the current alignment-gated loader.
+This is the established current full bank, not a claim that all 47 historical
+conditions now pass the new contract. No conditions are removed based on
+policy performance. The current loader passes all 3,840 slots; training map,
+source and scenario identities are disjoint from all nine broad held-out
+manifests. Held-out arrays are not staged for training.
+
+The foundation teacher uses nine local maps, carry credit in `agent_states`,
+and `[Q_reset, H_reset/V0]`. It does not use the newer admissible, executable,
+relocation-distance or trench-alignment inputs. In particular, full-start reset
+context is not generally a zero vector: `H_reset/V0` includes initial material
+work. Terra exports these latched quantities regardless of the student's
+feature selectors. The teacher consumes its own native preprocessing and
+network. The trench teacher retains its legacy admitted-dig vector, reconstructed
+before preprocessing from the same pre-action state.
+
+Only a teacher's matching task rows guide the student. The rollout stores
+pre-action family IDs through both PPO shuffles. Teacher parameters and logits
+remain frozen; the student keeps its current executable digging observations.
+Native continuation binds both teacher hashes and family roles.
+
+## Training and evidence gates
+
+The student starts from random parameters, fresh Adam and zero update clocks.
+Use one CSCS node with four GH200 GPUs, 256 environments per GPU, rollout 32,
+two PPO epochs and 32 minibatches. This is 32,768 transitions per update and
+64 Adam steps. Learning rate is 3e-4, entropy coefficient 0.02, and advantage
+normalization uses the global minibatch. Keep the current spatial residual
+architecture. This run is a capability experiment, not a matched initialization
+comparison against the separate two-GPU foundation arms.
+
+Teacher-to-student policy KL starts at 1 and follows the already selected
+cosine decay to zero by update 20,000 (655.36 million transitions). No value
+distillation or added lateral/base-travel/base-turn costs are used. Existing
+reward-v2 task progress, completion and step rewards remain. Efficiency costs
+require repeated strong fixed-panel completion before a later stage.
+
+Checkpoint every 500 updates, with absolute target 500,000 beyond one allocation.
+The first allocation repeats four-GPU CUDA, convolution-backward and NCCL
+checks, then validates finite u1/u2 checkpoints at the full batch before native
+continuation. Before submission, require local native teacher-logit parity,
+CPU routing and gradient checks, actual CUDA u1/u2 and native u3, bank integrity,
+and independent review of the pinned source, inputs and evidence. The old held
+job must not run alongside its replacement.
+
+Primary evaluation is the full 608-map development panel: report 384 foundations
+and 224 trenches separately, plus condition and road subsets. Compare continuous
+excavation/material progress, completion, productive base poses, unique area
+per setup, individual dig area, adjacent workspaces, revisits and travel between
+retained work poses. Report successful-episode efficiency separately to avoid
+confusing early stalls with efficient work. Raw navigation action counts are
+secondary because deployment replans navigation, while workspace continuity
+remains relevant. No sealed results guide this selection.
+
+Campaign artifacts, qualification reports and final job receipts:
+`/home/lorenzo/moleworks/.artifacts/terra_generalist_broad_teachers_20260915/`.
+The initial narrow campaign is preserved in
+[its historical design](GENERALIST_TASK_TEACHERS_20260915.md).
+
+Current status: bank qualification passed; broad teacher replay and corrected
+CUDA startup remain in progress. No replacement allocation is yet submitted.

@@ -1,4 +1,18 @@
-# Experiments — current state (updated 2026-09-15 11:03 CEST)
+# Experiments — current correction (2026-09-15 12:40 CEST)
+
+**4670716 is held with `JobHeldUser`; it never started.** Lorenzo clarified
+that the mixed generalist should use all foundations and a teacher trained on
+the broad dataset. The earlier teacher selection missed the mature V8 policies.
+Recovered FF u86000 completed341/384 foundations and670/720 promotion maps;
+GRU u40000 completed343/384 foundations and677/720. Those are legacy Terra
+results, with checkpoints present locally. The FF policy is now being replayed
+under current Terra46738cde and the current trench gate on608development cases.
+
+Correction artifacts and full3840-map bank qualification are in
+`/home/lorenzo/moleworks/.artifacts/terra_generalist_broad_teachers_20260915/`.
+The existing foundation pair4665916 is untouched. No replacement training job
+has been submitted. The paragraphs below preserve earlier status snapshots.
+
 
 The new CSCS generalist **4670716 is queued**; no training update has run there
 yet. One node, four GPUs, account `lterenzi`/`d130`. The original 24-hour request
