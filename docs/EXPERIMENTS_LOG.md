@@ -1,5 +1,30 @@
 # Experiments — completed log
 
+## 2026-09-15 21:50 CEST: post-teacher pair complete; recommend ending easy screen
+
+Evaluated existing u30000 checkpoints after 10,000 coefficient-zero updates
+(163.84M transitions per arm) on the unchanged 64-map fixed panel. Both score
+63/64 versus 64/64 at u20000. Scratch slot1, easy-foundation-l-00258, times out
+at 76% excavated/75.33% accepted; pretrained slot55, easy-foundation-l-00312,
+times out at 19.16% excavated/accepted. Both previously completed those maps.
+Hash/native/Adam1,920,000/source/reset/material integrity checks pass. The two
+evaluations exited normally, with no remaining local GPU worker.
+
+Use the 62 four-way common successes for efficiency: workspace area increases
+2.4%/1.3%, retained inter-setup distance falls 2.4%/1.0%, and lateral score falls
+3.6%/6.5% (scratch/pretrained). Adjacency changes 96.93→96.55% and 96.09→97.99%.
+Retain both u20000 policies for completion and u30000 for diagnosis. Recommend
+ending this unchanged easy-map comparison and keeping the separate broad
+generalist and its fading KL schedule. This does not establish an asymptotic
+initialization winner, causal KL benefit or the cause of the two timeouts.
+No scheduler changes, cancellation, new allocation or monitor were made.
+
+The one-shot evaluation helper was reviewed. Its timeout cleanup was improved
+for future invocation; original executed bytes and explicit root supervision
+are recorded. Both actual evaluations finished normally with no orphan process.
+Evidence: the foundation campaign's `status_20260915_evening/` decision,
+comparison, execution and independent-review receipts, plus `evaluation/paired/30000.json`.
+
 ## 2026-09-15 21:30 CEST: generalist starts; both foundation students solve 64/64
 
 Reduced the existing pending generalist 4672272 from 16 hours to 9 hours at

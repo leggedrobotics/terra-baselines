@@ -1,4 +1,26 @@
-# Experiments — generalist running; foundation pair solves 64/64 (2026-09-15 21:30 CEST)
+# Experiments — post-teacher comparison complete (2026-09-15 21:50 CEST)
+
+The existing u30000 foundation checkpoints were evaluated on the same 64 fixed
+easy maps after 10,000 updates without teacher guidance. **Both complete 63/64,
+versus 64/64 at u20000.** Scratch times out on L-map slot1 at 76% excavated;
+pretrained times out on L-map slot55 at 19.16%. Both reports have zero integrity
+failures and pass checkpoint/source/reset/protocol checks. No failure mechanism
+or causal effect of KL removal is established by the endpoint records.
+
+On the 62 maps completed by all four policy/checkpoint combinations, workspace
+area improves 2.4%/1.3% and retained inter-setup distance falls 2.4%/1.0%
+(scratch/pretrained). These are modest gains alongside lost completions.
+Recommend ending the unchanged easy-foundation initialization comparison,
+preserving both u20000 completion checkpoints plus u30000 diagnostic checkpoints,
+and continuing the separate broad generalist with its planned KL fade. This is
+a practical resource decision, not a no-KL ablation or new-task plasticity test.
+**No training job was canceled or submitted in this review.** The two local
+evaluations finished normally; no evaluator or new polling worker remains.
+
+Evidence: `.artifacts/terra_foundation_kl_init_comparison_20260914/status_20260915_evening/POST_TEACHER_DECISION.md`.
+The verified runtime snapshot and original u20000 comparison follow.
+
+## Runtime snapshot — 2026-09-15 21:30 CEST
 
 **CSCS 4672272 is RUNNING on nid005475 with four GPUs.** The existing pending
 job's time limit was reduced from 16 hours to 9 hours at 20:51:49; it started at

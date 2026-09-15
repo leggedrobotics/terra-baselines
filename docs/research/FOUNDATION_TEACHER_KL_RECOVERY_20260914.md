@@ -1,5 +1,27 @@
 # Foundation teacher-KL initialization comparison — September 14, 2026
 
+## September 15, 21:50 CEST: completed post-teacher screen
+
+At u20000 both students complete 64/64 easy fixed maps. At u30000, after 10,000
+updates with teacher coefficient zero, both complete 63/64. Scratch fails
+L-map slot1 at 76% excavation; pretrained fails L-map slot55 at 19.16%. These
+are different maps, both previously completed. Native checkpoints, matched
+resets, full reports and material integrity pass; no failure mechanism or
+causal KL-removal effect follows from endpoint data alone.
+
+On the 62 maps completed by both policies at both checkpoints, workspace area
+increases 2.4%/1.3% and retained work inter-setup distance falls 2.4%/1.0%
+(scratch/pretrained). This is modest efficiency improvement with imperfect
+completion retention, without a clear overall initialization winner.
+
+Recommend ending further unchanged easy-map training, keeping both u20000
+completion checkpoints and u30000 diagnostics, and focusing on the already
+running broad generalist. Random student plus fading KL is a reasonable working
+choice; this single paired-seed screen does not establish superior future
+plasticity or KL's causal benefit. No training was canceled by this analysis.
+See the campaign's `status_20260915_evening/POST_TEACHER_DECISION.md` and
+`evaluation/paired/30000.json`. Earlier design and runtime snapshots follow.
+
 The user reports that a randomly initialized student with teacher KL has worked
 better than initializing directly from a strong policy. Test that observation
 with a matched pair on the same easy foundation bank. This supersedes the
