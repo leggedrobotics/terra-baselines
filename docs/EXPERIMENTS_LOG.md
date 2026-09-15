@@ -1173,3 +1173,22 @@ A finite local GPU batch started at 00:35 for those exact two checkpoints, each
 on the easy 64 and full 608 panels. Source/launcher/checkpoint/panel receipts
 are captured before inference; complete final validation is required. No
 quality comparison is available at this snapshot.
+
+
+## September 16, 00:56 CEST: both delayed-cost arms pass full cluster startup
+
+Job 4675576 started at 00:42:39 on nid005363 and ends at 04:42:39 CEST. Both
+2x256 arms completed u20001/u20002 and saved finite native checkpoints after
+CUDA/conv/NCCL preflight. Paired initialization passes and all four physical
+GPUs are disjoint across the two processes. Downloaded FINAL checkpoints match
+remote SHA256 and pass local CPU validation. Production initialization restores
+each exact model and Adam at step 1,280,128. The original ramp is preserved.
+The second startup update measured roughly 9.1k transitions/s per arm; production
+was still compiling in the latest captured log. The first u20500 save remains
+outstanding, with a recommended unscheduled check at 01:20 CEST.
+
+Separately, the generalist u2500 replay completed and passed final source,
+native-state, panel/reset and integrity validation: 49/64 easy foundations,
+173/384 broad foundations, 175/224 trenches and 19/32 road trenches. The u5000
+replay is running, so the paired milestone comparison is incomplete. No new
+penalty-model quality or broad-generalist saturation conclusion is drawn.

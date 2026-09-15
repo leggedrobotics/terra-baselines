@@ -1,4 +1,36 @@
-# Experiments — delayed-cost pair queued (2026-09-16 00:43 CEST)
+# Experiments — delayed-cost pair passed full startup (2026-09-16 00:56 CEST)
+
+**CSCS 4675576 is RUNNING on nid005363**, started at 00:42:39 CEST after the
+four-hour admission adjustment. Slurm ends the allocation at **04:42:39 CEST**.
+Both 2x256 arms pass CUDA, convolution backward, NCCL, actual u20001/u20002
+finite checkpoint validation and paired initialization checks. Physical GPU
+identities confirm disjoint 2+2 assignments. Both actual u20002 FINAL files were
+downloaded with matching remote hashes and pass local CPU native validation.
+
+Production restored each arm's exact u20002 model and Adam at step 1,280,128,
+without resetting the original u20000 penalty-ramp origin. The second startup
+updates ran at about 9.1k transitions/s per arm; these are short startup timing
+samples, not a production throughput estimate. At the last captured production
+snapshot, the next rollout was compiling. The first u20500 production save is
+not yet due and remains to be checked. No new behavior-quality result exists.
+Evidence: `.artifacts/terra_foundation_delayed_costs_20260916/cluster_startup/acceptance.json`.
+
+The separate broad generalist **4672272** continues unchanged. Its complete
+u2500 fixed replay is validated: **49/64 easy foundations, 173/384 broad
+foundations and 175/224 trenches**, including **19/32 road trenches**. Native
+checkpoint, actual source, panel/reset identity, exact termination and integrity
+checks pass. The u5000 replay is now running; the two-checkpoint comparison is
+not complete. These early full-bank results are separate from the learned
+64/64 easy-foundation checkpoint used for the delayed-cost experiment.
+Evidence: `.artifacts/terra_generalist_broad_teachers_20260915/evaluation_20260916/u2500/validation.json`.
+
+Next recommended manual check: **01:20 CEST (September 15 23:20 UTC)** for
+production progress and the first scheduled u20500 save. This check is not
+scheduled. Morning decisions should use the complete paired milestone reports;
+no external polling worker or extra allocation was added. The previous
+foundation comparison is stopped and its u20000/u30000 checkpoints are preserved.
+
+# Earlier submission — delayed-cost pair queued (2026-09-16 00:43 CEST)
 
 **CSCS 4675576 is submitted and released, PENDING; cluster startup is unverified.**
 This is one four-GPU Daint node split 2+2, comparing the same native scratch

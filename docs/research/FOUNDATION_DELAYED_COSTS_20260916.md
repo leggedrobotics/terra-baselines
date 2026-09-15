@@ -191,3 +191,15 @@ attribute changes to an individual coefficient. It does not establish an upper
 penalty bound, saturation, general performance on the full dataset, or
 asymptotic plasticity. Any next stage requires a separate decision based on
 complete matched reports and behavior inspection.
+
+
+## Verified startup, September 16 at 00:56 CEST
+
+The same job started at 00:42:39 on nid005363; its actual end time is 04:42:39.
+Both full 2x256 CUDA/conv/NCCL and finite u20001/u20002 gates pass, with distinct
+2+2 physical GPUs and matching initial model/Adam/reset/RNG/history. Both actual
+FINAL checkpoints are downloaded and locally native-validated. Production
+initialization restores each own u20002 model and Adam exactly. Production's
+next rollout and first u20500 save were still outstanding at this snapshot.
+The [startup acceptance receipt](../../../../../.artifacts/terra_foundation_delayed_costs_20260916/cluster_startup/acceptance.json)
+contains the evidence; behavioral milestone results remain separate.
