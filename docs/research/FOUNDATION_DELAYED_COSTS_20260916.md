@@ -1,5 +1,24 @@
 # Foundation efficiency after completion: delayed costs, September 16, 2026
 
+## Morning status and schedule clarification
+
+At 09:19 CEST, live Slurm accounting records job 4675576 as FAILED, ending at
+03:37:28 after 2:54:49. The reachable Daint login node has no `/capstor` mount,
+so final training checkpoints, evaluation outputs and failure logs are not
+currently accessible. Full startup proof remains valid; there is no verified
+late-stage behavior result yet, and no diagnosed failure mechanism. Neither
+missing checkpoints nor penalty-induced learning failure follows from this
+storage limitation. Read the morning scheduler/storage receipt under
+`.artifacts/terra_training_status_20260916_morning/`.
+
+Lorenzo reaffirmed the existing decision to learn completion before introducing
+penalties gradually. This experiment follows that schedule: both arms resume
+the qualified 64/64 u20000 policy, with the treatment ramp below. The short
+zero-cost arm measures ordinary additional learning over the same interval.
+It is not another comparison of penalties applied at initialization. No new
+control extension or allocation was submitted at the morning review. Recover
+the existing outputs before deciding whether any further compute is needed.
+
 ## Decision and experiment scope
 
 One bounded comparison tests whether modest behavior costs improve an already

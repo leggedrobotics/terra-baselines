@@ -1,5 +1,31 @@
 # Experiments — completed log
 
+## 2026-09-16 09:19 CEST: generalist improves; overnight allocations ended
+
+Complete local greedy fixed evaluations at u2500/u5000 pass native, source,
+reset, exact-termination and integrity validation. Morning rechecks bind the
+actual checkpoint, report and summary hashes. Easy foundations improve 49→55/64,
+broad foundations 173→198/384, trenches 175→188/224, and the road subset 19→23/32.
+All-map broad-foundation excavation improves 69.52→73.39%; trench excavation
+improves 92.40→95.26%. On 133 common successful broad foundations, workspace
+yield improves 3.89% and retained work-pose distance falls 4.78%. Easy-map and
+road-trench mean excavation decline despite more exact completions; this is
+improvement with remaining regressions, not uniform mastery.
+
+Slurm reports generalist 4672272 TIMEOUT at 05:52:10 after nine hours and
+delayed-cost pair 4675576 FAILED at 03:37:28 after 2:54:49. `/capstor` is absent
+on the reachable Daint login node during maintenance, blocking final checkpoint
+and failure-log inspection. Do not infer final update counts, failed training
+rather than failed evaluation, or a negative penalty result from accounting.
+The latest locally validated generalist checkpoint is u5000.
+
+Lorenzo reiterated the agreed order: learn completion first, introduce stronger
+penalties gradually later. The pair already follows this order from the 64/64
+u20000 parent; its control is a bounded continuation for the new late-stage
+intervention, not another early-penalty experiment. The generalist keeps added
+costs zero. No new job, control extension or automatic continuation was added.
+Evidence: `.artifacts/terra_training_status_20260916_morning/`.
+
 ## 2026-09-15 21:50 CEST: post-teacher pair complete; recommend ending easy screen
 
 Evaluated existing u30000 checkpoints after 10,000 coefficient-zero updates

@@ -1,5 +1,41 @@
 # Generalist with broad foundation and trench teachers
 
+## September 16 morning results
+
+The u2500 and u5000 fixed evaluations completed with passing native,
+source/reset identity, exact termination and material-integrity receipts.
+Actual checkpoint/report/summary hashes were rechecked at the morning review.
+
+| Fixed panel | u2500 | u5000 |
+| --- | ---: | ---: |
+| Easy foundations | 49/64 | 55/64 |
+| Broad foundations | 173/384 | 198/384 |
+| Trenches | 175/224 | 188/224 |
+| Road trenches, included above | 19/32 | 23/32 |
+
+Broad-foundation mean excavated fraction improves 69.52→73.39%, and trench
+excavation improves 92.40→95.26%. On the **133 common successful broad
+foundations**, unique excavated area per retained productive setup increases
+5.814→6.040 m² (+3.89%); retained inter-setup straight-line distance decreases
+45.948→43.752 m (-4.78%); edge adjacency is 73.98→74.17% and lateral score
+0.7663→0.7643. These paired behavior changes avoid crediting stalled cases for
+reduced travel. They describe early learning without added behavior costs.
+
+Completion is still unstable on individual maps: broad foundations gain 65
+successes and lose 40; trenches gain 26 and lose 13. Easy mean excavation falls
+90.51→89.25%, and road mean excavation falls 94.19→90.61%, despite higher exact
+success counts. Full-bank mastery and later teacher-free learning are not yet
+established. Evidence: the campaign's `evaluation_20260916/u{2500,5000}/` and
+`.artifacts/terra_training_status_20260916_morning/generalist_fixed_comparison.json`.
+
+At 09:19 CEST, live accounting confirms 4672272 TIMEOUT at 05:52:10 after its
+nine-hour segment. The Daint login node is reachable but `/capstor` is absent
+during maintenance, so the final remote update/checkpoint is unknown. u5000 is
+the latest checkpoint already preserved and validated locally. Inspect the
+last saved checkpoint once storage returns before choosing a continuation;
+no new allocation or polling worker was added at this check. Behavior penalties
+remain off until this generalist itself qualifies for later gradual shaping.
+
 ## Corrected teacher selection
 
 The mixed run should cover all current foundation and trench conditions.

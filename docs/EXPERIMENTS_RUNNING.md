@@ -1,4 +1,51 @@
-# Experiments — delayed-cost pair passed full startup (2026-09-16 00:56 CEST)
+# Experiments — overnight allocations ended (2026-09-16 09:19 CEST)
+
+Live Slurm accounting confirms **4672272 TIMEOUT at 05:52:10 CEST**, after its
+nine-hour generalist segment, and **4675576 FAILED at 03:37:28 CEST**, after
+2:54:49 of the delayed-cost comparison. Neither Terra job is running or queued.
+SSH and accounting work, but `/capstor` is absent on daint-ln004 during the
+maintenance window. Final training updates, checkpoint inventory and the
+delayed-cost failure/evaluation logs cannot currently be inspected. An empty
+inventory under this unavailable mount is not evidence of missing checkpoints.
+The failure mechanism and delayed-cost behavior outcome remain unknown.
+
+The finite local generalist evaluation finished at **01:12:37 CEST**. Both
+milestones have complete fixed panels and passing native/source/reset/integrity
+receipts. Checkpoint, report and summary hashes were rechecked this morning.
+
+| Fixed panel | Update 2,500 | Update 5,000 |
+| --- | ---: | ---: |
+| Easy foundations | 49/64 | 55/64 |
+| Broad foundations | 173/384 | 198/384 |
+| Trenches | 175/224 | 188/224 |
+| Road trenches, subset of trenches | 19/32 | 23/32 |
+
+All-map excavated fractions improve from 69.52% to 73.39% on broad foundations
+and 92.40% to 95.26% on trenches. On the 133 broad foundations completed by both
+checkpoints, unique area per retained productive setup rises **3.89%** and
+retained inter-setup straight-line travel falls **4.78%**, with nearly unchanged
+adjacency and lateral digging. Progress is not uniform: broad foundations gain
+65 completions and lose 40; mean excavation falls on easy maps (90.51% to 89.25%)
+and road trenches (94.19% to 90.61%), despite higher exact completion counts.
+The latest locally validated generalist checkpoint is u5000; the final remote
+checkpoint after timeout is unknown until storage returns.
+
+The intended schedule remains **completion first, then gradual behavior
+penalties**. The generalist has zero added costs. The separate delayed-cost
+pair forks the already qualified u20000 foundation checkpoint (64/64), ramps
+to 25% of the old combined2x costs over 2,500 updates, then holds 2,500 updates.
+Its short zero-cost continuation distinguishes that intervention from ordinary
+additional learning. It does not repeat the early-penalty learning comparison.
+No control extension, training submission or automatic continuation was added.
+
+Evidence: `.artifacts/terra_training_status_20260916_morning/` contains
+`scheduler_and_storage.json` and `generalist_fixed_comparison.json`; the
+generalist campaign retains both complete milestone validation receipts.
+Next useful manual check is after `/capstor` is available: inspect the failed
+pair's saved outputs and latest generalist checkpoint before choosing a further
+training segment. No polling worker or scheduled check was created.
+
+# Earlier startup — delayed-cost pair (2026-09-16 00:56 CEST)
 
 **CSCS 4675576 is RUNNING on nid005363**, started at 00:42:39 CEST after the
 four-hour admission adjustment. Slurm ends the allocation at **04:42:39 CEST**.
