@@ -1,5 +1,17 @@
 # Experiments — completed log
 
+## 2026-09-16 18:52 CEST: CSCS storage still unavailable
+
+SSH works as `lterenzi`; the account queue is empty. `/capstor` itself returns
+ENOENT on `daint-ln003`, while `/iopsstor` and the user home are available.
+Generalist 4672272 remains TIMEOUT and delayed pair 4675576 remains FAILED;
+their final outputs cannot be recovered yet. The combined run is still local,
+not staged or submitted. No new policy evaluation or training result exists.
+The prior all-node maintenance reservation is no longer listed; the next one
+is September 17 14:00 through September 18 14:00 CEST. A manual storage check
+at 19:30 CEST is recommended, not scheduled. Evidence:
+`.artifacts/terra_oracle_combined_20260916/cscs_readiness_1852.json`.
+
 ## 2026-09-16: combined time, actor-capacity and teacher-throughput implementation
 
 Lorenzo selected one combined continuation because separate learning controls

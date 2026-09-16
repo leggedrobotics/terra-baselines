@@ -13,11 +13,17 @@ optimizer, rollout/teacher tensors and losses. Native resume reaches u5003 / Ada
 origins. Warmed batch 256 gradient time grows only 1.5%; forward time is
 essentially unchanged. These are runtime checks, not learning improvement. The previous two-control launcher is superseded, not submitted.
 
-**No new CSCS job is submitted.** Refreshed September 16 at 15:44 CEST:
-`lterenzi` authentication works, but campaign `/capstor` storage is absent;
-no jobs are queued/running for this account. The previously checked maintenance
-window ends 19:00 CEST. Recover latest generalist and delayed-cost outputs
-when storage returns before choosing the production parent.
+**No new CSCS job is submitted.** Refreshed September 16 at 18:52 CEST:
+`lterenzi` authentication works, but `/capstor` itself is absent on
+`daint-ln003` (ENOENT); no jobs are queued/running for this account. Accounting
+still reports generalist 4672272 TIMEOUT and delayed pair 4675576 FAILED.
+The earlier all-node maintenance reservation is no longer listed, but this
+does not establish storage readiness. The next all-node reservation is
+September 17 14:00 through September 18 14:00 CEST. Recover latest generalist
+and delayed-cost outputs when storage returns before choosing the production
+parent. Next recommended manual check: September 16 19:30 CEST (17:30 UTC),
+to determine whether storage recovery permits staging and submission; no check
+or automatic submission is scheduled.
 
 Paired source branches: baselines `oracle-followup-20260916`, Terra
 `oracle-time-work-costs-20260916`. Local artifacts:
