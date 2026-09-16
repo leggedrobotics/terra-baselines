@@ -1,4 +1,29 @@
-# Experiments — overnight allocations ended (2026-09-16 09:19 CEST)
+# Experiments — foundation teacher release prepared (2026-09-16)
+
+The [Oracle follow-up](research/ORACLE_FOLLOWUP_20260916.md) implements one
+bounded foundation-only teacher-release comparison from broad u5000. Both arms
+keep corrected physics, the same PPO/model/bank and zero added costs. The first
+decision is u6250; a non-inferior treatment can continue through a teacher-free
+hold to u7500. One four-GH200 allocation runs the arms sequentially. Complete
+608-map comparisons include paired lost successes and continuous metrics.
+
+Focused CPU and four-virtual-device gradient checks pass. Local 1x128 CUDA
+control and treatment smokes both reach u5002/Adam320128; the treatment resumes
+to u5003/Adam320192 with the original fade clock. Model, Adam and optimization
+diagnostics remain finite. Initial model/Adam/environment/history/RNG match
+between arms. This is runtime verification, not evidence of improved policy
+quality. The first 300-second cold-compile attempt timed out before an update
+and remains recorded separately. The bounded 12-failure replay and successor
+search is running separately on the local GPU.
+
+**No new CSCS job is submitted.** At the last live refresh, September16
+12:05 CEST, SSH as `lterenzi` works but `/capstor` is absent during the
+07:00–19:00 maintenance window. Recover the old delayed-cost pair and final
+generalist outputs when storage returns. No automatic polling worker exists.
+Source branch: `foundation-teacher-release-20260916`; local evidence:
+`.artifacts/terra_oracle_followup_20260916/`.
+
+# Earlier status — overnight allocations ended (2026-09-16 09:19 CEST)
 
 Live Slurm accounting confirms **4672272 TIMEOUT at 05:52:10 CEST**, after its
 nine-hour generalist segment, and **4675576 FAILED at 03:37:28 CEST**, after

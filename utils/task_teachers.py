@@ -212,3 +212,7 @@ def clear_task_teacher_config(config):
             config[field] = None
         else:
             setattr(config, field, None)
+    if isinstance(config, dict):
+        config["foundation_teacher_release_updates"] = 0
+    else:
+        config.foundation_teacher_release_updates = 0

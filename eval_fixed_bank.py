@@ -172,6 +172,11 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
     if bool(_field(config, "global_minibatch_advantage_norm", False)):
         # Missing/False retain the historical per-device treatment fingerprint.
         contract["ppo"]["global_minibatch_advantage_norm"] = True
+    release = checkpoint.get("foundation_teacher_release_state")
+    if release is not None or _field(config, "foundation_teacher_release_updates", 0):
+        if release is None or _field(config, "foundation_teacher_release_updates", 0) != release["duration_updates"]:
+            raise ValueError("foundation teacher release checkpoint lacks its matching saved state")
+        contract["foundation_teacher_release"] = _jsonable(release)
     condition_profile = _field(bank, "condition_profile", "full")
     if condition_profile != "full":
         # Preserve historical fingerprints while binding any narrowed V8 view.
@@ -2008,6 +2013,7 @@ def main() -> None:
                 "treatment_fingerprint": reference_treatment,
                 "r2_protocol_receipt": checkpoints[0][1].get("r2_protocol_receipt"),
                 "behavior_cost_ramp_state": checkpoint.get("behavior_cost_ramp_state"),
+                "foundation_teacher_release_state": checkpoint.get("foundation_teacher_release_state"),
                 "bank_root": str(bank_root),
                 "accepted_bank": (
                     None

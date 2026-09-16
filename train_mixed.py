@@ -202,6 +202,60 @@ def kickstart_coef_schedule(
     return float(initial_coef * 0.5 * (1.0 + math.cos(math.pi * fraction)))
 
 
+def foundation_teacher_release_coef(state, update_index):
+    """Linear foundation-only fade, indexed by the next rollout's PPO clock."""
+    fraction = min(1.0, max(0.0, (
+        update_index - state["origin_update"]
+    ) / state["duration_updates"]))
+    return state["start_coefficient"] * (1.0 - fraction)
+
+
+def restore_foundation_teacher_release(config, checkpoint, checkpoint_mode, resume_update):
+    """Start one explicit native-resume fade or retain its original clock."""
+    requested = getattr(config, "foundation_teacher_release_updates", 0)
+    saved = checkpoint.get("foundation_teacher_release_state") if checkpoint else None
+    saved_duration = _checkpoint_config_value(
+        checkpoint or {}, "foundation_teacher_release_updates", 0
+    )
+    if not requested and saved is None and not saved_duration:
+        return None
+    if (checkpoint_mode != "resume" or checkpoint is None
+            or checkpoint.get("next_update") != resume_update
+            or "optimizer_state" not in checkpoint
+            or getattr(config, "resume_update", None) is not None
+            or getattr(config, "trench_teacher_checkpoint", None) is None
+            or _checkpoint_config_value(checkpoint, "trench_teacher_checkpoint", None) is None):
+        raise ValueError("foundation teacher release requires native dual-teacher resume with its saved Adam and clock")
+    if saved is None:
+        if saved_duration:
+            raise ValueError("foundation teacher release checkpoint is missing its saved state")
+        start_coefficient = kickstart_coef_schedule(
+            resume_update, config.kickstart_kl_coef,
+            config.kickstart_kl_anneal_updates, config.kickstart_start_update,
+        )
+        if not np.isfinite(start_coefficient) or start_coefficient <= 0:
+            raise ValueError("foundation teacher release requires an active foundation teacher")
+        saved = dict(origin_update=int(resume_update), start_coefficient=start_coefficient,
+                     duration_updates=requested)
+    else:
+        if (set(saved) != {"origin_update", "start_coefficient", "duration_updates"}
+                or type(saved["origin_update"]) is not int or saved["origin_update"] < 0
+                or type(saved["duration_updates"]) is not int or saved["duration_updates"] <= 0
+                or not np.isfinite(saved["start_coefficient"]) or saved["start_coefficient"] <= 0
+                or resume_update < saved["origin_update"]):
+            raise ValueError("invalid foundation teacher release state")
+        if requested not in (0, saved["duration_updates"]) or saved_duration != saved["duration_updates"]:
+            raise ValueError("foundation teacher release duration changed across resume")
+        expected_start = kickstart_coef_schedule(
+            saved["origin_update"], config.kickstart_kl_coef,
+            config.kickstart_kl_anneal_updates, config.kickstart_start_update,
+        )
+        if saved["start_coefficient"] != expected_start:
+            raise ValueError("foundation teacher release start coefficient changed across resume")
+    config.foundation_teacher_release_updates = saved["duration_updates"]
+    return dict(saved)
+
+
 def _make_training_optimizer(config):
     """Retain constant-LR Adam state shape when teacher warmup is disabled.
 
@@ -1950,6 +2004,9 @@ class MixedAgentTrainConfig:
     kickstart_value_coef: float = 0.5
     kickstart_value_anneal_updates: int = 500
     kickstart_lr_warmup_updates: int = 100
+    # Explicit one-time native-resume experiment; subsequent resumes restore
+    # the saved origin/coefficient automatically, including when this is zero.
+    foundation_teacher_release_updates: int = 0
 
     # F15: 128x128 resolution scaling. All default None/1 = no change (the
     # default env/model/teacher paths stay bit-identical). Tile-denominated
@@ -1988,6 +2045,12 @@ class MixedAgentTrainConfig:
         if self.kickstart_lr_warmup_updates < 0:
             raise ValueError("kickstart_lr_warmup_updates must be nonnegative")
         validate_task_teacher_mode(self)
+        if type(self.foundation_teacher_release_updates) is not int or self.foundation_teacher_release_updates < 0:
+            raise ValueError("foundation_teacher_release_updates must be a nonnegative integer")
+        if self.foundation_teacher_release_updates and (
+                not self.resume_from or self.warm_start_from
+                or self.resume_update is not None or self.trench_teacher_checkpoint is None):
+            raise ValueError("foundation_teacher_release_updates requires native dual-teacher resume")
         _checkpoint_load_mode(self)
         _validate_foundation_behavior_config(self)
         _validate_task_bank_transfer(self)
@@ -3358,6 +3421,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                       or checkpoint.get("behavior_cost_ramp_state") is not None)
         else None,
     )
+    foundation_teacher_release_state = restore_foundation_teacher_release(
+        config, checkpoint, checkpoint_mode, resume_update,
+    )
+    if foundation_teacher_release_state is not None:
+        print(f"Foundation teacher release: {foundation_teacher_release_state}; continuing at {resume_update}.", flush=True)
+        wandb.config.update({"foundation_teacher_release_state": foundation_teacher_release_state}, allow_val_change=True)
     # Initialize training components (optionally with env override)
     rng, env, env_params, train_state = make_mixed_agent_states(
         config, env_params_override=env_params_override
@@ -3832,6 +3901,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 ent_coef_current,
                 kickstart_kl_coef_current,
                 kickstart_value_coef_current,
+                foundation_kl_coef_current,
                 flush_episode_aggregate,
             ):
                 # COLLECT TRAJECTORIES
@@ -4196,6 +4266,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             teacher_params=teacher_params,
                             kickstart_kl_coef=kickstart_kl_coef_current,
                             kickstart_value_coef=kickstart_value_coef_current,
+                            foundation_kickstart_kl_coef=(foundation_kl_coef_current
+                                if foundation_teacher_release_state is not None else None),
                         )
                         return new_train_state, update_info
 
@@ -4472,6 +4544,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 kickstart_value_broadcast = jnp.array(
                     [kickstart_value_coef_current] * config.num_devices
                 )
+                foundation_kl_coef_current = (
+                    foundation_teacher_release_coef(foundation_teacher_release_state, i)
+                    if foundation_teacher_release_state is not None
+                    else kickstart_kl_coef_current
+                )
+                foundation_kl_broadcast = jnp.array(
+                    [foundation_kl_coef_current] * config.num_devices
+                )
                 flush_episode_broadcast = jnp.array(
                     [need_episode_flush] * config.num_devices,
                     dtype=jnp.bool_,
@@ -4587,6 +4667,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         ent_broadcast,
                         kickstart_kl_broadcast,
                         kickstart_value_broadcast,
+                        foundation_kl_broadcast,
                         flush_episode_broadcast,
                     )
                 )
@@ -4847,6 +4928,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         checkpoint["reward_anneal_state"] = dict(reward_anneal_state)
                     if behavior_cost_ramp_state is not None:
                         checkpoint["behavior_cost_ramp_state"] = copy.deepcopy(behavior_cost_ramp_state)
+                    if foundation_teacher_release_state is not None:
+                        checkpoint["foundation_teacher_release_state"] = dict(foundation_teacher_release_state)
                     partial_reset_receipt = partial_reset_curriculum_receipt(
                         config, i + 1
                     )
@@ -5109,6 +5192,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             final_checkpoint["reward_anneal_state"] = train_info["reward_anneal_state"]
         if behavior_cost_ramp_state is not None:
             final_checkpoint["behavior_cost_ramp_state"] = copy.deepcopy(behavior_cost_ramp_state)
+        if foundation_teacher_release_state is not None:
+            final_checkpoint["foundation_teacher_release_state"] = dict(foundation_teacher_release_state)
         partial_reset_receipt = partial_reset_curriculum_receipt(
             config, config.num_updates
         )
@@ -5409,6 +5494,14 @@ if __name__ == "__main__":
         help=("Second frozen teacher, routed only to trench transitions; "
               "--teacher_checkpoint then supervises foundations only. Requires "
               "one tracked excavator, executable observations and value coefficient zero."),
+    )
+    parser.add_argument(
+        "--foundation_teacher_release_updates",
+        type=int,
+        default=0,
+        help=("On native dual-teacher resume, fade only foundation KL linearly from "
+              "its current coefficient to zero over this many updates. Subsequent "
+              "resumes automatically retain the saved release origin and duration."),
     )
     parser.add_argument(
         "--kickstart_start_update",
@@ -6386,6 +6479,7 @@ if __name__ == "__main__":
         kickstart_value_coef=args.kickstart_value_coef,
         kickstart_value_anneal_updates=args.kickstart_value_anneal_updates,
         kickstart_lr_warmup_updates=args.kickstart_lr_warmup_updates,
+        foundation_teacher_release_updates=args.foundation_teacher_release_updates,
         # F15 resolution scaling (truck_capacity/skidsteer_capacity already
         # passed above; CLI precedence applied when parsing the preset).
         agent_move_tiles=args.agent_move_tiles,

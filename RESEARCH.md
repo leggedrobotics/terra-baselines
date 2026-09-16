@@ -14,6 +14,8 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Completion-first Oracle follow-up and foundation teacher release](docs/research/ORACLE_FOLLOWUP_20260916.md)
+
 - [Foundation efficiency with delayed behavior costs](docs/research/FOUNDATION_DELAYED_COSTS_20260916.md)
 
 - [Full generalist using recovered broad teachers](docs/research/GENERALIST_BROAD_TEACHERS_20260915.md)

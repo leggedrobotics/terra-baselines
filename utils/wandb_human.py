@@ -115,6 +115,8 @@ TRAINING_SCALAR_KEYS = frozenset(
         "kickstart/value_coef",
         "kickstart/foundation_kl",
         "kickstart/trench_kl",
+        "kickstart/foundation_kl_coef",
+        "kickstart/trench_kl_coef",
         "kickstart/foundation_selected_count",
         "kickstart/trench_selected_count",
         "system/steps_per_second",
@@ -243,7 +245,7 @@ def loss_metrics(
             }
         )
     for family in ("foundation", "trench"):
-        for metric in ("kl", "selected_count"):
+        for metric in ("kl", "kl_coef", "selected_count"):
             key = f"kickstart/{family}_{metric}"
             if key in loss_info:
                 metrics[key] = scalar(key)

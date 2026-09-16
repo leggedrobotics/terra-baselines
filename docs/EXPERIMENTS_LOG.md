@@ -1,5 +1,29 @@
 # Experiments — completed log
 
+## 2026-09-16: controlled teacher-release implementation and failure diagnostics
+
+Accepted the independent review's completion-first priority. Added an opt-in
+foundation-only linear KL fade, persistent native checkpoint clock, independent
+family coefficient logging and a bounded u5000→u6250→u7500 matched recipe.
+Trench guidance retains its original cosine; broad behavior costs remain zero.
+The hold requires complete fixed evaluations and explicitly counts lost trench
+and road successes, so new gains cannot hide those losses.
+
+CPU schedule, actual-gradient, multi-device family weighting and checkpoint
+metadata checks pass. The CPU observation test reproduces identical physical
+state/history inputs at ages50/440/449/450 with different terminal semantics;
+this is time aliasing evidence, not a measured benefit of time-aware training.
+Finite CUDA control/treatment continuations both reach u5002/Adam320128 from
+identical initial state; treatment resume reaches u5003/Adam320192 without
+restarting its fade. These use 1x128 diagnostic batches, not production data.
+Further runtime and 12-case replay results are recorded in the
+[follow-up note](research/ORACLE_FOLLOWUP_20260916.md).
+
+CSCS scratch remains unavailable during maintenance; no pilot, duplicate
+generalist, or additional delayed-cost job was submitted. Existing remote final
+checkpoints and the delayed-job failure reason remain uninspected. Artifacts:
+`.artifacts/terra_oracle_followup_20260916/`.
+
 ## 2026-09-16 09:19 CEST: generalist improves; overnight allocations ended
 
 Complete local greedy fixed evaluations at u2500/u5000 pass native, source,

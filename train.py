@@ -351,6 +351,7 @@ def ppo_update_networks(
     kickstart_kl_coef: float = 0.0,
     kickstart_value_coef: float = 0.0,
     actor_hidden_init: jax.Array | None = None,
+    foundation_kickstart_kl_coef: float | None = None,
 ):
     clip_eps = config.clip_eps
     vf_coef = config.vf_coef
@@ -369,6 +370,8 @@ def ppo_update_networks(
     # a Python-static int, so the transform is traced/specialized at compile.
     teacher_obs_downsample = int(getattr(config, "teacher_obs_downsample", 1))
     task_teachers = getattr(config, "trench_teacher_checkpoint", None) is not None
+    if foundation_kickstart_kl_coef is not None and not task_teachers:
+        raise ValueError("foundation KL override requires dual task teachers")
     # V6 dense per-cell auxiliary supervision. 0.0 = off, and the branch is
     # Python-static so the traced loss graph of existing runs is unchanged.
     aux_coef = float(_config_option(config, "aux_coef", 0.0))
@@ -508,6 +511,16 @@ def ppo_update_networks(
                     teacher_p * (teacher_logp - student_logp), axis=-1
                 )
                 kl = per_row_kl.mean()
+                # Retain the existing scalar-mean arithmetic unless the
+                # foundation-only release was explicitly enabled. Family
+                # exposure remains transition-weighted, not renormalized.
+                weighted_kl = jnp.zeros((), dtype=jnp.float32)
+                if foundation_kickstart_kl_coef is not None:
+                    coefficient = jnp.where(
+                        transitions_obs_reshaped[FAMILY_KEY] == config.task_teacher_family_ids["foundation"],
+                        foundation_kickstart_kl_coef, kickstart_kl_coef,
+                    )
+                    weighted_kl = (coefficient * per_row_kl).mean()
                 vmse = jnp.mean((value - teacher_value) ** 2)
                 task_stats = task_teacher_kl_stats(
                     per_row_kl, transitions_obs_reshaped[FAMILY_KEY],
@@ -521,6 +534,7 @@ def ppo_update_networks(
                     _nan_safe_abs_max(teacher_value),
                     _nan_safe_abs_max(teacher_logits),
                     task_stats,
+                    weighted_kl,
                 )
 
             def _zero_kickstart(_):
@@ -536,6 +550,7 @@ def ppo_update_networks(
                     jnp.zeros((), dtype=jnp.float32),
                     jnp.zeros((), dtype=jnp.float32),
                     task_stats,
+                    jnp.zeros((), dtype=jnp.float32),
                 )
 
             (
@@ -546,8 +561,11 @@ def ppo_update_networks(
                 teacher_value_abs_max,
                 teacher_logits_abs_max,
                 task_teacher_stats,
+                weighted_kickstart_kl,
             ) = jax.lax.cond(
-                (kickstart_kl_coef + kickstart_value_coef) > 0,
+                ((kickstart_kl_coef + kickstart_value_coef) > 0
+                 if foundation_kickstart_kl_coef is None else
+                 (jnp.maximum(kickstart_kl_coef, foundation_kickstart_kl_coef) + kickstart_value_coef) > 0),
                 _compute_kickstart,
                 _zero_kickstart,
                 None,
@@ -592,9 +610,11 @@ def ppo_update_networks(
         if aux_coef > 0.0:
             total_loss = total_loss + aux_coef * aux_loss
         if teacher_apply_fn is not None:
+            kl_loss = (kickstart_kl_coef * kickstart_kl
+                       if foundation_kickstart_kl_coef is None else weighted_kickstart_kl)
             total_loss = (
                 total_loss
-                + kickstart_kl_coef * kickstart_kl
+                + kl_loss
                 + kickstart_value_coef * kickstart_value_mse
             )
         return total_loss, (
@@ -803,6 +823,11 @@ def ppo_update_networks(
         # Global unnormalized statistics survive variable family proportions
         # between devices/minibatches. The caller forms the weighted means.
         update_info.update(jax.lax.psum(task_teacher_stats, axis_name="devices"))
+        update_info["kickstart/foundation_kl_coef"] = (
+            kickstart_kl_coef if foundation_kickstart_kl_coef is None
+            else foundation_kickstart_kl_coef
+        )
+        update_info["kickstart/trench_kl_coef"] = kickstart_kl_coef
     if teacher_apply_fn is not None:
         update_info["kickstart/kl"] = k_kl
         update_info["kickstart/value_mse"] = k_vmse
