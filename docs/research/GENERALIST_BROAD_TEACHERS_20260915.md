@@ -2,6 +2,20 @@
 
 ## September 16 morning results
 
+At the 09:25 follow-up, Lorenzo proposed **50,000 total PPO updates** as the
+next review target for the same generalist while continuous progress improves.
+This is reasonable given the early broad-panel gains, not a prediction of
+eventual completion. Recover and validate the latest remote checkpoint before
+native continuation; retain Adam, the existing KL fade to zero at u20000, the
+four-GPU batch and zero added behavior costs. Evaluate unchanged fixed panels
+at u10000/u20000/u35000/u50000 with per-condition material progress and common
+successful-cohort efficiency. No new control or allocation was submitted.
+The local continuation plan is recorded in the campaign's
+`continuation_50000/plan.json`; checkpoint selection remains blocked by storage.
+Live Slurm confirms active September 16 maintenance 07:00–19:00 CEST and a
+further reservation September 17 14:00–September 18 14:00 CEST. Segment duration
+must fit actual admission; storage recovery at the advertised end is unverified.
+
 The u2500 and u5000 fixed evaluations completed with passing native,
 source/reset identity, exact termination and material-integrity receipts.
 Actual checkpoint/report/summary hashes were rechecked at the morning review.
