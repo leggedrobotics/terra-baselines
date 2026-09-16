@@ -20,7 +20,7 @@ movement and soil-handling cycles, not WAIT. No bank infeasibility or new
 environment bug is established. The GPU work has ended.
 
 **No new CSCS job is submitted.** At the last live refresh, September16
-12:05 CEST, SSH as `lterenzi` works but `/capstor` is absent during the
+12:59 CEST, SSH as `lterenzi` works but `/capstor` is absent during the
 07:00–19:00 maintenance window. Recover the old delayed-cost pair and final
 generalist outputs when storage returns. No automatic polling worker exists.
 Source branch: `foundation-teacher-release-20260916`; local evidence:

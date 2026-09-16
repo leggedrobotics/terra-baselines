@@ -188,9 +188,10 @@ The 12-case GPU replay/search completed normally within its 900-second limit;
 the timed replay/search portion was 571 seconds. Its bounded conclusions are
 recorded above. In-allocation four-GH200 execution remains outstanding.
 
-At the last live refresh (September 16, 12:05 CEST), SSH as `lterenzi` works but
+At the last live refresh (September 16, 12:59 CEST), SSH as `lterenzi` works but
 `/capstor` is unavailable during the 07:00–19:00 maintenance reservation. Neither
 Terra job is running or queued. The prior generalist 4672272 timed out; delayed
 pair 4675576 failed for a still-uninspected reason. No new job has been submitted.
+The final readiness snapshot is `cluster_readiness.json`.
 The next useful cluster check is when storage returns; no polling worker is
 scheduled. In-allocation four-GH200 execution remains outstanding.
