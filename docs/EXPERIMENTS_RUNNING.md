@@ -13,8 +13,11 @@ to u5003/Adam320192 with the original fade clock. Model, Adam and optimization
 diagnostics remain finite. Initial model/Adam/environment/history/RNG match
 between arms. This is runtime verification, not evidence of improved policy
 quality. The first 300-second cold-compile attempt timed out before an update
-and remains recorded separately. The bounded 12-failure replay and successor
-search is running separately on the local GPU.
+and remains recorded separately. The bounded 12-failure audit completed:
+12/12 endpoint matches, eight progress witnesses, five work/disposal/translation
+witnesses and zero complete suffixes within depth12. Current failures show
+movement and soil-handling cycles, not WAIT. No bank infeasibility or new
+environment bug is established. The GPU work has ended.
 
 **No new CSCS job is submitted.** At the last live refresh, September16
 12:05 CEST, SSH as `lterenzi` works but `/capstor` is absent during the

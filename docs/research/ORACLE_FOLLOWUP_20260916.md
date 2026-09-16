@@ -95,9 +95,50 @@ not identical original action trajectories; the prior report lacks raw traces.
 The CPU observation diagnostic already reproduces time aliasing with the actual
 Terra observation function and u5000 preprocessing configuration: identical
 physical state and five-action history at ages 50, 440, 449 and 450 produce
-identical policy inputs; only age450 terminates. This used a synthetic four-cell
+identical policy inputs; only age 450 terminates. This used a synthetic four-cell
 excavation/disposal state and no policy inference. It establishes the missing
 information, not its measured effect on learning.
+
+### Completed 12-case replay and qualitative review
+
+All 12 failures reproduce their original failure/excavation/disposal endpoints.
+The completed audit uses 5,400 replay actions and 8,280 real successor candidates.
+It finds additional legal material progress in **8/12** cases and sequences of
+fresh work, accepted disposal and a subsequent base translation in **5/12**.
+It finds **zero complete-success suffixes** within width 8/depth 12. These are
+selected-case witnesses, not a feasibility rate for the broad bank.
+
+The independent excavation-behavior review identifies:
+
+- Movement/orientation cycles, including both blocked actions and successful
+  movement that returns to the same poses. None of these 12 rollouts uses WAIT
+  during its final 100 actions. Historical WAIT-loop diagnoses do not describe
+  these traces.
+- Stationary relift/dump cycles in road slots 343/296 with no improvement in
+  excavation or accepted disposal. Their nearest declared disposal cells at the
+  terminal pose are 9.37 m/8.93 m away, beyond the 6.5m direct dump reach. Foundation
+  cleanup 63 has the same direct-reach issue at 7.96 m. Cabin turns alone cannot
+  provide a direct accepted drop there; longer staging/relocation feasibility
+  remains unresolved.
+- Tee 503's sole remaining cell is at the far tip of its second section, not
+  at the junction. This case does not support a junction-cell admission bug.
+- Foundation slots 4/564 had executable fresh work and legal work/disposal/move
+  alternatives at their saved roots. Useful opportunities remained when the
+  policy stopped advancing the task.
+
+Material changes alone are not progress: the two soil-cycling cases can look
+active while excavation and accepted disposal remain flat. Keep task-progress
+stalls separate from material-change stalls. This evidence supports testing
+teacher release before stronger initial movement costs; it does not establish
+that the teacher caused the loops.
+
+All 12 real-state time-aliasing checks also pass. Search roots precede terminal
+poses and are at action 0 for three no-work cases. An alternative from those
+roots does not prove escape from the later final pose. No complete geometric
+contradiction or motion-rule violation was established. Path figures overlay
+terminal terrain, so crossing a drawn hole does not show travel over an already
+excavated cell. Evidence: `failure_audit/summary.json`, `qualitative_review.md`,
+`behavior_counts.json`, per-case states/traces and `failure_endpoints_disposal.png`.
 
 ## Separate next changes
 
@@ -135,7 +176,7 @@ The first local native CUDA smoke reached its 300-second bound during initial
 compilation, before a PPO update; it is not a passing training check. The second
 attempt, bounded to 600 seconds per phase, **passes all three phases** on one
 RTX4090 with 128 environments: control and treatment each reach u5002 with
-Adam320128, then the treatment resumes to u5003/Adam320192. Model, optimizer and
+Adam 320128, then the treatment resumes to u5003/Adam 320192. Model, optimizer and
 optimization/teacher diagnostics remain finite. Existing initialization records
 confirm identical starting model, Adam, environment, history and RNG in both
 arms. The release origin stays at u5000 through resume. The treatment's last
@@ -143,12 +184,13 @@ foundation/trench coefficients are 0.852188/0.853443, confirming separate clocks
 Evidence: `release/attempt2/verification.json`. These are diagnostic batches;
 production rejects their checkpoints as parents and retains 4x256 throughout.
 
-The 12-case GPU replay/search is running separately; it is not yet a completed
-failure-mechanism result. In-allocation four-GH200 execution remains outstanding.
+The 12-case GPU replay/search completed normally within its 900-second limit;
+the timed replay/search portion was 571 seconds. Its bounded conclusions are
+recorded above. In-allocation four-GH200 execution remains outstanding.
 
-At the last live refresh (September16, 12:05 CEST), SSH as `lterenzi` works but
+At the last live refresh (September 16, 12:05 CEST), SSH as `lterenzi` works but
 `/capstor` is unavailable during the 07:00–19:00 maintenance reservation. Neither
-Terra job is running or queued. The prior generalist4672272 timed out; delayed
-pair4675576 failed for a still-uninspected reason. No new job has been submitted.
+Terra job is running or queued. The prior generalist 4672272 timed out; delayed
+pair 4675576 failed for a still-uninspected reason. No new job has been submitted.
 The next useful cluster check is when storage returns; no polling worker is
 scheduled. In-allocation four-GH200 execution remains outstanding.

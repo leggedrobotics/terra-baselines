@@ -16,7 +16,11 @@ this is time aliasing evidence, not a measured benefit of time-aware training.
 Finite CUDA control/treatment continuations both reach u5002/Adam320128 from
 identical initial state; treatment resume reaches u5003/Adam320192 without
 restarting its fade. These use 1x128 diagnostic batches, not production data.
-Further runtime and 12-case replay results are recorded in the
+All 12 failure replays match their previous endpoints. The bounded search finds
+eight progress witnesses and five work/disposal/translation witnesses, but no
+complete suffix. The independent qualitative review identifies movement loops
+and stationary soil cycling, not WAIT. Tee503's last cell is at a far branch
+tip rather than a junction. Full findings and limits are recorded in the
 [follow-up note](research/ORACLE_FOLLOWUP_20260916.md).
 
 CSCS scratch remains unavailable during maintenance; no pilot, duplicate
