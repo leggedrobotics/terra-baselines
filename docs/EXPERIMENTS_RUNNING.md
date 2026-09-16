@@ -1,5 +1,25 @@
 # Experiments — combined Oracle continuation prepared (2026-09-16)
 
+**Latest check, September 16 23:02 CEST: authentication blocks access.** Lorenzo
+reports CSCS is online and authorizes proceeding with the needed experiments.
+A dedicated authentication agent used `cscs-auth`: the existing certificate
+expired at 20:45:34 CEST, Ela rejects `lterenzi` with `Permission denied
+(publickey)`, and Daint cannot pass the jump host. The signing request ended
+with a token-poll timeout; direct IPv4 HTTPS connections to `auth.cscs.ch`
+also time out. Saved browser login and the authenticator recovery source are
+available. No duplicate signing request or job was started. Current storage
+and scheduler status could not be refreshed; the 18:52 snapshot below is historical.
+
+The authorized queue is one combined four-GPU continuation, evaluation of a
+newer recovered broad parent if selected, and recovery of the existing delayed
+comparison. Resume delayed training only if saved u25000 is absent, preserving
+the u20000 ramp origin and ending at u25000. Its old wrapper has an expired
+maintenance deadline/start cutoff and must not be resubmitted unchanged.
+No separate time/capacity controls are needed. Read-only recovery inventory:
+`.artifacts/terra_oracle_combined_20260916/recovery_inventory.py`.
+Next useful check is after the authentication endpoint becomes reachable;
+no polling, renewal, or submission worker remains active.
+
 Lorenzo chose one combined broad run instead of separate learning controls.
 The [recipe](../scripts/oracle_followup/README.md) combines remaining time,
 zero-output actor growth, earlier foundation release and cached teacher

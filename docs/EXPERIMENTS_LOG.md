@@ -1,5 +1,23 @@
 # Experiments — completed log
 
+## 2026-09-16 23:02 CEST: authenticated access cannot yet be restored
+
+Lorenzo reports CSCS online and authorizes the needed experiments. A dedicated
+agent followed `cscs-auth` using the existing key and pending signing request.
+The certificate expired at 20:45:34 CEST. The CLI exits on token-poll timeout,
+and independent HTTPS attempts to `auth.cscs.ch` time out; saved browser login
+and authenticator recovery are available. Ela rejects the expired certificate,
+so current Daint storage, queue and old outputs remain unverified. No new
+job or duplicate authentication request was created. Task-created sensitive
+logs/screenshots were removed.
+
+Independent launch review finds no blocker in the prepared combined recipe.
+Proceed with one four-GPU continuation and a baseline evaluation if choosing
+a newer recovered parent. Recover delayed-cost outputs before allocating its
+remaining training; never restart completed work or reset the u20000 ramp.
+The old delayed wrapper has an expired deadline/start cutoff. Local readiness
+record: `.artifacts/terra_oracle_combined_20260916/cscs_readiness_2302.json`.
+
 ## 2026-09-16 18:52 CEST: CSCS storage still unavailable
 
 SSH works as `lterenzi`; the account queue is empty. `/capstor` itself returns
