@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 from tensorflow_probability.substrates import jax as tfp
 from utils.helpers import validate_executable_dig_observation
+from utils.remaining_time import validate_time_observation_mode
 
 
 _LOCAL_MAP_KEYS = (
@@ -60,6 +61,18 @@ def scale_local_maps_in_obs(obs, scale):
 
 def obs_to_model_input(obs, prev_actions, train_cfg):
     validate_executable_dig_observation(train_cfg)
+    time_mode = validate_time_observation_mode(
+        _config_option(train_cfg, "time_observation_mode", "none")
+    )
+    remaining_time = None
+    if time_mode != "none":
+        if _config_option(train_cfg, "action_logit_masking", False):
+            raise ValueError("remaining-time continuation uses an unmasked policy")
+        if "remaining_time" not in obs:
+            raise ValueError("time observation requires Terra obs['remaining_time']")
+        remaining_time = jnp.asarray(obs["remaining_time"], dtype=jnp.float32)
+        if time_mode == "constant":
+            remaining_time = jnp.zeros_like(remaining_time)
     # Capture the env's action mask before ``obs`` is rebound to the list.
     action_mask = (
         obs["action_mask"]
@@ -210,6 +223,9 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         # executable fresh volume when the checkpoint opts into that semantic.
         # EnvConfig is checked before rollout; this is LocalMapNet's tenth map.
         obs.append(local_map_admissible_dig)
+    if remaining_time is not None:
+        # Named head variant: keep every existing input index unchanged.
+        obs.append(remaining_time[..., None])
     if _config_option(train_cfg, "action_logit_masking", False):
         # Effect-based action mask from the env (D3). Appended last; the model
         # consumes no fixed index for it, only policy() masking reads it.

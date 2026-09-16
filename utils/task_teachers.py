@@ -17,6 +17,8 @@ from utils.utils_ppo import obs_to_model_input
 
 FAMILY_KEY = "teacher_episode_family_id"
 LEGACY_DIG_KEY = "teacher_legacy_local_map_admissible_dig"
+CACHED_LOGITS_KEY = "teacher_cached_logits"
+CACHED_VALUE_KEY = "teacher_cached_value"
 IDENTITY_FIELDS = (
     "teacher_checkpoint_sha256",
     "trench_teacher_checkpoint_sha256",
@@ -127,6 +129,35 @@ def task_teacher_rollout_observation(observation, state, active_family_id):
     return result
 
 
+def cache_task_teacher_outputs(observation, prev_actions, apply_fn, params, num_minibatches):
+    """Evaluate frozen teachers once on pre-action rows, before PPO shuffling.
+
+    Input/output use [time, env, ...]. Inference uses the same flattened batch
+    size as PPO, avoiding a rollout-sized convolution and its memory cost.
+    The resulting leaves follow exactly the ordinary observation shuffle.
+    """
+    steps, envs = prev_actions.shape[:2]
+    if (steps * envs) % num_minibatches:
+        raise ValueError("teacher cache requires complete PPO minibatches")
+
+    def chunks(x):
+        return x.swapaxes(0, 1).reshape((num_minibatches, -1) + x.shape[2:])
+
+    rows = jax.tree_util.tree_map(chunks, (observation, prev_actions))
+    values, logits = jax.lax.map(lambda batch: apply_fn(params, *batch), rows)
+
+    def restore(x):
+        x = x.reshape((envs, steps) + x.shape[2:]).swapaxes(0, 1)
+        return jax.lax.stop_gradient(x.astype(jnp.float32))
+
+    result = dict(observation)
+    result[CACHED_VALUE_KEY] = restore(values)
+    result[CACHED_LOGITS_KEY] = restore(logits)
+    # No later teacher call needs these relatively large native-only features.
+    result.pop(LEGACY_DIG_KEY, None)
+    return result
+
+
 def validate_task_teacher_configs(student_config, foundation_config, trench_config):
     validate_task_teacher_mode(student_config)
     for role, config in (("foundation", foundation_config), ("trench", trench_config)):
@@ -214,5 +245,7 @@ def clear_task_teacher_config(config):
             setattr(config, field, None)
     if isinstance(config, dict):
         config["foundation_teacher_release_updates"] = 0
+        config["cache_teacher_outputs"] = False
     else:
         config.foundation_teacher_release_updates = 0
+        config.cache_teacher_outputs = False

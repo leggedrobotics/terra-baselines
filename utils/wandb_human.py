@@ -17,6 +17,13 @@ FOUNDATION_ROLLOUT_METRICS = {
     "reward_v2_fresh_dig_volume": "behavior/fresh_dig_volume_per_step",
     "reward_v2_base_travel_m": "behavior/base_travel_m_per_step",
     "reward_v2_base_turn_rad": "behavior/base_turn_rad_per_step",
+    "reward_v2_retained_setup": "reward/retained_setup_per_step",
+    "reward_v2_retained_travel": "reward/retained_travel_per_step",
+    "reward_v2_retained_turn": "reward/retained_turn_per_step",
+    "reward_v2_retained_work_event": "behavior/retained_work_events_per_step",
+    "reward_v2_retained_new_setup": "behavior/retained_setups_per_step",
+    "reward_v2_retained_inter_setup_m": "behavior/retained_inter_setup_m_per_step",
+    "reward_v2_retained_heading_rad": "behavior/retained_heading_rad_per_step",
 }
 FAMILIES = ("foundation", "trench")
 BRANCH_DEPTHS = ("Anchor", "Nearby core", "One-axis", "Composed")
@@ -64,6 +71,7 @@ TRAINING_SCALAR_KEYS = frozenset(
         "train/full_start_episode_success_rate",
         "train/partial_reset_episode_success_rate",
         "train/update",
+        "system/end_to_end_steps_per_second",
         "behavior/absolute_completion",
         "behavior/dig_completion",
         "behavior/dump_volume_completion",

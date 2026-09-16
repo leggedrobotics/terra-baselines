@@ -36,6 +36,7 @@ from utils.models import validate_model_params_match
 from utils.explicit_episode_bank import ExplicitEpisodePanel
 from utils.explicit_episode_bank import load_explicit_episode_panel
 from utils.helpers import (
+    checkpoint_retained_work_costs,
     checkpoint_evaluation_config,
     checkpoint_foundation_behavior,
     load_pkl_object,
@@ -216,10 +217,18 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
         contract["architecture"]["movement_feasibility_observation"] = True
     if bool(_field(config, "previous_outcome_observation", False)):
         contract["architecture"]["previous_outcome_observation"] = True
+    time_mode = _field(config, "time_observation_mode", "none")
+    if time_mode != "none":
+        contract["architecture"]["time_observation_mode"] = time_mode
+    if bool(_field(config, "actor_residual_head", False)):
+        contract["architecture"]["actor_residual_head"] = True
     if any(foundation_behavior.values()):
         # The executable feature changes semantics, not width. Bind the costs
         # and observation treatment together while preserving legacy hashes.
         contract["foundation_behavior"] = foundation_behavior
+    retained_costs = checkpoint_retained_work_costs(checkpoint)
+    if any(retained_costs.values()):
+        contract["retained_work_costs"] = retained_costs
     partial_reset_digest = _field(config, "partial_reset_bank_sha256")
     if partial_reset_digest is not None:
         raw_partial_receipt = checkpoint.get("partial_reset_curriculum")

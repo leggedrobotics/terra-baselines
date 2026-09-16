@@ -15,6 +15,11 @@ FOUNDATION_BEHAVIOR_DEFAULTS = {
     "base_travel_cost": 0.0,
     "base_turn_cost": 0.0,
 }
+RETAINED_WORK_COST_DEFAULTS = {
+    "retained_work_setup_cost": 0.0,
+    "retained_work_travel_cost": 0.0,
+    "retained_work_turn_cost": 0.0,
+}
 
 
 def _config_field(config, name, default=None):
@@ -117,7 +122,8 @@ def checkpoint_foundation_behavior(checkpoint):
 
 def checkpoint_evaluation_config(checkpoint):
     """Copy the recorded config, filling only the four behavior settings."""
-    settings = checkpoint_foundation_behavior(checkpoint)
+    settings = {**checkpoint_foundation_behavior(checkpoint),
+                **checkpoint_retained_work_costs(checkpoint)}
     config = copy.deepcopy(checkpoint["train_config"])
     if isinstance(config, dict):
         config.update(settings)
@@ -127,10 +133,24 @@ def checkpoint_evaluation_config(checkpoint):
     return config
 
 
+def checkpoint_retained_work_costs(checkpoint):
+    settings = {}
+    config, env = checkpoint.get("train_config"), checkpoint.get("env_config")
+    for name, default in RETAINED_WORK_COST_DEFAULTS.items():
+        trained = _foundation_scalar(_config_field(config, name, default), name)
+        actual = _foundation_scalar(_config_field(env, name, default), name)
+        if not _foundation_values_match(trained, actual):
+            raise ValueError(f"checkpoint {name} differs between training and environment")
+        settings[name] = trained
+    return settings
+
+
 def overlay_foundation_behavior(env_config, settings):
     """Apply resolved settings without losing existing environment batch axes."""
     updates = {}
-    for name, default in FOUNDATION_BEHAVIOR_DEFAULTS.items():
+    for name, default in {**FOUNDATION_BEHAVIOR_DEFAULTS, **RETAINED_WORK_COST_DEFAULTS}.items():
+        if name in RETAINED_WORK_COST_DEFAULTS and name not in settings:
+            continue
         value = _foundation_scalar(settings.get(name, default), name)
         if not hasattr(env_config, name):
             if value != default:
@@ -146,7 +166,7 @@ def overlay_foundation_behavior(env_config, settings):
 def validate_foundation_behavior_env(config, env_config, *, env=None):
     """Verify semantics before a rollout; observation values cannot prove them."""
     validate_executable_dig_observation(config, env=env)
-    for name, default in FOUNDATION_BEHAVIOR_DEFAULTS.items():
+    for name, default in {**FOUNDATION_BEHAVIOR_DEFAULTS, **RETAINED_WORK_COST_DEFAULTS}.items():
         expected = _foundation_scalar(_config_field(config, name, default), name)
         actual = _foundation_scalar(_config_field(env_config, name, default), name)
         if not _foundation_values_match(expected, actual):

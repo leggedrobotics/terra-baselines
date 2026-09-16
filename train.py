@@ -491,7 +491,10 @@ def ppo_update_networks(
 
         if teacher_apply_fn is not None:
             def _compute_kickstart(_):
-                if task_teachers:
+                if "teacher_cached_logits" in transitions_obs_reshaped:
+                    teacher_value = transitions_obs_reshaped["teacher_cached_value"]
+                    teacher_logits = transitions_obs_reshaped["teacher_cached_logits"]
+                elif task_teachers:
                     teacher_value, teacher_logits = teacher_apply_fn(
                         teacher_params, transitions_obs_reshaped,
                         transitions_prev_actions_flat,

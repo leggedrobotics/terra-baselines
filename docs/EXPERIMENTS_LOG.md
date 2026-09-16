@@ -1,5 +1,28 @@
 # Experiments — completed log
 
+## 2026-09-16: combined time, actor-capacity and teacher-throughput implementation
+
+Lorenzo selected one combined continuation because separate learning controls
+would exceed the compute budget. Added remaining time to actor/critic, a
+zero-output residual actor head, explicit migrations preserving native Adam,
+frozen-teacher caching and a teacher-free execution specialization. Optional
+retained-work costs and numerical readiness diagnostics are implemented but
+remain disabled for the broad policy. Corrected physics and reward-v2 remain.
+
+CPU suites, four-device cache/gradient parity and independent source review
+pass. Actual native-parent CUDA smoke reaches u5002 / Adam320128 and native
+resume reaches u5003 / Adam320192 with finite states and original release
+origin 5000. Model size is 2,940,829 versus 2,311,701. Initial GPU logits/values
+and live/cached teachers match exactly. Warmed RTX 4090 batch 256 forward is
+5.695→5.677 ms, forward-plus-gradient 22.196→22.533 ms. This is local runtime
+and kernel evidence, not learning/throughput promotion on GH200.
+
+Prepared one four-GH200 run with 81.92M new-transition ceiling and midpoint/end
+608-case evaluations. No job submitted: lterenzi auth succeeds but campaign
+storage is absent at 15:44 CEST during maintenance. The earlier two-arm release
+launcher is superseded. Source and the item-by-item status are in
+[the Oracle follow-up](research/ORACLE_FOLLOWUP_20260916.md).
+
 ## 2026-09-16: controlled teacher-release implementation and failure diagnostics
 
 Accepted the independent review's completion-first priority. Added an opt-in
@@ -195,7 +218,7 @@ Together with its62/64 easy-map result and the recovered trench teacher's
 fifteen broad trench training conditions. The qualified2976-slot bank is
 source/scenario/map disjoint from all eleven checked held-out manifests.
 
-43CPU tests and15subtests pass, with two existing skips. Local RTX4090 startup
+43CPU tests and15subtests pass, with two existing skips. Local RTX 4090 startup
 u1/u2 and native u3 pass actual teacher, fresh/native initialization,
 model/optimizer/loss, checkpoint-clock and transition-integrity gates.
 The staged one-node CSCS campaign has not yet been submitted at this entry.
@@ -365,7 +388,7 @@ section 12.
 Status: local gates passed; Euler inputs staged; no job submitted. Terra
 `ba9cc214` supplies strict occupied footprints, eligible-soil selection and
 short tracked maneuvers. Baselines `9354b89` adds retained work-pose metrics and
-a one-RTX4090, 24-hour full-bank 2x recipe. Four local native updates including
+a one-RTX 4090, 24-hour full-bank 2x recipe. Four local native updates including
 an ordinary process restart pass finite and transition-integrity checks; the
 PPO executable cache is reused. The specialist regression screen is 175/224
 versus 188/224. The mixed-bank generalist u5000 remains the initializer: it
@@ -644,7 +667,7 @@ discard the schedule. Values change only between PPO rollouts with stable
 array shapes and dtypes. Fixed-cost training and Terra legality are unchanged.
 
 Validation: 122 focused CPU tests plus 22 subtests, shell checks, independent
-review, and a real local RTX4090 convolution/native-resume smoke passed. Seven
+review, and a real local RTX 4090 convolution/native-resume smoke passed. Seven
 checkpoints spanning u10001..u10005 preserve finite model/Adam/loss values,
 zero integrity counters and Adam640064..640320. The u10002 checkpoint resumes
 from half weight, reaches full weight at u10004, and holds through u10005.
@@ -674,7 +697,7 @@ foundation speedup reaches >=1.5x. Its parent is the verified diagnostic
 trench u32016 FINAL; production repeats runtime and two native-update checks.
 No child is submitted yet.
 
-Euler replacement **13939497** is submitted under lterenzi with four RTX4090s,
+Euler replacement **13939497** is submitted under lterenzi with four RTX 4090s,
 a 45-minute limit and `AUTO_CONTINUE_FOUNDATION=1`. At 16:40 it is PENDING
 (nodes down, drained or reserved), with no allocated GPU or reliable start
 estimate. Old 13935300 was cancelled
@@ -689,7 +712,7 @@ Training source b6d1597, published to baselines main, includes smooth ramp
 b6754540, account cleanup
 c2df04a and the portable Python 3.10 hash fix; Terra remains 46738cde. Checks:
 122 CPU tests plus 22 subtests, 65 post-compatibility tests, independent review,
-shell/submission-stub checks and seven finite real local RTX4090/32-env ramp
+shell/submission-stub checks and seven finite real local RTX 4090/32-env ramp
 checkpoints with persistent-cache reuse. Four-GPU native training acceptance
 remains pending. See the [current status and evidence](../../../../.artifacts/terra_delayed_penalties_20260912/STATUS.md).
 
@@ -942,7 +965,7 @@ its historical treatment fingerprint, which predates the normalization flag.
 ## September 14, 12:54 CEST: recovery evaluations complete; both Euler jobs training
 
 Both Euler jobs are RUNNING and have passed their full production-workload
-startup gates: four RTX4090 GPUs, CUDA convolution backward, NCCL, two finite
+startup gates: four RTX 4090 GPUs, CUDA convolution backward, NCCL, two finite
 native updates and checkpoint/environment/bank/integrity validation.
 
 | Run | Approximate live update | Saved checkpoint | Recent global transitions/s | Scheduled end (CEST) |

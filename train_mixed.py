@@ -126,6 +126,7 @@ from utils.utils_ppo import (
 )
 from utils.task_teachers import (
     bind_task_teacher_checkpoints,
+    cache_task_teacher_outputs,
     finalize_task_teacher_metrics,
     load_task_teacher_checkpoint,
     make_task_teacher_apply_fn,
@@ -736,6 +737,8 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "resnet_blocks_per_stage": None,
         "carry_work_observation": False,
         "stall_age_observation": False,
+        "time_observation_mode": "none",
+        "actor_residual_head": False,
         "reward_v2_reset_context_observation": False,
         # Fresh-trench alignment adds two (3, 704) embeddings.
         "trench_alignment_observation": False,
@@ -785,6 +788,13 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             saved = int(saved)
             current = int(current)
         if saved != current:
+            if (field_name == "time_observation_mode" and saved == "none"
+                    and current in ("remaining", "constant")
+                    and getattr(config, "migrate_remaining_time", False)):
+                continue
+            if (field_name == "actor_residual_head" and not saved and current
+                    and getattr(config, "grow_actor_capacity", False)):
+                continue
             if field_name == "executable_dig_observation" and bool(
                 getattr(config, "finetune_foundation_behavior", False)
             ):
@@ -1199,6 +1209,12 @@ def _validate_foundation_behavior_config(config) -> None:
                      or config.reward_stage != "reward_v2"):
         raise ValueError("behavior_cost_ramp_updates requires native reward_v2 resume")
     settings = _foundation_behavior_settings(config)
+    retained = {name: float(getattr(config, name, 0.0)) for name in helpers.RETAINED_WORK_COST_DEFAULTS}
+    for name, value in retained.items():
+        if not np.isfinite(value) or value < 0:
+            raise ValueError(f"{name} must be finite and nonnegative")
+        if value and config.reward_stage != "reward_v2":
+            raise ValueError(f"{name} applies only to reward_v2")
     for name in ("lateral_dig_cost", "base_travel_cost", "base_turn_cost"):
         if not np.isfinite(settings[name]) or settings[name] < 0:
             raise ValueError(f"{name} must be finite and nonnegative")
@@ -1337,6 +1353,9 @@ def _r2_protocol_receipt(config) -> dict | None:
     behavior = _foundation_behavior_settings(config)
     if any(behavior.values()):
         receipt["foundation_behavior"] = behavior
+    retained = {name: float(getattr(config, name, 0.0)) for name in helpers.RETAINED_WORK_COST_DEFAULTS}
+    if any(retained.values()):
+        receipt["retained_work_costs"] = retained
     return receipt
 
 
@@ -1395,6 +1414,7 @@ def _validate_r2_resume_checkpoint(
             ):
                 raise ValueError("unknown foundation behavior fields in R2 receipt")
         ignored_fields.add("foundation_behavior")
+        ignored_fields.add("retained_work_costs")
     if getattr(config, "finetune_task_bank", False):
         for receipt in (saved_receipt, current_receipt):
             if not isinstance(receipt, dict) or receipt.get("schema") != "terra_v8_r2_reward_protocol_v1":
@@ -1414,6 +1434,10 @@ def _validate_r2_resume_checkpoint(
             "R2 resume checkpoint protocol receipt does not match this run"
         )
     if not behavior_finetune and checkpoint.get("train_config") is not None:
+        saved_retained_costs = helpers.checkpoint_retained_work_costs(checkpoint)
+        for name, value in saved_retained_costs.items():
+            if not np.isclose(value, getattr(config, name, 0.0), rtol=1e-6, atol=0.0):
+                raise ValueError(f"R2 resume {name} differs from the saved objective")
         saved_behavior = helpers.checkpoint_foundation_behavior(checkpoint)
         if checkpoint.get("behavior_cost_ramp_state") is not None:
             # The helper verifies the effective saved reward. Ordinary resume
@@ -1894,6 +1918,9 @@ class MixedAgentTrainConfig:
     lateral_dig_cost: float = 0.0
     base_travel_cost: float = 0.0  # per executed metre
     base_turn_cost: float = 0.0  # per executed radian, excluding cabin swing
+    retained_work_setup_cost: float = 0.0
+    retained_work_travel_cost: float = 0.0  # per straight-line metre between work poses
+    retained_work_turn_cost: float = 0.0  # per radian between work poses
     behavior_cost_ramp_updates: int = 0  # new ramp duration; saved ramps restore automatically
     executable_dig_observation: bool = False
     # Preserve Adam and absolute update while explicitly changing only the
@@ -1904,6 +1931,10 @@ class MixedAgentTrainConfig:
     finetune_task_bank: bool = False
     carry_work_observation: bool = False
     stall_age_observation: bool = False
+    time_observation_mode: str = "none"
+    migrate_remaining_time: bool = False  # explicit one-time native checkpoint growth
+    actor_residual_head: bool = False
+    grow_actor_capacity: bool = False  # explicit one-time native checkpoint growth
     movement_feasibility_observation: bool = False
     previous_outcome_observation: bool = False
     # Terra's static geodesic dump-zone distance map as an encoder channel.
@@ -2007,6 +2038,7 @@ class MixedAgentTrainConfig:
     # Explicit one-time native-resume experiment; subsequent resumes restore
     # the saved origin/coefficient automatically, including when this is zero.
     foundation_teacher_release_updates: int = 0
+    cache_teacher_outputs: bool = False
 
     # F15: 128x128 resolution scaling. All default None/1 = no change (the
     # default env/model/teacher paths stay bit-identical). Tile-denominated
@@ -2045,6 +2077,22 @@ class MixedAgentTrainConfig:
         if self.kickstart_lr_warmup_updates < 0:
             raise ValueError("kickstart_lr_warmup_updates must be nonnegative")
         validate_task_teacher_mode(self)
+        if self.time_observation_mode not in ("none", "remaining", "constant"):
+            raise ValueError("time_observation_mode must be none, remaining, or constant")
+        if self.time_observation_mode != "none" and self.action_logit_masking:
+            raise ValueError("remaining-time continuation uses an unmasked policy")
+        if self.migrate_remaining_time and (
+                self.time_observation_mode == "none" or not self.resume_from
+                or self.warm_start_from or self.resume_update is not None):
+            raise ValueError("migrate_remaining_time requires native resume and a time input mode")
+        if self.grow_actor_capacity and (
+                not self.actor_residual_head or not self.resume_from
+                or self.warm_start_from or self.resume_update is not None):
+            raise ValueError("grow_actor_capacity requires native resume and actor_residual_head")
+        if self.actor_residual_head and (self.actor_core != "mlp" or self.model_core != "mlp"):
+            raise ValueError("actor_residual_head supports the feedforward MLP policy")
+        if self.cache_teacher_outputs and self.trench_teacher_checkpoint is None:
+            raise ValueError("cache_teacher_outputs requires dual task teachers")
         if type(self.foundation_teacher_release_updates) is not int or self.foundation_teacher_release_updates < 0:
             raise ValueError("foundation_teacher_release_updates must be a nonnegative integer")
         if self.foundation_teacher_release_updates and (
@@ -2338,7 +2386,9 @@ def _overlay_env_reward_stage(
 
 
 def _overlay_env_foundation_behavior(env_params: EnvConfig, config) -> EnvConfig:
-    settings = _foundation_behavior_settings(config)
+    settings = {**_foundation_behavior_settings(config),
+                **{name: float(getattr(config, name, 0.0))
+                   for name in helpers.RETAINED_WORK_COST_DEFAULTS}}
     missing = set(settings) - set(env_params._fields)
     if missing and any(settings.values()):
         raise ValueError(
@@ -3462,6 +3512,22 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
     # If checkpoint has model params, overwrite initialized params
     if checkpoint is not None and "model" in checkpoint:
         try:
+            if config.migrate_remaining_time:
+                from utils.remaining_time import migrate_remaining_time_checkpoint
+                time_target = train_state.params
+                if config.grow_actor_capacity:
+                    from utils.actor_capacity import without_actor_capacity
+                    time_target = without_actor_capacity(time_target)
+                checkpoint = migrate_remaining_time_checkpoint(
+                    checkpoint, time_target, config.time_observation_mode,
+                )
+                config.migrate_remaining_time = False
+                print("Added zero actor/critic time projections; retained existing parameters and Adam slots.", flush=True)
+            if config.grow_actor_capacity:
+                from utils.actor_capacity import migrate_actor_capacity_checkpoint
+                checkpoint = migrate_actor_capacity_checkpoint(checkpoint, train_state.params)
+                config.grow_actor_capacity = False
+                print("Added zero-output actor residual head; retained existing parameters and Adam slots.", flush=True)
             train_state = train_state.replace(params=checkpoint["model"])
             print("Replaced model parameters from checkpoint.")
             if checkpoint_mode == "resume" and "optimizer_state" in checkpoint:
@@ -3502,6 +3568,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         except Exception as e:
             raise RuntimeError("Failed to restore checkpoint training state") from e
     _validate_resume_update(resume_update, config.num_updates)
+    model_migrations = {name: copy.deepcopy(checkpoint[name]) for name in (
+        "remaining_time_migration", "actor_capacity_migration",
+    ) if checkpoint is not None and name in checkpoint}
 
     # F7: kickstart distillation teacher setup. Built after
     # make_mixed_agent_states so config.num_prev_actions is finalized. The
@@ -3895,7 +3964,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 _archive_replayed_episode_aggregate_receipts(config, resume_update)
 
             # TRAIN LOOP
-            @partial(jax.pmap, axis_name="devices", donate_argnums=(0,))
+            @partial(jax.pmap, axis_name="devices", donate_argnums=(0,),
+                     static_broadcasted_argnums=(6,))
             def _update_step(
                 runner_state,
                 ent_coef_current,
@@ -3903,6 +3973,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 kickstart_value_coef_current,
                 foundation_kl_coef_current,
                 flush_episode_aggregate,
+                teacher_updates_active,
             ):
                 # COLLECT TRAJECTORIES
                 rollout_actor_h0 = jax.lax.stop_gradient(runner_state[-1])
@@ -3922,7 +3993,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     # Preserve pre-action provenance and geometry, before an
                     # ending episode is replaced by env.step's auto-reset.
                     rollout_observation = prev_timestep.observation
-                    if config.trench_teacher_checkpoint is not None:
+                    if config.trench_teacher_checkpoint is not None and teacher_updates_active:
                         rollout_observation = task_teacher_rollout_observation(
                             rollout_observation, prev_timestep.state,
                             episode_accumulator.family_id,
@@ -4251,6 +4322,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     transitions, last_val, config.gamma, config.gae_lambda
                 )
 
+                if config.cache_teacher_outputs and teacher_updates_active:
+                    transitions = transitions.replace(obs=cache_task_teacher_outputs(
+                        transitions.obs, transitions.prev_actions,
+                        teacher_apply_fn, teacher_params, config.num_minibatches,
+                    ))
+
                 # UPDATE NETWORK
                 def _update_epoch(update_state, _):
                     def _update_minbatch_feedforward(train_state, batch_info):
@@ -4262,7 +4339,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             targets=targets,
                             config=config,
                             ent_coef_override=ent_coef_current,
-                            teacher_apply_fn=teacher_apply_fn,
+                            teacher_apply_fn=teacher_apply_fn if teacher_updates_active else None,
                             teacher_params=teacher_params,
                             kickstart_kl_coef=kickstart_kl_coef_current,
                             kickstart_value_coef=kickstart_value_coef_current,
@@ -4382,7 +4459,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
 
                 # averaging over minibatches then over epochs
                 loss_info = jtu.tree_map(lambda x: x.mean(-1).mean(-1), loss_info)
-                if config.trench_teacher_checkpoint is not None:
+                if config.trench_teacher_checkpoint is not None and teacher_updates_active:
                     loss_info = finalize_task_teacher_metrics(loss_info, config.num_minibatches)
 
                 # Explained variance between value predictions and returns
@@ -4486,6 +4563,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
             ent_end = float(config.ent_schedule_end)
             ent_T = float(config.ent_schedule_steps)
 
+            wall_window_start = time.monotonic()
+            wall_window_transitions = 0
+            previous_teacher_active = None
             for i in tqdm(range(resume_update, config.num_updates), desc="Training"):
                 need_train_log = (
                     config.log_train_interval > 0 and i % config.log_train_interval == 0
@@ -4552,6 +4632,16 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 foundation_kl_broadcast = jnp.array(
                     [foundation_kl_coef_current] * config.num_devices
                 )
+                # Every supported guidance schedule is nonincreasing. Once all
+                # coefficients reach zero, compile one teacher-free rollout and
+                # loss path, including removal of native teacher observations.
+                teacher_updates_active = (teacher_apply_fn is not None and max(
+                    kickstart_kl_coef_current, kickstart_value_coef_current,
+                    foundation_kl_coef_current,
+                ) > 0.0)
+                if teacher_updates_active != previous_teacher_active:
+                    print(f"Teacher execution active: {teacher_updates_active} at u{i}", flush=True)
+                    previous_teacher_active = teacher_updates_active
                 flush_episode_broadcast = jnp.array(
                     [need_episode_flush] * config.num_devices,
                     dtype=jnp.bool_,
@@ -4669,6 +4759,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         kickstart_value_broadcast,
                         foundation_kl_broadcast,
                         flush_episode_broadcast,
+                        teacher_updates_active,
                     )
                 )
                 transition_integrity_single = unreplicate(transition_integrity)
@@ -4715,7 +4806,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                 iterations_per_second = 1 / iteration_duration
                 steps_per_second = iterations_per_second * config.env_steps_per_update
 
-                tqdm.write(f"Steps/s: {steps_per_second:.2f}")
+                wall_window_transitions += config.env_steps_per_update
+                if need_train_log or need_final_state:
+                    wall_now = time.monotonic()
+                    end_to_end_sps = wall_window_transitions / (wall_now - wall_window_start)
+                    tqdm.write(f"Steps/s: {steps_per_second:.2f}; end-to-end: {end_to_end_sps:.2f}")
+                    wall_window_start = wall_now
+                    wall_window_transitions = 0
 
                 if need_host_state:
                     loss_info_single = unreplicate(loss_info)
@@ -4777,6 +4874,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                             {
                                 "train/update": i + 1,
                                 "system/steps_per_second": steps_per_second,
+                                "system/end_to_end_steps_per_second": end_to_end_sps,
                                 "system/environment_steps": (i + 1)
                                 * config.env_steps_per_update,
                                 **episode_metrics(
@@ -4790,7 +4888,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                                 **loss_metrics(
                                     loss_info_single,
                                     entropy_coef=float(ent_coef_current),
-                                    teacher_enabled=teacher_apply_fn is not None,
+                                    teacher_enabled=teacher_updates_active,
                                     kickstart_kl_coef=kickstart_kl_coef_current,
                                     kickstart_value_coef=kickstart_value_coef_current,
                                 ),
@@ -4921,6 +5019,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                     }
                     if r2_protocol_receipt is not None:
                         checkpoint["r2_protocol_receipt"] = r2_protocol_receipt
+                    checkpoint.update(model_migrations)
                     _attach_stall_age_receipt(checkpoint, stall_age_prepared_receipt)
                     if pooled_sampler is not None:
                         checkpoint["pooled_sampler_state"] = pooled_sampler.state_dict()
@@ -5183,6 +5282,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
         }
         if r2_protocol_receipt is not None:
             final_checkpoint["r2_protocol_receipt"] = r2_protocol_receipt
+        final_checkpoint.update(model_migrations)
         _attach_stall_age_receipt(final_checkpoint, stall_age_prepared_receipt)
         if train_info["pooled_sampler_state"] is not None:
             final_checkpoint["pooled_sampler_state"] = train_info[
@@ -5494,6 +5594,26 @@ if __name__ == "__main__":
         help=("Second frozen teacher, routed only to trench transitions; "
               "--teacher_checkpoint then supervises foundations only. Requires "
               "one tracked excavator, executable observations and value coefficient zero."),
+    )
+    parser.add_argument(
+        "--actor_residual_head", action="store_true",
+        help="Add a 704->512->512->8 actor branch with zero initial output.",
+    )
+    parser.add_argument(
+        "--grow_actor_capacity", action="store_true",
+        help="Explicitly add the residual actor branch to a native checkpoint, preserving Adam.",
+    )
+    parser.add_argument(
+        "--time_observation_mode", choices=("none", "remaining", "constant"), default="none",
+        help="Episode-budget input to actor and critic; constant is the local parity control.",
+    )
+    parser.add_argument(
+        "--migrate_remaining_time", action="store_true",
+        help="Explicitly grow a native checkpoint with zero time projections and zero new Adam slots.",
+    )
+    parser.add_argument(
+        "--cache_teacher_outputs", action="store_true",
+        help="Cache frozen dual-teacher outputs once per rollout before PPO epochs.",
     )
     parser.add_argument(
         "--foundation_teacher_release_updates",
@@ -5909,6 +6029,9 @@ if __name__ == "__main__":
         ("base_travel_cost", "Reward-v2 cost per metre of executed base travel."),
         ("base_turn_cost", "Reward-v2 cost per radian of executed base rotation; "
          "does not charge cabin swing."),
+        ("retained_work_setup_cost", "Reward-v2 cost per retained effective work setup."),
+        ("retained_work_travel_cost", "Reward-v2 cost per straight-line metre between retained work poses."),
+        ("retained_work_turn_cost", "Reward-v2 cost per heading radian between retained work poses."),
     ):
         parser.add_argument(f"--{name}", type=float, default=0.0, help=help_text)
     parser.add_argument(
@@ -6416,6 +6539,9 @@ if __name__ == "__main__":
         reward_stage=args.reward_stage,
         reward_v2_timing_variant=args.reward_v2_timing_variant,
         lateral_dig_cost=args.lateral_dig_cost,
+        retained_work_setup_cost=args.retained_work_setup_cost,
+        retained_work_travel_cost=args.retained_work_travel_cost,
+        retained_work_turn_cost=args.retained_work_turn_cost,
         base_travel_cost=args.base_travel_cost,
         base_turn_cost=args.base_turn_cost,
         behavior_cost_ramp_updates=args.behavior_cost_ramp_updates,
@@ -6424,6 +6550,10 @@ if __name__ == "__main__":
         finetune_task_bank=args.finetune_task_bank,
         carry_work_observation=args.carry_work_observation,
         stall_age_observation=args.stall_age_observation,
+        time_observation_mode=args.time_observation_mode,
+        migrate_remaining_time=args.migrate_remaining_time,
+        actor_residual_head=args.actor_residual_head,
+        grow_actor_capacity=args.grow_actor_capacity,
         movement_feasibility_observation=(
             args.movement_feasibility_observation
         ),
@@ -6480,6 +6610,7 @@ if __name__ == "__main__":
         kickstart_value_anneal_updates=args.kickstart_value_anneal_updates,
         kickstart_lr_warmup_updates=args.kickstart_lr_warmup_updates,
         foundation_teacher_release_updates=args.foundation_teacher_release_updates,
+        cache_teacher_outputs=args.cache_teacher_outputs,
         # F15 resolution scaling (truck_capacity/skidsteer_capacity already
         # passed above; CLI precedence applied when parsing the preset).
         agent_move_tiles=args.agent_move_tiles,

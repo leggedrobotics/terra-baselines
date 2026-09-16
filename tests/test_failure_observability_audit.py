@@ -37,16 +37,25 @@ def physical_state():
 
 
 class FailureObservabilityAuditTest(unittest.TestCase):
-    def test_identical_physical_states_alias_age_but_not_termination(self):
+    def test_legacy_policy_aliases_age_until_time_input_is_enabled(self):
         config = SimpleNamespace(clip_action_maps=True, executable_dig_observation=True,
                                  carry_work_observation=True, trench_alignment_observation=True,
                                  relocation_distance_observation=True, admissible_dig_observation=True)
         history = jnp.array([7,6,4,2,0], dtype=jnp.int32)
         result = compare_episode_ages(physical_state(),config,history)
         assert result['identical_physics_history_and_other_state']
-        assert result['raw_observations_identical']
+        assert not result['raw_observations_identical']
         assert result['model_inputs_identical']
         assert result['done'] == [False,False,False,True]
+        config.time_observation_mode = "remaining"
+        timed_result = compare_episode_ages(physical_state(),config,history)
+        assert not timed_result['model_inputs_identical']
+        config.time_observation_mode = "constant"
+        assert compare_episode_ages(physical_state(),config,history)['model_inputs_identical']
+        state = physical_state()
+        for age, expected in ((0,1.0),(50,400/450),(440,10/450),(450,0.0),(500,0.0)):
+            observation = TerraEnv._state_to_obs_dict(state._replace(env_steps=age))
+            np.testing.assert_allclose(observation['remaining_time'],expected,atol=1e-7)
 
 
     def test_selection_covers_distinct_failed_cases_and_preserves_starts(self):

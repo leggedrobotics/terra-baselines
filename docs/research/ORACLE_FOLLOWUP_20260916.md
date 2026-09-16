@@ -1,5 +1,92 @@
 # Completion-first follow-up to the September 16 research review
 
+## Updated decision: one combined run
+
+Lorenzo requested remaining-time input and implementation across the review,
+then explicitly chose one combined run because separate learning controls cost
+too much compute. This supersedes the two-arm launch recommendation below;
+that section remains the record of the already implemented release test.
+
+Use [oracle_followup](../../scripts/oracle_followup/README.md): native broad
+continuation with remaining time, an initially zero-output actor residual head,
+earlier foundation release and cached frozen-teacher outputs. Preserve the
+encoder, corrected physics, original reward-v2 and **all added costs at zero**.
+No additional control or architecture sweep is scheduled. Initial policy and
+old Adam slots are preserved, but subsequent learning deliberately changes;
+the combined experiment cannot identify each change's separate effect.
+
+The next allocation is bounded to 81.92M new transitions, with fixed 608-case
+evaluations at 40.96M and 81.92M. A 1x128 local smoke is diagnostic only and
+cannot become the production parent. The actual production batch remains
+4 GPUs  x 256 environments  x 32 steps, with 64 Adam steps per update.
+
+| Review item | Implementation/evidence | Remaining work |
+| --- | --- | --- |
+| Completion before efficiency | Zero-cost combined recipe; numerical readiness checker includes cohort/condition floors, transition spacing and paired losses | Teacher-free hold and qualitative failure review remain necessary before promotion |
+| Deployment-aligned work efficiency | Optional retained setup, inter-work distance and heading costs; effective digs, relifts and dumps; executable fresh union across headings | Costs stay off. Observe the previous retained pose before enabling them; validate route rankings with navigation |
+| Earlier foundation release | Native release clock/Adam preserved; 40.96M transition fade, trench cosine unchanged | Combined learning result pending |
+| Finite horizon observability | Remaining fraction enters actor and critic; zero embeddings and explicit native migration; constant input used for local parity | Measure late-stall/completion effects in the combined run |
+| Executable failure suffixes | 12 frozen failures replayed; 8 progress witnesses, 5 work/disposal/move witnesses, zero complete suffixes | Deeper terminal escape search for dominant unresolved cycles; no infeasibility claim |
+| Reward terminal boundary | New test verifies discounted telescoping including failed-terminal potential; reward unchanged | No incidental shaping rewrite |
+| Family gradient interference | Offline helper measures PPO/KL encoder norms/cosines on supplied real globally-normalized minibatches | Actual training gradient measurement pending; do not infer interference from exposure or synthetic gradients |
+| Representation/capacity | 64 counterfactuals from 12 real failure snapshots; 19 single-cell residual probes all change inputs; preserve encoder; grow action head | Warmed GPU cost measured (+1.5% gradient kernel at batch 256); training behavior pending; remote pile amounts remain aliased |
+| Experience-unit budgets | Launcher records global batch, added transitions and40.96M release duration | Resume only production-layout checkpoints |
+| Frozen teacher throughput | Cache once before PPO shuffle; native observations kept until last teacher release, then static teacher-free specialization | End-to-end speed is measured separately from teacher forward reduction |
+| Host bookkeeping | Print throughput at log cadence; add synchronized training-loop rate including intervening host work | Integrity checks remain each update; throughput excludes setup/final saving |
+| Reset/geometry/family bucketing/legacy reward specialization | No unmeasured transition/RNG rewrite | Profile before changing these higher-risk paths; wider batches/shuffling/precision are learning changes |
+| Existing delayed-cost comparison | Existing data and ramp are preserved | Recover outputs when CSCS campaign storage returns; no replacement pair is launched |
+
+The actual u2500/u5000 readiness report is false: completion floors fail,
+25/38 conditions remain below 80% at u5000, and road accepted-material mean
+declines 91.1% to 87.2%. Broad completion is 198/384 and trench 188/224, including
+23/32 road cases. Do not interpret preparation of retained rewards as permission
+to activate them on this student.
+
+Native actor/time growth expands 2,311,701 to 2,940,829 parameters. The added
+actor branch is 704->512->512->8; final projection is initially zero. Actual
+u5000 outputs are bit-exact on the saved slot 503 state after migration.
+JAX CPU lowering estimates only 0.2374% more forward FLOPs, which is not a GPU
+timing or learning result. See [network scaling](NETWORK_SCALING_20260916.md).
+
+CSCS readiness refreshed September 16 at 15:44 CEST: `lterenzi` login succeeds,
+campaign storage under `/capstor/scratch/cscs/lterenzi/terra-training` is absent,
+and no jobs for this account are queued/running. No combined job is submitted.
+The earlier all-node maintenance reservation ends 19:00 CEST; elapsed time alone
+does not establish that storage or scheduling has recovered.
+
+## Validation of the combined implementation
+
+The paired Terra implementation is `f040663d`, based on the corrected physics
+runtime `46738cde`. Baselines uses branch `oracle-followup-20260916`, building
+on tested foundation release `d7a3bb3`. Both sources are needed for time-aware
+training and evaluation; no deployment checkpoint has been promoted.
+
+Focused suites pass: 31 teacher/cache/logging checks (one optional fixture
+skipped), 58 checkpoint/reward/ramp checks, time and capacity migration tests,
+four-device gradient diagnostics and 36 environment checks. The teacher-free
+loss is also tested without teacher-only observation keys. Independent review
+found and resolved metric-key, cost-overlay, and retained-resume consistency
+issues; time-plus-action-masking is explicitly unsupported.
+
+CUDA convolution backward passed. The actual native broad parent completes
+two local PPO updates and saves u5002 / Adam320128; its new checkpoint resumes
+to u5003 / Adam320192 without repeating migration or restarting the teacher
+fade. Initial actor/critic output parity, finite model/Adam/teacher tensors and
+checkpoint clocks pass. The new residual branch is modest in four saved-state
+probes after these updates. No fixed-panel improvement is claimed from smoke.
+On the resumed smoke checkpoint, 12 age probes across four saved physical
+states have zero input collisions: both action probabilities and values now
+respond to time. Mean probability total variation is 0.00117 and mean absolute
+value change is 0.0167; greedy actions are unchanged. This establishes that
+time is used, not that deadline behavior has improved.
+
+Warmed RTX 4090 timing at the production per-device minibatch size of 256 is
+5.695→5.677 ms forward and 22.196→22.533 ms forward-plus-gradient. Caching the
+native teachers gives exact output parity on GPU; gradients and family
+statistics match the uncached path in four-device CPU tests. The timing is a
+model-kernel measurement. The training-loop rate excludes initial setup and
+final saving; allocation-level throughput remains to be measured on CSCS.
+
 ## Decision and scope
 
 Implement the foundation-specific teacher release first, alongside a bounded
@@ -175,7 +262,7 @@ no remaining blocking issue in the release and comparison logic.
 The first local native CUDA smoke reached its 300-second bound during initial
 compilation, before a PPO update; it is not a passing training check. The second
 attempt, bounded to 600 seconds per phase, **passes all three phases** on one
-RTX4090 with 128 environments: control and treatment each reach u5002 with
+RTX 4090 with 128 environments: control and treatment each reach u5002 with
 Adam 320128, then the treatment resumes to u5003/Adam 320192. Model, optimizer and
 optimization/teacher diagnostics remain finite. Existing initialization records
 confirm identical starting model, Adam, environment, history and RNG in both

@@ -116,7 +116,9 @@ def compare_episode_ages(state, config, previous_actions):
                 raw_observations_identical=equal_observations,
                 model_inputs_identical=equal_inputs, done=done,
                 observation_keys=sorted(observations[0]),
-                conclusion='Time is aliased; this does not measure its learning effect.')
+                conclusion=('Time is aliased; this does not measure its learning effect.'
+                            if equal_inputs else
+                            'The policy input distinguishes age; learning impact remains unmeasured.'))
 
 
 def pose_diagnostics(state):

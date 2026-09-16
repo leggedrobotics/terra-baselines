@@ -1,3 +1,32 @@
+# Experiments — combined Oracle continuation prepared (2026-09-16)
+
+Lorenzo chose one combined broad run instead of separate learning controls.
+The [recipe](../scripts/oracle_followup/README.md) combines remaining time,
+zero-output actor growth, earlier foundation release and cached teacher
+outputs. Corrected physics, encoder, PPO settings and zero added costs remain.
+The native parent grows from 2.31M to 2.94M parameters without changing its
+initial outputs. The planned four-GH200 allocation adds at most 81.92M
+transitions and evaluates saved checkpoints after 40.96M and 81.92M.
+
+The local 1x128 CUDA smoke reached u5002 / Adam320128 with finite parameters,
+optimizer, rollout/teacher tensors and losses. Native resume reaches u5003 / Adam320192 with unchanged migration/release
+origins. Warmed batch 256 gradient time grows only 1.5%; forward time is
+essentially unchanged. These are runtime checks, not learning improvement. The previous two-control launcher is superseded, not submitted.
+
+**No new CSCS job is submitted.** Refreshed September 16 at 15:44 CEST:
+`lterenzi` authentication works, but campaign `/capstor` storage is absent;
+no jobs are queued/running for this account. The previously checked maintenance
+window ends 19:00 CEST. Recover latest generalist and delayed-cost outputs
+when storage returns before choosing the production parent.
+
+Paired source branches: baselines `oracle-followup-20260916`, Terra
+`oracle-time-work-costs-20260916`. Local artifacts:
+`.artifacts/terra_oracle_combined_20260916/` and the earlier
+`.artifacts/terra_oracle_followup_20260916/` diagnostics. No polling worker or
+automatic submission exists.
+
+## Earlier preparation — superseded learning control
+
 # Experiments — foundation teacher release prepared (2026-09-16)
 
 The [Oracle follow-up](research/ORACLE_FOLLOWUP_20260916.md) implements one
@@ -343,7 +372,7 @@ and comparisons; preceding September 13 observations are historical.
 
 
 Two new overnight Euler recovery screens are submitted: foundation **14055215**
-and old-trench recovery **14055463**, four RTX4090s and24hours each. Both local
+and old-trench recovery **14055463**, four RTX 4090s and24hours each. Both local
 finite resume tests pass; remote startup is not yet verified. Added penalties
 remain zero. See the last entry for source, contracts and the automatic
 milestone-evaluation monitor. CSCS observations below remain auth-limited.
@@ -1025,7 +1054,7 @@ cancelled before it reached update 500. The user's own chain
 Status: local gates passed; Euler inputs staged; no job submitted. Terra
 `ba9cc214` supplies strict occupied footprints, eligible-soil selection and
 short tracked maneuvers. Baselines `9354b89` adds retained work-pose metrics and
-a one-RTX4090, 24-hour full-bank 2x recipe. Four local native updates including
+a one-RTX 4090, 24-hour full-bank 2x recipe. Four local native updates including
 an ordinary process restart pass finite and transition-integrity checks; the
 PPO executable cache is reused. The specialist regression screen is 175/224
 versus 188/224. The mixed-bank generalist u5000 remains the initializer: it
@@ -1435,7 +1464,7 @@ PPO update signature per process; the resumed process hit the persistent
 behavior comparison. Focused CPU validation passed 122 tests and 22 subtests;
 independent source review has no remaining findings.
 
-Euler diagnostic **13935300**, account **lterenzi**, requests four RTX4090s,
+Euler diagnostic **13935300**, account **lterenzi**, requests four RTX 4090s,
 12 CPUs, 6 GB/CPU and at most 45 minutes. It measures 1-vs-4 GPU throughput
 from the same u10000 parent/global batch, then verifies a native mid-ramp
 resume at the full global batch. At 15:52 CEST it was PENDING/Priority, with
@@ -1513,7 +1542,7 @@ with checkpoints every 500 updates, bounded by one 24-hour allocation. There
 is no further allocation chain or automatic penalty promotion. No production
 child is submitted at this check.
 
-Euler replacement **13939497** is submitted under lterenzi for four RTX4090s
+Euler replacement **13939497** is submitted under lterenzi for four RTX 4090s
 and at most 45 minutes, with `AUTO_CONTINUE_FOUNDATION=1`. At 16:40 it is
 PENDING because nodes are down, drained or reserved, with no allocated GPU or
 reliable start estimate. Old 13935300 was cancelled only while pending under
@@ -1532,7 +1561,7 @@ b6d1597e96e63aeaef40373d0909e31a1d28ed0d, including
 smooth ramp b6754540, lterenzi routing c2df04a and the portable hash fix; Terra
 remains 46738cde. Validation includes 122 CPU tests plus 22 subtests, 65 tests
 after the Python 3.10 compatibility fix, shell checks, independent review and
-bounded submission-stub checks. The real local RTX4090/32-env ramp/resume test
+bounded submission-stub checks. The real local RTX 4090/32-env ramp/resume test
 produced seven finite checkpoints, retained Adam clocks and crossed the ramp
 endpoint with a persistent executable cache hit. CSCS four-GPU foundation
 native updates now pass; the remaining runtime and scaling checks are pending.
@@ -1843,7 +1872,7 @@ its historical treatment fingerprint, which predates the normalization flag.
 ## September 14, 12:54 CEST: recovery evaluations complete; both Euler jobs training
 
 Both Euler jobs are RUNNING and have passed their full production-workload
-startup gates: four RTX4090 GPUs, CUDA convolution backward, NCCL, two finite
+startup gates: four RTX 4090 GPUs, CUDA convolution backward, NCCL, two finite
 native updates and checkpoint/environment/bank/integrity validation.
 
 | Run | Approximate live update | Saved checkpoint | Recent global transitions/s | Scheduled end (CEST) |

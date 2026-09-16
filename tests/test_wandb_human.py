@@ -214,7 +214,7 @@ def test_bounded_logging_schema_and_manual_workspace():
     assert not any(key.startswith("diagnostics/") for key in metrics)
 
     # Six optional task-teacher summaries (two KLs, two counts, two coefficients).
-    assert len(TRAINING_SCALAR_KEYS) <= 83
+    assert len(TRAINING_SCALAR_KEYS) <= 91
     assert "reward/terminal_objective_mix" in TRAINING_SCALAR_KEYS
     assert "train/full_start_episode_success_rate" in TRAINING_SCALAR_KEYS
     assert {

@@ -83,16 +83,23 @@ def test_release_rejects_restarts_and_eval_copy_keeps_training_metadata():
     assert checkpoint_treatment_fingerprint(parent)["sha256"] != fingerprint["sha256"]
 
 
-def _actual_update(foundation_coef=None, trench_coef=.7, *, dual=True, teacher_nan=False):
+def _actual_update(foundation_coef=None, trench_coef=.7, *, dual=True, teacher_nan=False, cached=False, teacher_free=False):
     devices, samples = jax.local_device_count(), 4
     n = devices * samples
     raw = _raw_obs(n)
     raw[FAMILY_KEY] = jnp.where(jnp.arange(n) < 3, ROUTE["foundation"], ROUTE["trench"])
+    family = raw[FAMILY_KEY]
+    if teacher_free:
+        raw.pop(FAMILY_KEY)
+        raw.pop("teacher_legacy_local_map_admissible_dig", None)
     logits = jnp.arange(n * 8, dtype=jnp.float32).reshape(n, 8) / 13
     # Distinct action distributions for both families and across devices.
     logits = logits * jnp.arange(1, n + 1)[:, None]
     if teacher_nan:
         logits = jnp.full_like(logits, jnp.nan)
+    if cached:
+        raw["teacher_cached_logits"] = logits
+        raw["teacher_cached_value"] = jnp.zeros((n, 1))
     cfg = _config(num_envs_per_device=2, num_minibatches=1, num_steps=2,
                   ent_coef=0., vf_coef=0., task_teacher_family_ids=ROUTE,
                   flat_minibatch_shuffle=True)
@@ -103,6 +110,8 @@ def _actual_update(foundation_coef=None, trench_coef=.7, *, dual=True, teacher_n
         return jnp.zeros((obs[0].shape[0], 1)), jnp.broadcast_to(params, (obs[0].shape[0], 8))
 
     def teacher_apply(params, obs, history=None):
+        if cached:
+            raise AssertionError("PPO invoked a teacher despite its cached outputs")
         return jnp.zeros((samples, 1)), params
 
     state = TrainState.create(apply_fn=student_apply, params=jnp.zeros(8), tx=optax.sgd(1.))
@@ -115,12 +124,12 @@ def _actual_update(foundation_coef=None, trench_coef=.7, *, dual=True, teacher_n
 
     def update(state, tr, teacher_params):
         return ppo_update_networks(state, tr, jnp.zeros_like(tr.value), jnp.zeros_like(tr.value),
-            cfg, teacher_apply_fn=teacher_apply, teacher_params=teacher_params,
+            cfg, teacher_apply_fn=None if teacher_free else teacher_apply, teacher_params=teacher_params,
             kickstart_kl_coef=trench_coef, foundation_kickstart_kl_coef=foundation_coef)
 
     updated, info = jax.pmap(update, axis_name="devices")(
         replicate(state), tr, logits.reshape(devices, samples, 8))
-    return updated, info, logits, raw[FAMILY_KEY]
+    return updated, info, logits, family
 
 
 def test_disabled_release_matches_legacy_scalar_loss_and_actual_gradient():
@@ -150,3 +159,8 @@ def test_foundation_zeroing_preserves_trench_weight_counts_and_inactive_fast_pat
     np.testing.assert_array_equal(inactive.params, 0.)
     np.testing.assert_array_equal(zero_info["total_loss"], 0.)
     np.testing.assert_array_equal(zero_info["diagnostics/teacher_logits_finite_fraction"], 1.)
+    freed, free_info, _, _ = _actual_update(
+        foundation_coef=0., trench_coef=0., teacher_free=True,
+    )
+    np.testing.assert_array_equal(freed.params, inactive.params)
+    np.testing.assert_array_equal(free_info["total_loss"], zero_info["total_loss"])

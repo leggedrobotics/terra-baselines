@@ -8,6 +8,7 @@ from terra.config import REWARD_V2_DISTANCE_BOUND
 from terra.env import TerraEnvBatch
 from functools import partial
 from utils.helpers import validate_executable_dig_observation
+from utils.remaining_time import validate_time_observation_mode
 
 
 MAP_ENCODER_ALIASES = {
@@ -336,6 +337,10 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         admissible_dig_observation=bool(
             _config_option(config, "admissible_dig_observation", False)
         ),
+        time_observation_mode=validate_time_observation_mode(
+            _config_option(config, "time_observation_mode", "none")
+        ),
+        actor_residual_head=bool(_config_option(config, "actor_residual_head", False)),
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
         use_aux_decoder=use_aux_decoder,
@@ -399,6 +404,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         )
     if bool(_config_option(config, "admissible_dig_observation", False)):
         obs.append(jnp.zeros((init_batch_size, angles_cabin), dtype=jnp.float32))
+    if model.time_observation_mode != "none":
+        obs.append(jnp.zeros((init_batch_size, 1), dtype=jnp.float32))
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
     # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
@@ -547,6 +554,22 @@ class MLP(nn.Module):
                 if i != len(self.layers) - 1:
                     x = self.activation(x)
         return x
+
+
+class ActorResidualHead(nn.Module):
+    """A wider parallel actor, initially contributing exactly zero logits."""
+
+    num_actions: int
+
+    @nn.compact
+    def __call__(self, features):
+        x = nn.relu(nn.Dense(512, name="Dense_0")(features))
+        x = nn.relu(nn.Dense(512, name="Dense_1")(x))
+        return nn.Dense(
+            self.num_actions, name="Dense_2",
+            kernel_init=nn.initializers.zeros_init(),
+            bias_init=nn.initializers.zeros_init(),
+        )(x)
 
 
 class AgentStateNet(nn.Module):
@@ -1568,6 +1591,9 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     # the width-12 admissible-dig local map.
     relocation_distance_observation: bool = False
     admissible_dig_observation: bool = False
+    # Explicit actor/critic input variant; the map encoder itself is unchanged.
+    time_observation_mode: str = "none"
+    actor_residual_head: bool = False
     attn_latent_queries: int = 4
     flatten_reduce_channels: int | None = None
     use_aux_decoder: bool = False
@@ -1578,6 +1604,23 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
+        if self.actor_residual_head:
+            if self.actor_core != "mlp":
+                raise ValueError("actor_residual_head requires actor_core='mlp'")
+            self.actor_residual_net = ActorResidualHead(
+                num_actions=num_actions, name="actor_residual_head",
+            )
+        time_mode = validate_time_observation_mode(self.time_observation_mode)
+        if time_mode != "none":
+            # Bias-free zero projections preserve a migrated parent's outputs.
+            self.remaining_time_actor_embedding = self.param(
+                "remaining_time_actor_embedding", nn.initializers.zeros_init(),
+                (704,), jnp.float32,
+            )
+            self.remaining_time_critic_embedding = self.param(
+                "remaining_time_critic_embedding", nn.initializers.zeros_init(),
+                (704,), jnp.float32,
+            )
 
         self.mlp_v = MLP(
             hidden_dim_layers=self.hidden_dim_v,
@@ -1996,6 +2039,21 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 previous_outcome @ self.previous_outcome_critic_embedding
             )
 
+        if self.time_observation_mode != "none":
+            if len(obs) <= extra_index or obs[extra_index].shape[-1:] != (1,):
+                raise ValueError(
+                    "time observation requires a trailing width-1 input "
+                    f"at obs[{extra_index}] before any action mask"
+                )
+            if x.shape[-1] != self.remaining_time_actor_embedding.shape[0]:
+                raise ValueError(
+                    "time observation supports the broad policy fused width "
+                    f"704, got {x.shape[-1]}"
+                )
+            remaining_time = jnp.asarray(obs[extra_index], jnp.float32).reshape((B, 1))
+            actor_x = actor_x + remaining_time * self.remaining_time_actor_embedding
+            critic_x = critic_x + remaining_time * self.remaining_time_critic_embedding
+
         return actor_x, critic_x
 
     def __call__(self, obs: Array) -> Array:
@@ -2006,7 +2064,10 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 "an explicit recurrent state"
             )
         actor_x, critic_x = self._fused_features(obs)
-        return self.mlp_v(critic_x), self.mlp_pi(actor_x)
+        value, logits = self.mlp_v(critic_x), self.mlp_pi(actor_x)
+        if self.actor_residual_head:
+            logits = logits + self.actor_residual_net(actor_x)
+        return value, logits
 
     def value(self, obs: Array) -> Array:
         """Evaluate the feed-forward critic without advancing actor memory."""

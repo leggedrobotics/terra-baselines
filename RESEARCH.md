@@ -14,7 +14,8 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
-- [Completion-first Oracle follow-up and foundation teacher release](docs/research/ORACLE_FOLLOWUP_20260916.md)
+- [Oracle implementation and combined broad continuation](docs/research/ORACLE_FOLLOWUP_20260916.md): remaining time, native actor growth, earlier foundation release and cached teachers; zero added costs.
+- [Network capacity and representation diagnostics](docs/research/NETWORK_SCALING_20260916.md)
 
 - [Foundation efficiency with delayed behavior costs](docs/research/FOUNDATION_DELAYED_COSTS_20260916.md)
 
