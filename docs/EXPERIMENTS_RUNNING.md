@@ -1,6 +1,6 @@
 # Experiments — long generalist continuation queued (2026-09-17)
 
-**CSCS 4685246 is PENDING (Priority)** at 16:55 CEST. Lorenzo authorized the
+**CSCS 4685246 is PENDING (Priority)** at September 17 18:41 CEST. Lorenzo authorized the
 evaluated native u7500 checkpoint to continue toward **u100000**, replacing the
 short diagnostic cap. Three sequential 24-hour segments are submitted:
 **4685246 -> 4685248 -> 4685249**. Successors wait on `afterany` dependencies and
@@ -8,9 +8,10 @@ run only after a COMPLETED or TIMEOUT predecessor. Each resumes the latest
 atomic campaign checkpoint. At most one node/four GH200s run at once; there is
 one learning run, no duplicate control. The account is `lterenzi`, project `d130`.
 
-Slurm currently estimates the first start at **20:13 CEST**; that is provisional.
+Slurm now estimates the first start at **September 18 00:24 CEST**; that is provisional
+and has moved later since submission. No training failure is reported.
 No node, production update or new checkpoint exists yet. The next recommended
-manual check is **20:30 CEST / 18:30 UTC**, to verify actual admission, CUDA/NCCL,
+manual check is **September 18 00:45 CEST / September 17 22:45 UTC**, to verify actual admission, CUDA/NCCL,
 native initialization, finite updates and the first u7750 save if due. No
 monitoring worker or scheduled status check was created. After healthy startup,
 use roughly 12-hour checks unless an evaluation/failure changes the decision.

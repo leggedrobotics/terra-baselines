@@ -1,5 +1,14 @@
 # Experiments — completed log
 
+## 2026-09-17 18:41 CEST: long continuation still waiting for priority
+
+Live scheduler refresh confirms4685246 remains PENDING(Priority), with4685248
+and4685249 PENDING(Dependency). No node, training process, new checkpoint or
+evaluation exists yet. Slurm's provisional start estimate moved to September18
+00:24 CEST. No failure or configuration change is reported. Next recommended
+manual startup check: September18 00:45 CEST (September17 22:45 UTC), not scheduled.
+Evidence: `.artifacts/terra_oracle_long_20260917/latest_status.json`.
+
 ## 2026-09-17 16:55 CEST: long native continuation submitted
 
 Lorenzo approved continuing u7500 toward u100000 on one node/four GH200s.
