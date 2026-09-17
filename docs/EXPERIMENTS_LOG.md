@@ -1,5 +1,32 @@
 # Experiments — completed log
 
+## 2026-09-17 16:55 CEST: long native continuation submitted
+
+Lorenzo approved continuing u7500 toward u100000 on one node/four GH200s.
+Submitted sequential CSCS jobs4685246,4685248,4685249, each with a24-hour cap,
+using native resume and one absolute final target. At16:55 the first is
+PENDING(Priority), successors PENDING(Dependency), with first start estimated
+20:13 CEST. Startup remains unverified; no production update has occurred.
+
+Removed the2,500-update pilot cap and9,000-second timeout. Added fixed-panel
+checkpoint callbacks at10k/20k/35k/50k/75k/100k without restarting the PPO process.
+Atomic saves every250updates preserve continuation across Slurm limits; failed
+or cancelled predecessors stop the chain. An evaluation failure is logged and
+does not discard continued training. Final-checkpoint evaluation recovery and
+training-only throughput accounting were corrected during independent review.
+
+All six added costs remain zero. Native Adam480000, time input and actor branch
+are preserved; no migration/fade is repeated. Foundation KL remains0, trench
+KL reaches0 at the original u20000, LR3e-4 and entropy0.02 remain constant.
+Source is Terra6a0d7bdd / baselines407e85e. Thirteen focused CPU tests and ten
+subtests, native dry run, shell validation and a finite local CUDA continuation
+to u7502/Adam480128 pass. The local smoke does not replace the four-GPU parent.
+
+Artifacts: `.artifacts/terra_oracle_long_20260917/`. Next recommended check:
+20:30 CEST/18:30 UTC for startup and first scheduled checkpoint; no automatic
+status monitor exists. GPU coexistence during the first fixed panel remains
+to be measured. Old Capstor campaign-output recovery is separate and unchanged.
+
 ## 2026-09-17 15:56 CEST: combined run completes; broad foundations recover
 
 CSCS 4682135 COMPLETED, exit 0:0, from 09:43:44 to 12:02:28 CEST on nid006024.

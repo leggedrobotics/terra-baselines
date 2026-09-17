@@ -1,5 +1,27 @@
 # Completion-first follow-up to the September 16 research review
 
+## Authorized long continuation — September 17
+
+After the combined result below, Lorenzo authorized native continuation from
+u7500 toward an absolute u100000 ceiling. The short diagnostic budget is
+superseded. CSCS jobs4685246 ->4685248 ->4685249 are sequential24-hour segments,
+with at most one node/four GH200s active. The first is PENDING(Priority) at16:55
+CEST; its estimated20:13start is provisional. See the live experiment ledger
+for startup verification. Runtime is Terra6a0d7bdd / baselines407e85e.
+
+Preserve native model/Adam, the4x256x32 batch, constant LR3e-4 and entropy0.02,
+foundation KL0, original trench cosine to zero at u20000, and all six added
+costs at zero. The new target adds at most3.03104B transitions. Save every250
+updates and evaluate the fixed608panel at10k/20k/35k/50k/75k/100k using a blocking
+child evaluator while the same PPO process retains its state and compilation.
+The larger target does not stretch any learning/teacher schedule.
+
+The previous completion churn is a reason to inspect intermediate outcomes,
+not evidence of saturation at u7500. Evaluate trends in exact completion,
+condition failures, excavation/disposal and common-success retained-work
+metrics. Efficiency remains a later decision; no automatic cost switch occurs.
+No causal attribution to individual combined interventions is established.
+
 ## Completed combined result — September 17
 
 The single four-GH200 run, CSCS 4682135, completed u5000 to u7500 and both

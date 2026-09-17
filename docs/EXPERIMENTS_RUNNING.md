@@ -1,4 +1,50 @@
-# Experiments — combined Oracle continuation completed (2026-09-17)
+# Experiments — long generalist continuation queued (2026-09-17)
+
+**CSCS 4685246 is PENDING (Priority)** at 16:55 CEST. Lorenzo authorized the
+evaluated native u7500 checkpoint to continue toward **u100000**, replacing the
+short diagnostic cap. Three sequential 24-hour segments are submitted:
+**4685246 -> 4685248 -> 4685249**. Successors wait on `afterany` dependencies and
+run only after a COMPLETED or TIMEOUT predecessor. Each resumes the latest
+atomic campaign checkpoint. At most one node/four GH200s run at once; there is
+one learning run, no duplicate control. The account is `lterenzi`, project `d130`.
+
+Slurm currently estimates the first start at **20:13 CEST**; that is provisional.
+No node, production update or new checkpoint exists yet. The next recommended
+manual check is **20:30 CEST / 18:30 UTC**, to verify actual admission, CUDA/NCCL,
+native initialization, finite updates and the first u7750 save if due. No
+monitoring worker or scheduled status check was created. After healthy startup,
+use roughly 12-hour checks unless an evaluation/failure changes the decision.
+
+Runtime sources: Terra **6a0d7bdd**, baselines **407e85e**. Production restores
+the original four-GPU u7500 / Adam480000 checkpoint from job4682135, keeping
+4x256 environments, rollout32, two epochs and32 minibatches. Absolute u100000
+is 3.2768B total transitions, **3.03104B additional** from the parent. Model and
+Adam remain native; time/head migration is not repeated. LR remains3e-4,
+entropy coefficient0.02, foundation KL0, and trench KL retains its original
+cosine to zero at u20000. All six added efficiency costs remain zero.
+
+Save every250 updates. Fixed 608-map greedy450 panels run at u10000, u20000,
+u35000, u50000, u75000 and u100000. A checkpoint callback pauses training for
+the bounded evaluator, preserving the parent PPO process, live state and compiled
+functions. Evaluation failure is explicitly recorded without terminating PPO.
+An interrupted parent-milestone evaluation is recovered on resume, including
+at u100000. The first panel will also check GPU memory coexistence of the paused
+trainer and evaluator; standalone evaluation does not establish that yet.
+
+Validation:13 focused CPU tests plus10 subtests, syntax/shellcheck, independent
+review and actual native-parent production-layout dry run pass. A local1x128
+CUDA smoke reaches u7502 / Adam480128 with finite model/Adam and the original
+release/migration metadata. It is diagnostic only; production uses the original
+four-GPU parent. One intentional teacher-free compilation is expected at u20000.
+
+Remote campaign:
+`/ritom/scratch/cscs/lterenzi/terra-training/runs/terra-oracle-long-20260917`.
+Local launch, source, validation and scheduler receipts:
+`.artifacts/terra_oracle_long_20260917/`. W&B remains offline. No efficiency
+promotion or separate run is automatic; the queued segments cover continuation
+up to the authorized ceiling within at most three24-hour allocations.
+
+## Previous completed combined run (2026-09-17)
 
 **CSCS 4682135 COMPLETED with exit 0:0 at 12:02:28 CEST.** It ran from
 09:43:44 on nid006024, one node/four GH200s, account `lterenzi`, project `d130`.
