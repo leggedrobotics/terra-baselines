@@ -48,11 +48,24 @@ u5000 outputs are bit-exact on the saved slot 503 state after migration.
 JAX CPU lowering estimates only 0.2374% more forward FLOPs, which is not a GPU
 timing or learning result. See [network scaling](NETWORK_SCALING_20260916.md).
 
-CSCS readiness refreshed September 16 at 15:44 CEST: `lterenzi` login succeeds,
-campaign storage under `/capstor/scratch/cscs/lterenzi/terra-training` is absent,
-and no jobs for this account are queued/running. No combined job is submitted.
-The earlier all-node maintenance reservation ends 19:00 CEST; elapsed time alone
-does not establish that storage or scheduling has recovered.
+CSCS job **4682135** starts September 17 at 09:43:44 CEST on nid006024,
+one node/four GPUs, ending 13:43:44 before the 14:00 maintenance reservation.
+Lorenzo reaffirmed the single combined run to conserve compute; no unchanged
+control was submitted. The old Capstor files remain unavailable, so the known
+local native u5000 parent, teachers and banks were restored under the current
+`$SCRATCH`, `/ritom/scratch/cscs/lterenzi`. The established JAX24.10 runtime was
+rebuilt from the same Dockerfile and pinned requirements. CUDA convolution
+backward and four-device NCCL pass. At 09:48, native restoration and both
+migrations are complete and the first PPO update is compiling; learning and
+checkpoint evidence remain pending. The live ledger is
+[EXPERIMENTS_RUNNING.md](../EXPERIMENTS_RUNNING.md).
+
+Staging also caught a frozen-bank compatibility bug: new zero-valued retained
+cost fields changed the serialized benchmark fingerprint. Terra `6a0d7bdd`
+canonicalizes only their exact inert defaults in the historical receipt;
+nonzero defaults still fail and treatment serialization retains real values.
+Seventeen tests and independent loader checks pass. The staged bank has all
+608 ordered episodes from the historical u5000 panel, with dereferenced payloads.
 
 ## Validation of the combined implementation
 

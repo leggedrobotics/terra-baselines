@@ -1,4 +1,44 @@
-# Experiments — combined Oracle continuation prepared (2026-09-16)
+# Experiments — combined Oracle continuation started (2026-09-17)
+
+**CSCS 4682135 is RUNNING on nid006024**, started September 17 at 09:43:44
+CEST; the allocation ends 13:43:44, ahead of the 14:00 maintenance reservation.
+One node / four GPUs, account `lterenzi`, project `d130`. At 09:51 CEST,
+four-GPU detection, CUDA convolution backward and NCCL all-reduce pass. Native
+initialization restores u5000 / Adam320000 with 2,940,829 parameters and finite
+model/optimizer state. The first PPO update is compiling; there is no new
+checkpoint yet. Scheduler and initialization are not yet training-health evidence.
+
+Lorenzo reaffirmed one combined run to conserve compute and time. The brief
+two-node control proposal was withdrawn before any control was submitted.
+The run adds remaining time, residual actor capacity, earlier foundation
+teacher release and cached teachers to the native u5000 broad parent. All six
+added behavior costs remain zero. It stops at u7500 (81.92M new transitions),
+saves every 250 updates, and evaluates u6250/u7500 on the fixed 608-map panel.
+
+The old `/capstor` root remains unavailable. Current Daint `$SCRATCH` is
+`/ritom/scratch/cscs/lterenzi`; inputs, the known native u5000 checkpoint and
+the dereferenced accepted evaluation panel were restored from local copies.
+The established NGC JAX24.10 image was rebuilt from the same Dockerfile and
+pinned Python requirements. No later old checkpoint or delayed-cost result
+has been recovered; the old delayed pair was not restarted.
+
+Runtime sources are Terra `6a0d7bdd` and baselines `b61ce031`. Staging exposed
+and fixed a frozen-bank fingerprint regression from new zero-default retained
+cost fields: zero defaults preserve the historical receipt, nonzero defaults
+remain rejected, and treatment metadata keeps their actual values. Seventeen
+tests and two independent accepted-bank loader checks pass. The staged panel
+matches all 608 ordered u5000 episode identities (384 foundation, 224 trench).
+
+Remote root: `/ritom/scratch/cscs/lterenzi/terra-training/runs/terra-oracle-combined-20260917`.
+Local launch and submission receipt:
+`.artifacts/terra_oracle_combined_20260916/launch_cscs_20260917/`.
+W&B is offline; there is no claimed online history or policy improvement yet.
+Next recommended check: **10:10 CEST (08:10 UTC)** for finite update progress
+and the first scheduled u5250 save, then the fixed-panel decision after this
+allocation. That check is recommended, not scheduled. No extra monitor or
+automatic extension runs.
+
+## Previous preparation and access recovery
 
 **Latest check, September 16 23:02 CEST: authentication blocks access.** Lorenzo
 reports CSCS is online and authorizes proceeding with the needed experiments.

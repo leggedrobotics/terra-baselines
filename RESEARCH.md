@@ -74,9 +74,11 @@ changes either the data distribution or optimizer workload and must be reported.
 
 The current full-reset path requires `env_steps == 0`, checked by
 `assert_initial_env_steps_zero`; it does not randomize the initial elapsed step.
-The policy still does not observe elapsed or remaining time. Partial-completion
-resets, where enabled by the resolved recipe, change the material state rather
-than shorten the initial horizon. Their exact schedule is documented in the
+Legacy policies do not observe elapsed or remaining time. The combined Oracle
+continuation enables normalized remaining time for both actor and critic,
+using explicit checkpoint migration. Partial-completion resets, where enabled
+by the resolved recipe, change the material state rather than shorten the
+initial horizon. Their exact schedule is documented in the
 [training protocol](docs/TRAINING_PROTOCOL.md).
 
 ### PPO optimization and checkpointing
