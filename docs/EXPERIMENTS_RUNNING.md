@@ -2,11 +2,14 @@
 
 **CSCS 4682135 is RUNNING on nid006024**, started September 17 at 09:43:44
 CEST; the allocation ends 13:43:44, ahead of the 14:00 maintenance reservation.
-One node / four GPUs, account `lterenzi`, project `d130`. At 09:51 CEST,
-four-GPU detection, CUDA convolution backward and NCCL all-reduce pass. Native
-initialization restores u5000 / Adam320000 with 2,940,829 parameters and finite
-model/optimizer state. The first PPO update is compiling; there is no new
-checkpoint yet. Scheduler and initialization are not yet training-health evidence.
+One node / four GPUs, account `lterenzi`, project `d130`. The recovered offline
+history verifies **u5081**, with finite model/Adam/loss checks passed through
+that logging boundary. Approximate PPO KL is 0.01718, clip fraction 0.1553,
+and entropy 0.7229. CUDA convolution backward and
+NCCL all-reduce pass; native initialization restored u5000 / Adam320000 with
+2,940,829 parameters. Warmed training-loop throughput is about 16,040 global
+transitions/s (latest window 15,985), excluding startup. First scheduled save u5250 is not yet due;
+there is no new checkpoint or policy-quality evaluation at this snapshot.
 
 Lorenzo reaffirmed one combined run to conserve compute and time. The brief
 two-node control proposal was withdrawn before any control was submitted.

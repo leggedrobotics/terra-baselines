@@ -16,9 +16,12 @@ zero-default cost fields was fixed with exact default checks; seventeen tests
 and independent validation pass. The staged accepted panel preserves all608
 ordered episode identities. By 09:51 CEST, CUDA convolution backward, four-GPU
 NCCL and finite native initialization pass (2,940,829 model parameters,
-u5000 / Adam320000). First-update compilation and the first new checkpoint
-remain outstanding. Old later checkpoints and delayed-cost outputs remain
-unrecovered. Next recommended manual check is 10:10 CEST (08:10 UTC).
+u5000 / Adam320000). At 09:53:42, training advances to u5043, with finite
+model/Adam/loss checks passed through u5041 and warmed loop throughput around
+16,040 transitions/s. Offline history subsequently verifies u5081 with PPO
+KL0.01718, clip fraction0.1553 and entropy0.7229. The first u5250 save remains outstanding. Old later
+checkpoints and delayed-cost outputs remain unrecovered. Next recommended
+manual check is 10:10 CEST (08:10 UTC), not automatically scheduled.
 
 ## 2026-09-16 23:02 CEST: authenticated access cannot yet be restored
 

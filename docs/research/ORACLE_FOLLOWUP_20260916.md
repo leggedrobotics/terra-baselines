@@ -55,9 +55,10 @@ control was submitted. The old Capstor files remain unavailable, so the known
 local native u5000 parent, teachers and banks were restored under the current
 `$SCRATCH`, `/ritom/scratch/cscs/lterenzi`. The established JAX24.10 runtime was
 rebuilt from the same Dockerfile and pinned requirements. CUDA convolution
-backward and four-device NCCL pass. At 09:48, native restoration and both
-migrations are complete and the first PPO update is compiling; learning and
-checkpoint evidence remain pending. The live ledger is
+backward and four-device NCCL pass. By 09:53:42, training reaches u5043 with
+finite checks passed through u5041 and warmed loop throughput around 16,040
+transitions/s. First checkpoint and fixed behavioral evaluation remain
+pending; startup health does not establish policy improvement. The live ledger is
 [EXPERIMENTS_RUNNING.md](../EXPERIMENTS_RUNNING.md).
 
 Staging also caught a frozen-bank compatibility bug: new zero-valued retained
