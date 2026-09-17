@@ -1,5 +1,42 @@
 # Experiments — completed log
 
+## 2026-09-17 15:56 CEST: combined run completes; broad foundations recover
+
+CSCS 4682135 COMPLETED, exit 0:0, from 09:43:44 to 12:02:28 CEST on nid006024.
+One node/four GH200s used about 9.25 GPU-hours including two fixed evaluations.
+The native u5000 parent reaches u7500 / Adam480000 after 81.92M new transitions.
+Both downloaded u6250/u7500 checkpoints pass finite model/Adam and native-clock
+validation. Runtime sources are Terra 6a0d7bdd / baselines b61ce031.
+
+Complete fixed panels show foundations **198 to 316 to 322/384**, trenches
+**188 to 195 to 193/224**, and the road subset **23 to 22 to 25/32** at
+u5000/u6250/u7500. Foundation mean excavation rises 73.39% to 93.70%, accepted
+disposal 70.91% to 92.88%. Independent analysis verifies matching recorded
+manifest/reset/evaluation contracts and episode identities; all panels have
+zero integrity, nonfinite and mass errors. Complete initial Agent-state hashes
+are absent from these reports, limiting exact state-parity claims.
+
+On 181 common successful foundations, retained inter-setup distance falls
+20.5%, raw travel 31.9%, and adjacency rises 73.99% to 82.77%. Area per
+productive setup falls 2.5% and setup count rises 4.4%, so this is better travel
+and continuity without demonstrated larger workspaces. Relative to u5000,
+u7500 gains 141 foundation successes and loses 17; trenches gain 20 and lose15.
+The last u6250-to-u7500 segment has substantial churn: foundation gains42/losses36,
+trench gains13/losses15, with slightly worse mean trench material completion.
+
+Foundation guidance is zero from u6250, trench guidance retains the original
+cosine, and all six added costs stay zero. The numerical efficiency-readiness
+result is false. Recommend another bounded completion phase and review of
+regressions before any efficiency stage. This combined continuation cannot
+identify causal effects of time, capacity, release or extra training separately.
+Warmed loop median is 15,533 transitions/s; last-100-update means are entropy
+0.468, approximate KL0.0191 and clip fraction0.111.
+
+At 15:56 CEST the account queue is empty, no reservations are listed, and the
+old Capstor root is accessible again. Its earlier campaign outputs remain
+unrecovered. No new allocation or automatic extension was started. Evidence:
+`.artifacts/terra_oracle_combined_20260916/status_20260917_completed/`.
+
 ## 2026-09-17 09:44 CEST: combined job submitted on restored Ritom inputs
 
 CSCS 4682135 starts on nid006024 at 09:43:44, with one node/four GPUs and a

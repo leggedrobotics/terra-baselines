@@ -1,5 +1,61 @@
 # Completion-first follow-up to the September 16 research review
 
+## Completed combined result — September 17
+
+The single four-GH200 run, CSCS 4682135, completed u5000 to u7500 and both
+608-map fixed evaluations within 2:18:44 (about 9.25 GPU-hours including
+evaluation). It used Terra `6a0d7bdd` / baselines `b61ce031`; the final native
+checkpoint is u7500 / Adam480000. Remaining-time input, the residual actor
+head and teacher caching are active. Foundation KL is zero from u6250 through
+the u7500 endpoint, while trench KL retains its original cosine. All six added
+efficiency costs stayed zero. No automatic continuation was submitted.
+
+| Cohort | Parent u5000 | u6250 | u7500 |
+| --- | ---: | ---: | ---: |
+| Foundation completion | 198/384 | 316/384 | 322/384 |
+| Trench completion | 188/224 | 195/224 | 193/224 |
+| Road completion, trench subset | 23/32 | 22/32 | 25/32 |
+| Foundation mean excavation | 73.39% | 92.96% | 93.70% |
+| Foundation accepted disposal | 70.91% | 91.47% | 92.88% |
+| Trench mean excavation | 95.26% | 96.78% | 95.86% |
+| Trench accepted disposal | 94.57% | 96.29% | 95.29% |
+
+On the 181 foundations completed at both u5000 and u7500, retained inter-setup
+straight-line distance improves 47.10 to 37.42 m (-20.5%), raw travel improves
+105.77 to 72.08 m (-31.9%), edge adjacency improves 73.99% to 82.77%, and lateral
+digging score falls 17.5%. However, area per productive setup decreases 6.125
+to 5.971 m² (-2.5%), productive setups increase 4.4%, and fresh area per dig
+decreases 6.1%. This supports better continuity and travel, not larger workspaces.
+Straight-line retained distance remains a lower-bound route proxy, not a
+validated navigation-stack path cost.
+
+The combined change plus more training improves broad foundation competence
+substantially; it does not isolate which intervention caused that improvement.
+Relative to u5000, u7500 gains141/loses17 foundation successes and gains20/loses15
+trench successes. The final segment is much less stable: foundations gain42 and
+lose36, trenches gain13 and lose15. Bearing-wall foundations fall from14/16
+to10/16. Mean trench excavation and accepted disposal also decline afteru6250.
+Therefore **keep added efficiency costs off**. The proposed numerical readiness
+check fails completion floors, eleven condition checks at one/both milestones,
+and accepted-material nonregression. Review lost successes and consider a bounded
+completion continuation before any cost stage; do not promote on aggregate gains.
+
+Independent analysis verifies all three complete 608-case reports, matching
+manifest/reset/evaluation contracts and per-episode identifiers. All integrity,
+nonfinite and mass-error counts are zero. Complete initial Agent-state hashes
+are not included, so this is recorded-contract validation rather than independent
+full initial-state equality. Native CPU validation of downloaded u6250/u7500
+checks finite model/Adam state, clocks, zero costs and unchanged release origin.
+Warmed training-loop median is15,533 transitions/s. Last-100-update means are
+entropy0.468, approximate KL0.0191 and clip fraction0.111. No causal throughput
+speedup is claimed without a matched runtime control.
+
+Evidence: `.artifacts/terra_oracle_combined_20260916/status_20260917_completed/`
+contains both reports/checkpoints, `paired_cohort_analysis.json`,
+`efficiency_readiness.json`, `native_validation.json` and parsed offline history.
+The account queue is empty at15:56 CEST. The old Capstor path is accessible
+again, but the previous broad-run and delayed-cost outputs remain to be recovered.
+
 ## Updated decision: one combined run
 
 Lorenzo requested remaining-time input and implementation across the review,
@@ -24,12 +80,12 @@ cannot become the production parent. The actual production batch remains
 | --- | --- | --- |
 | Completion before efficiency | Zero-cost combined recipe; numerical readiness checker includes cohort/condition floors, transition spacing and paired losses | Teacher-free hold and qualitative failure review remain necessary before promotion |
 | Deployment-aligned work efficiency | Optional retained setup, inter-work distance and heading costs; effective digs, relifts and dumps; executable fresh union across headings | Costs stay off. Observe the previous retained pose before enabling them; validate route rankings with navigation |
-| Earlier foundation release | Native release clock/Adam preserved; 40.96M transition fade, trench cosine unchanged | Combined learning result pending |
-| Finite horizon observability | Remaining fraction enters actor and critic; zero embeddings and explicit native migration; constant input used for local parity | Measure late-stall/completion effects in the combined run |
+| Earlier foundation release | Native release clock/Adam preserved; 40.96M transition fade, trench cosine unchanged; teacher-free foundation hold completed to u7500 | Foundation completion improves in the combined run; separate release effect remains unknown |
+| Finite horizon observability | Remaining fraction enters actor and critic; zero embeddings and explicit native migration; constant input used for local parity | Combined completion improves; isolated deadline-behavior effect remains unmeasured |
 | Executable failure suffixes | 12 frozen failures replayed; 8 progress witnesses, 5 work/disposal/move witnesses, zero complete suffixes | Deeper terminal escape search for dominant unresolved cycles; no infeasibility claim |
 | Reward terminal boundary | New test verifies discounted telescoping including failed-terminal potential; reward unchanged | No incidental shaping rewrite |
 | Family gradient interference | Offline helper measures PPO/KL encoder norms/cosines on supplied real globally-normalized minibatches | Actual training gradient measurement pending; do not infer interference from exposure or synthetic gradients |
-| Representation/capacity | 64 counterfactuals from 12 real failure snapshots; 19 single-cell residual probes all change inputs; preserve encoder; grow action head | Warmed GPU cost measured (+1.5% gradient kernel at batch 256); training behavior pending; remote pile amounts remain aliased |
+| Representation/capacity | 64 counterfactuals from 12 real failure snapshots; 19 single-cell residual probes all change inputs; preserve encoder; grow action head | Combined learning result above; separate capacity effect unknown; remote pile amounts remain aliased |
 | Experience-unit budgets | Launcher records global batch, added transitions and40.96M release duration | Resume only production-layout checkpoints |
 | Frozen teacher throughput | Cache once before PPO shuffle; native observations kept until last teacher release, then static teacher-free specialization | End-to-end speed is measured separately from teacher forward reduction |
 | Host bookkeeping | Print throughput at log cadence; add synchronized training-loop rate including intervening host work | Integrity checks remain each update; throughput excludes setup/final saving |
@@ -48,7 +104,7 @@ u5000 outputs are bit-exact on the saved slot 503 state after migration.
 JAX CPU lowering estimates only 0.2374% more forward FLOPs, which is not a GPU
 timing or learning result. See [network scaling](NETWORK_SCALING_20260916.md).
 
-CSCS job **4682135** starts September 17 at 09:43:44 CEST on nid006024,
+Historical startup: CSCS job **4682135** starts September 17 at 09:43:44 CEST on nid006024,
 one node/four GPUs, ending 13:43:44 before the 14:00 maintenance reservation.
 Lorenzo reaffirmed the single combined run to conserve compute; no unchanged
 control was submitted. The old Capstor files remain unavailable, so the known

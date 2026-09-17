@@ -1,45 +1,57 @@
-# Experiments — combined Oracle continuation started (2026-09-17)
+# Experiments — combined Oracle continuation completed (2026-09-17)
 
-**CSCS 4682135 is RUNNING on nid006024**, started September 17 at 09:43:44
-CEST; the allocation ends 13:43:44, ahead of the 14:00 maintenance reservation.
-One node / four GPUs, account `lterenzi`, project `d130`. The recovered offline
-history verifies **u5081**, with finite model/Adam/loss checks passed through
-that logging boundary. Approximate PPO KL is 0.01718, clip fraction 0.1553,
-and entropy 0.7229. CUDA convolution backward and
-NCCL all-reduce pass; native initialization restored u5000 / Adam320000 with
-2,940,829 parameters. Warmed training-loop throughput is about 16,040 global
-transitions/s (latest window 15,985), excluding startup. First scheduled save u5250 is not yet due;
-there is no new checkpoint or policy-quality evaluation at this snapshot.
+**CSCS 4682135 COMPLETED with exit 0:0 at 12:02:28 CEST.** It ran from
+09:43:44 on nid006024, one node/four GH200s, account `lterenzi`, project `d130`.
+Training reached **u7500 / Adam480000**, adding the budgeted 81.92M transitions;
+both complete fixed 608-map evaluations finished. The allocation used 2:18:44
+(about 9.25 GPU-hours, including evaluation). At the live 15:56 CEST refresh,
+the account queue is empty and Slurm lists no reservations. No continuation,
+control, second node, or automatic monitor is running.
 
-Lorenzo reaffirmed one combined run to conserve compute and time. The brief
-two-node control proposal was withdrawn before any control was submitted.
-The run adds remaining time, residual actor capacity, earlier foundation
-teacher release and cached teachers to the native u5000 broad parent. All six
-added behavior costs remain zero. It stops at u7500 (81.92M new transitions),
-saves every 250 updates, and evaluates u6250/u7500 on the fixed 608-map panel.
+| Fixed cohort | Native parent u5000 | u6250 | u7500 |
+| --- | ---: | ---: | ---: |
+| Foundations | 198/384 (51.6%) | 316/384 (82.3%) | 322/384 (83.9%) |
+| Trenches | 188/224 (83.9%) | 195/224 (87.1%) | 193/224 (86.2%) |
+| Road trenches, included above | 23/32 | 22/32 | 25/32 |
 
-The old `/capstor` root remains unavailable. Current Daint `$SCRATCH` is
-`/ritom/scratch/cscs/lterenzi`; inputs, the known native u5000 checkpoint and
-the dereferenced accepted evaluation panel were restored from local copies.
-The established NGC JAX24.10 image was rebuilt from the same Dockerfile and
-pinned Python requirements. No later old checkpoint or delayed-cost result
-has been recovered; the old delayed pair was not restarted.
+Foundation mean excavation improves **73.39% to 93.70%**, accepted disposal
+**70.91% to 92.88%**. On the 181 foundations solved at both u5000/u7500,
+retained inter-setup straight-line distance falls **47.10 to 37.42 m (-20.5%)**,
+raw travel falls 31.9%, and fresh-workspace edge adjacency rises **73.99% to
+82.77%**. Area per productive setup falls **6.125 to 5.971 m² (-2.5%)**:
+continuity and travel improve, but larger workspaces are not established.
 
-Runtime sources are Terra `6a0d7bdd` and baselines `b61ce031`. Staging exposed
-and fixed a frozen-bank fingerprint regression from new zero-default retained
-cost fields: zero defaults preserve the historical receipt, nonzero defaults
-remain rejected, and treatment metadata keeps their actual values. Seventeen
-tests and two independent accepted-bank loader checks pass. The staged panel
-matches all 608 ordered u5000 episode identities (384 foundation, 224 trench).
+**Keep all added efficiency costs at zero.** Completion still churns:
+u6250 to u7500 gains 42 foundation successes and loses 36; trenches gain 13
+and lose 15. Trench mean excavation/disposal also decline slightly over this
+last segment. The numerical efficiency-readiness check is false: completion
+floors fail, 11 conditions miss 80% at one or both milestones, and trench
+accepted material declines. The next useful decision is another bounded
+completion phase and inspection of lost successes, not an automatic cost ramp.
 
-Remote root: `/ritom/scratch/cscs/lterenzi/terra-training/runs/terra-oracle-combined-20260917`.
-Local launch and submission receipt:
-`.artifacts/terra_oracle_combined_20260916/launch_cscs_20260917/`.
-W&B is offline; there is no claimed online history or policy improvement yet.
-Next recommended check: **10:10 CEST (08:10 UTC)** for finite update progress
-and the first scheduled u5250 save, then the fixed-panel decision after this
-allocation. That check is recommended, not scheduled. No extra monitor or
-automatic extension runs.
+Foundation teacher KL reaches zero at u6250 and stays off through u7500;
+trench KL retains its original cosine. Remaining time, the residual actor head
+and teacher caching are active. Both downloaded checkpoints pass native CPU
+validation with finite model/Adam state, the original release clock, 2,940,829
+parameters and all six added costs zero. Warmed training-loop median is
+15,533 transitions/s. Last-100-update mean entropy is 0.468, approximate PPO KL
+0.0191 and clip fraction 0.111; these are training diagnostics, not evaluation
+success. The combined run cannot separate time/capacity/release effects from
+each other or from additional training.
+
+Runtime sources are Terra `6a0d7bdd` and baselines `b61ce031`. Independent
+analysis verifies complete panels, matching manifest, recorded reset contracts
+and episode identities, with zero integrity/nonfinite/mass errors. Reports do
+not contain complete initial Agent-state hashes; matching recorded contracts
+is not an independent byte-level initial-state comparison.
+
+The old Capstor path is accessible again at the latest check, but old generalist
+and delayed-cost outputs have not yet been inventoried. The delayed pair was
+not restarted. This run remains under
+`/ritom/scratch/cscs/lterenzi/terra-training/runs/terra-oracle-combined-20260917`.
+Local reports, both native checkpoints, offline history, paired analysis and
+readiness result: `.artifacts/terra_oracle_combined_20260916/status_20260917_completed/`.
+The [research note](research/ORACLE_FOLLOWUP_20260916.md) records interpretation.
 
 ## Previous preparation and access recovery
 
