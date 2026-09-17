@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One combined run; no duplicate learning control or automatic efficiency phase.
+# One long combined run; sequential allocations preserve the native checkpoint.
 set -euo pipefail
 : "${TERRA_ROOT:?}" "${INPUTS_ROOT:?}" "${BANK_ROOT:?}" "${PARENT_CHECKPOINT:?}" "${EXPERIMENT_ROOT:?}" "${SLURM_JOB_ID:?}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -14,33 +14,25 @@ unset WANDB_RUN_ID WANDB_RESUME
 [[ ! -e "$OUTPUT_DIR" ]] || { echo "Output already exists: $OUTPUT_DIR" >&2; exit 2; }
 mkdir -p "$OUTPUT_DIR"
 export JAX_COMPILATION_CACHE_DIR="$EXPERIMENT_ROOT/jax-cache"
+PARENT_CHECKPOINT="$("$PYTHON" - "$EXPERIMENT_ROOT" "$PARENT_CHECKPOINT" <<'PY'
+from pathlib import Path
+import sys
+root, parent = Path(sys.argv[1]), Path(sys.argv[2])
+paths = list(root.glob('segments/*/training/checkpoints/*_update_*.pkl'))
+if paths:
+    parent = max(paths, key=lambda path: int(path.stem.rsplit('_', 1)[1]))
+print(parent)
+PY
+)"
+printf '%s\n' "$PARENT_CHECKPOINT" > "$OUTPUT_DIR/parent_checkpoint.txt"
 "$PYTHON" "$REPO/cluster/cscs/check_jax_runtime.py" --min-devices 4 > "$OUTPUT_DIR/preflight.log" 2>&1
 "$PYTHON" - <<'PY'
 import jax
 if len(jax.devices()) != 4 or not all('GH200' in d.device_kind for d in jax.devices()):
     raise RuntimeError(f'Expected four GH200 GPUs, got {jax.devices()}')
 PY
-timeout --signal=TERM --kill-after=30s 9000 "$PYTHON" \
+exec "$PYTHON" \
     "$REPO/scripts/oracle_followup/run.py" --checkpoint "$PARENT_CHECKPOINT" \
-    --inputs "$INPUTS_ROOT" --output "$OUTPUT_DIR/training" --updates 2500 \
+    --inputs "$INPUTS_ROOT" --output "$OUTPUT_DIR/training" --target-update 100000 \
+    --eval-bank "$BANK_ROOT" --eval-output "$EXPERIMENT_ROOT/evaluation" \
     > "$OUTPUT_DIR/training.log" 2>&1
-
-# Both milestone checkpoints come from one uninterrupted training process.
-mapfile -t milestones < <("$PYTHON" - "$OUTPUT_DIR/training/plan.json" <<'PY'
-import json, sys
-plan = json.load(open(sys.argv[1]))
-print(plan['start_update'] + 1250)
-print(plan['target_update'])
-PY
-)
-for milestone in "${milestones[@]}"; do
-    printf -v suffix '%06d' "$milestone"
-    checkpoint="$OUTPUT_DIR/training/checkpoints/generalist-oracle-combined_update_${suffix}.pkl"
-    timeout --signal=TERM --kill-after=30s 1800 \
-        bash "$REPO/scripts/excavation_reliability/eval.sh" "$checkpoint" "$OUTPUT_DIR/u${milestone}.json" \
-        > "$OUTPUT_DIR/evaluation_u${milestone}.log" 2>&1
-done
-"$PYTHON" "$REPO/scripts/analysis/terra_efficiency_readiness.py" \
-    --previous "$OUTPUT_DIR/u${milestones[0]}.json" --current "$OUTPUT_DIR/u${milestones[1]}.json" \
-    --transitions-per-update 32768 --output "$OUTPUT_DIR/efficiency_readiness.json"
-echo "Combined bounded run and both fixed panels complete. Added efficiency costs remain zero."

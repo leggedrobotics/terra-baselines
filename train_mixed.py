@@ -3333,7 +3333,7 @@ def _load_task_teachers(config, env, env_params, rng, checkpoint=None):
     return rng, teacher_apply_fn, params
 
 
-def train_mixed_agents(config: MixedAgentTrainConfig):
+def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=None):
     """Main training function for mixed agents - with full feature parity to original train.py"""
 
     bind_task_teacher_checkpoints(config)
@@ -5088,6 +5088,15 @@ def train_mixed_agents(config: MixedAgentTrainConfig):
                         receipt_path.write_text(
                             json.dumps(receipt, indent=2, sort_keys=True) + "\n"
                         )
+
+                    if checkpoint_callback is not None:
+                        callback_start = time.monotonic()
+                        checkpoint_callback(
+                            Path(config.checkpoint_dir) / checkpoint_name, i + 1
+                        )
+                        # Fixed-panel evaluation pauses training. Exclude its
+                        # wall time from the next training-throughput window.
+                        wall_window_start += time.monotonic() - callback_start
 
                 if need_eval:
                     # Reuse the training reset shape regime and keep only the

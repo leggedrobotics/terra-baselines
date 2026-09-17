@@ -5,10 +5,55 @@ import dataclasses
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
+import time
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
+EVALUATION_UPDATES = (10000, 20000, 35000, 50000, 75000, 100000)
+
+
+def evaluate_checkpoint(checkpoint, update, bank, output):
+    """Pause PPO for the fixed panel; an evaluator failure preserves training."""
+    if update not in EVALUATION_UPDATES:
+        return
+    output.mkdir(parents=True, exist_ok=True)
+    report = output / f"u{update}.json"
+    if report.exists():
+        from scripts.foundation_teacher_release.compare import load_report
+        try:
+            if load_report(report)["checkpoint_update"] != update:
+                raise ValueError("Evaluation belongs to another checkpoint update")
+        except (ValueError, KeyError, OSError):
+            report.rename(report.with_suffix(f".incomplete-{int(time.time())}.json"))
+        else:
+            return
+    env = dict(os.environ, BANK_ROOT=str(bank), CUDA_VISIBLE_DEVICES="0",
+               WANDB_MODE="disabled", XLA_PYTHON_CLIENT_PREALLOCATE="false")
+    print(f"Fixed evaluation starting at u{update}: {report}", flush=True)
+    with (output / f"u{update}.log").open("a") as log:
+        result = subprocess.run(
+            ["timeout", "--signal=TERM", "--kill-after=30s", "1800",
+             "bash", str(REPO / "scripts/excavation_reliability/eval.sh"),
+             str(checkpoint), str(report)],
+            env=env, stdout=log, stderr=subprocess.STDOUT, check=False,
+        )
+    status = {"update": update, "checkpoint": str(checkpoint),
+              "returncode": result.returncode, "report": str(report)}
+    if result.returncode == 0:
+        from scripts.foundation_teacher_release.compare import load_report
+        try:
+            if load_report(report)["checkpoint_update"] != update:
+                raise ValueError("Evaluation belongs to another checkpoint update")
+        except (ValueError, KeyError, OSError) as error:
+            status.update(status="FAILED_VALIDATION", error=str(error))
+        else:
+            status["status"] = "PASS"
+    else:
+        status["status"] = "FAILED"
+    (output / f"u{update}.status.json").write_text(json.dumps(status, indent=2) + "\n")
+    print(f"Fixed evaluation u{update}: {status['status']}; continuing PPO", flush=True)
 
 
 def main():
@@ -17,10 +62,21 @@ def main():
     parser.add_argument("--inputs", type=Path, required=True,
                         help="Existing broad campaign inputs: bank and both teachers")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--updates", type=int, default=2500, help="At most 81.92M new global transitions in production")
+    parser.add_argument("--target-update", type=int, required=True,
+                        help="Absolute update ceiling, at most the authorized u100000")
+    parser.add_argument("--eval-bank", type=Path)
+    parser.add_argument("--eval-output", type=Path)
     parser.add_argument("--smoke", action="store_true", help="1 GPU x 128 envs, at most 2 new updates")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if (args.eval_bank is None) != (args.eval_output is None):
+        parser.error("--eval-bank and --eval-output must be provided together")
+    args.checkpoint = args.checkpoint.resolve()
+    if args.eval_bank is not None:
+        args.eval_bank = args.eval_bank.resolve()
+        args.eval_output = args.eval_output.resolve()
+        if not args.eval_bank.is_dir():
+            raise FileNotFoundError(args.eval_bank)
     inputs = args.inputs.resolve()
     for path in (args.checkpoint, inputs / "bank", inputs / "foundation_teacher.pkl",
                  inputs / "trench_teacher.pkl"):
@@ -42,13 +98,17 @@ def main():
               for field in dataclasses.fields(MixedAgentTrainConfig) if field.init}
     start = int(parent["next_update"])
     release = parent.get("foundation_teacher_release_state")
-    if not 1 <= args.updates <= 2500 or start < 5000:
-        raise ValueError("Use a broad native parent at u5000 or later, with 1..2500 new updates")
-    if args.smoke and args.updates > 2:
+    target_update = args.target_update
+    if start < 5000 or not start <= target_update <= 100000:
+        raise ValueError("Use a broad native parent and an absolute target at or after it, at most u100000")
+    if args.smoke and target_update - start > 2:
         raise ValueError("Smoke is limited to two finite updates")
-    target_update = start + args.updates
     if int(np.asarray(parent["train_state_step"])) != start * 64:
         raise ValueError("Parent Adam clock does not match 64 steps per update")
+    for key in ("model", "optimizer_state"):
+        if not all(np.isfinite(np.asarray(leaf)).all()
+                   for leaf in jax.tree_util.tree_leaves(parent[key])):
+            raise ValueError(f"Nonfinite parent {key}")
     if saved.config_name != "trench_align_v2_generalist_gen":
         raise ValueError("Expected the broad generalist parent")
     if any(getattr(saved, key, 0.) != 0 for key in
@@ -100,6 +160,8 @@ def main():
         objectives="Corrected physics and reward-v2; every added behavior cost remains zero",
         interpretation="Combined intervention, no causal attribution to individual changes",
         source=dict(baselines=str(REPO), terra=os.environ.get("TERRA_ROOT")),
+        evaluation_updates=list(EVALUATION_UPDATES) if args.eval_bank else [],
+        evaluation_output=str(args.eval_output) if args.eval_output else None,
     )
     if args.dry_run:
         print(json.dumps(plan, indent=2))
@@ -109,7 +171,21 @@ def main():
     (output / "wandb").mkdir()
     os.environ["WANDB_DIR"] = str(output / "wandb")
     os.chdir(output)
-    train_mixed_agents(config)
+    checkpoint_callback = None
+    if args.eval_bank is not None:
+        def checkpoint_callback(path, update):
+            evaluate_checkpoint(path, update, args.eval_bank, args.eval_output)
+        # A wall-time limit may have interrupted evaluation immediately after
+        # the parent checkpoint was written. Complete that panel on resume.
+        checkpoint_callback(args.checkpoint.resolve(), start)
+    if start == target_update:
+        (output / "result.json").write_text(json.dumps(dict(
+            status="ALREADY_AT_TARGET", checkpoint=str(args.checkpoint),
+            update=start, adam_step=int(np.asarray(parent["train_state_step"])),
+        ), indent=2) + "\n")
+        print(f"Already at u{start}; no further training.", flush=True)
+        return
+    train_mixed_agents(config, checkpoint_callback=checkpoint_callback)
     final = Path(config.checkpoint_dir) / f"{config.name}_FINAL.pkl"
     checkpoint = load_pkl_object(str(final))
     if (checkpoint["next_update"] != target_update
