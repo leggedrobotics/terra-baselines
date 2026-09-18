@@ -1,5 +1,42 @@
 # Completion-first follow-up to the September 16 research review
 
+## Long-run progress — September 18
+
+The continuation is healthy at about u25158 with a validated native u25000
+checkpoint. Fixed evaluation at u20000 completes **367/384 foundations (95.6%)**,
+**195/224 trenches (87.1%)**, including **27/32 road trenches**. This follows a
+temporary foundation drop to301/384 at u10000 from322/384 at the u7500 parent.
+The foundation gain therefore appears with longer training; the short decline
+did not establish convergence or a reason to stop the run.
+
+From u10000 to u20000, foundations gain73 and lose7 successes; trenches gain11
+and lose11. Foundation accepted disposal improves91.01% to97.89%, while trench
+accepted disposal slips96.16% to96.03%. The proposed repeated efficiency gate
+remains false: one strong foundation checkpoint does not establish stable
+broad completion, and trench/road floors remain unmet. Keep costs zero.
+
+The continuous foundation result is also stronger than u7500: excavation
+93.70% to98.13%, accepted disposal92.88% to97.89%, and off-zone residual0.68%
+to0.155%. On313 cases solved at both endpoints, area per productive setup
+improves6.09 to6.25 m² (+2.57%), retained inter-setup straight-line distance
+falls44.62 to39.87 m (-10.64%), raw travel falls12.22%, edge adjacency rises
+82.09% to84.82%, and lateral score falls13.71%. The earlier absence of larger
+setup workspaces has changed to a modest yield improvement with more training.
+Trench material progress remains around96.3% dug/96.0% accepted; its common-success
+retained distance rises0.99% and yield falls1.11%. Preserve that distinction.
+
+Independent analysis verifies all608identities, recorded resets, treatment
+fingerprints and evaluation contracts, with zero integrity/nonfinite/mass errors.
+
+Trench KL reached zero and the teacher-free execution branch activated at
+u20000; foundation KL has been zero since u6250. Native u25000 validation confirms
+both coefficients zero, original migration/release metadata and finite Adam/model
+state. The next fixed u35000 panel will test retention after sustained completely
+teacher-free training. These remain results from one combined intervention and
+continuation, without separate causal attribution to time, capacity or release.
+
+Evidence: `.artifacts/terra_oracle_long_20260917/status_20260918_morning/`.
+
 ## Authorized long continuation — September 17
 
 After the combined result below, Lorenzo authorized native continuation from

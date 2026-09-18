@@ -1,5 +1,44 @@
 # Experiments — completed log
 
+## 2026-09-18 08:26 CEST: long continuation healthy; broad foundations reach 95.6%
+
+CSCS4685246 is RUNNING on nid006532 with four GH200s, from September17
+21:23:31 CEST to its scheduled September18 21:23:31 wall limit. Training has
+advanced from the native u7500 parent to approximately u25158, with u25000 /
+Adam1600000 downloaded and validated finite. Transition integrity records zero
+mass residual, obstacle mutation and target mutation. CUDA/NCCL pass, warmed
+throughput is about17k transitions/s, and both successors remain dependency-held.
+
+The fixed608panels at u10000 and u20000 both pass. Foundations rise from
+301/384 to367/384 (95.6%), after the parent u7500 had322/384. Trenches remain
+195/224 (87.1%), compared with193/224 at the parent. Road trenches rise25/32
+to27/32. Total completion is496/608 then562/608, versus515/608 at the parent.
+The10k-to20k interval gains73/loses7 foundation successes and gains11/loses11
+trench successes. Accepted disposal improves91.01% to97.89% for foundations,
+but slips96.16% to96.03% for trenches. This is broad foundation improvement
+with unfinished trench progress, not a completed efficiency qualification.
+
+Independent comparison verifies matching608episode identities, reset receipts,
+treatment fingerprint and evaluation contracts, with zero integrity/nonfinite/
+mass errors. Relative to u7500, foundation excavation rises93.70% to98.13% and
+off-zone residual falls0.68% to0.155%. On313 common successful foundations,
+retained inter-setup travel improves10.6%, workspace yield2.6%, edge adjacency
+82.09% to84.82%, and lateral score13.7%. Trench retained travel rises1.0% and
+workspace yield falls1.1% on its common-success cohort, so behavior gains are
+primarily foundational. Full paired detail is in the local analysis artifact.
+
+Both teacher coefficients are zero at the native u25000 checkpoint; the log
+confirms teacher-free execution from u20000. All six added costs remain zero
+in trainer and environment. Entropy0.237, approximate PPO KL0.0124, clip0.0648;
+all saved rollout/gradient/model diagnostics are finite. Fixed evaluation runs
+successfully beside the paused trainer and training resumes afterward.
+
+The repeated efficiency-readiness result remains false. Continue the authorized
+run unchanged toward u100000. Next meaningful report is u35000, estimated early
+afternoon; recommended manual check14:15 CEST/12:15 UTC, not scheduled. Evidence:
+`.artifacts/terra_oracle_long_20260917/status_20260918_morning/` and timestamped
+scheduler status in the campaign artifact root.
+
 ## 2026-09-17 18:41 CEST: long continuation still waiting for priority
 
 Live scheduler refresh confirms4685246 remains PENDING(Priority), with4685248

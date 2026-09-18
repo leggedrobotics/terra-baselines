@@ -1,47 +1,73 @@
-# Experiments — long generalist continuation queued (2026-09-17)
+# Experiments — long generalist running; foundations reach 95.6% (2026-09-18)
 
-**CSCS 4685246 is PENDING (Priority)** at September 17 18:41 CEST. Lorenzo authorized the
-evaluated native u7500 checkpoint to continue toward **u100000**, replacing the
-short diagnostic cap. Three sequential 24-hour segments are submitted:
-**4685246 -> 4685248 -> 4685249**. Successors wait on `afterany` dependencies and
-run only after a COMPLETED or TIMEOUT predecessor. Each resumes the latest
-atomic campaign checkpoint. At most one node/four GH200s run at once; there is
-one learning run, no duplicate control. The account is `lterenzi`, project `d130`.
+**CSCS 4685246 is RUNNING on nid006532**, verified September 18 at 08:26 CEST.
+It started September 17 at 21:23:31 CEST and its first allocation ends today at
+21:23:31. Training has reached about **u25158**; the downloaded **u25000 /
+Adam1600000** checkpoint passes finite model, optimizer and loss checks, with
+zero recorded material/obstacle/target integrity errors. Current warmed training
+rate is about **17,000 transitions/s**. CUDA convolution and four-GPU NCCL pass.
 
-Slurm now estimates the first start at **September 18 00:24 CEST**; that is provisional
-and has moved later since submission. No training failure is reported.
-No node, production update or new checkpoint exists yet. The next recommended
-manual check is **September 18 00:45 CEST / September 17 22:45 UTC**, to verify actual admission, CUDA/NCCL,
-native initialization, finite updates and the first u7750 save if due. No
-monitoring worker or scheduled status check was created. After healthy startup,
-use roughly 12-hour checks unless an evaluation/failure changes the decision.
+Continuation remains **4685246 -> 4685248 -> 4685249**, with both successors
+PENDING(Dependency). They resume native checkpoints after a COMPLETED or TIMEOUT
+predecessor toward the same **u100000** ceiling. At most one Terra node/four GH200s
+run at once, account `lterenzi`, project `d130`. No extra experiment is submitted.
+
+| Fixed cohort | u7500 parent | u10000 | u20000 |
+| --- | ---: | ---: | ---: |
+| Foundations | 322/384 (83.9%) | 301/384 (78.4%) | **367/384 (95.6%)** |
+| Trenches | 193/224 (86.2%) | 195/224 (87.1%) | **195/224 (87.1%)** |
+| Road trenches, included above | 25/32 | 25/32 | **27/32** |
+| Total | 515/608 | 496/608 | **562/608 (92.4%)** |
+
+Both fixed reports are complete and pass integrity validation. The foundation
+dip at u10000 recovered strongly by u20000: gains73/losses7 over that interval,
+while trenches gain11/lose11 with unchanged total completion. Foundation accepted
+disposal rises91.01% to97.89%; trench accepted disposal slips96.16% to96.03%.
+Keep all efficiency costs off: the proposed repeated-completion gate is still
+false, and the trench/road floors are not reached. Training continues unchanged.
+
+Compared with u7500, foundation mean excavation improves **93.70% to 98.13%**
+and accepted disposal **92.88% to 97.89%**. On the 313 foundations solved at both
+u7500/u20000, retained inter-setup distance improves **44.62 to 39.87 m (-10.6%)**,
+area per productive setup improves **6.09 to 6.25 m² (+2.6%)**, edge adjacency
+rises **82.09% to 84.82%**, and lateral score falls13.7%. These are matched-success
+behavior comparisons, not averages over a changing success cohort. Trench
+continuous progress and common-success behavior remain largely flat.
+
+The next fixed evaluation is **u35000**, roughly early afternoon at the current
+rate. Recommended manual check: **14:15 CEST / 12:15 UTC** for its completed
+report and teacher-free retention; this is an estimate, not a scheduled monitor.
 
 Runtime sources: Terra **6a0d7bdd**, baselines **407e85e**. Production restores
 the original four-GPU u7500 / Adam480000 checkpoint from job4682135, keeping
 4x256 environments, rollout32, two epochs and32 minibatches. Absolute u100000
 is 3.2768B total transitions, **3.03104B additional** from the parent. Model and
 Adam remain native; time/head migration is not repeated. LR remains3e-4,
-entropy coefficient0.02, foundation KL0, and trench KL retains its original
-cosine to zero at u20000. All six added efficiency costs remain zero.
+entropy coefficient0.02, and both teacher KL coefficients are now zero. The log
+confirms the teacher-free execution path activated at u20000. All six added
+efficiency costs remain zero in both the saved trainer and environment config.
+At u25000, entropy is0.237, approximate PPO KL0.0124 and clip fraction0.0648.
 
 Save every250 updates. Fixed 608-map greedy450 panels run at u10000, u20000,
 u35000, u50000, u75000 and u100000. A checkpoint callback pauses training for
 the bounded evaluator, preserving the parent PPO process, live state and compiled
 functions. Evaluation failure is explicitly recorded without terminating PPO.
 An interrupted parent-milestone evaluation is recovered on resume, including
-at u100000. The first panel will also check GPU memory coexistence of the paused
-trainer and evaluator; standalone evaluation does not establish that yet.
+at u100000. Both u10000 and u20000 panels completed inside the active allocation
+and PPO resumed, verifying the paused trainer/evaluator coexistence on this node.
 
 Validation:13 focused CPU tests plus10 subtests, syntax/shellcheck, independent
 review and actual native-parent production-layout dry run pass. A local1x128
 CUDA smoke reaches u7502 / Adam480128 with finite model/Adam and the original
 release/migration metadata. It is diagnostic only; production uses the original
-four-GPU parent. One intentional teacher-free compilation is expected at u20000.
+four-GPU parent. Production has now advanced beyond the intentional teacher-free
+switch at u20000 without a reported runtime failure.
 
 Remote campaign:
 `/ritom/scratch/cscs/lterenzi/terra-training/runs/terra-oracle-long-20260917`.
 Local launch, source, validation and scheduler receipts:
-`.artifacts/terra_oracle_long_20260917/`. W&B remains offline. No efficiency
+`.artifacts/terra_oracle_long_20260917/`; current reports and native validation
+are in its `status_20260918_morning/` directory. W&B remains offline. No efficiency
 promotion or separate run is automatic; the queued segments cover continuation
 up to the authorized ceiling within at most three24-hour allocations.
 
