@@ -66,13 +66,8 @@ def _foundation_values_match(left, right):
     return bool(np.isclose(left, right, rtol=1e-6, atol=0.0))
 
 
-def checkpoint_foundation_behavior(checkpoint):
-    """Resolve the trained behavior, rejecting conflicting saved metadata.
-
-    Old dataclass pickles inherit newly added class defaults on unpickling.
-    Only instance fields count as explicitly saved train_config metadata; a
-    missing field can therefore be recovered from the saved environment.
-    """
+def _checkpoint_behavior_config(checkpoint):
+    """Resolve effective ramp costs before comparing saved environment values."""
     config = checkpoint.get("train_config")
     if config is None:
         raise ValueError("checkpoint has no train_config")
@@ -89,6 +84,18 @@ def checkpoint_foundation_behavior(checkpoint):
         saved_config = {**saved_config, **ramp_costs(ramp, checkpoint["next_update"])}
     elif saved_config.get("behavior_cost_ramp_updates", 0):
         raise ValueError("Ramped checkpoint is missing behavior_cost_ramp_state")
+    return saved_config
+
+
+def checkpoint_foundation_behavior(checkpoint):
+    """Resolve the trained behavior, rejecting conflicting saved metadata.
+
+    Old dataclass pickles inherit newly added class defaults on unpickling.
+    Only instance fields count as explicitly saved train_config metadata; a
+    missing field can therefore be recovered from the saved environment.
+    """
+    saved_config = _checkpoint_behavior_config(checkpoint)
+    config = checkpoint["train_config"]
     env_config = checkpoint.get("env_config")
     missing = object()
     settings = {}
@@ -121,7 +128,7 @@ def checkpoint_foundation_behavior(checkpoint):
 
 
 def checkpoint_evaluation_config(checkpoint):
-    """Copy the recorded config, filling only the four behavior settings."""
+    """Copy the recorded config with its effective behavior and retained costs."""
     settings = {**checkpoint_foundation_behavior(checkpoint),
                 **checkpoint_retained_work_costs(checkpoint)}
     config = copy.deepcopy(checkpoint["train_config"])
@@ -135,7 +142,7 @@ def checkpoint_evaluation_config(checkpoint):
 
 def checkpoint_retained_work_costs(checkpoint):
     settings = {}
-    config, env = checkpoint.get("train_config"), checkpoint.get("env_config")
+    config, env = _checkpoint_behavior_config(checkpoint), checkpoint.get("env_config")
     for name, default in RETAINED_WORK_COST_DEFAULTS.items():
         trained = _foundation_scalar(_config_field(config, name, default), name)
         actual = _foundation_scalar(_config_field(env, name, default), name)

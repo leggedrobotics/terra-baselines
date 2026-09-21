@@ -1,4 +1,835 @@
-# Experiments — long generalist running; foundations reach 95.6% (2026-09-18)
+# Experiments — geometry comparison complete; efficiency comparison running (2026-09-21)
+
+## September 21, 21:05 UTC: control reaches110k; final panel running
+
+CSCS4729577 remains RUNNING on nid006413, fourGH200s, elapsed3h44m56s.
+Control saved its nativeu110000 checkpoint after completing all5,000 updates;
+the final fixed608 panel is in progress (150/450 steps observed). No completed
+u110000 score is available yet. Update throughput was about17.5k transitions/s.
+The penalty arm has passed native first-update and resume qualification through
+u105002 and will start automatically after control evaluation. Both arms'
+initial model/Adam/RNG/environment receipts match. No production penalty
+result exists yet, and no new job was submitted.
+
+Completed controlu107500 remains PASS:381/384 foundations (3gains/3losses),
+212/224 trenches (3gains/2losses),31/32roads (no churn), relative tou105000.
+On378 common foundation successes, area/productive setup improves1.68%,
+productive setups fall2.10%, retained travel falls0.14%, adjacency rises0.72pp,
+and lateral score falls4.63%. On209 common trench successes, retained travel
+rises0.83% and area/setup falls0.42%. These are zero-added-cost control results,
+not evidence for the still-pending penalty treatment.
+
+Separate Euler geometry result remains verified from completed artifacts:
+straight32 improves2→26 successes with the identicalu109250 policy; full608
+changes383→382foundations,208→211trenches and29→29roads. The active CSCS
+comparison keeps its original frozen geometry in both arms.
+
+Evidence: `.artifacts/terra_efficiency_p25_20260921/status_20260921_2105/`.
+Recommended next check23:15UTC for treatment progress/evaluation; allocation
+endsSeptember22 at01:20UTC. No monitor is scheduled.
+
+## September 21, 20:14 UTC: geometry comparison passes; efficiency control is training
+
+Euler **14791590 COMPLETED** in 2h33m46s on one RTX3090. Finite native resume
+u109250→u109251 and transition integrity pass. Every evaluation uses the
+unchanged original **u109250**, on the same GPU and matching reset panels.
+
+| Fixed panel | Previous geometry | Corrected geometry |
+| --- | ---: | ---: |
+| Straight trench, 32 fresh starts | 2/32 | **26/32** |
+| Foundations | 383/384 | **382/384** |
+| Trenches | 208/224 | **211/224** |
+| Road subset of trenches | 29/32 | **29/32** |
+
+Straight mean excavation rises93.32%→99.14%, accepted disposal90.63%→98.83%,
+and mean duration falls447.6→181.0 actions including failures at450. Straight
+churn is26 gains and2 losses: both previously successful starts now fail.
+Full608 retention passes with four trench gains, one lost trench and one lost
+foundation. Original straight slot434 is now solved. Lost foundation521 reaches
+88.57% dug; trench389 reaches44.12% and stalls425steps. Six straight starts
+remain unsolved. Full-panel retained travel, workspace yield and adjacency
+change little. This is policy evidence without retraining, not universal
+completion or egress qualification.
+
+CSCS **4729577 RUNNING** on nid006413 with fourGH200s. CUDA/cuDNN/NCCL,
+context migration, both native first-update/save-resume checks and matching
+initialization pass. Control is aroundu108690; latest savedu108500. Its first
+u107500 panel passes at381/384F,212/224T,31/32roads. The penalty arm qualifies
+throughu105002 and awaits the control; no production treatment result exists.
+Both arms retain the previous geometry. Do not insert the new correction into
+an active comparison or duplicate it with another broad continuation.
+
+The earlier4725717 continuation stopped on its completeu110000 retention
+panel:381/384F,206/224T,29/32roads. The efficiency parent remainsu105000.
+No job was submitted during this update. Keep the geometry correction and
+inspect its remaining/lost cases while the bounded efficiency comparison
+finishes. Recommended next CSCS check: **23:15UTC** for the treatment milestone;
+allocation endsSeptember22 at01:20UTC. No monitor is scheduled.
+
+Evidence: `.artifacts/terra_latest_geometry_20260921/results/`, its
+`RESULTS_SUMMARY.json`, and
+`.artifacts/terra_efficiency_p25_20260921/status_20260921_2014/`.
+
+## September 21, 17:20 UTC: retained-work comparison submitted; queued for resources
+
+CSCS **4729577** is **PENDING/Resources** under `lterenzi`, accountd130:
+one node, four GH200 GPUs,64CPU cores, eight-hour ceiling. This is the
+bounded control versus25% retained-work stage from native **u105000**;
+2,500 updates of linear ramp plus2,500 of hold per arm, run sequentially.
+No new training update is claimed yet. Slurm's start estimate is17:26UTC,
+which can change.
+
+Focused CPU checks, actual-parent migration parity and independent review
+pass. The local1x32 GPU smoke completed u105001, saved/reloaded finite
+model/Adam, and preserved the6,720,000→6,720,064 optimizer clock. It exposed
+and then verified a fix for three missing retained-cost scalar names in the
+W&B logging contract. This diagnostic checkpoint is not a production parent.
+
+Inside the allocation, fresh four-GPU convolution/NCCL checks and real-parent
+GPU output parity precede independent native4x256 first-update/resume checks
+for **both** arms. Their initial model/Adam/RNG/environment receipts must match
+before production. Production uses the qualified u105002 states; the ramp
+origin remains105000. Checkpoint/evaluation milestones107500/110000 compare
+to the frozen105k panel (381/384F,211/224T,31/32roads), with explicit retention
+stops. Both teachers remain released, no imitation, raw navigation costs zero.
+W&B runs offline; cluster first-update/checkpoint evidence remains pending.
+
+The separate September21 metadata/map-edge geometry changes are excluded from
+both arms. Source and rationale: [retained efficiency](research/RETAINED_EFFICIENCY_20260921.md).
+Local evidence: `.artifacts/terra_efficiency_p25_20260921/`; remote root:
+`/ritom/scratch/cscs/lterenzi/terra-training/runs/terra-efficiency-p25-20260921/`.
+
+Recommended next check **18:15UTC (20:15CEST)**: verify allocation, both native
+qualifications and the first production checkpoint. No monitor is scheduled.
+
+## September 21, 17:10 UTC: u110000 reaches retention stop; bounded efficiency stage prepared
+
+CSCS4725717 reached u110000 and exited after6h44m52s with the policy-retention
+stop:381/384 foundations,206/224 trenches,29/32 roads; trench net loss3>2
+against its u100000 parent. The stronger u105000 remains381/384,211/224,31/32.
+This is a completed evaluation, not an infrastructure failure or convergence claim.
+
+Prepare the authorized control versus25%-strength retained-work penalty stage
+from native u105000, with a2500-update linear ramp then2500-update hold.
+Both arms receive zero-initialized previous-work-pose context; Adam and native
+clocks are preserved. Raw navigation costs stay zero. One four-GPU CSCS node
+runs both arms sequentially after independent finite first-update/resume checks.
+Runtime stays frozen to the u105000 panel; separate local metadata/map-edge
+corrections are excluded. No new allocation is submitted at this preparation
+entry. See [retained efficiency](research/RETAINED_EFFICIENCY_20260921.md).
+Evidence: `.artifacts/terra_efficiency_p25_20260921/`.
+
+## September 21, 15:56 UTC: latest-checkpoint geometry comparison submitted on one Euler GPU
+
+Euler **14791590** is PENDING/Priority. Slurm confirms one RTX3090, eight CPU
+cores, 32 GiB RAM and a three-hour limit under `lterenzi`; GPU startup and the
+first update remain unverified. No new CSCS job was submitted. CSCS allocates
+whole nodes, so reserve it for the native four-GPU continuation after this
+comparison, rather than a one-GPU diagnostic.
+
+The frozen parent is **u109250**, the latest complete checkpoint at preparation.
+One disposable 1x128 PPO resume update runs first and must pass finite
+model/Adam/loss and transition-integrity checks. Both evaluations then use the
+original unchanged parent: previous versus corrected geometry on straight32
+and the full608 panel, sequentially on the same allocated GPU with native
+chunk120 inference and matching resets. The geometry delta is float32 map
+metadata, inclusive map-edge bounds and trench-boundary tolerance. Rewards,
+architecture and PPO remain unchanged; added efficiency costs and imitation
+remain off. Evaluation geometries are not added to training.
+
+Staged inputs have no broken links; actual Euler-Python dry-run and independent
+launch review pass. The local full-policy attempt failed with
+`CUDNN_STATUS_EXECUTION_FAILED` despite passing tiny CUDA and geometry tests;
+it produced no policy result. Euler uses the previously working
+JAX0.4.33/CUDA12.6/cuDNN9.5 project runtime. Full608 arms allow 3300 seconds;
+the global three-hour cap may leave incomplete outputs if execution is slow.
+
+Evidence and launch files: `.artifacts/terra_latest_geometry_20260921/`.
+Remote outputs: `/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_latest_geometry_20260921/`.
+Recommended next check: **16:55 UTC**, to verify allocation, runtime smoke and
+the current evaluation phase. This is not a scheduled monitor. The later
+CSCS continuation also requires native4x256 qualification and its own matching
+GH200 parent panel; it does not reuse Euler scores as the retention reference.
+
+## September 21, 15:25 UTC: bounded continuation improves; next step is fixed-runtime evaluation
+
+Live CSCS check: 4725717 remains RUNNING on nid005700 (four GPUs); checkpoint
+u108500 is present. The completed u105000 retention panel is PASS: foundations
+381/384 (six gains, three losses versus u100000), trenches 211/224 (four gains,
+two losses), road subset 31/32 (one gain, no loss). The parent scored
+378/384, 209/224 and 30/32. This job uses the prior frozen geometry, including
+float16 metadata and the earlier map-edge bounds, not today's local correction.
+Let the existing bounded continuation reach its u110000 decision; no duplicate
+continuation was submitted. Next useful check is its final evaluation or the
+16:43 UTC allocation limit, whichever comes first; no monitor is scheduled.
+
+Euler 14766038 completed at 13:29:52 UTC. Straight performed zero PPO updates;
+T-junction has finite saved milestones through u50, and road-network reached
+u250 (2,048,000 training transitions) with zero material/target/obstacle
+violations. Road evaluation was explicitly deferred for insufficient remaining
+budget. These are saved training outputs, not measured adapted-policy gains.
+
+Sampling retry 14776814 FAILED at 13:14:47 UTC after 30m49s. Its actual 256-lane
+sampling layout changed greedy actions relative to the reused Euler baseline:
+`ValueError: Sample batch changes greedy actions; refusing to mix execution contracts`.
+The failed-layout receipt remains in `results_14776814/layout_parity.json`;
+no stochastic improvement is established. Diagnose the first divergence and
+use a consistent inference and simulator batch layout before another comparison.
+
+Recommended next work: a bounded GPU smoke and actual-policy evaluation under
+the local geometry fix, first on the straight 32-start panel, then the full
+608 cases including foundations. Reuse the already saved adaptation outputs
+for evaluation before allocating more map-specific PPO. Regenerate any reused
+demonstration observations from fresh original metadata. Keep this known-map
+diagnostic out of generalist training. Resume a selected generalist only after
+fixed-runtime retention is checked; add efficiency costs gradually after
+completion stabilizes. This section records recommendations, not submissions.
+
+## September21, 15:22 UTC: u105000 retention passes; training near108560
+
+CSCS4725717 RUNNING5h38m; latest saved milestoneu108500. Live training around
+u108559, about1.87s/update. Completed corrected-runtime u105000 panel PASS:
+381/384foundations,211/224trenches,31/32roads versus parent378/209/30.
+Foundations gain6/lose3 and trenches gain4/lose2; per-condition checks pass.
+Foundation mean dug99.775%, accepted99.578%; trench dug98.610%, accepted98.536%.
+On common successful foundations retained inter-setup distance falls1.55%,
+area/productive setup falls0.60%, adjacency rises0.15percentage points. Trench
+retained distance falls0.86%, workspace yield essentiallyunchanged. Thus modest
+completion gains, no established major efficiency gain; no costs/imitation active.
+Next/final panelu110000 is pending. At current throughput ~45minutes of updates
+remain, plus evaluation. Recommend nextcheck17:00UTC, notscheduled; no newjobs.
+Evidence: `.artifacts/terra_overnight_20260920/status_20260921_1228/u105000.retention.json`.
+
+## September 21, 14:32 UTC: local geometry fix restores the straight finish and exit
+
+Float32 map geometry, inclusive continuous map-edge bounds and a 1e-5 m trench
+boundary tolerance are validated and applied to the active local Terra source.
+The original greedy action sequence now finishes 80/80 excavation and accepted
+disposal at action 46. A manual plan finishes at 62, then exits in seven native
+steps to clear ground with all four base movements available. The full plan
+passes a second replay and all transition integrity checks.
+
+Selected CPU regression checks and independent review pass. This is one-map
+fixed-action/manual evidence; GPU first-update qualification and a fresh
+policy panel remain pending. The seven exit steps occur after task completion,
+not as extra RL episodes. No existing cluster snapshot or job was changed,
+no allocation was created, and the held-out witness was not added to training.
+
+Evidence: `.artifacts/terra_geometry_clearance_20260921/`.
+See [test-time compute](research/TEST_TIME_COMPUTE_20260921.md).
+
+## September 21, 13:01 UTC: straight endpoint diagnosed and manually completed
+
+Recorded-action replay reproduced greedy 78/80 and sampled 79/80 failures.
+At the right edge, residual cells lie inside the arm's minimum radius;
+forward motion/turns fail map bounds, and reverse motion intersects spoil
+or the excavated trench. Greedy's first reverse cell is blocked by its own
+spoil. This is an actual geometric trap in the selected work sequence.
+
+A corrected 16-action suffix after the sampled policy's first 38 actions
+completes 80/80 excavation and accepted disposal at action 54, unloaded, under
+the same frozen physics. Full replay from the original initial state passes
+all transition checks. It changes endpoint alignment and dumps away from
+the next dig sector. The final chassis still has no immediate legal base
+move: task completion is not an egress certificate.
+
+A separate precision defect is confirmed: float16 trench-axis storage shifts
+this axis 5.23 mm, admitting one nominal 2 m offset approach and rejecting its
+mirror. Preserve geometry coefficients in float32 in a future corrected
+runtime. The strict positive-edge corner bounds also merit contract review.
+No running experiment's physics was changed. The manual plan is retained as
+an evaluation-geometry diagnostic, excluded from the generalist demo bank.
+
+Artifacts: `.artifacts/terra_test_time_compute_20260921/straight_failure_inspection/`.
+See [test-time compute](research/TEST_TIME_COMPUTE_20260921.md).
+
+
+## September 21, 12:50 UTC: local sampling retry and first finetuning checkpoints
+
+Euler **14776814** is RUNNING on eu-g4-023, checking greedy parity in the
+actual sampling layout against the completed Euler baseline. It reuses
+14765736's full greedy output and preserves the failed GH200 comparison.
+One GPU for 75 minutes keeps all three sampling attempts within 118m52s of
+the original two-hour allocation. No stochastic gain is verified yet.
+
+Geometry job **14766038** has now saved finite T-junction updates 1, 2, 10
+and 50 with zero material/integrity violations. These are verified training
+checkpoints; adapted-policy evaluation is not yet available. Straight had
+zero PPO updates. The future road case uses the train-first ordering.
+
+Receipts: `.artifacts/terra_test_time_compute_20260921/launch/euler_local_submission.json`
+and the remote adaptation result under `results_14766038/trn-tee-side2/`.
+
+
+## September 21, 12:35 UTC: test-time failures diagnosed; road finetuning reordered
+
+Sampling 14765736 stopped after 43m26s at its cross-runtime greedy check.
+The Euler rollout passes integrity and solves 587/608, equal to CSCS in total,
+but 109 episodes differ and four success labels flip. The selected64 panel is
+45/64 on Euler versus43/64 on CSCS; those gains are not search improvements.
+Its complete Euler baseline is retained for a separately identified local
+comparison with mandatory exact sampling-layout validation.
+
+Geometry-specific14766038 remains RUNNING. Straight used4588s on baseline
+rollouts and performed zero PPO updates. Greedy andN12 both solve0/32;
+mean excavation rises93.594%→97.734% and accepted material92.813%→97.695%.
+Tee parent solves32/32; N16 lowers retained total work travel50.806→50.021m
+(1.54%). These are frozen-policy results. Tee reached native PPO compilation;
+no completed update was verified at12:35UTC.
+
+The evaluation-first schedule was poorly budgeted. At12:35:46UTC, replaced
+only the not-yet-started road case with reviewed train-firstv2: verify/save
+PPO milestones before evaluation, omitN16, and admit greedy parent/latest
+only if time remains. The active tee process retains importedv1. Original
+source and handoff receipt are archived. Allocation, physics, PPO settings
+and per-case timeouts are unchanged. User subsequently requested visual/manual
+investigation of straight residuals; that diagnostic is in progress on CPU.
+
+Evidence: `.artifacts/terra_test_time_compute_20260921/status_20260921_1228/`
+and `adaptation/train_first_handoff.json`. No monitor is scheduled.
+
+## September21, 12:28 UTC: corrected-runtime continuation training; two panels pass
+
+CSCS4725717 RUNNING on nid005700 for2h44m. Production reached approximately
+u103669; latest saved milestoneu103500 (35,345,010bytes). Observed end-to-end
+throughput17.4ktransitions/s, about1.9s/update. Checksum configuration path and
+four-GH200 CUDA/cuDNN/NCCL checks passed. No final checkpoint claim yet.
+
+Corrected-runtime panels (foundations/trenches/road): parentu100000378/209/30,
+u101000381/209/31, u102500381/208/30, denominators384/224/32. Both retention
+checks PASS, including per-condition tolerance. At102500 foundations gain6/lost3;
+trenches gain4/lost5. Thus the foundation gain is retained, trench exact completion
+is flat/slightly lower, and individual solved maps still change.
+
+Continuous mean dug/accepted at102500: foundations99.606%/99.498% versus
+parent99.405%/99.320%; trenches98.749%/98.557% versus98.672%/98.216%.
+Efficiency is not clearly improving: on375 common successful foundations,
+retained inter-setup distance31.460→32.832m (+4.36%), unique area/productive
+setup7.039→6.847m² (-2.72%), edge adjacency88.576%→86.660%. On204 common trench
+successes retained distance35.419→35.262m and workspace yield2.817→2.820m².
+No efficiency costs or imitation are active. Continue the existing bounded
+run; next required panelu105000 should clarify whether completion/behavior
+changes persist. Recommend next result check near14:00UTC, not scheduled.
+Evidence: `.artifacts/terra_overnight_20260920/status_20260921_1228/`.
+
+## September 21: geometry-specific RL comparison submitted; sampling repaired
+
+At the user's request, submitted **Euler 14766038**: one RTX3090, four-hour
+total cap, three sequential independent finetunes of the current u100000
+generalist on straight slot 434, T-junction slot 495 and road-network slot 346.
+Each has a 70-minute process budget, fresh Adam, 256 environments, rollout 32,
+8192 transitions/update, and checkpoints at 1/2/10/50/250. Update 1 must pass
+finite model/optimizer/loss and transition-integrity checks before proceeding.
+All added behavior costs, teachers and imitation are disabled. Parent and
+adapted policies share 32 fresh same-geometry starts; parent/final N16 retains
+greedy and uses retained-work objectives. This is known-map planning, not
+generalist promotion or proof of rescuing the original full-608 reset.
+
+Local CPU tests, actual cluster-Python configuration validation, canonical bank
+checks and independent review pass. Initial live check shows RUNNING on eu-g4-011 in CUDA
+preflight; no completed PPO update is verified. Receipt: `.artifacts/terra_test_time_compute_20260921/adaptation/submission.json`.
+Check after the first case's 70-minute budget or an earlier failure. This is a
+recommended check, not a scheduled monitor. No automatic continuation.
+
+Sampling job 14763650 passed CUDA but failed after 26 seconds because archived
+map symlinks pointed to local-only paths. Replaced them with real map files;
+the cluster full-608 dataset contract passes. Retry **14765736** is RUNNING
+on eu-g4-016 and has reached the greedy baseline rollout, with native parity
+still unverified. Its 1h59m cap preserves the original total allocation budget.
+See [test-time compute](research/TEST_TIME_COMPUTE_20260921.md).
+
+## September 21, 09:53 UTC: bounded current-policy sampling submitted
+
+Euler **14763650** is PENDING (Priority): one RTX3090, 8 CPUs, 32 GB, two-hour
+wall limit. It compares greedy and nested best-of-4/16/64 under the corrected
+u100000 runtime, using all 21 fixed-panel failures and 43 successful controls.
+Optional N256 applies only to unresolved failures inside the same allocation.
+Successful greedy plans remain available to both completion-first selectors,
+which minimize retained work-pose travel or work-pose count. No PPO updates or
+reward/physics changes. Native GPU startup and greedy parity remain unverified;
+local CPU integrity/selection checks and independent code review pass.
+
+The earlier campaign showed straight completion 30/32 to 32/32 at N16 and
+diminishing T-junction pose gains through N1024; short u250 adaptation plus N16
+reached 8 T-junction poses. The old road remained unsolved despite long runs.
+Those results use a different parent and runtime and are not current results.
+See [test-time compute](research/TEST_TIME_COMPUTE_20260921.md) for scope, costs,
+selection rules and artifacts. No new map-PPO job is submitted before this
+screen identifies useful targets. CSCS continuation 4725717 was separately
+confirmed RUNNING on nid005700; it is not duplicated. No monitor is scheduled.
+
+## September21, 09:42 UTC: checksum repair retry submitted
+
+Live refresh confirmed no new generalist production updates after4721607;
+Euler100-source bank remains complete and both legacy finetuning lanes run.
+Within the existing authorized100k→110k continuation, submitted **4725717**,
+one4-GH200 node,d130/normal,seven-hour cap (prior failed job used44m14s of the
+original eight-hour budget). Scheduler startup remains unverified at submission.
+The artifact runner now uses streaming SHA256 compatible with cluster Python.
+Actual-parent CPU dry-run including the corrected retention report/checksum
+passes, shell/Python checks pass, and independent review found no blockers.
+
+The retry reuses completed corrected-u100000 evaluation and finite native
+100001/save-resume100002 qualifications from4721607. Fresh CUDA/NCCL and exact
+cluster-Python dry-run run before production. It resumes the untouchedu100000
+model and Adam, not diagnostic checkpoints, under the same corrected frozen
+runtime. No imitation, physics, reward, or PPO changes. Fixed retention panels
+101000/102500/105000/110000 and rolling250-update saves remain. Both previous
+calibration and alreadycompleted dataset collection are not repeated.
+
+Remote outputs use `terra-overnight-20260920/retry_20260921/`; local submission
+receipt `.artifacts/terra_overnight_20260920/launch/retry_submission.json`.
+Next recommended check10:45UTC for queue/startup and first finite production
+checkpoint. Recommended only; no monitor is scheduled. Do not count the
+retry as healthy training until actual completed updates are present.
+
+## September 21, 08:04 UTC: demonstration target reached; production continuation did not start
+
+Live Daint/Euler checks succeeded. CSCS4721607 FAILED after44m14s. Corrected
+u100000 panel completed378/384 foundations,209/224 trenches,30/32 roads with
+zero integrity failures. Mean dug/accepted: foundations99.405%/99.320%,
+trenches98.672%/98.216%. Compared to corrected u75000 counts375/206/30,
+completion is up3 foundations and3 trenches; these are checkpoints of the
+original training run replayed under corrected physics, not new adaptation.
+Native finite u100001 and save/resume u100002 qualifications PASS with
+Adam6400064/6400128. Production failed before updates in parent checksum
+validation: `AttributeError: module 'hashlib' has no attribute 'file_digest'`.
+The compatibility bug is fixed locally in the artifact continuation runner and
+source run.py using streaming SHA256; exact digest parity on the actual parent
+and syntax checks pass. Remote repair/resubmission has not been performed.
+No retention-stop result or new production checkpoint exists.
+
+Imitation calibration still stops on unchanged-parent cross-graph discrepancies:
+logp0.05428314/value0.01160336. Dynamic parameter routing did not resolve the
+native failure. No imitation PPO was run; do not weaken guards without diagnosis.
+
+Euler14730608 COMPLETED56m09s with native oriented replay PASS. Collection
+14730609_0/1 COMPLETED in3h01m/3h33m, yielding38+37 new sources. The full combined
+bank was validated this turn at `qualified_combined_20260921`:100distinct sources,
+102episodes,11875total transitions,11020supervised,94full plans and8corrective
+suffixes. Existing native acceptance is retained; this combine pass checked
+arrays/history/time/splits but did not rerun native simulation. Held-out source
+and scenario overlap are zero across9manifests. Only1new road-disposal source
+was solved; coverage remains uneven. Data collection is not learned policy
+improvement. The optional known-network diagnostic failed separately and has
+no completed replay result. Old Euler finetuning lanes continue; no new jobs
+were submitted during this status check.
+
+Evidence: `.artifacts/terra_overnight_20260920/status_20260921/` and remote
+Euler `terra_trench_recovery_20260920/qualified_combined_20260921/`.
+
+## September 20, 21:47 UTC: bounded overnight work submitted and runtime checked
+
+**CSCS 4721607 is RUNNING on nid006492**, lterenzi/d130, one node with four
+GH200 GPUs, 64 task CPUs, eight-hour ceiling ending September21 05:46 UTC
+(07:46 Paris). Four-GPU identity, cuDNN backward and NCCL all-reduce PASS.
+It is evaluating the native u100000 checkpoint under the corrected runtime;
+no new PPO update is verified yet. The original-runtime 380/384 foundation,
+213/224 trench and 31/32 road counts are not the current-runtime baseline.
+
+The submitted sequence is:
+1. Required corrected-runtime 608-case u100000 evaluation and integrity checks.
+2. At most 30 minutes of old-u75000 imitation calibration, diagnostic only.
+   Its failure is recorded separately and cannot select a production model or
+   block the independent no-imitation continuation.
+3. Independent native four-GPU finite u100001 and save/resume u100002 checks,
+   including exact Adam6400064/6400128 and absent demonstration state.
+4. Discard those diagnostic steps; resume the original native u100000 model and
+   Adam toward u110000 (maximum327.68M added transitions), with all added costs
+   zero and no imitation. Save every250 updates. Required matched panels at
+   u101000, u102500, u105000 and u110000 compare to the corrected baseline.
+   Stop for net losses above4 foundations,2 trenches,1 road case, or2 in any
+   condition. No automatic promotion or further allocation follows this job.
+
+This replaces the provisional plan to retry the old demonstration comparison.
+The parent solves24/25 instruction resets; all26 instruction variants for those
+successful resets require more raw Terra actions. That does not prove worse
+retained-pose deployment efficiency, which was not compared. It does mean this
+bank cannot be assumed to contain generally better expert behavior. The one
+new successful strategy and larger training-only search remain useful research
+inputs, but no hard-label training is launched tonight.
+
+Calibration now passes rollout weights dynamically, matching production.
+A varying-input CPU check of the actual parent has zero scan-versus-forward
+logp/value discrepancy in BF16 and FP32; an earlier hoistable repeated-input
+probe still drifts. The correction is not proof of the GH200 failure cause.
+All native drift guards remain unchanged and the GPU diagnostic remains pending.
+
+**Euler 14730608 is RUNNING on eu-g4-007**, one RTX3090,8CPUs,32GB,75minutes.
+CUDA/cuDNN checks PASS; current phase is native scalar-path compilation after
+325seconds of runtime initialization. Native oriented replay remains unverified.
+Dependent collection **14730609_[0-1]** is PENDING/Dependency: two one-GPU lanes,
+eight CPUs and32GB each, capped at six hours. Search clocks now exclude cold
+compilation; each has at most five hours of search. Both require the new native
+qualification receipt and afterok dependency. Target remains75 additional hard
+training sources; zero new examples are claimed at this handoff. The old Euler
+finetuning lanes remain untouched.
+
+The CSCS runtime reuses September19 frozen Terra/baselines snapshots. Only the
+artifact continuation runner's authorized ceiling and source routing differ;
+training/Adam/PPO/reward logic is unchanged. Its actual-u100000 CPU dry-run
+passes with4 virtual CPU devices,1024global envs,32768transitions/update and no
+inherited imitation. Syntax, shell, EDF, source-diff and independent reviews
+pass. GPU optimizer qualification, first production update and new checkpoints
+remain outstanding. Walltime with a saved finite checkpoint is continuable,
+not scientific failure; inspect any retention stop before resuming.
+
+Artifacts: `.artifacts/terra_overnight_20260920/` (recovery, launch, Euler checks).
+CSCS root: `/ritom/scratch/cscs/lterenzi/terra-training/runs/terra-overnight-20260920`.
+Euler root remains `codex_terra_edge_runs/terra_trench_recovery_20260920` in
+lterenzi scratch. Submission receipts record exact IDs and resources.
+Next recommended startup check: **September20 22:45 UTC**, to establish native
+qualification and the first PPO checkpoint; morning result check **September21
+06:00 UTC**. These are recommendations, not scheduled monitors. The jobs perform
+the described checks automatically. Report actual phases and completed panels.
+
+## September20, 21:33 UTC: CSCS access restored and complete results recovered
+
+Daint SSH and Slurm verified as lterenzi, project d130. Broad segment4685249
+COMPLETED at native u100000 with Adam6400000 and PASS finite-state result.
+The original-runtime fixed greedy450 panel improves from u75000 to u100000:
+foundations379/384→380/384, trenches208/224→213/224, included road30/32→31/32.
+All608 cases have zero integrity failures. Foundations gain4 and lose3 maps;
+trenches gain7 and lose2. On376 common foundation successes, retained inter-setup
+straight-line travel34.671→32.403m, unique area/productive setup6.804→6.953m²,
+and fresh workspace edge adjacency86.06%→87.47%. These are original-runtime
+results, not yet corrected-runtime qualification or evidence for cost promotion.
+
+CSCS imitation4712295 FAILED after14m39s in calibration before either PPO arm.
+Parent instruction comparison and bank assembly completed. The parent succeeds
+on24/25 selected instruction resets, so most existing labels teach a different
+successful sequence rather than a task the parent cannot complete. Calibration
+stopped at unchanged-parent logp drift0.0507202/value0.0107465; cached parent
+probabilities match within5.96e-8. There is no new imitation learning result.
+The rollout embeds frozen weights as compile constants, unlike the dynamic
+production path; a diagnostic correction is being checked without relaxing
+numerical guards. The overnight run will preserve the matched u75000 recipe.
+
+Euler qualification14671834 FAILED/124 after17m45s during pre-search startup;
+no START2983 or native successful plan occurred. Its dependent collection array
+14671835 was canceled before running. CUDA passed, bank loading took3m36s and
+model initialization20s. The search budget incorrectly started before cold
+compilation; it now starts after explicit warmup, with phase timing and a longer
+bounded qualification. This is startup evidence, not a planner failure.
+
+Recovery artifacts: `.artifacts/terra_overnight_20260920/recovery/`; Euler timing
+and retry checks: `.artifacts/terra_overnight_20260920/euler/`. Source runtime,
+physics and efficiency costs are unchanged. No new overnight job is claimed
+started by this recovery entry; submission and startup will be recorded below.
+
+## September 20, 05:22 UTC: Euler compute reallocated to hard-trench demonstrations
+
+The user approved using Euler while CSCS access remains unavailable. Preserved
+six native scratch checkpoints (model and Adam, 646 finite numeric leaves each)
+in `/cluster/project/rsl/lterenzi/terra_trench_recovery_20260920/preserved_scratch/`.
+The two scratch lanes and their already queued successors are now confirmed
+CANCELLED: 14606054, 14615001, 14670279 and 14671603. The two finetuning lanes
+14606393/14609052 remain RUNNING; their successors 14670278/14670291 are untouched.
+This is a compute reallocation, not evidence that all scratch runs failed:
+scratch straight seed14 reached 32/32 at u16000 and scratch T seed13 reached
+32/32 at u17000. The preserved checkpoints retain those recoveries.
+
+All four known-network variants remain 0/32 in the latest complete panels at
+u15000–u18000. Finetune seed14 excavates 95.35% but accepts only 65.12%, with
+25.25% off-zone and 4.98% loaded material. It needs a disposal/sequence audit;
+this does not prove infeasibility. These adaptation maps originate in held-out
+banks and are diagnostic-only, never imitation inputs.
+
+Submitted replacement qualification **14671834** (one RTX3090, 45 minutes) and dependent
+collection array **14671835_[0-1]** (one RTX3090 per lane, six hours each), account
+lterenzi, gpuhe/es_hutter. At submission qualification is PENDING and collection PENDING/Dependency.
+Native replay remains UNVERIFIED. The initial qualification 14671793 passed
+CUDA/convolution checks but failed after 33 seconds because the staged bank
+lacked its required parent source registry. Dependent array14671794 was
+automatically CANCELLED without starting. The original registry was added;
+the complete 3,840-map dataset contract now passes on CPU. Both old logs and
+submission receipts are preserved.
+The collection starts only after the new oriented planner completes a known
+training source and independently replays it in 16 native lanes. A bounded
+32-reset corrected-runtime network audit shares the qualification allocation;
+its failure is recorded separately and does not imply a negative policy result.
+
+Target: add 75 distinct hard training sources to the existing 25, best effort.
+743 eligible unused sources remain after excluding all nine held-out manifests
+(5,440 rows); the two disjoint lanes attempt at most 110 sources each. The new
+proposal uses actual segment orientations for branch-first retreat planning.
+Each source is bounded by 300 seconds and 120,000 transition queries; each lane
+by 5M queries and 19,800 seconds internally. Every accepted plan must pass native
+full-reset history/time replay, exact completion, mass, target/obstacle and
+chassis checks. Corrective prefix actions retain context but are unsupervised.
+CPU validation passed for 27 existing episodes and 110 negative mutations.
+Remote input planning and both Slurm resource dry runs pass. No PPO, reward,
+physics, or efficiency-cost changes are introduced; maximum new allocation is
+12.75 GPU-hours. There is no automatic continuation.
+
+Sources reuse the September19 corrected snapshots (Terra 6a0d7bd plus dirty
+changes; baselines f550c04 plus dirty changes). Local artifacts are
+`.artifacts/terra_trench_recovery_20260920/{launch,expansion,diagnosis}`. Euler run
+root is `/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_trench_recovery_20260920`.
+No duplicate of CSCS imitation comparison 4712295 was launched; its latest
+confirmed state remains September19 13:19 UTC, not a current result.
+
+Next recommended check: **September20 06:30 UTC**, to inspect qualification and
+collection startup, then 3–6 hours after collection starts for accepted source
+counts. No monitor or scheduled check was installed. Before any later imitation
+assembly, exclude the enlarged instruction sources from fresh retention too;
+do not reuse overlapping September19 retention rows. Merge only verified
+accepted examples and report actual counts; 100 is a target, not a result.
+
+## September 19, 16:42 UTC: live update blocked by CSCS authentication
+
+SSH through Ela fails with publickey denial; the certificate expired at
+15:48:33 UTC. Autonomous browser renewal did not issue a new certificate.
+One bounded CLI recovery attempt then failed before authorization with
+`failed to fetch OIDC discovery document: client error (Connect), operation timed out`
+from auth.cscs.ch. No jobs were changed.
+
+Current scheduler state, new checkpoints, calibration and comparison results
+are unavailable. The 13:19 UTC verification below remains the last confirmed
+comparison state; it must not be presented as current. Recheck once CSCS auth
+responds and SSH is restored; no automatic check is installed. Evidence is
+`.artifacts/terra_imitation_revision_20260919/launch/access_check_20260919_1634.json`.
+
+## September 19, 13:19 UTC: revised imitation comparison started
+
+Broad 4685248 was verified RUNNING with u78500 saved at 12:19 UTC; 4685249 is
+dependency-pending. Its u75000 original-runtime evaluation passes at 379/384
+foundations, 208/224 trenches and 30/32 road cases. It continues unchanged.
+
+Preparation **4711914 COMPLETED in 22m06s**, exit 0, on four GH200 GPUs. Its
+CUDA, convolution-backward and NCCL checks pass. The fresh corrected-runtime
+u75000 baseline is **375/384 foundations, 206/224 trenches and 30/32 road cases**,
+with zero integrity failures. Mean excavation/accepted fractions are
+98.987%/98.885% for foundations and 98.104%/97.982% for trenches. This is the
+shared retention reference; the original-runtime panel above is historical.
+
+The fresh retention collection selected **320 episodes / 27,240 transitions**:
+eight successes in every one of 40 conditions (200 foundation, 120 trench).
+All nine held-out source/scenario lists and reserved instruction sources were
+excluded. The instruction bank adds **27 episodes / 25 hard geometries**:
+seven networks, three segmented bends, fifteen T junctions; 2,727 supervised
+actions and 105 masked prefix actions. There is no straight-trench padding.
+Twenty-one sources are new; four retain previous native acceptance. Native
+replay, full reset/history/time checks and material/chassis checks pass.
+
+Comparison **4712295 RUNNING on nid006338** after submission at 13:15 UTC: one node,
+four GH200 GPUs, 64 task CPUs, lterenzi/d130, six-hour ceiling. No PPO update
+is verified yet. Its four-GH200 count, cuDNN backward and NCCL checks pass;
+it is now comparing the parent on the instruction resets. It then
+assembles the bank, calibrates beta with native Adam, and independently checks
+finite update/save-resume for both arms plus the guided fade boundary.
+Next useful startup check: about **14:00 UTC**, to establish calibration and
+native-update results. Recommended only; no additional monitor is installed.
+
+The frozen snapshot is
+`/ritom/scratch/cscs/lterenzi/terra-training/snapshots/terra-imitation-revision-20260919`;
+run artifacts use the same basename under `runs/`. It includes current dirty
+source from Terra 6a0d7bd and baselines f550c04. The exact source receipt and
+archives are under local `.artifacts/terra_imitation_revision_20260919/launch/`.
+Both retention families now use cached selected-parent probabilities; hard
+instruction samples source before condition. Twenty-nine focused CPU checks
+pass. The native-Adam calibration helper passes its CPU reconstruction fixture;
+actual four-GPU calibration remains required. Local collection is complete and
+its GPU is released.
+
+Submitted comparison: same native u75000 parent/Adam, corrected runtime and
+4x256x32 layout; 1,000 updates each for PPO-only and revised imitation,
+sequentially on one additional node. Guided fade/hold are 500/500 updates;
+fixed panels are u75500/u76000. Existing strict retention stops apply to both.
+Beta is chosen from 0.001/0.003/0.01; no acceptable candidate means no training.
+Live episodes restart from the same configured seed/protocol in both arms.
+Only a measured control retention stop permits proceeding to the independently
+qualified guided arm; other errors stop the job. Compare at the shared
+milestone if one arm stops early. No penalty switch or policy promotion is
+automatic, and the 1,000-update screen is not a saturation claim.
+
+## September 19, 05:48 UTC: broad u50000 evaluated; u67000 saved
+
+**CSCS 4685248 is RUNNING on nid006516**, elapsed 10h12m, with u67000 saved and
+logs near u67068 at about 17.1k end-to-end transitions/s. Job 4685249 remains
+PENDING (Dependency). Costs remain zero; the next fixed-panel evaluation is
+u75000. The imitation candidate remains stopped. No new job, automatic penalty
+switch or promotion accompanies this update.
+
+The original-runtime u50000 panel PASS matches u35000 source, panel, resets,
+protocol and treatment fingerprint. Foundations rise 374 to **377/384** (8 gained,
+5 lost); trenches stay **209/224** (4 gained, 4 lost); the included road subset
+rises 29 to **30/32** (2 gained, 1 lost). Foundation excavation/accepted soil rise
+98.752%/98.636% to 99.529%/99.528%; trench values fall 98.863%/98.649% to
+98.527%/98.396%. On 369 common foundation successes, retained travel falls
+37.753 to 36.399 m (-3.6%), area/setup rises 6.570 to 6.624 m² (+0.8%) and
+adjacency rises 85.313% to 86.384%. Integrity counts are zero. These matched
+old-runtime results are separate from the corrected-runtime imitation screen.
+
+**Delayed evaluation recovery 4709744 COMPLETED in 19 minutes, exit 0.** It
+recovered the already-trained comparison without PPO or weight changes. The
+fresh parent reproduces 64/64; control and penalty both achieve 63/64 at u22500
+and 62/64 at u25000. All five native/evaluation checks pass, with zero integrity
+failures. The completion gate is FALSE because the final score is below 63/64;
+equal arm counts do not establish a net completion loss caused by penalties.
+On 60 common successes at u25000, penalty versus control gives retained travel
+-10.3%, area/setup +4.3%, productive setups -4.0%, lateral score -22.3%, and
+adjacency +0.21 percentage points. No stage acceptance or automatic escalation.
+
+Evidence: `.artifacts/terra_training_status_20260919/generalist/paired_35000_50000.json`
+and `delayed_penalty/analysis.md`, `analysis.json` and `comparison/stage_acceptance.json`.
+Earlier snapshots below are historical.
+
+## September 18: decision refinement after the 20:01 UTC snapshot
+
+The 750-update imitation retention STOP is a conservative screen, **not evidence
+of plateau, saturation or failure of imitation in general**. Keep the already
+running broad continuation through its u50000 fixed-panel evaluation; the last
+verified checkpoint remains u49250. Historical old-runtime trenches improved
+u20000 to u35000 from 195/224 to 209/224 and 96.34% to 98.86% excavated. That is
+an observed learning trend, not a matched current-runtime control.
+
+Next prioritize gradual efficiency from a qualified mature checkpoint. The
+proposed bounded recipe is a **linear 40.96M-transition ramp followed by a
+40.96M-transition hold**: 1,250 + 1,250 updates at 4x256x32. Evaluate completion,
+retained work-pose travel, workspace yield and continuity at milestones. Parent
+and coefficients are unselected; no new job is configured or launched. Entry
+depends on measured performance; u50000 is an evaluation point, not proof of
+saturation. This preserves the planned delayed-cost direction; it does not
+restart an initial-penalty or control sweep.
+
+The deployment target retains effective work poses, including dump and relift.
+Lateral penalties apply only to fresh digging, not dumping or loose-soil work.
+Retained-work cost terms are implemented, but the current ramp includes only
+lateral/raw base-travel/raw base-turn costs, and the previous retained pose is
+not in policy observations. Preparatory implementation is therefore needed
+before a retained-cost ramp is ready. Existing delayed-comparison outputs are
+being recovered now that storage is accessible, to avoid duplicate compute.
+
+Euler's 25 new plans have completed readback and are not merged. A possible
+combined expert bank would have 37 plans from 31 sources: 27 straight, three
+T junctions and one network. Four junction sources leave limited hard-case
+coverage; plan count does not establish diversity or learning sufficiency.
+
+## September 18, 20:01 UTC: imitation stopped on retention; expert collection completed
+
+**CSCS 4709420 stopped at u35750 on the intended trench-retention check.** Slurm
+reports FAILED/exit 1 after 1:41:01; this is the deliberate retention exception,
+not an infrastructure failure. Exact four-GPU cuDNN/NCCL, finite first update,
+native save/resume and fade-boundary checks passed. Both fixed-panel evaluations
+passed, with no integrity failures in any of the 608 cases.
+
+| Same-runtime CSCS panel | u35000 parent | u35750 | Gained / lost |
+| --- | ---: | ---: | ---: |
+| Foundations | 369/384 | 383/384 | 14 / 0 |
+| Trenches | 213/224 | 205/224 | 1 / 9 |
+| Road trenches, included above | 30/32 | 29/32 | 1 / 2 |
+| Overall | 582/608 | 588/608 | 15 / 9 |
+
+The net trench loss is eight cases, above the allowed two. No hold started;
+there is no promotion or automatic retry. Production checkpoints u35250,
+u35500 and u35750 are saved. Added efficiency costs stayed zero. At u35741,
+logged entropy was 0.24482, PPO KL 0.01384 and end-to-end throughput about
+15.1k transitions/s; these do not override the retention result.
+
+On all 369 common foundation successes, retained distance rises 37.8407 to
+38.7566 m (+2.4%), area/setup falls 6.6175 to 6.5857 m² (-0.5%), adjacency falls
+86.02% to 85.51%, and lateral score rises 0.4955 to 0.5253. No efficiency win
+is established. Across all trenches, excavation falls 99.12% to 97.91% and the
+mean longest task-progress stall rises 36.42 to 51.86 actions. All nine lost
+trenches time out at 450 actions, with 0–94.4% dug and longest stalls of
+209–450 actions. The parent completes each under the same corrected physics;
+bank infeasibility cannot explain these nine regressions. Imitation versus
+ordinary PPO drift is not isolated. The sole remaining foundation failure is
+slot 253 (`fnd-slab-side1-obj`), 49.3% dug with 379 ineffective actions.
+
+**The old broad chain is retained.** Job 4685246 timed out after 24 hours with
+u48750 preserved. Native successor 4685248 is RUNNING, about 27 minutes elapsed
+at the latest check, with u49250 saved at 21:59 CEST and roughly 17.3k end-to-end
+transitions/s. Job 4685249 is PENDING (Dependency). No replacement promotion,
+old-chain cancellation or additional job has occurred.
+
+**Euler 14555235 COMPLETED in 1:53:21**, reporting 25 new plans from 25 sources:
+23 straight and two compact T junctions, 837 actions, 48 source attempts and
+44,701 action queries. These are training-only collection results, not another
+policy evaluation. Retrieval/readback is now complete; the two T solutions do
+not establish multi-junction network coverage and were not in the completed
+331-plan imitation bank and have not been merged. Existing Euler training lanes
+are untouched.
+
+Evidence: `.artifacts/terra_trench_failures_20260918/boundary_fix/`
+`cscs_4709420_status_2001/`, including both evaluation reports/status files,
+`u35750.retention.json` and `lost_trench_details.json`. Next recommended check:
+September 18 at **20:45 UTC** for the continuing broad run's u50000 fixed panel.
+No watcher or scheduled check is configured.
+
+## September 18 submission/startup snapshot, superseded above
+
+**CSCS imitation job 4709420 is PENDING (Priority); allocation qualification and
+production startup are UNVERIFIED.** It has no dependency and requests one
+node/four GH200s, 64 CPUs and six hours, account `lterenzi`, project `d130`.
+Slurm estimates a September 18 start at 20:25 CEST (18:25 UTC); this is a
+scheduler estimate, not a confirmed start. Submission receipt:
+`boundary_fix/launch/cscs_submission.json` (16:51 UTC), under the artifact root
+below. Remote campaign:
+`/ritom/scratch/cscs/lterenzi/terra-training/runs/terra-imitation-20260918`.
+Its evaluation directory is fresh; no local parent report is reused.
+
+**Euler expert job 14555235 is RUNNING on eu-g4-004**, account `lterenzi`, one
+RTX 3090, partition `gpuhe.4h`, three-hour wall limit. The search itself stops
+at 7,200 seconds or 400,000 action queries. CUDA library loading and cuDNN
+backward pass; NCCL all-reduce is skipped for this one-GPU job. It searches
+deterministic source ordinals 8–55, comprising 23 straight and 25 junction
+candidates, after the local 0–7 range. Existing Euler training lanes are
+untouched. Preflight passes, but expert generation is **STARTUP_UNVERIFIED**.
+At 12m54s elapsed, model initialization was complete, with no WARMUP, SOURCE,
+BEST or RESULT record and no accepted expert plan.
+
+Euler output root:
+`/cluster/scratch/lterenzi/codex_terra_edge_runs/terra-imitation-20260918`.
+Submission receipt and frozen launch material are under
+`.artifacts/terra_trench_failures_20260918/boundary_fix/launch/`: Terra
+`6a0d7bddd` plus geometry changes, baselines `f550c048` plus grouped-imitation
+and launcher changes. The archives include the declared dirty patches.
+
+The selected active bank is assembled: **331 plans, 27,613 transitions, 299
+source geometries, all 40 conditions**, with 27,612 eligible imitation labels.
+It contains 200 foundations, 119
+ordinary trenches and 12 expert plans from six expert sources. One ordinary
+trench scenario was replaced by its expert version. The mixture is 50%/20%/30%,
+with cached u35000 foundation distributions and hard trench/expert labels.
+All nine evaluation manifests are excluded. Its NPZ occupies 10,376,666
+compressed bytes and 1,257,523,633 raw transition bytes; this is distinct from
+the completed 1,280-plan collection archive.
+
+New straight slots 3175 and 3196 pass exact native replay in 49 total actions.
+Slot 3174 is `UNVERIFIED_TIMEOUT` and excluded; four locally tried networks
+remain unresolved. There are no new verified hard-junction successes yet.
+
+The local grouped-bank GPU smoke **PASSES** in
+`boundary_fix/grouped_gpu_smoke/result.json`: native u35000 to u35001, Adam
+2,240,000 to 2,240,064, finite state and the 331-plan/27,613-transition bank
+readback. It uses 1x128 and is never a production parent or evidence that the
+four-GPU layout has passed. CSCS job 4709420 has a bounded budget of one
+six-hour/four-GH200 allocation, u35000 to u36500, beta 0.01,
+16 auxiliary examples per device/minibatch, 750-update fade and 750-update hold.
+All efficiency costs stay zero; online teachers are released. The allocation
+must pass exact 4x256 finite update, native save/resume and fade-boundary checks,
+then establish a fresh same-hardware parent panel before production evidence.
+Retention losses beyond four foundation cases, two trenches, one road case or
+two cases in any condition stop before the hold; there is no automatic control
+or extension.
+
+The local corrected u35000 reference is 369/384 foundations, 213/224 trenches
+and 30/32 road cases. The historical CSCS u35000 result is 374/384, 209/224 and
+29/32 respectively. Runtime and hardware both differ, so their churn is not an
+isolated geometry-fix effect. Existing CSCS chain 4685246 -> 4685248 -> 4685249
+is untouched. Retirement remains pending and is not automatic; it requires a
+new production finite update and checkpoint, preserving the old chain's latest
+complete checkpoint.
+
+Recommended checks on September 18: **17:40 UTC** for Euler's first native expert
+output and **18:55 UTC** for CSCS allocation qualification and the first
+production checkpoint. Neither check is scheduled; no watcher is configured.
+Detailed evidence and pending distinctions:
+[demonstration research note](research/TRENCH_DEMONSTRATIONS_20260918.md).
+
+## September 18 08:26 CEST: earlier long-run status, superseded above
 
 **CSCS 4685246 is RUNNING on nid006532**, verified September 18 at 08:26 CEST.
 It started September 17 at 21:23:31 CEST and its first allocation ends today at

@@ -15,7 +15,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from utils.behavior_cost_ramp import COST_KEYS, SCHEMA, validate_ramp_state
+from utils.behavior_cost_ramp import (
+    LEGACY_COST_KEYS as COST_KEYS, LEGACY_SCHEMA as SCHEMA, validate_ramp_state,
+)
 
 FULL_COSTS = (0.5, 0.01, 0.04)  # Previously called combined 2x.
 FRACTIONS = (0.0, 0.25, 0.5, 1.0)

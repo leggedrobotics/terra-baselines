@@ -14,10 +14,13 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Delayed retained-work efficiency](docs/research/RETAINED_EFFICIENCY_20260921.md): CSCS4729577 runs on one four-GPU node; both arms pass native update/resume qualification. Control reached and savedu110000; final evaluation is running. Its completedu107500 panel passes381F/212T/31roads. The25% retained-work arm is qualified throughu105002 and awaits its sequential turn. Ramp2500 updates, hold2500, native Adam preserved; selected parentu105000, previous frozen geometry retained.
+- [Current-policy test-time compute](docs/research/TEST_TIME_COMPUTE_20260921.md): Euler14791590 completedPASS. Same u109250 policy improves straight32 from2/32 to26/32 after geometry correction; full608 changes383→382foundations,208→211trenches,29→29roads. Six straight failures and two lost full-panel cases remain. The correction is excluded from the active matched efficiency comparison.
+- [Demonstrations and successful-policy rehearsal](docs/research/TRENCH_DEMONSTRATIONS_20260918.md): September21 combined bank passes with100sources/102episodes/11020supervised actions. CSCS4721607 corrected u100000 scores378/384F,209/224T,30/32roads; native qualifications pass, but production never starts due Python checksum API incompatibility. Retry4725717 finished u110000 at381/384F,206/224T,29/32roads and triggered the trench-retention STOP. Selected u105000 scores381/384F,211/224T,31/32roads for the next bounded efficiency comparison. Imitation drift remains unresolved; the completed continuation had zero added costs.
 - [Oracle implementation and combined broad continuation](docs/research/ORACLE_FOLLOWUP_20260916.md): remaining time, native actor growth, earlier foundation release and cached teachers; zero added costs.
 - [Network capacity and representation diagnostics](docs/research/NETWORK_SCALING_20260916.md)
 
-- [Foundation efficiency with delayed behavior costs](docs/research/FOUNDATION_DELAYED_COSTS_20260916.md)
+- [Foundation efficiency with delayed behavior costs](docs/research/FOUNDATION_DELAYED_COSTS_20260916.md): evaluation-only recovery 4709744 completed. Both arms score 63/64 at u22500 and 62/64 at u25000, below the final 63/64 floor. The penalty arm improves retained travel by 10.3% and workspace yield by 4.3% on 60 common successes, but the stage is not accepted.
 
 - [Full generalist using recovered broad teachers](docs/research/GENERALIST_BROAD_TEACHERS_20260915.md)
 
@@ -96,6 +99,85 @@ items when present, but environment state, RNG, and previous-action history
 restart, so a resumed run is not bit-exact. Older parameter-only checkpoints
 are warm starts with a fresh optimizer unless their continuation semantics are
 recorded explicitly.
+
+Optional actor imitation now uses separate demonstration observations/actions,
+the normal preprocessing path, and a coefficient fading in global transitions.
+PPO rollouts, advantages and value targets remain on-policy. Its checkpointed
+origin survives native resume; the extra demonstration forward pass stops after
+release. A diagnostic one-GPU continuation from u25000 to u25002 preserved Adam
+and produced finite state. This verifies implementation, not foundation
+retention or improved trench completion. The original ten-plan bank has only
+four sources and no foundations, so it is not the selected production dataset.
+All ten plans now pass native float16-metadata replay with unchanged actions
+and reset seeds; regenerated observations supersede the earlier helper export.
+The broader archive now exports 1,280 successful plans across all 40 foundation
+and trench conditions: 116,265 transitions from 784 sources, about 4.93 GiB of
+raw arrays per bank copy. This does not qualify production training memory.
+Cached soft foundation targets, explicit group/condition/source sampling and
+recovery masks are now implemented and CPU-tested. The selected single-run
+recipe uses 50%/20%/30% foundation/trench/expert guidance, beta 0.01 and 16
+auxiliary examples per device/minibatch, fading over 750 updates with a
+conditional 750-update hold. The selected bank has 331 plans:
+200 foundations, 119 ordinary trenches and 12 experts from six expert sources.
+The local grouped-bank GPU smoke passes u35000 to u35001 at 1x128, preserving
+Adam through step 2,240,064 and reading 27,613 transitions/27,612 eligible labels.
+It is diagnostic only. CSCS job 4709420 subsequently passed exact four-GPU
+cuDNN/NCCL, finite-update, native save/resume and fade-boundary checks. It ran
+1:41:01 and stopped as designed at u35750: Slurm FAILED/exit 1 records the
+retention exception, not an infrastructure failure. Same-runtime, same-CSCS
+panels pass validation and improve foundations from 369/384 to 383/384
+(14 gained, none lost), but regress trenches from 213/224 to 205/224
+(one gained, nine lost). The net eight-case trench loss exceeds the allowed two.
+Road trenches decline from 30/32 to 29/32; overall completion rises 582/608 to
+588/608, which does not override the family retention gate. The hold did not
+start; there is no promotion or automatic retry. All added costs remain zero.
+
+The 369 common foundation successes show no efficiency gain: retained distance
+37.84 to 38.76 m, unique area/setup 6.618 to 6.586 m², adjacency 86.02% to 85.51%,
+and lateral score 0.4955 to 0.5253. All nine lost trenches time out at 450 actions;
+the parent supplies successful witnesses under the same physics. Their losses
+cannot be assigned to bank infeasibility, and imitation versus ordinary PPO
+drift is not isolated. Euler 14555235 completed in 1:53:21 with 25 new plans from
+25 sources (23 straight, two compact T junctions), totaling 837 actions.
+Readback of these new collection outputs is complete; they were not part of the
+completed 331-plan training bank and have not been merged. Combining them with
+the existing 12 expert plans would yield 37 plans from 31 sources: 27 straight,
+three T junctions and one network. Only four sources are junctions, leaving a
+substantial coverage gap.
+
+On September 18, CSCS access was restored and existing job 4685246 was running
+on `nid006532`; dependents 4685248/4685249 remained pending, with no scheduler
+changes. Complete u42000 checkpoint metadata was fetched at 15:46 UTC. The
+historical u35000 full panel is 374/384 foundations and 209/224 trenches,
+with paired gains/losses of 14/7 and 17/3 relative to u20000. Both panels use the
+runtime before the local boundary fix. The local corrected-runtime u35000 panel
+completes 369/384 foundations, 213/224 trenches and 30/32 road cases. The fresh
+CSCS parent panel reproduces those counts and supplies the controlled baseline
+for the stopped imitation screen. At the 20:01 UTC update, old job 4685246 had
+timed out with u48750 preserved; native successor 4685248 was running with
+u49250 saved and about 17.3k end-to-end transitions/s, while 4685249 remained
+dependency-pending. Keep this chain because the candidate failed retention.
+The 750-update imitation stop is a conservative retention screen, not a plateau
+or rejection of all imitation. Keep the already-running broad policy through
+its u50000 evaluation. Historical old-runtime trenches improved u20000 to
+u35000 from 195/224 to 209/224 and 96.34% to 98.86% dug; this supports allowing
+continued learning, but is not a matched current-runtime control. The next
+recommended u50000-panel check is 20:45 UTC; no watcher is scheduled.
+See the demonstration research note and `boundary_fix/cscs_4709420_status_2001/`
+for paired reports, failure details and the bounded geometry-audit scope.
+
+The September 21 efficiency stage starts from qualified u105000, with a linear
+81.92M-transition ramp (2,500 updates at 4x256x32) and an equal hold. Control
+and treatment both observe the previous effective work pose through initially
+zero actor/critic projections; native Adam leaves and clocks are preserved.
+The ramp now supports all six costs and restores historical three-cost stages
+unchanged. Effective work includes excavation, dumping and relifting; lateral
+cost applies only to fresh excavation, and raw navigation costs remain zero.
+The one-node comparison and its completion/behavior criteria are recorded in
+[retained-work efficiency](docs/research/RETAINED_EFFICIENCY_20260921.md).
+Its frozen environment excludes the separately validated September 21 geometry
+correction. The earlier easy-map delayed-cost stage is complete and failed its
+final completion floor; it is not evidence for promoting the new treatment.
 
 ### Policy inputs and architecture
 

@@ -340,6 +340,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         time_observation_mode=validate_time_observation_mode(
             _config_option(config, "time_observation_mode", "none")
         ),
+        retained_work_context_observation=bool(
+            _config_option(config, "retained_work_context_observation", False)
+        ),
         actor_residual_head=bool(_config_option(config, "actor_residual_head", False)),
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
@@ -406,6 +409,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         obs.append(jnp.zeros((init_batch_size, angles_cabin), dtype=jnp.float32))
     if model.time_observation_mode != "none":
         obs.append(jnp.zeros((init_batch_size, 1), dtype=jnp.float32))
+    if model.retained_work_context_observation:
+        obs.append(jnp.zeros((init_batch_size, 5), dtype=jnp.float32))
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
     # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
@@ -1593,6 +1598,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     admissible_dig_observation: bool = False
     # Explicit actor/critic input variant; the map encoder itself is unchanged.
     time_observation_mode: str = "none"
+    retained_work_context_observation: bool = False
     actor_residual_head: bool = False
     attn_latent_queries: int = 4
     flatten_reduce_channels: int | None = None
@@ -1620,6 +1626,15 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             self.remaining_time_critic_embedding = self.param(
                 "remaining_time_critic_embedding", nn.initializers.zeros_init(),
                 (704,), jnp.float32,
+            )
+        if self.retained_work_context_observation:
+            self.retained_work_context_actor_embedding = self.param(
+                "retained_work_context_actor_embedding", nn.initializers.zeros_init(),
+                (5, 704), jnp.float32,
+            )
+            self.retained_work_context_critic_embedding = self.param(
+                "retained_work_context_critic_embedding", nn.initializers.zeros_init(),
+                (5, 704), jnp.float32,
             )
 
         self.mlp_v = MLP(
@@ -2053,6 +2068,22 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             remaining_time = jnp.asarray(obs[extra_index], jnp.float32).reshape((B, 1))
             actor_x = actor_x + remaining_time * self.remaining_time_actor_embedding
             critic_x = critic_x + remaining_time * self.remaining_time_critic_embedding
+            extra_index += 1
+
+        if self.retained_work_context_observation:
+            if len(obs) <= extra_index or obs[extra_index].shape[-1:] != (5,):
+                raise ValueError(
+                    "retained-work observation requires a trailing width-5 input "
+                    f"at obs[{extra_index}] before any action mask"
+                )
+            if x.shape[-1] != self.retained_work_context_actor_embedding.shape[1]:
+                raise ValueError(
+                    "retained-work context supports the broad policy fused width "
+                    f"704, got {x.shape[-1]}"
+                )
+            context = jnp.asarray(obs[extra_index], jnp.float32).reshape((B, 5))
+            actor_x = actor_x + context @ self.retained_work_context_actor_embedding
+            critic_x = critic_x + context @ self.retained_work_context_critic_embedding
 
         return actor_x, critic_x
 

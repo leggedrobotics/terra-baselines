@@ -9,8 +9,8 @@ import pytest
 
 from terra.config import EnvConfig
 from train_mixed import _r2_protocol_receipt, _validate_r2_resume_checkpoint, _validate_foundation_behavior_config
-from utils.behavior_cost_ramp import COST_KEYS, ramp_costs, restore_behavior_cost_ramp
-from utils.helpers import checkpoint_evaluation_config, checkpoint_foundation_behavior, overlay_foundation_behavior
+from utils.behavior_cost_ramp import COST_KEYS, LEGACY_COST_KEYS, LEGACY_SCHEMA, ramp_costs, restore_behavior_cost_ramp
+from utils.helpers import checkpoint_evaluation_config, checkpoint_foundation_behavior, checkpoint_retained_work_costs, overlay_foundation_behavior
 
 
 def config(**changes):
@@ -20,6 +20,7 @@ def config(**changes):
         distance_sidecar_sha256="a" * 64, update_epochs=2, num_minibatches=32,
         admissible_dig_observation=True, executable_dig_observation=True,
         lateral_dig_cost=0.125, base_travel_cost=0.0025, base_turn_cost=0.01,
+        retained_work_setup_cost=0.0, retained_work_travel_cost=0.0, retained_work_turn_cost=0.0,
         finetune_foundation_behavior=True, resume_from="parent.pkl", warm_start_from=None,
         resume_update=None, load_env_from_checkpoint=True, behavior_cost_ramp_updates=2500,
     ) | changes))
@@ -116,6 +117,78 @@ def test_next_stage_starts_at_the_accepted_plateau_cost():
     assert ramp_costs(state, 17500)["lateral_dig_cost"] == .25
 
 
+def retained_config(**changes):
+    return config(**(dict(base_travel_cost=0.0, base_turn_cost=0.0,
+                         retained_work_setup_cost=.0025, retained_work_travel_cost=.0025,
+                         retained_work_turn_cost=.01) | changes))
+
+
+def retained_ramp():
+    cp = checkpoint(config(**dict.fromkeys(COST_KEYS, 0.0), behavior_cost_ramp_updates=0),
+                    None, 105000)
+    behavior = {**checkpoint_foundation_behavior(cp), **checkpoint_retained_work_costs(cp)}
+    return restore_behavior_cost_ramp(retained_config(), cp, "resume", 105000, behavior)
+
+
+def test_retained_ramp_resumes_effective_costs_and_holds_without_resetting_adam():
+    state = retained_ramp()
+    cfg = retained_config(finetune_foundation_behavior=False)
+    cp = checkpoint(cfg, state, 106250)
+    resume = retained_config(behavior_cost_ramp_updates=0, finetune_foundation_behavior=False)
+    _validate_r2_resume_checkpoint(cp, _r2_protocol_receipt(resume), resume)
+    behavior = {**checkpoint_foundation_behavior(cp), **checkpoint_retained_work_costs(cp)}
+    restored = restore_behavior_cost_ramp(resume, cp, "resume", 106250, behavior)
+    assert restored == state and restored["start_update"] == 105000
+    assert cp["optimizer_state"]["count"] == 106250 * 64
+    evaluated = checkpoint_evaluation_config(cp)
+    for key in COST_KEYS:
+        assert getattr(evaluated, key) == pytest.approx(getattr(cfg, key) / 2)
+        for update, fraction in ((105000, 0), (105001, 1 / 2500), (106250, .5),
+                                 (107500, 1), (110000, 1)):
+            assert ramp_costs(restored, update)[key] == pytest.approx(getattr(cfg, key) * fraction)
+    assert cp["r2_protocol_receipt"]["retained_work_costs"]["retained_work_setup_cost"] == .0025
+    assert cp["train_config"].retained_work_setup_cost == .0025
+
+
+def test_retained_ramp_rejects_missing_fields_frozen_targets_and_stale_environment():
+    state = retained_ramp()
+    cp = checkpoint(retained_config(), state, 106250)
+    for key in set(COST_KEYS) - set(LEGACY_COST_KEYS):
+        bad = copy.deepcopy(cp)
+        bad["behavior_cost_ramp_state"]["start_costs"].pop(key)
+        with pytest.raises(ValueError, match="every cost field"):
+            checkpoint_retained_work_costs(bad)
+        bad = copy.deepcopy(cp)
+        bad["env_config"] = bad["env_config"]._replace(**{key: jnp.float32(0.0)})
+        with pytest.raises(ValueError, match=key):
+            checkpoint_retained_work_costs(bad)
+        frozen = retained_config(**{key: getattr(retained_config(), key) / 2},
+                                 finetune_foundation_behavior=False)
+        with pytest.raises(ValueError, match="protocol receipt"):
+            _validate_r2_resume_checkpoint(cp, _r2_protocol_receipt(frozen), frozen)
+        with pytest.raises(ValueError, match=key):
+            _validate_foundation_behavior_config(retained_config(**{key: -1}))
+
+
+def test_legacy_three_cost_ramp_roundtrips_with_zero_retained_costs():
+    state = new_ramp()
+    state["schema"] = LEGACY_SCHEMA
+    for name in ("start_costs", "target_costs"):
+        state[name] = {key: state[name][key] for key in LEGACY_COST_KEYS}
+    cp = checkpoint(config(), state, 11250)
+    resume = config(behavior_cost_ramp_updates=0, finetune_foundation_behavior=False)
+    _validate_r2_resume_checkpoint(cp, _r2_protocol_receipt(resume), resume)
+    restored = restore_behavior_cost_ramp(resume, cp, "resume", 11250,
+                                         checkpoint_foundation_behavior(cp))
+    assert restored == state
+    assert set(ramp_costs(restored, 11250)) == set(LEGACY_COST_KEYS)
+    assert not any(checkpoint_retained_work_costs(cp).values())
+    bad = copy.deepcopy(cp)
+    bad["train_config"].retained_work_setup_cost = .0025
+    with pytest.raises(ValueError, match="target differs"):
+        checkpoint_retained_work_costs(bad)
+
+
 def test_parameters_only_warm_start_keeps_the_fresh_objective_contract():
     cp = checkpoint(config(), new_ramp(), 11250)
     fresh = config(behavior_cost_ramp_updates=0, warm_start_from="parent.pkl", resume_from=None)
@@ -147,21 +220,19 @@ def test_new_ramp_requires_explicit_finetune_and_unchanged_observations_bank_and
 
 def test_reward_arrays_change_without_retracing_or_changing_other_environment_fields():
     cfg = EnvConfig()._replace(
-        lateral_dig_cost=jnp.zeros((2, 3), dtype=jnp.float32),
-        base_travel_cost=jnp.zeros((2, 3), dtype=jnp.float32),
-        base_turn_cost=jnp.zeros((2, 3), dtype=jnp.float32),
+        **{key: jnp.zeros((2, 3), dtype=jnp.float32) for key in COST_KEYS},
     )
     traces = []
     @jax.jit
     def reward(env_cfg):
         traces.append(1)
-        return -(env_cfg.lateral_dig_cost + 2 * env_cfg.base_travel_cost + env_cfg.base_turn_cost)
-    state = new_ramp()
-    for update in (10000, 10001, 11250, 12500, 15000):
+        return -sum(getattr(env_cfg, key) for key in COST_KEYS)
+    state = retained_ramp()
+    for update in (105000, 105001, 106250, 107500, 110000):
         values = ramp_costs(state, update)
         overlaid = overlay_foundation_behavior(cfg, {**values, "executable_dig_observation": False})
         result = reward(overlaid)
-        np.testing.assert_allclose(result, -(values[COST_KEYS[0]] + 2 * values[COST_KEYS[1]] + values[COST_KEYS[2]]), rtol=1e-6)
+        np.testing.assert_allclose(result, -sum(values.values()), rtol=1e-6)
         for key in cfg._fields:
             if key not in (*COST_KEYS, "executable_dig_observation"):
                 assert getattr(overlaid, key) is getattr(cfg, key)

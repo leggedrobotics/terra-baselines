@@ -1,5 +1,36 @@
 # Foundation efficiency after completion: delayed costs, September 16, 2026
 
+## Recovered results, September 19
+
+Evaluation-only CSCS job **4709744 COMPLETED in 19 minutes, exit 0**. Both arms
+had already saved u22500, u25000 and FINAL checkpoints: original job 4675576
+stopped on a 600-second evaluation timeout (exit 124), not unfinished training.
+The recovery reused the frozen source/image, native policies and 64-map,
+450-step protocol with longer evaluation limits and fresh outputs. It performed
+no PPO or weight changes. The earlier partial log's 63/64 at step 375 was not
+a completed score and is not used as result evidence.
+
+The fresh parent reproduces **64/64**. Control and penalty both complete
+**63/64 at u22500 and 62/64 at u25000**. All five native/evaluation checks and
+both paired comparisons pass, with no integrity failures. Stage acceptance is
+**false**: the penalty arm misses the required 63/64 final floor. Because the
+control also loses two parent successes, this does not establish a net
+completion loss caused by penalties. The final policies fail different maps.
+
+On the 60 maps solved by both final policies, penalty versus control reduces
+retained work-pose travel **10.3%**, increases unique area/setup **4.3%**, reduces
+productive setups **4.0%** and lateral score **22.3%**, and increases adjacency
+**0.21 percentage points**. Both final arms average about 99.71% excavated and
+accepted material, with no off-zone or carried residual, but the completion
+failures remain. Retained travel is a straight-line deployment proxy, not a
+navigation-stack route measurement. This one easy-bank comparison does not
+qualify a broad penalty stage or authorize automatic coefficient escalation.
+
+Complete reports and independent row-based analysis are under
+`.artifacts/terra_training_status_20260919/delayed_penalty/`: `analysis.md`,
+`analysis.json`, five validation receipts and `comparison/stage_acceptance.json`.
+Earlier status entries below are historical.
+
 ## Morning status and schedule clarification
 
 At 09:19 CEST, live Slurm accounting records job 4675576 as FAILED, ending at

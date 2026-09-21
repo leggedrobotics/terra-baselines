@@ -61,6 +61,13 @@ def scale_local_maps_in_obs(obs, scale):
 
 def obs_to_model_input(obs, prev_actions, train_cfg):
     validate_executable_dig_observation(train_cfg)
+    retained_work_context = None
+    if _config_option(train_cfg, "retained_work_context_observation", False):
+        if "retained_work_context" not in obs:
+            raise ValueError("retained-work observation requires Terra obs['retained_work_context']")
+        retained_work_context = jnp.asarray(obs["retained_work_context"], jnp.float32)
+        if retained_work_context.shape[-1:] != (5,):
+            raise ValueError("retained_work_context must end with width 5")
     time_mode = validate_time_observation_mode(
         _config_option(train_cfg, "time_observation_mode", "none")
     )
@@ -226,6 +233,8 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
     if remaining_time is not None:
         # Named head variant: keep every existing input index unchanged.
         obs.append(remaining_time[..., None])
+    if retained_work_context is not None:
+        obs.append(retained_work_context)
     if _config_option(train_cfg, "action_logit_masking", False):
         # Effect-based action mask from the env (D3). Appended last; the model
         # consumes no fixed index for it, only policy() masking reads it.
@@ -323,8 +332,9 @@ def select_action_ppo(
     # Prepare policy input from Terra State
     obs = obs_to_model_input(obs, prev_actions, config)
 
+    # Optional policy features precede the mask, which is always last.
     action_mask = (
-        obs[22]
+        obs[-1]
         if _config_option(config, "action_logit_masking", False)
         else None
     )

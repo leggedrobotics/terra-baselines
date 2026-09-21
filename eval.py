@@ -99,10 +99,10 @@ def rollout_episode(
             obs_model = obs_to_model_input(timestep.observation, prev_actions, rl_config)
             v, logits_pi = model.apply(model_params, obs_model)
             # D3: evaluation must respect the same masked distribution the
-            # policy trained under (obs_model[22] when the flag is on).
+            # policy trained under (mask appended after optional features).
             if _config_option(rl_config, "action_logit_masking", False):
                 logits_pi = jnp.where(
-                    obs_model[22], logits_pi, jnp.float32(-1e9)
+                    obs_model[-1], logits_pi, jnp.float32(-1e9)
                 )
             if deterministic:
                 action = np.argmax(logits_pi, axis=-1)

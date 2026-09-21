@@ -178,6 +178,11 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
         if release is None or _field(config, "foundation_teacher_release_updates", 0) != release["duration_updates"]:
             raise ValueError("foundation teacher release checkpoint lacks its matching saved state")
         contract["foundation_teacher_release"] = _jsonable(release)
+    demonstration_state = checkpoint.get("demonstration_state")
+    if demonstration_state is not None or _field(config, "demonstration_npz"):
+        if demonstration_state is None:
+            raise ValueError("demonstration checkpoint is missing its saved schedule")
+        contract["demonstrations"] = _jsonable(demonstration_state)
     condition_profile = _field(bank, "condition_profile", "full")
     if condition_profile != "full":
         # Preserve historical fingerprints while binding any narrowed V8 view.
@@ -220,6 +225,8 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
     time_mode = _field(config, "time_observation_mode", "none")
     if time_mode != "none":
         contract["architecture"]["time_observation_mode"] = time_mode
+    if bool(_field(config, "retained_work_context_observation", False)):
+        contract["architecture"]["retained_work_context_observation"] = True
     if bool(_field(config, "actor_residual_head", False)):
         contract["architecture"]["actor_residual_head"] = True
     if any(foundation_behavior.values()):
@@ -403,6 +410,9 @@ def configure_for_bank(train_config, relative_path: str, count: int):
     config.replay_map_count = 0
     config.target_map_repeat = 0
     config.teacher_checkpoint = None
+    config.demonstration_npz = None
+    config.demonstration_coef = 0.0
+    config.demonstration_fade_transitions = 0
     from utils.task_teachers import clear_task_teacher_config
     clear_task_teacher_config(config)
     config.kickstart_start_update = 0

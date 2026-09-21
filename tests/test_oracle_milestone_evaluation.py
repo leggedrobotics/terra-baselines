@@ -3,25 +3,35 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from scripts.oracle_followup.run import evaluate_checkpoint
 
 
-def complete_report(update):
+def complete_report(update, checkpoint):
     return {"horizon": 450, "deterministic": True, "checkpoint_update": update,
+            "checkpoint": str(checkpoint),
             "per_map": [{"episode_id": str(i), "integrity_failure": False,
                          "integrity_unavailable": False, "terminated": True}
                         for i in range(608)]}
 
 
-def test_milestone_uses_child_gpu_and_reuses_complete_panel(tmp_path, monkeypatch):
+@pytest.mark.parametrize("visible,expected", [
+    (None, "0"), ("2", "2"), ("2,3", "2"), ("GPU-allocated", "GPU-allocated"), ("", ""),
+])
+def test_milestone_uses_child_gpu_and_reuses_complete_panel(tmp_path, monkeypatch, visible, expected):
     calls = []
+    if visible is None:
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    else:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
 
     def evaluate(command, **kwargs):
         calls.append(command)
-        assert kwargs["env"]["CUDA_VISIBLE_DEVICES"] == "0"
+        assert kwargs["env"]["CUDA_VISIBLE_DEVICES"] == expected
         assert kwargs["env"]["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"
         assert kwargs["env"]["BANK_ROOT"] == str(tmp_path)
-        Path(command[-1]).write_text(json.dumps(complete_report(10000)))
+        Path(command[-1]).write_text(json.dumps(complete_report(10000, checkpoint)))
         return SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("scripts.oracle_followup.run.subprocess.run", evaluate)

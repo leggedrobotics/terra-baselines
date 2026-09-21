@@ -26,6 +26,7 @@ from utils.utils_ppo import (
     recurrent_policy_sequence,
 )
 from utils.task_teachers import FAMILY_KEY, task_teacher_kl_stats
+from utils.demonstrations import DEMONSTRATION_GROUPS
 import os
 
 jax.config.update("jax_threefry_partitionable", True)
@@ -352,6 +353,8 @@ def ppo_update_networks(
     kickstart_value_coef: float = 0.0,
     actor_hidden_init: jax.Array | None = None,
     foundation_kickstart_kl_coef: float | None = None,
+    demonstration_batch=None,
+    demonstration_coef: float = 0.0,
 ):
     clip_eps = config.clip_eps
     vf_coef = config.vf_coef
@@ -369,7 +372,7 @@ def ppo_update_networks(
     # off (teacher sees the student obs unchanged, historical behavior). This is
     # a Python-static int, so the transform is traced/specialized at compile.
     teacher_obs_downsample = int(getattr(config, "teacher_obs_downsample", 1))
-    task_teachers = getattr(config, "trench_teacher_checkpoint", None) is not None
+    task_teachers = _config_option(config, "trench_teacher_checkpoint", None) is not None
     if foundation_kickstart_kl_coef is not None and not task_teachers:
         raise ValueError("foundation KL override requires dual task teachers")
     # V6 dense per-cell auxiliary supervision. 0.0 = off, and the branch is
@@ -377,6 +380,8 @@ def ppo_update_networks(
     aux_coef = float(_config_option(config, "aux_coef", 0.0))
     action_logit_masking = bool(_config_option(config, "action_logit_masking", False))
     actor_core = _config_option(config, "actor_core", "mlp")
+    if demonstration_batch is not None and actor_core != "mlp":
+        raise ValueError("demonstrations require a feedforward actor")
     if actor_core == "gru":
         if flat_minibatch_shuffle:
             raise ValueError(
@@ -451,7 +456,8 @@ def ppo_update_networks(
         model_obs_finite = _tree_finite_fraction(obs)
         # D3: the loss must build the same masked distribution the rollout
         # sampled from, or log_prob/entropy would disagree across the ratio.
-        loss_action_mask = obs[22] if action_logit_masking else None
+        # Optional policy features precede the mask, which is always last.
+        loss_action_mask = obs[-1] if action_logit_masking else None
         if actor_core == "gru":
             value, dist, _ = recurrent_policy_sequence(
                 train_state.apply_fn,
@@ -620,6 +626,43 @@ def ppo_update_networks(
                 + kl_loss
                 + kickstart_value_coef * kickstart_value_mse
             )
+        demonstration_stats = {}
+        if demonstration_batch is not None:
+            def _imitation(_):
+                demo_obs = obs_to_model_input(
+                    demonstration_batch["obs"], demonstration_batch["previous_actions"], config,
+                )
+                _, demo_dist = policy(
+                    train_state.apply_fn, params, demo_obs,
+                    action_mask=demo_obs[-1] if action_logit_masking else None,
+                )
+                # Both retention groups anchor the selected parent distribution;
+                # expert/recovery actions supply hard labels. Neither trains values.
+                expert_actions = demonstration_batch["actions"]
+                group_id = demonstration_batch["group_id"]
+                retention = (group_id == 0) | (group_id == 1)
+                probabilities = jax.lax.stop_gradient(demonstration_batch["parent_probs"])
+                log_probabilities = jax.nn.log_softmax(demo_dist.logits_parameter(), axis=-1)
+                parent_log = jnp.log(jnp.maximum(probabilities, jnp.finfo(jnp.float32).tiny))
+                parent_entropy = -jnp.sum(probabilities * parent_log, axis=-1)
+                retention_kl = jnp.sum(probabilities * (parent_log - log_probabilities), axis=-1)
+                cross_entropy = -demo_dist.log_prob(expert_actions)
+                row_loss = jnp.where(retention, retention_kl, cross_entropy)
+                target_action = jnp.where(retention, jnp.argmax(probabilities, axis=-1), expert_actions)
+                accuracy = jnp.argmax(log_probabilities, axis=-1) == target_action
+                groups = jax.nn.one_hot(group_id, len(DEMONSTRATION_GROUPS))
+                stats = dict(count=groups.sum(axis=0), loss=groups.T @ row_loss,
+                             accuracy=groups.T @ accuracy.astype(jnp.float32),
+                             target_entropy=groups.T @ jnp.where(retention, parent_entropy, 0.))
+                # Sampling already carries the declared group weights exactly once.
+                return row_loss.mean(), stats
+
+            demo_loss, demonstration_stats = jax.lax.cond(
+                demonstration_coef > 0, _imitation,
+                lambda _: (jnp.float32(0), {key: jnp.zeros(len(DEMONSTRATION_GROUPS), jnp.float32)
+                                           for key in ("count", "loss", "accuracy", "target_entropy")}), None,
+            )
+            total_loss = total_loss + demonstration_coef * demo_loss
         return total_loss, (
             value_loss,
             actor_loss,
@@ -657,6 +700,7 @@ def ppo_update_networks(
             teacher_value_abs_max,
             teacher_logits_abs_max,
             task_teacher_stats,
+            demonstration_stats,
         )
 
     (
@@ -698,6 +742,7 @@ def ppo_update_networks(
             teacher_value_abs_max,
             teacher_logits_abs_max,
             task_teacher_stats,
+            demonstration_stats,
         ),
     ), grads = jax.value_and_grad(_loss_fn, has_aux=True)(train_state.params)
     (
@@ -836,6 +881,20 @@ def ppo_update_networks(
         update_info["kickstart/value_mse"] = k_vmse
     if aux_coef > 0.0:
         update_info["aux_loss"] = aux_loss
+    if demonstration_batch is not None:
+        demo = jax.lax.psum(demonstration_stats, axis_name="devices")
+        total_count = jnp.maximum(demo["count"].sum(), 1.)
+        hard_count = jnp.maximum(demo["count"][2:].sum(), 1.)
+        update_info.update({"imitation/loss": demo["loss"].sum() / total_count,
+                            "imitation/cross_entropy": demo["loss"][2:].sum() / hard_count,
+                            "imitation/action_accuracy": demo["accuracy"][2:].sum() / hard_count})
+        for index, group in enumerate(DEMONSTRATION_GROUPS):
+            count = jnp.maximum(demo["count"][index], 1.)
+            prefix = f"imitation/{group}"
+            update_info[f"{prefix}/sample_fraction"] = demo["count"][index] / total_count
+            update_info[f"{prefix}/loss"] = demo["loss"][index] / count
+            update_info[f"{prefix}/accuracy"] = demo["accuracy"][index] / count
+            update_info[f"{prefix}/target_entropy"] = demo["target_entropy"][index] / count
     return train_state, update_info
 
 

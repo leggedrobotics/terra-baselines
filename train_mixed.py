@@ -85,6 +85,10 @@ Reward Multipliers:
 
 import copy
 from utils.behavior_cost_ramp import ramp_costs, ramp_progress, restore_behavior_cost_ramp
+from utils.demonstrations import (
+    demonstration_coefficient, demonstration_global_transitions, load_demonstrations, restore_demonstration_schedule,
+    sample_demonstrations, validate_demonstration_config,
+)
 
 import jax
 import jax.numpy as jnp
@@ -448,6 +452,9 @@ _OPTIONAL_FINITE_LOSS_KEYS = (
     "kickstart/value_mse",
     "kickstart/foundation_kl",
     "kickstart/trench_kl",
+    "imitation/cross_entropy",
+    "imitation/loss",
+    "imitation/action_accuracy",
     "aux_loss",
     "diagnostics/grad_global_norm",
 )
@@ -738,6 +745,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "carry_work_observation": False,
         "stall_age_observation": False,
         "time_observation_mode": "none",
+        "retained_work_context_observation": False,
         "actor_residual_head": False,
         "reward_v2_reset_context_observation": False,
         # Fresh-trench alignment adds two (3, 704) embeddings.
@@ -794,6 +802,9 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
                 continue
             if (field_name == "actor_residual_head" and not saved and current
                     and getattr(config, "grow_actor_capacity", False)):
+                continue
+            if (field_name == "retained_work_context_observation" and not saved and current
+                    and getattr(config, "migrate_retained_work_context", False)):
                 continue
             if field_name == "executable_dig_observation" and bool(
                 getattr(config, "finetune_foundation_behavior", False)
@@ -1434,16 +1445,20 @@ def _validate_r2_resume_checkpoint(
             "R2 resume checkpoint protocol receipt does not match this run"
         )
     if not behavior_finetune and checkpoint.get("train_config") is not None:
-        saved_retained_costs = helpers.checkpoint_retained_work_costs(checkpoint)
-        for name, value in saved_retained_costs.items():
-            if not np.isclose(value, getattr(config, name, 0.0), rtol=1e-6, atol=0.0):
-                raise ValueError(f"R2 resume {name} differs from the saved objective")
-        saved_behavior = helpers.checkpoint_foundation_behavior(checkpoint)
+        saved_behavior = {
+            **helpers.checkpoint_foundation_behavior(checkpoint),
+            **helpers.checkpoint_retained_work_costs(checkpoint),
+        }
         if checkpoint.get("behavior_cost_ramp_state") is not None:
             # The helper verifies the effective saved reward. Ordinary resume
             # must also keep the declared ramp target, not freeze at that reward.
             saved_behavior.update(checkpoint["behavior_cost_ramp_state"]["target_costs"])
-        for name, current in _foundation_behavior_settings(config).items():
+        current_behavior = {
+            **_foundation_behavior_settings(config),
+            **{name: float(getattr(config, name, 0.0))
+               for name in helpers.RETAINED_WORK_COST_DEFAULTS},
+        }
+        for name, current in current_behavior.items():
             if not np.isclose(saved_behavior[name], current, rtol=1e-6, atol=0.0):
                 raise ValueError(
                     f"R2 resume {name} mismatch: checkpoint={saved_behavior[name]}, "
@@ -1933,6 +1948,8 @@ class MixedAgentTrainConfig:
     stall_age_observation: bool = False
     time_observation_mode: str = "none"
     migrate_remaining_time: bool = False  # explicit one-time native checkpoint growth
+    retained_work_context_observation: bool = False
+    migrate_retained_work_context: bool = False
     actor_residual_head: bool = False
     grow_actor_capacity: bool = False  # explicit one-time native checkpoint growth
     movement_feasibility_observation: bool = False
@@ -2039,6 +2056,11 @@ class MixedAgentTrainConfig:
     # the saved origin/coefficient automatically, including when this is zero.
     foundation_teacher_release_updates: int = 0
     cache_teacher_outputs: bool = False
+    # Training-only raw pre-action examples: foundation KL / trench CE, never GAE data.
+    demonstration_npz: list[str] | None = None
+    demonstration_coef: float = 0.0
+    demonstration_fade_transitions: int = 0
+    demonstration_batch_size: int = 32  # per device and optimizer minibatch
 
     # F15: 128x128 resolution scaling. All default None/1 = no change (the
     # default env/model/teacher paths stay bit-identical). Tile-denominated
@@ -2077,6 +2099,7 @@ class MixedAgentTrainConfig:
         if self.kickstart_lr_warmup_updates < 0:
             raise ValueError("kickstart_lr_warmup_updates must be nonnegative")
         validate_task_teacher_mode(self)
+        validate_demonstration_config(self)
         if self.time_observation_mode not in ("none", "remaining", "constant"):
             raise ValueError("time_observation_mode must be none, remaining, or constant")
         if self.time_observation_mode != "none" and self.action_logit_masking:
@@ -2085,6 +2108,15 @@ class MixedAgentTrainConfig:
                 self.time_observation_mode == "none" or not self.resume_from
                 or self.warm_start_from or self.resume_update is not None):
             raise ValueError("migrate_remaining_time requires native resume and a time input mode")
+        if self.retained_work_context_observation and (
+                self.actor_core != "mlp" or self.model_core != "mlp"
+                or self.action_logit_masking):
+            raise ValueError("retained-work context supports the unmasked feedforward MLP policy")
+        if self.migrate_retained_work_context and (
+                not self.retained_work_context_observation or not self.resume_from
+                or self.warm_start_from or self.resume_update is not None
+                or self.migrate_remaining_time or self.grow_actor_capacity):
+            raise ValueError("migrate_retained_work_context requires native resume and only context growth")
         if self.grow_actor_capacity and (
                 not self.actor_residual_head or not self.resume_from
                 or self.warm_start_from or self.resume_update is not None):
@@ -3466,7 +3498,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
         )
     behavior_cost_ramp_state = restore_behavior_cost_ramp(
         config, checkpoint, checkpoint_mode, resume_update,
-        helpers.checkpoint_foundation_behavior(checkpoint)
+        {**helpers.checkpoint_foundation_behavior(checkpoint),
+         **helpers.checkpoint_retained_work_costs(checkpoint)}
         if checkpoint_mode == "resume" and checkpoint is not None and (config.behavior_cost_ramp_updates
                                       or checkpoint.get("behavior_cost_ramp_state") is not None)
         else None,
@@ -3477,6 +3510,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
     if foundation_teacher_release_state is not None:
         print(f"Foundation teacher release: {foundation_teacher_release_state}; continuing at {resume_update}.", flush=True)
         wandb.config.update({"foundation_teacher_release_state": foundation_teacher_release_state}, allow_val_change=True)
+    demonstration_state = restore_demonstration_schedule(
+        config, checkpoint, checkpoint_mode, resume_update,
+    )
     # Initialize training components (optionally with env override)
     rng, env, env_params, train_state = make_mixed_agent_states(
         config, env_params_override=env_params_override
@@ -3528,6 +3564,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                 checkpoint = migrate_actor_capacity_checkpoint(checkpoint, train_state.params)
                 config.grow_actor_capacity = False
                 print("Added zero-output actor residual head; retained existing parameters and Adam slots.", flush=True)
+            if config.migrate_retained_work_context:
+                from utils.retained_work_context import migrate_retained_work_context_checkpoint
+                checkpoint = migrate_retained_work_context_checkpoint(checkpoint, train_state.params)
+                config.migrate_retained_work_context = False
+                print("Added zero actor/critic retained-pose projections; retained existing parameters and Adam slots.", flush=True)
             train_state = train_state.replace(params=checkpoint["model"])
             print("Replaced model parameters from checkpoint.")
             if checkpoint_mode == "resume" and "optimizer_state" in checkpoint:
@@ -3568,8 +3609,24 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
         except Exception as e:
             raise RuntimeError("Failed to restore checkpoint training state") from e
     _validate_resume_update(resume_update, config.num_updates)
+    demonstration_data = None
+    if demonstration_coefficient(demonstration_state, demonstration_global_transitions(
+            demonstration_state, resume_update, config.env_steps_per_update)) > 0:
+        demonstration_data, counts = load_demonstrations(
+            config.demonstration_npz, config, resolved_map_edge_px,
+        )
+        if demonstration_state.get("data_counts", counts) != counts:
+            raise ValueError("demonstration episode/transition counts changed across resume")
+        demonstration_state["data_counts"] = counts
+        # Keep the bank in device buffers, outside the compiled update's constants.
+        demonstration_data = replicate(
+            demonstration_data, jax.local_devices()[: config.num_devices],
+        )
+    if demonstration_state is not None:
+        print(f"Demonstration actor guidance: {demonstration_state}", flush=True)
+        wandb.config.update({"demonstration_state": demonstration_state}, allow_val_change=True)
     model_migrations = {name: copy.deepcopy(checkpoint[name]) for name in (
-        "remaining_time_migration", "actor_capacity_migration",
+        "remaining_time_migration", "actor_capacity_migration", "retained_work_context_migration",
     ) if checkpoint is not None and name in checkpoint}
 
     # F7: kickstart distillation teacher setup. Built after
@@ -3850,6 +3907,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
             print("🎯 Restored reward anneal state.", flush=True)
 
         def train(rng: jax.Array, train_state: TrainState):
+            nonlocal demonstration_data
             # INIT ENV
             rng, _rng = jax.random.split(rng)
             reset_rng = jax.random.split(
@@ -3965,7 +4023,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
 
             # TRAIN LOOP
             @partial(jax.pmap, axis_name="devices", donate_argnums=(0,),
-                     static_broadcasted_argnums=(6,))
+                     static_broadcasted_argnums=(6, 8))
             def _update_step(
                 runner_state,
                 ent_coef_current,
@@ -3974,6 +4032,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                 foundation_kl_coef_current,
                 flush_episode_aggregate,
                 teacher_updates_active,
+                demonstration_coef_current,
+                demonstration_updates_active,
+                demonstration_bank,
             ):
                 # COLLECT TRAJECTORIES
                 rollout_actor_h0 = jax.lax.stop_gradient(runner_state[-1])
@@ -4332,6 +4393,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                 def _update_epoch(update_state, _):
                     def _update_minbatch_feedforward(train_state, batch_info):
                         transitions, advantages, targets = batch_info
+                        demonstration_batch = None
+                        if demonstration_updates_active:
+                            # Separate RNG stream leaves live rollout/permutation RNG unchanged.
+                            demo_rng = jax.random.fold_in(jax.random.PRNGKey(config.seed), train_state.step)
+                            demo_rng = jax.random.fold_in(demo_rng, jax.lax.axis_index("devices"))
+                            demonstration_batch = sample_demonstrations(
+                                demonstration_bank, demo_rng, config.demonstration_batch_size,
+                            )
                         new_train_state, update_info = ppo_update_networks(
                             train_state=train_state,
                             transitions=transitions,
@@ -4345,6 +4414,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                             kickstart_value_coef=kickstart_value_coef_current,
                             foundation_kickstart_kl_coef=(foundation_kl_coef_current
                                 if foundation_teacher_release_state is not None else None),
+                            demonstration_batch=demonstration_batch,
+                            demonstration_coef=demonstration_coef_current,
                         )
                         return new_train_state, update_info
 
@@ -4566,6 +4637,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
             wall_window_start = time.monotonic()
             wall_window_transitions = 0
             previous_teacher_active = None
+            previous_demonstration_active = None
             for i in tqdm(range(resume_update, config.num_updates), desc="Training"):
                 need_train_log = (
                     config.log_train_interval > 0 and i % config.log_train_interval == 0
@@ -4642,6 +4714,20 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                 if teacher_updates_active != previous_teacher_active:
                     print(f"Teacher execution active: {teacher_updates_active} at u{i}", flush=True)
                     previous_teacher_active = teacher_updates_active
+                demonstration_coef_current = demonstration_coefficient(
+                    demonstration_state, demonstration_global_transitions(
+                        demonstration_state, i, config.env_steps_per_update,
+                    ),
+                )
+                demonstration_updates_active = demonstration_coef_current > 0
+                if not demonstration_updates_active:
+                    # The fade is permanent. Release its buffers and pass no bank
+                    # to the statically disabled update specialization.
+                    demonstration_data = None
+                demonstration_broadcast = jnp.full((config.num_devices,), demonstration_coef_current)
+                if demonstration_state is not None and demonstration_updates_active != previous_demonstration_active:
+                    print(f"Demonstration execution active: {demonstration_updates_active} at u{i}", flush=True)
+                    previous_demonstration_active = demonstration_updates_active
                 flush_episode_broadcast = jnp.array(
                     [need_episode_flush] * config.num_devices,
                     dtype=jnp.bool_,
@@ -4760,6 +4846,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                         foundation_kl_broadcast,
                         flush_episode_broadcast,
                         teacher_updates_active,
+                        demonstration_broadcast,
+                        demonstration_updates_active,
+                        demonstration_data,
                     )
                 )
                 transition_integrity_single = unreplicate(transition_integrity)
@@ -4870,6 +4959,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                             jax.device_get(runner_state[2].env_cfg.curriculum.level)
                         )
                     if need_train_log:
+                        if demonstration_state is not None:
+                            log_dict.update({
+                                "imitation/coefficient": demonstration_coef_current,
+                                "imitation/active": float(demonstration_updates_active),
+                                **{key: float(value) for key, value in loss_info_single.items()
+                                   if key.startswith("imitation/")},
+                            })
                         log_dict.update(
                             {
                                 "train/update": i + 1,
@@ -5029,6 +5125,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                         checkpoint["behavior_cost_ramp_state"] = copy.deepcopy(behavior_cost_ramp_state)
                     if foundation_teacher_release_state is not None:
                         checkpoint["foundation_teacher_release_state"] = dict(foundation_teacher_release_state)
+                    if demonstration_state is not None:
+                        checkpoint["demonstration_state"] = copy.deepcopy(demonstration_state)
                     partial_reset_receipt = partial_reset_curriculum_receipt(
                         config, i + 1
                     )
@@ -5303,6 +5401,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
             final_checkpoint["behavior_cost_ramp_state"] = copy.deepcopy(behavior_cost_ramp_state)
         if foundation_teacher_release_state is not None:
             final_checkpoint["foundation_teacher_release_state"] = dict(foundation_teacher_release_state)
+        if demonstration_state is not None:
+            final_checkpoint["demonstration_state"] = copy.deepcopy(demonstration_state)
         partial_reset_receipt = partial_reset_curriculum_receipt(
             config, config.num_updates
         )
@@ -5586,6 +5686,14 @@ if __name__ == "__main__":
             "samples per minibatch, instead of the default env-only shuffle."
         ),
     )
+    parser.add_argument("--demonstration_npz", nargs="+", default=None,
+                        help="Training-only grouped NPZ banks with raw observations and eligible label masks.")
+    parser.add_argument("--demonstration_coef", type=float, default=0.0,
+                        help="Initial auxiliary foundation-KL / trench-CE coefficient; default disabled.")
+    parser.add_argument("--demonstration_fade_transitions", type=int, default=0,
+                        help="Linear fade duration in global live transitions, anchored at native resume.")
+    parser.add_argument("--demonstration_batch_size", type=int, default=32,
+                        help="Balanced eligible examples per device per optimizer minibatch.")
     # F7: kickstart distillation.
     parser.add_argument(
         "--teacher_checkpoint",
@@ -5619,6 +5727,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--migrate_remaining_time", action="store_true",
         help="Explicitly grow a native checkpoint with zero time projections and zero new Adam slots.",
+    )
+    parser.add_argument(
+        "--retained_work_context_observation", action="store_true",
+        help="Expose the previous effective work pose to actor and critic.",
+    )
+    parser.add_argument(
+        "--migrate_retained_work_context", action="store_true",
+        help="Add zero retained-work context projections and Adam slots to a native checkpoint.",
     )
     parser.add_argument(
         "--cache_teacher_outputs", action="store_true",
@@ -6561,6 +6677,8 @@ if __name__ == "__main__":
         stall_age_observation=args.stall_age_observation,
         time_observation_mode=args.time_observation_mode,
         migrate_remaining_time=args.migrate_remaining_time,
+        retained_work_context_observation=args.retained_work_context_observation,
+        migrate_retained_work_context=args.migrate_retained_work_context,
         actor_residual_head=args.actor_residual_head,
         grow_actor_capacity=args.grow_actor_capacity,
         movement_feasibility_observation=(
@@ -6620,6 +6738,10 @@ if __name__ == "__main__":
         kickstart_lr_warmup_updates=args.kickstart_lr_warmup_updates,
         foundation_teacher_release_updates=args.foundation_teacher_release_updates,
         cache_teacher_outputs=args.cache_teacher_outputs,
+        demonstration_npz=args.demonstration_npz,
+        demonstration_coef=args.demonstration_coef,
+        demonstration_fade_transitions=args.demonstration_fade_transitions,
+        demonstration_batch_size=args.demonstration_batch_size,
         # F15 resolution scaling (truck_capacity/skidsteer_capacity already
         # passed above; CLI precedence applied when parsing the preset).
         agent_move_tiles=args.agent_move_tiles,

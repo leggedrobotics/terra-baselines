@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from scripts.create_wandb_human_workspace import workspace_spec
+from utils.behavior_cost_ramp import COST_KEYS
 from utils.wandb_human import (
     BRANCH_DEPTHS,
     CONDITION_COLUMNS,
@@ -213,9 +214,15 @@ def test_bounded_logging_schema_and_manual_workspace():
     assert metrics["behavior/base_turn_rad_per_step"] == pytest.approx(0.8)
     assert not any(key.startswith("diagnostics/") for key in metrics)
 
-    # Six optional task-teacher summaries (two KLs, two counts, two coefficients).
-    assert len(TRAINING_SCALAR_KEYS) <= 91
+    # Optional imitation has four group diagnostics; retained costs add three
+    # explicit coefficients without enabling unbounded diagnostic logging.
+    assert len(TRAINING_SCALAR_KEYS) <= 115
+    assert {"imitation/loss", "imitation/foundation/target_entropy",
+            "imitation/expert/sample_fraction"}.issubset(TRAINING_SCALAR_KEYS)
     assert "reward/terminal_objective_mix" in TRAINING_SCALAR_KEYS
+    # The trainer logs every effective ramp coefficient after each update.
+    # A missing retained-cost key aborts otherwise finite PPO before saving.
+    assert {f"reward/{key}" for key in COST_KEYS}.issubset(TRAINING_SCALAR_KEYS)
     assert "train/full_start_episode_success_rate" in TRAINING_SCALAR_KEYS
     assert {
         f"curriculum/population/{label}" for label in (*FAMILIES, *BRANCH_DEPTHS)
