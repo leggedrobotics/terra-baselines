@@ -2,7 +2,7 @@
 # Stage and submit the GRU generalist on the 512-maps-per-condition bank.
 #   SUBMIT=0      local checks only (default)
 #   SUBMIT=stage  upload exact source, Terra runtime, bank and teacher
-#   SUBMIT=smoke  3-update finite smoke, W&B disabled, 24 h queue
+#   SUBMIT=smoke  3-update finite smoke, W&B disabled, 4 h queue
 #   SUBMIT=1      production segment (TERRA_RESUME_FROM=<ckpt> to continue)
 # Outputs live on project storage: lterenzi scratch is over its file quota.
 set -euo pipefail
@@ -35,7 +35,7 @@ KL_ANNEAL_UPDATES=$((655360000 / (NUM_DEVICES * ENVS_PER_DEVICE * 32)))
 RESUME_FROM="${TERRA_RESUME_FROM:-none}"
 DEPENDENCY="${TERRA_SLURM_DEPENDENCY:-none}"
 if [ "$SUBMIT" = smoke ]; then
-    TARGET_UPDATE=3 PARTITION=gpuhe.24h WALLTIME=01:30:00 WANDB_MODE=disabled
+    TARGET_UPDATE=3 PARTITION=gpuhe.4h WALLTIME=01:30:00 WANDB_MODE=disabled
 else
     TARGET_UPDATE="${TERRA_TARGET_UPDATE:-100000}"
     PARTITION="${TERRA_PARTITION:-gpuhe.120h}"
