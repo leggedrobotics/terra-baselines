@@ -3,12 +3,15 @@
 #   SUBMIT=0      local checks only (default)
 #   SUBMIT=stage  upload exact source, Terra runtime, bank and teacher
 #   SUBMIT=smoke  3-update finite smoke, W&B disabled, 4 h queue
-#   SUBMIT=1      production segment (TERRA_RESUME_FROM=<ckpt> to continue)
+#   SUBMIT=1      120 h segment of the shared run, resuming its newest
+#                 checkpoint; it takes over from a running 24 h segment
+#   SUBMIT=chain  TERRA_SEGMENTS (default 6) chained 24 h segments of the same
+#                 run (afterany dependencies), each resuming the newest checkpoint
 # Outputs live on project storage: lterenzi scratch is over its file quota.
 set -euo pipefail
 
 SUBMIT="${SUBMIT:-0}"
-case "$SUBMIT" in 0|stage|smoke|1) ;; *) echo "SUBMIT must be 0, stage, smoke or 1" >&2; exit 2 ;; esac
+case "$SUBMIT" in 0|stage|smoke|1|chain) ;; *) echo "SUBMIT must be 0, stage, smoke, 1 or chain" >&2; exit 2 ;; esac
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$REPO/cluster/euler_account.sh"
@@ -32,16 +35,26 @@ ENVS_PER_DEVICE="${TERRA_ENVS_PER_DEVICE:-512}"
 GPU_TYPE="${GPU_TYPE:-rtx_4090}"
 # Teacher guidance covers 655,360,000 transitions, as in the 2026-09-15 restart.
 KL_ANNEAL_UPDATES=$((655360000 / (NUM_DEVICES * ENVS_PER_DEVICE * 32)))
-RESUME_FROM="${TERRA_RESUME_FROM:-none}"
 DEPENDENCY="${TERRA_SLURM_DEPENDENCY:-none}"
+SEGMENTS="${TERRA_SEGMENTS:-6}"
+TAKEOVER=0
 if [ "$SUBMIT" = smoke ]; then
     TARGET_UPDATE=3 PARTITION=gpuhe.4h WALLTIME=01:30:00 WANDB_MODE=disabled
+    RESUME_FROM=none
 else
     TARGET_UPDATE="${TERRA_TARGET_UPDATE:-100000}"
-    PARTITION="${TERRA_PARTITION:-gpuhe.120h}"
-    WALLTIME="${TERRA_WALLTIME:-119:45:00}"
     WANDB_MODE="${WANDB_MODE:-online}"
+    RESUME_FROM="${TERRA_RESUME_FROM:-latest}"
+    if [ "$SUBMIT" = chain ]; then
+        PARTITION="${TERRA_PARTITION:-gpuhe.24h}"
+        WALLTIME="${TERRA_WALLTIME:-24:00:00}"
+    else
+        PARTITION="${TERRA_PARTITION:-gpuhe.120h}"
+        WALLTIME="${TERRA_WALLTIME:-119:45:00}"
+        TAKEOVER=1
+    fi
 fi
+[[ "$SEGMENTS" =~ ^[1-9][0-9]?$ ]]
 [[ "$DEPENDENCY" == none || "$DEPENDENCY" =~ ^after(ok|any):[0-9]+$ ]]
 REMOTE_HOST=euler-lterenzi
 REMOTE_VENV=/cluster/project/rsl/lterenzi/terra_runtime/terra_jax0433_cuda126_cudnn950_20260903
@@ -104,14 +117,13 @@ fi
 if [ "$SUBMIT" = smoke ]; then
     RUN_DIR="$ROOT/runs/smoke/${BASELINES_REVISION:0:12}_$(date +%Y%m%d_%H%M%S)"
     RUN_NAME="gru_gen512_smoke_${BASELINES_REVISION:0:10}"
-else
-    RUN_DIR="$ROOT/runs/${BASELINES_REVISION:0:12}/s$SEED"
-    RUN_NAME="gru_gen512_${BASELINES_REVISION:0:10}_s$SEED"
-fi
-if [ "$RESUME_FROM" = none ]; then
     remote "test ! -e '$RUN_DIR' && mkdir -p '$RUN_DIR'"
 else
-    remote "test -d '$RUN_DIR' && test -r '$RESUME_FROM'"
+    # Every production segment of this seed shares one run directory.
+    RUN_DIR="$ROOT/runs/gru_gen512_s$SEED"
+    RUN_NAME="gru_gen512_s$SEED"
+    remote "mkdir -p '$RUN_DIR'"
+    [ "$RESUME_FROM" = latest ] || remote "test -r '$RESUME_FROM'"
 fi
 EXPORTS="ALL,TARGET_UPDATE=$TARGET_UPDATE,RUN_DIR=$RUN_DIR,RUN_NAME=$RUN_NAME,BASELINES_ROOT=$REMOTE_SOURCE"
 EXPORTS+=",BASELINES_REVISION=$BASELINES_REVISION,RUNTIME_TERRA_ROOT=$REMOTE_TERRA"
@@ -123,10 +135,22 @@ EXPORTS+=",BANK_ARCHIVE_SHA=$BANK_ARCHIVE_SHA,BANK_MAPS_PATH=$BANK_MAPS_PATH"
 EXPORTS+=",BANK_DATASET_SIZE=$BANK_DATASET_SIZE,BANK_DISTANCE_SIDECAR_SHA=$BANK_DISTANCE_SIDECAR_SHA"
 EXPORTS+=",TEACHER=$REMOTE_TEACHER,TEACHER_SHA=$TEACHER_SHA,NUM_DEVICES=$NUM_DEVICES"
 EXPORTS+=",ENVS_PER_DEVICE=$ENVS_PER_DEVICE,KL_ANNEAL_UPDATES=$KL_ANNEAL_UPDATES,GPU_TYPE=$GPU_TYPE"
-EXPORTS+=",EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,RESUME_FROM=$RESUME_FROM"
-DEPENDENCY_OPTION=""
-[ "$DEPENDENCY" = none ] || DEPENDENCY_OPTION="--dependency=$DEPENDENCY"
-JOB_RAW="$(remote "cat '$REMOTE_SOURCE/scripts/euler_gru_generalist_512/run.sbatch' | sbatch --parsable --account=es_hutter --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:$NUM_DEVICES' --cpus-per-task=8 --mem-per-cpu=8G --tmp=20G --exclude=eu-g6-064 --job-name='terra-gru-gen512' --output='$RUN_DIR/slurm_%j.out' $DEPENDENCY_OPTION --export='$EXPORTS'")"
-JOB_ID="${JOB_RAW%%;*}"
-[[ "$JOB_ID" =~ ^[0-9]+$ ]]
-echo "job_id=$JOB_ID run_dir=$RUN_DIR"
+EXPORTS+=",EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,RESUME_FROM=$RESUME_FROM,TAKEOVER=$TAKEOVER"
+submit_job() {  # dependency (none or after...:<id>)
+    local option=""
+    [ "$1" = none ] || option="--dependency=$1"
+    local raw
+    raw="$(remote "cat '$REMOTE_SOURCE/scripts/euler_gru_generalist_512/run.sbatch' | sbatch --parsable --account=es_hutter --partition='$PARTITION' --time='$WALLTIME' --gpus='$GPU_TYPE:$NUM_DEVICES' --cpus-per-task=8 --mem-per-cpu=8G --tmp=20G --exclude=eu-g6-064 --job-name='terra-gru-gen512' --output='$RUN_DIR/slurm_%j.out' $option --export='$EXPORTS'")"
+    JOB_ID="${raw%%;*}"
+    [[ "$JOB_ID" =~ ^[0-9]+$ ]]
+    echo "job_id=$JOB_ID gpu=$GPU_TYPE partition=$PARTITION dependency=$1 run_dir=$RUN_DIR"
+}
+if [ "$SUBMIT" = chain ]; then
+    previous="$DEPENDENCY"
+    for _ in $(seq "$SEGMENTS"); do
+        submit_job "$previous"
+        previous="afterany:$JOB_ID"
+    done
+else
+    submit_job "$DEPENDENCY"
+fi

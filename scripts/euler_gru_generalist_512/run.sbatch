@@ -14,7 +14,56 @@ for REQUIRED in TARGET_UPDATE RUN_DIR RUN_NAME BASELINES_ROOT BASELINES_REVISION
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
+# One run may have several segments (a 24 h chain and a 120 h job): each
+# resumes from the newest checkpoint and only one trains at a time. A segment
+# with TAKEOVER=1 stops the running segment instead of exiting.
+LOCK="$RUN_DIR/active_segment"
+mkdir -p "$RUN_DIR/checkpoints"
+claim_lock() {
+    if mkdir "$LOCK" 2>/dev/null; then
+        echo "$SLURM_JOB_ID" > "$LOCK/job"
+        return 0
+    fi
+    sleep 15
+    local holder
+    holder="$(cat "$LOCK/job" 2>/dev/null || true)"
+    if [ -n "$holder" ] && [ "$holder" != "$SLURM_JOB_ID" ] && \
+        squeue -h -j "$holder" -o %T 2>/dev/null | grep -q RUNNING; then
+        if [ "${TAKEOVER:-0}" != 1 ]; then
+            echo "segment $holder is training this run; nothing to do"
+            return 1
+        fi
+        echo "taking over from segment $holder"
+        scancel "$holder"
+        for _ in $(seq 60); do
+            squeue -h -j "$holder" 2>/dev/null | grep -q . || break
+            sleep 10
+        done
+    fi
+    mkdir -p "$LOCK"
+    echo "$SLURM_JOB_ID" > "$LOCK/job"
+}
+release_lock() {
+    if [ "$(cat "$LOCK/job" 2>/dev/null)" = "$SLURM_JOB_ID" ]; then
+        rm -f "$LOCK/job"
+        rmdir "$LOCK" 2>/dev/null || true
+    fi
+}
+claim_lock || exit 0
+trap release_lock EXIT
+trap 'release_lock; exit 143' TERM INT
+
 RESUME_FROM="${RESUME_FROM:-none}"
+if [ "$RESUME_FROM" = latest ]; then
+    if compgen -G "$RUN_DIR/checkpoints/*_FINAL.pkl" > /dev/null; then
+        echo "run already reached its target update"
+        exit 0
+    fi
+    # Checkpoint names carry zero-padded updates and are written atomically.
+    RESUME_FROM="$( (ls "$RUN_DIR"/checkpoints/*_update_*.pkl 2>/dev/null || true) | sort | tail -n 1)"
+    RESUME_FROM="${RESUME_FROM:-none}"
+    echo "resume_from=$RESUME_FROM"
+fi
 if [ "$RESUME_FROM" != none ]; then
     test -r "$RESUME_FROM"
     RESUME_ARGS=(--resume_from "$RESUME_FROM" --load_env_from_checkpoint)
@@ -44,7 +93,7 @@ fi
 
 export JAX_COMPILATION_CACHE_DIR="${JAX_COMPILATION_CACHE_DIR:-$RUN_DIR/jax-cache}"
 export JAX_ENABLE_COMPILATION_CACHE="${JAX_ENABLE_COMPILATION_CACHE:-true}"
-mkdir -p "$RUN_DIR/checkpoints" "$RUN_DIR/wandb" "$JAX_COMPILATION_CACHE_DIR"
+mkdir -p "$RUN_DIR/wandb" "$JAX_COMPILATION_CACHE_DIR"
 tar --zstd -xf "$BANK_ARCHIVE" -C "$TMPDIR" bank
 export DATASET_PATH="$TMPDIR/bank"
 export DATASET_SIZE="$BANK_DATASET_SIZE"
@@ -118,8 +167,8 @@ assert count == int(os.environ["EXPECTED_PARAMETERS"]), count
 print(f"PASS model parameters {count}")
 PY
 
-# One W&B run per Slurm segment; continuations link to the previous run id.
-BASE_RUN_ID="gru_gen512_${BASELINES_REVISION:0:10}_s${SEED}"
+# One W&B run per Slurm segment; continuations carry the job id.
+BASE_RUN_ID="$RUN_NAME"
 if [ "$RESUME_FROM" = none ]; then
     export WANDB_RUN_ID="$BASE_RUN_ID" WANDB_RESUME=never
 else
