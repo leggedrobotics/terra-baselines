@@ -95,4 +95,16 @@ SHA-256 `3ddaaf53…`, built under `.artifacts/terra_gru_bigbank_20260923/`
 
 ## Status
 
-Pending first update on Euler.
+September 24, 00:30. Euler smoke 15005789 (one RTX 4090, 512 environments,
+full bank, baselines f8b1094, Terra 83e6f630) completed three updates in
+18 minutes: runtime lock, cuDNN/NCCL loaders, convolution backward and
+parameter count pass; 20,480 maps load with verified trench metadata; the
+shared u110000 teacher is evaluated once. First update including compilation
+638 s, then about 3,850 environment steps/s per GPU with teacher KL active.
+The final checkpoint (Adam step 192) has finite parameters and optimizer
+state, zero transition-integrity counts, teacher KL 1.24 (foundation 10,144
+and trench 6,240 rows) and no memory failure.
+
+Production job 15005791 (4 × RTX 4090, gpuhe.120h, u100000, W&B online) is
+queued; Slurm estimates a start between September 28 and 30. At about 4.5 s
+per update, one 120-hour segment covers most of the 100,000 updates.
