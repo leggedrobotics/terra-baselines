@@ -81,10 +81,18 @@ def _scaled_lecun_normal(scale: float):
     return init
 
 
+def team_size(config) -> int:
+    """Number of jointly controlled agents in a training config."""
+    agent_types = _config_option(config, "agent_types_override", None)
+    return len(tuple(agent_types)) if agent_types else 1
+
+
 def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
     """Instantiate a model according to obs shape of environment."""
     validate_executable_dig_observation(config, env=env)
-    init_batch_size = 1
+    num_agents = team_size(config)
+    # A team's model input holds one row per agent view.
+    init_batch_size = num_agents
     num_embeddings_agent = jnp.max(
         jnp.array(
             [
@@ -347,6 +355,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
         use_aux_decoder=use_aux_decoder,
+        num_agents=num_agents,
         **model_kwargs,
     )
 
@@ -413,6 +422,17 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         obs.append(jnp.zeros((init_batch_size, 5), dtype=jnp.float32))
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
+    if num_agents > 1:
+        # One team of ``num_agents``; the intent decoder is created here.
+        init_args = (
+            obs,
+            jnp.zeros((1, num_agents), dtype=jnp.int32),
+            jnp.arange(num_agents, dtype=jnp.int32)[None, :],
+        )
+        with jax.default_device(jax.devices("cpu")[0]):
+            params = model.init(rng, *init_args, method=model.joint_policy)
+        print(f"Model: {sum(x.size for x in jax.tree_leaves(params)):,} parameters")
+        return model, params
     # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
     # Euler 3090s (CUDNN_STATUS_EXECUTION_FAILED, jobs 10307312/10307751) and
     # placement is irrelevant here — values are PRNG-identical and training
@@ -1554,6 +1574,53 @@ class ResettableGRUCell(nn.Module):
         return carry, output
 
 
+class AgentIntentDecoder(nn.Module):
+    """Condition each agent on the actions its teammates already chose.
+
+    Multi-Agent Transformer style decoding (Wen et al., 2022) over a small
+    team: agent ``i`` attends to (embedding, action) tokens of the agents
+    decided before it in this step's order. The output projection starts at
+    zero, so an untrained decoder leaves every agent's features unchanged.
+    """
+
+    num_actions: int
+    features: int = 64
+    num_heads: int = 4
+
+    @nn.compact
+    def __call__(self, actor_x, agent_embedding, actions, decided):
+        """``actor_x`` [B, A, F], ``agent_embedding`` [B, A, D], ``actions``
+        [B, A] int, ``decided`` [B, A, A] bool (query agent, earlier agent)."""
+        tokens = jnp.concatenate(
+            (
+                agent_embedding.astype(jnp.float32),
+                jax.nn.one_hot(actions, self.num_actions, dtype=jnp.float32),
+            ),
+            axis=-1,
+        )
+        tokens = nn.LayerNorm()(nn.relu(nn.Dense(self.features)(tokens)))
+        queries = nn.LayerNorm()(nn.Dense(self.features)(actor_x))
+        attended = nn.MultiHeadDotProductAttention(
+            num_heads=self.num_heads,
+            qkv_features=self.features,
+            out_features=self.features,
+        )(queries, tokens, mask=decided[:, None, :, :])
+        # The first agent has no decided teammates; masked attention would
+        # otherwise average all tokens uniformly.
+        attended = jnp.where(jnp.any(decided, axis=-1, keepdims=True), attended, 0.0)
+        return nn.Dense(
+            actor_x.shape[-1],
+            kernel_init=nn.initializers.zeros_init(),
+            bias_init=nn.initializers.zeros_init(),
+        )(nn.relu(attended))
+
+
+def decided_before(order: Array) -> Array:
+    """[B, A, A] mask: agent ``j`` acts before agent ``i`` under ``order``."""
+    position = jnp.argsort(order, axis=-1)
+    return position[:, None, :] < position[:, :, None]
+
+
 class SimplifiedCoupledCategoricalNet(nn.Module):
     """
     The full net for centralized dual-agent policy.
@@ -1607,9 +1674,16 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     transformer_num_layers: int = 2
     transformer_num_heads: int = 4
     transformer_ffn_dim: int = 256
+    # Agents controlled jointly. One agent keeps the historical parameter tree;
+    # a team adds the intent decoder and uses the joint_* methods.
+    num_agents: int = 1
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
+        if self.num_agents > 1:
+            if self.actor_core != "mlp" or self.model_core != "mlp":
+                raise ValueError("joint team control requires the MLP actor/core")
+            self.intent_decoder = AgentIntentDecoder(num_actions=num_actions)
         if self.actor_residual_head:
             if self.actor_core != "mlp":
                 raise ValueError("actor_residual_head requires actor_core='mlp'")
@@ -2104,6 +2178,64 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         """Evaluate the feed-forward critic without advancing actor memory."""
         _, critic_x = self._fused_features(obs)
         return self.mlp_v(critic_x)
+
+    def _team_features(self, obs: Array) -> tuple[Array, Array, Array]:
+        """Per-agent actor/critic features and self embeddings, [B, A, ...]."""
+        actor_x, critic_x = self._fused_features(obs)
+        agent_embedding = self.agent_state_net(obs[0][:, 0, :])
+        shape = (-1, self.num_agents)
+        return (
+            actor_x.reshape(shape + actor_x.shape[1:]),
+            critic_x.reshape(shape + critic_x.shape[1:]),
+            agent_embedding.reshape(shape + agent_embedding.shape[1:]),
+        )
+
+    def _team_logits(self, actor_x, agent_embedding, actions, order) -> Array:
+        actor_x = actor_x + self.intent_decoder(
+            actor_x, agent_embedding, actions, decided_before(order)
+        )
+        logits = self.mlp_pi(actor_x)
+        if self.actor_residual_head:
+            logits = logits + self.actor_residual_net(actor_x)
+        return logits
+
+    def joint_policy(self, obs: Array, actions: Array, order: Array):
+        """Team values [B, A] and logits [B, A, n], each agent conditioned on
+        the ``actions`` of the agents before it in ``order`` (teacher forcing)."""
+        actor_x, critic_x, agent_embedding = self._team_features(obs)
+        values = self.mlp_v(critic_x)[..., 0]
+        return values, self._team_logits(actor_x, agent_embedding, actions, order)
+
+    def joint_act(self, obs: Array, order: Array, rng: Array, greedy: bool = False):
+        """Decide the team's actions one agent at a time in ``order``.
+
+        Returns actions [B, A], their log-probabilities, the per-agent values
+        [B, A] and the final logits [B, A, n]. Every agent's logits depend only
+        on the agents decided before it, so they equal ``joint_policy``'s.
+        """
+        actor_x, critic_x, agent_embedding = self._team_features(obs)
+        batch = jnp.arange(order.shape[0])
+        actions = jnp.zeros(order.shape, dtype=jnp.int32)
+        for position, key in enumerate(jax.random.split(rng, self.num_agents)):
+            agent = order[:, position]
+            logits = self._team_logits(actor_x, agent_embedding, actions, order)
+            agent_logits = logits[batch, agent]
+            choice = (
+                jnp.argmax(agent_logits, axis=-1)
+                if greedy
+                else jax.random.categorical(key, agent_logits)
+            )
+            actions = actions.at[batch, agent].set(choice.astype(jnp.int32))
+        logits = self._team_logits(actor_x, agent_embedding, actions, order)
+        log_probs = jnp.take_along_axis(
+            jax.nn.log_softmax(logits, axis=-1), actions[..., None], axis=-1
+        )[..., 0]
+        return actions, log_probs, self.mlp_v(critic_x)[..., 0], logits
+
+    def joint_value(self, obs: Array) -> Array:
+        """Per-agent critic values [B, A]."""
+        _, critic_x, _ = self._team_features(obs)
+        return self.mlp_v(critic_x)[..., 0]
 
     def actor_step(
         self,

@@ -94,7 +94,7 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
-from utils.models import MAP_ENCODER_ALIASES, canonical_map_encoder, get_model_ready
+from utils.models import MAP_ENCODER_ALIASES, canonical_map_encoder, get_model_ready, team_size
 from terra.env import TerraEnvBatch
 from terra.config import (
     EnvConfig,
@@ -121,12 +121,16 @@ from utils.initialization_receipt import write_initialization_receipt
 from utils.utils_ppo import (
     initial_actor_hidden,
     is_recurrent_actor,
+    joint_value_ppo,
     obs_to_model_input,
     policy,
     select_action_ppo,
     select_action_ppo_recurrent,
+    select_joint_action,
+    update_prev_actions,
     value_ppo,
     wrap_action,
+    wrap_joint_action,
 )
 from utils.task_teachers import (
     bind_task_teacher_checkpoints,
@@ -437,6 +441,10 @@ class Transition(struct.PyTreeNode):
     obs: jax.Array
     prev_actions: jax.Array
     prev_reward: jax.Array
+    # Teams only: each env's agent decision/execution order and the agents'
+    # critic values (``value`` is their mean, the team value).
+    agent_order: jax.Array | None = None
+    agent_values: jax.Array | None = None
 
 
 _REQUIRED_FINITE_LOSS_KEYS = (
@@ -878,35 +886,6 @@ def resolve_run_name(
     if exact_run_name:
         return requested_name
     return f"{requested_name}-{machine}-{timestamp}"
-
-
-def _backfill_terminal_rewards(
-    reward_seq: jax.Array,
-    terminal_reward_seq: jax.Array,
-    done_seq: jax.Array,
-    num_agents_per_env: jax.Array,
-    max_agents: int = 4,
-) -> jax.Array:
-    """Share terminal credit with prior same-episode agent turns."""
-    terminal_reward_seq = jnp.where(done_seq, terminal_reward_seq, 0.0)
-    backfill = jnp.zeros_like(reward_seq)
-    for k in range(1, max_agents):
-        zeros = jnp.zeros_like(terminal_reward_seq[:k])
-        shifted = jnp.concatenate([terminal_reward_seq[k:], zeros], axis=0)
-
-        # A reward at t+k belongs to the same episode as t only when no step in
-        # [t, t+k) terminated an episode.
-        same_episode = jnp.ones_like(done_seq, dtype=jnp.bool_)
-        for offset in range(k):
-            done_ahead = jnp.concatenate(
-                [done_seq[offset:], jnp.ones_like(done_seq[:offset])],
-                axis=0,
-            )
-            same_episode = jnp.logical_and(same_episode, ~done_ahead)
-
-        use_k = (num_agents_per_env > k).astype(reward_seq.dtype)
-        backfill += jnp.where(same_episode, shifted, 0.0) * use_k
-    return reward_seq + backfill
 
 
 def assert_initial_env_steps_zero(timestep):
@@ -1879,7 +1858,7 @@ class MixedAgentTrainConfig:
     keep_checkpoint_history: bool = False
 
     # Model settings optimized for mixed agents
-    num_prev_actions: int = 10  # overridden to 5 * num_agents at runtime
+    num_prev_actions: int = 10  # overridden to 5 (each agent's own history) at runtime
     clip_action_maps: bool = True  # clips the action maps to [-1, 1]
     local_map_normalization_bounds: tuple[int, int] = (-16, 16)
     maps_net_normalization_bounds: tuple[int, int] = (-10, 10)
@@ -2487,6 +2466,12 @@ def create_mixed_agent_env_config(
 
     # Set the action types from the training configuration
     env_config = env_config._replace(action_types=action_types)
+    # Only tracked skid steers load (wheeled FORWARD has no pickup), and the
+    # int8 load cannot hold more than 127 units.
+    if any(agent == 2 and action != 0 for agent, action in zip(agent_types, action_types)):
+        raise ValueError("skid steers must be tracked (action type 0)")
+    if skidsteer_capacity is not None and not 0 < skidsteer_capacity <= 127:
+        raise ValueError(f"skidsteer_capacity must be in 1..127, got {skidsteer_capacity}")
 
     if relocation_progress_mult is not None:
         env_config = env_config._replace(
@@ -3029,33 +3014,22 @@ def make_mixed_agent_states(
     rng = jax.random.PRNGKey(config.seed)
     rng, _rng = jax.random.split(rng)
 
-    # Infer num_prev_actions as 5 per agent without triggering a reset/pmap
-    try:
-        MAX_AGENTS = 4
-        # The actual batched environment is authoritative, including when it
-        # came from a checkpoint and the CLI still has its default override.
-        try:
-            na = _num_agents_from_env_params(env_params)
-        except ValueError:
-            if config.agent_types_override is not None:
-                na = len(tuple(config.agent_types_override))
-            elif hasattr(env.batch_cfg, "agent_types") and isinstance(
-                env.batch_cfg.agent_types, (tuple, list)
-            ):
-                na = len(env.batch_cfg.agent_types)
-            else:
-                na = MAX_AGENTS
-        na = max(1, min(MAX_AGENTS, int(na)))
-        config.num_prev_actions = int(5 * na)
-        print(
-            f"Setting num_prev_actions to {config.num_prev_actions} (5 per agent × {na} agents)",
-            flush=True,
+    # Each agent observes its own last five actions.
+    num_agents = team_size(config)
+    if num_agents != _num_agents_from_env_params(env_params):
+        raise ValueError(
+            f"model team size {num_agents} does not match the environment's "
+            f"{_num_agents_from_env_params(env_params)} agents"
         )
-    except Exception as e:
-        print(
-            f"Warning: failed to infer num_agents for num_prev_actions ({e}); keeping {config.num_prev_actions}",
-            flush=True,
+    if num_agents > 1 and (
+        np.any(np.asarray(env_params.enable_reachability_obs))
+        or config.partial_reset_root is not None
+    ):
+        raise ValueError(
+            "teams support neither the single-actor reachability observation "
+            "nor partial-reset banks"
         )
+    config.num_prev_actions = 5
 
     # Create the unified network with agent type features (now that num_prev_actions is set)
     print(f"🧠 Model size preset: {getattr(config, 'model_size', 'base')}", flush=True)
@@ -3368,6 +3342,8 @@ def _load_task_teachers(config, env, env_params, rng, checkpoint=None):
 def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=None):
     """Main training function for mixed agents - with full feature parity to original train.py"""
 
+    # Agents acting in every env step; a team is controlled jointly.
+    num_agents = team_size(config)
     bind_task_teacher_checkpoints(config)
     print("PPO advantage normalization: " + (
         "global minibatch across devices" if config.global_minibatch_advantage_norm
@@ -3569,6 +3545,32 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                 checkpoint = migrate_retained_work_context_checkpoint(checkpoint, train_state.params)
                 config.migrate_retained_work_context = False
                 print("Added zero actor/critic retained-pose projections; retained existing parameters and Adam slots.", flush=True)
+            if num_agents > 1 and "intent_decoder" not in checkpoint["model"]["params"]:
+                if checkpoint_mode != "warm_start":
+                    raise ValueError(
+                        "a single-agent checkpoint can only warm-start a team"
+                    )
+                from utils.team_migration import (
+                    team_optimizer_state, team_params_from_single_agent,
+                )
+                checkpoint = {
+                    **checkpoint,
+                    "model": team_params_from_single_agent(
+                        checkpoint["model"], train_state.params
+                    ),
+                }
+                if "optimizer_state" in checkpoint:
+                    train_state = train_state.replace(
+                        opt_state=team_optimizer_state(
+                            checkpoint["optimizer_state"], train_state.opt_state
+                        )
+                    )
+                print(
+                    f"Team of {num_agents}: every agent starts as the single-agent "
+                    "policy; intent decoder and teammate-slot inputs start at zero; "
+                    "shared parameters keep the parent's Adam moments.",
+                    flush=True,
+                )
             train_state = train_state.replace(params=checkpoint["model"])
             print("Replaced model parameters from checkpoint.")
             if checkpoint_mode == "resume" and "optimizer_state" in checkpoint:
@@ -3978,11 +3980,9 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
             # Removed one-time debug sanity prints
 
             prev_actions = jnp.zeros(
-                (
-                    config.num_devices,
-                    config.num_envs_per_device,
-                    config.num_prev_actions,
-                ),
+                (config.num_devices, config.num_envs_per_device)
+                + ((num_agents,) if num_agents > 1 else ())
+                + (config.num_prev_actions,),
                 dtype=jnp.int32,
             )
             prev_reward = jnp.zeros((config.num_devices, config.num_envs_per_device))
@@ -4062,7 +4062,23 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
 
                     # SELECT ACTION
                     rng, _rng_model, _rng_env = jax.random.split(rng, 3)
-                    if is_recurrent_actor(config):
+                    agent_order = agent_values = None
+                    if num_agents > 1:
+                        (
+                            action,
+                            agent_order,
+                            log_prob,
+                            value,
+                            agent_values,
+                        ) = select_joint_action(
+                            train_state,
+                            prev_timestep.observation,
+                            prev_actions,
+                            _rng_model,
+                            config,
+                        )
+                        next_actor_hidden = actor_hidden
+                    elif is_recurrent_actor(config):
                         (
                             action,
                             log_prob,
@@ -4093,8 +4109,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
 
                     # STEP ENV
                     _rng_env = jax.random.split(_rng_env, config.num_envs_per_device)
-                    action_env = wrap_action(action, env.batch_cfg.action_type)
-                    timestep = env.step(prev_timestep, action_env, _rng_env)
+                    if num_agents > 1:
+                        action_env = wrap_joint_action(action, env.batch_cfg.action_type)
+                    else:
+                        action_env = wrap_action(action, env.batch_cfg.action_type)
+                    timestep = env.step(prev_timestep, action_env, _rng_env, agent_order)
                     reward_components = timestep.info["reward_components"]
                     material_progress = normalized_material_progress(
                         source_volume=progress_source_volume,
@@ -4200,15 +4219,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                         obs=rollout_observation,
                         prev_actions=prev_actions,
                         prev_reward=prev_reward,
+                        agent_order=agent_order,
+                        agent_values=agent_values,
                     )
 
                     # UPDATE PREVIOUS ACTIONS
-                    prev_actions = jnp.roll(prev_actions, shift=1, axis=-1)
-                    prev_actions = prev_actions.at[..., 0].set(action)
-                    prev_actions = jnp.where(
-                        timestep.done[..., None],
-                        jnp.zeros_like(prev_actions),
-                        prev_actions,
+                    prev_actions = update_prev_actions(
+                        prev_actions, action, timestep.done
                     )
                     actor_hidden = jnp.where(
                         timestep.done[..., None],
@@ -4330,28 +4347,6 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                         "saturated_fraction": jnp.zeros((), dtype=jnp.float32),
                     }
 
-                # Share terminal credit with preceding same-episode agent turns.
-                done_seq = transitions.done  # [seq, batch]
-                reward_seq = transitions.reward  # [seq, batch]
-
-                # Get num_agents per env (assumed constant across sequence); shape [batch]
-                # transitions.obs stores prev_timestep.observation
-                num_agents_per_env = transitions.obs["num_agents"][0]  # [batch]
-                # Clip to supported window 1..MAX_AGENTS
-                MAX_AGENTS = 4
-                num_agents_per_env = jnp.clip(
-                    num_agents_per_env.astype(jnp.int32), 1, MAX_AGENTS
-                )
-
-                augmented_reward = _backfill_terminal_rewards(
-                    reward_seq,
-                    transitions.terminal_reward,
-                    done_seq,
-                    num_agents_per_env,
-                    max_agents=MAX_AGENTS,
-                )
-                transitions = transitions.replace(reward=augmented_reward)
-
                 # CALCULATE ADVANTAGE
                 (
                     rng,
@@ -4364,7 +4359,14 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                     actor_hidden,
                 ) = runner_state
                 rng, _rng = jax.random.split(rng)
-                if is_recurrent_actor(config):
+                if num_agents > 1:
+                    last_val = joint_value_ppo(
+                        train_state,
+                        timestep.observation,
+                        prev_actions,
+                        config,
+                    )
+                elif is_recurrent_actor(config):
                     last_val = value_ppo(
                         train_state,
                         timestep.observation,

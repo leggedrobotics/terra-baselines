@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
-from utils.models import get_model_ready, _config_option
+from utils.models import get_model_ready, _config_option, team_size
 from terra.env import TerraEnvBatch
 from terra.config import EnvConfig
 from flax.training.train_state import TrainState
@@ -17,10 +17,12 @@ from functools import partial
 from flax.jax_utils import replicate, unreplicate
 from flax import struct
 import utils.helpers as helpers
+from tensorflow_probability.substrates import jax as tfp
 from utils.utils_ppo import (
     select_action_ppo,
     wrap_action,
     obs_to_model_input,
+    joint_obs_to_model_input,
     policy,
     policy_with_intermediates,
     recurrent_policy_sequence,
@@ -380,6 +382,21 @@ def ppo_update_networks(
     aux_coef = float(_config_option(config, "aux_coef", 0.0))
     action_logit_masking = bool(_config_option(config, "action_logit_masking", False))
     actor_core = _config_option(config, "actor_core", "mlp")
+    # Team PPO (MAT objective): one clipped ratio per agent's conditional
+    # policy, all agents sharing the team advantage; every agent's critic view
+    # regresses the team return.
+    num_agents = team_size(config)
+    if num_agents > 1 and (
+        actor_core != "mlp"
+        or aux_coef > 0.0
+        or action_logit_masking
+        or teacher_apply_fn is not None
+        or demonstration_batch is not None
+    ):
+        raise ValueError(
+            "team PPO supports the feed-forward actor without aux loss, logit "
+            "masking, kickstart teachers or demonstrations"
+        )
     if demonstration_batch is not None and actor_core != "mlp":
         raise ValueError("demonstrations require a feedforward actor")
     if actor_core == "gru":
@@ -448,17 +465,36 @@ def ppo_update_networks(
         rollout_log_prob_finite = _finite_fraction(transitions.log_prob)
         advantages_finite = _finite_fraction(advantages)
         targets_finite = _finite_fraction(targets)
-        obs = obs_to_model_input(
-            transitions_obs_reshaped,
-            transitions_prev_actions_flat,
-            config,
-        )
+        if num_agents > 1:
+            obs = joint_obs_to_model_input(
+                transitions_obs_reshaped,
+                transitions_prev_actions_flat,
+                config,
+                num_agents,
+            )
+        else:
+            obs = obs_to_model_input(
+                transitions_obs_reshaped,
+                transitions_prev_actions_flat,
+                config,
+            )
         model_obs_finite = _tree_finite_fraction(obs)
         # D3: the loss must build the same masked distribution the rollout
         # sampled from, or log_prob/entropy would disagree across the ratio.
         # Optional policy features precede the mask, which is always last.
         loss_action_mask = obs[-1] if action_logit_masking else None
-        if actor_core == "gru":
+        if num_agents > 1:
+            agent_values, team_logits = train_state.apply_fn(
+                params,
+                obs,
+                jnp.reshape(transitions.action, (-1, num_agents)),
+                jnp.reshape(transitions.agent_order, (-1, num_agents)),
+                method="joint_policy",
+            )
+            value = agent_values[..., None]
+            dist = tfp.distributions.Categorical(logits=team_logits)
+            aux_loss = jnp.zeros((), dtype=jnp.float32)
+        elif actor_core == "gru":
             value, dist, _ = recurrent_policy_sequence(
                 train_state.apply_fn,
                 params,
@@ -588,25 +624,33 @@ def ppo_update_networks(
             teacher_logits_abs_max = jnp.zeros((), dtype=jnp.float32)
             task_teacher_stats = {}
 
-        value = jnp.reshape(value, transitions.value.shape)
+        if num_agents > 1:
+            old_value = transitions.agent_values
+            value_targets = targets[..., None]
+            policy_advantages = advantages[..., None]
+        else:
+            old_value = transitions.value
+            value_targets = targets
+            policy_advantages = advantages
+        value = jnp.reshape(value, old_value.shape)
         log_prob = jnp.reshape(log_prob, transitions.log_prob.shape)
 
         if use_value_clip:
-            value_pred_clipped = transitions.value + (value - transitions.value).clip(
+            value_pred_clipped = old_value + (value - old_value).clip(
                 -clip_eps, clip_eps
             )
-            value_loss = jnp.square(value - targets)
-            value_loss_clipped = jnp.square(value_pred_clipped - targets)
+            value_loss = jnp.square(value - value_targets)
+            value_loss_clipped = jnp.square(value_pred_clipped - value_targets)
             value_loss = 0.5 * jnp.maximum(value_loss, value_loss_clipped).mean()
         else:
-            value_loss = 0.5 * jnp.square(value - targets).mean()
+            value_loss = 0.5 * jnp.square(value - value_targets).mean()
 
         log_ratio = log_prob - transitions.log_prob
         ratio = jnp.exp(log_ratio)
         approx_kl = ((ratio - 1.0) - log_ratio).mean()
         clip_fraction = (jnp.abs(ratio - 1.0) > clip_eps).mean()
-        actor_loss1 = advantages * ratio
-        actor_loss2 = advantages * jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
+        actor_loss1 = policy_advantages * ratio
+        actor_loss2 = policy_advantages * jnp.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)
         actor_loss = -jnp.minimum(actor_loss1, actor_loss2).mean()
         entropy_values = dist.entropy()
         entropy = entropy_values.mean()

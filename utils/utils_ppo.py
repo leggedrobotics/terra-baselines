@@ -242,6 +242,76 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
     return obs
 
 
+def joint_obs_to_model_input(obs, prev_actions, train_cfg, num_agents: int):
+    """Model input for a team observation: one row per agent's view.
+
+    ``obs`` holds Terra's per-agent view keys as [B, A, ...] and shared keys as
+    [B, ...]; ``prev_actions`` is [B, A, k]. Rows are ordered (env, agent),
+    the order ``SimplifiedCoupledCategoricalNet`` reshapes back to [B, A].
+    """
+    from terra.env import AGENT_VIEW_OBS_KEYS
+
+    batch = jnp.shape(obs["action_map"])[0]
+    rows = batch * num_agents
+    flat = {}
+    for key, value in obs.items():
+        value = jnp.asarray(value)
+        if key in AGENT_VIEW_OBS_KEYS:
+            flat[key] = value.reshape((rows,) + value.shape[2:])
+        else:
+            flat[key] = jnp.repeat(value, num_agents, axis=0)
+    return obs_to_model_input(
+        flat, prev_actions.reshape((rows,) + prev_actions.shape[2:]), train_cfg
+    )
+
+
+def random_agent_order(rng, batch: int, num_agents: int):
+    """One uniformly random decision/execution order of the agents per env."""
+    return jnp.argsort(
+        jax.random.uniform(rng, (batch, num_agents)), axis=-1
+    ).astype(jnp.int32)
+
+
+def select_joint_action(train_state, obs, prev_actions, rng, config, greedy=False):
+    """Sample (or pick greedily) one action per agent, sequentially decoded.
+
+    Returns actions, order, per-agent log-probs [B, A], the team value [B]
+    (mean of the agents' values) and per-agent values [B, A].
+    """
+    batch, num_agents = prev_actions.shape[:2]
+    rng_order, rng_act = jax.random.split(rng)
+    order = random_agent_order(rng_order, batch, num_agents)
+    model_obs = joint_obs_to_model_input(obs, prev_actions, config, num_agents)
+    actions, log_probs, agent_values, _ = train_state.apply_fn(
+        train_state.params, model_obs, order, rng_act, greedy, method="joint_act"
+    )
+    return actions, order, log_probs, agent_values.mean(axis=-1), agent_values
+
+
+def joint_value_ppo(train_state, obs, prev_actions, config):
+    """Team value [B]: the mean of the agents' critic values."""
+    num_agents = prev_actions.shape[1]
+    model_obs = joint_obs_to_model_input(obs, prev_actions, config, num_agents)
+    values = train_state.apply_fn(train_state.params, model_obs, method="joint_value")
+    return values.mean(axis=-1)
+
+
+def wrap_joint_action(action, action_type):
+    """[B, A] agent actions as one Terra action per env."""
+    return action_type.new(action)
+
+
+def update_prev_actions(prev_actions, action, done):
+    """Push each agent's newest action into its history; clear ended episodes.
+
+    ``prev_actions`` is [..., k] (single agent) or [..., A, k] (team) with
+    ``action`` shaped like ``prev_actions[..., 0]`` and ``done`` per env.
+    """
+    prev_actions = jnp.roll(prev_actions, shift=1, axis=-1).at[..., 0].set(action)
+    done = jnp.reshape(done, done.shape + (1,) * (prev_actions.ndim - done.ndim))
+    return jnp.where(done, jnp.zeros_like(prev_actions), prev_actions)
+
+
 def _masked_logits(logits_pi, action_mask):
     """Invalid-action masking (D3): finite large negative keeps gradients safe.
 

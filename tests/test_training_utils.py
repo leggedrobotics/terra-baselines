@@ -26,7 +26,6 @@ from train_mixed import (
     _assert_finite_tree,
     _assert_transition_integrity,
     kickstart_coef_schedule,
-    _backfill_terminal_rewards,
     assert_initial_env_steps_zero,
     _strip_checkpoint_env_axis,
     _num_agents_from_env_params,
@@ -343,21 +342,6 @@ class TrainingAccountingTest(unittest.TestCase):
         self.assertEqual(config.env_steps_per_update, 128)
         self.assertEqual(config.num_updates, 3)
         self.assertEqual(config.actual_total_timesteps, 384)
-
-
-class TerminalBackfillTest(unittest.TestCase):
-    def test_backfill_is_causal_and_stays_within_episode(self):
-        rewards = jnp.zeros((6, 1), dtype=jnp.float32)
-        terminal = jnp.array([[0], [0], [5], [0], [7], [99]], dtype=jnp.float32)
-        done = jnp.array([[False], [False], [True], [False], [True], [False]])
-        num_agents = jnp.array([3], dtype=jnp.int32)
-
-        result = _backfill_terminal_rewards(rewards, terminal, done, num_agents)
-
-        np.testing.assert_allclose(
-            np.asarray(result[:, 0]),
-            np.array([5, 5, 0, 7, 0, 0], dtype=np.float32),
-        )
 
 
 class CheckpointCompatibilityTest(unittest.TestCase):

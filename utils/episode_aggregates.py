@@ -358,6 +358,12 @@ def update_episode_aggregate(
     step_reward_residual_violation = (
         step_reward_residual > step_reward_residual_tolerance
     ).astype(jnp.int32)
+    action_counts = jax.nn.one_hot(step.action, NUM_ACTIONS, dtype=jnp.int32)
+    explicit_noops = (step.action == NUM_ACTIONS - 1).astype(jnp.int32)
+    if action_counts.ndim > accumulator.action_counts.ndim:
+        # A team's step carries one action per agent: [..., agents].
+        action_counts = action_counts.sum(axis=-2)
+        explicit_noops = explicit_noops.sum(axis=-1)
     updated = accumulator.replace(
         episodic_return=accumulator.episodic_return + step.reward,
         agent_reward_sum=accumulator.agent_reward_sum + step.agent_rewards,
@@ -384,15 +390,11 @@ def update_episode_aggregate(
         step_count=accumulator.step_count + 1,
         action_counts=(
             accumulator.action_counts
-            + jax.nn.one_hot(
-                step.action,
-                NUM_ACTIONS,
-                dtype=jnp.int32,
-            )
+            + action_counts
         ),
         explicit_noop_count=(
             accumulator.explicit_noop_count
-            + (step.action == NUM_ACTIONS - 1).astype(jnp.int32)
+            + explicit_noops
         ),
         no_effect_action_count=(
             accumulator.no_effect_action_count

@@ -5,12 +5,16 @@ import jax
 import jax.numpy as jnp
 from flax.training.train_state import TrainState
 from typing import NamedTuple
+from utils.models import team_size
 from utils.utils_ppo import (
     initial_actor_hidden,
     is_recurrent_actor,
     select_action_ppo,
     select_action_ppo_recurrent,
+    select_joint_action,
+    update_prev_actions,
     wrap_action,
+    wrap_joint_action,
 )
 
 
@@ -424,6 +428,7 @@ def rollout_from_timestep(rng, env, timestep, train_state, config):
     num_devices = rng.shape[0]
     num_envs = config.num_envs_per_device
     num_rollouts = config.num_rollouts_eval
+    num_agents = team_size(config)
 
     key = (id(env), id(config))
     eval_step = _PMAPPED_STEP_CACHE.get(key)
@@ -440,27 +445,33 @@ def rollout_from_timestep(rng, env, timestep, train_state, config):
         ):
             rng_, _rng_step, _rng_model = jax.random.split(rng_, 3)
 
-            action, next_actor_hidden_ = _select_eval_action(
-                train_state_,
-                timestep_.observation,
-                prev_actions_,
-                actor_hidden_,
-                _rng_model,
-                config,
-            )
+            if num_agents > 1:
+                action, order, _, _, _ = select_joint_action(
+                    train_state_,
+                    timestep_.observation,
+                    prev_actions_,
+                    _rng_model,
+                    config,
+                )
+                action_env = wrap_joint_action(action, env.batch_cfg.action_type)
+                next_actor_hidden_ = actor_hidden_
+            else:
+                action, next_actor_hidden_ = _select_eval_action(
+                    train_state_,
+                    timestep_.observation,
+                    prev_actions_,
+                    actor_hidden_,
+                    _rng_model,
+                    config,
+                )
+                action_env = wrap_action(action, env.batch_cfg.action_type)
+                order = None
             _rng_step = jax.random.split(_rng_step, num_envs)
-            action_env = wrap_action(action, env.batch_cfg.action_type)
             episode_steps_before = timestep_.state.env_steps
-            timestep_ = env.step(timestep_, action_env, _rng_step)
+            timestep_ = env.step(timestep_, action_env, _rng_step, order)
             timestep_ = _strip_reward_components(timestep_)
 
-            prev_actions_ = jnp.roll(prev_actions_, shift=1, axis=-1)
-            prev_actions_ = prev_actions_.at[..., 0].set(action)
-            prev_actions_ = jnp.where(
-                timestep_.done[..., None],
-                jnp.zeros_like(prev_actions_),
-                prev_actions_,
-            )
+            prev_actions_ = update_prev_actions(prev_actions_, action, timestep_.done)
             actor_hidden_ = jnp.where(
                 timestep_.done[..., None],
                 jnp.zeros_like(next_actor_hidden_),
@@ -525,7 +536,10 @@ def rollout_from_timestep(rng, env, timestep, train_state, config):
 
     timestep = _strip_reward_components(timestep)
     prev_actions = jnp.zeros(
-        (num_devices, num_envs, config.num_prev_actions), dtype=jnp.int32
+        (num_devices, num_envs)
+        + ((num_agents,) if num_agents > 1 else ())
+        + (config.num_prev_actions,),
+        dtype=jnp.int32,
     )
     actor_hidden = initial_actor_hidden(num_devices * num_envs, config).reshape(
         num_devices, num_envs, -1

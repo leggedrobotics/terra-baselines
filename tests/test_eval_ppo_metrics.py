@@ -41,7 +41,7 @@ class _FakeEnv:
             info={"task_done": jnp.zeros((num_envs,), dtype=jnp.bool_)},
         )
 
-    def step(self, timestep, action, rng):
+    def step(self, timestep, action, rng, order=None):
         del action, rng
         env_index = jnp.arange(timestep.state.env_steps.shape[0])
         next_steps = timestep.state.env_steps + 1
