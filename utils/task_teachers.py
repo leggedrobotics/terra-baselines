@@ -35,8 +35,12 @@ def validate_task_teacher_mode(config):
         return
     if option(config, "teacher_checkpoint") is None:
         raise ValueError("trench_teacher_checkpoint requires the foundation teacher_checkpoint")
-    if option(config, "actor_core", "mlp") != "mlp":
-        raise ValueError("task teachers require actor_core='mlp'")
+    # Teachers stay feed-forward; a GRU student is scored row by row against them.
+    actor_core = option(config, "actor_core", "mlp")
+    if actor_core not in ("mlp", "gru"):
+        raise ValueError("task teachers require an mlp or gru student actor")
+    if actor_core == "gru" and option(config, "cache_teacher_outputs", False):
+        raise ValueError("a gru student scores teachers per minibatch; disable cache_teacher_outputs")
     if int(option(config, "teacher_obs_downsample", 1)) != 1:
         raise ValueError("task teachers require teacher_obs_downsample=1")
     if float(option(config, "kickstart_value_coef", 0.5)) != 0.0:
@@ -187,15 +191,19 @@ def native_task_teacher_obs(raw_obs, prev_actions, teacher_config):
 
 
 def make_task_teacher_apply_fn(foundation_apply_fn, trench_apply_fn,
-                               foundation_config, trench_config, family_ids):
+                               foundation_config, trench_config, family_ids, shared=False):
+    """``shared``: both roles bind the same checkpoint bytes, so evaluate it once."""
     def apply_fn(params, raw_obs, prev_actions):
         params = jax.tree_util.tree_map(jax.lax.stop_gradient, params)
         foundation_value, foundation_logits = foundation_apply_fn(
             params["foundation"], native_task_teacher_obs(raw_obs, prev_actions, foundation_config),
         )
-        trench_value, trench_logits = trench_apply_fn(
-            params["trench"], native_task_teacher_obs(raw_obs, prev_actions, trench_config),
-        )
+        if shared:
+            trench_value, trench_logits = foundation_value, foundation_logits
+        else:
+            trench_value, trench_logits = trench_apply_fn(
+                params["trench"], native_task_teacher_obs(raw_obs, prev_actions, trench_config),
+            )
         if foundation_logits.shape != trench_logits.shape or foundation_logits.shape[-1] != 8:
             raise ValueError("task teachers must share the eight-action tracked interface")
         family = raw_obs[FAMILY_KEY]

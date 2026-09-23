@@ -180,3 +180,64 @@ def test_recurrent_ppo_update_is_finite():
     assert info["diagnostics/grads_all_finite"].item() == 1.0
     assert info["diagnostics/params_all_finite"].item() == 1.0
     assert all(jnp.isfinite(x).all() for x in jax.tree.leaves(new_state.params))
+
+
+def test_gru_student_task_teacher_kl_is_rowwise():
+    """Teacher rows must align with the student's [sequence, time] rows."""
+    from utils.task_teachers import FAMILY_KEY, make_task_teacher_apply_fn
+
+    route = {"foundation": 3, "trench": 1}
+    env = _env()
+    config = Config(_config(), trench_teacher_checkpoint="trench.pkl",
+                    task_teacher_family_ids=route)
+    model, params = get_model_ready(jax.random.PRNGKey(2), config, env)
+    train_state = TrainState.create(apply_fn=model.apply, params=params, tx=optax.sgd(0.0))
+    seqs, steps = 2, 3
+    obs = _observation((seqs, steps), env)
+    obs[FAMILY_KEY] = jnp.array([[3, 1, 1], [1, 3, 3]], dtype=jnp.int32)
+    # Distinct previous actions make every teacher row different.
+    prev_actions = (jnp.arange(seqs * steps, dtype=jnp.int32).reshape(seqs, steps, 1)
+                    % 8) * jnp.ones((1, 1, 5), dtype=jnp.int32)
+    done = jnp.array([[False, True, False], [False, False, False]])
+    h0 = jnp.zeros((seqs, 64), dtype=jnp.float32)
+    teacher_config = SimpleNamespace(num_prev_actions=5, admissible_dig_observation=False,
+                                     executable_dig_observation=False, actor_core="mlp",
+                                     clip_action_maps=True, local_map_area_scale=1.0)
+
+    def teacher_apply(p, model_obs):
+        signal = model_obs[21][:, :1].astype(jnp.float32) + 1.0
+        return signal, signal * p[None, :]
+
+    teacher_params = {"foundation": jnp.linspace(-1.0, 1.0, 8),
+                      "trench": jnp.linspace(1.0, -2.0, 8)}
+    teacher_fn = make_task_teacher_apply_fn(teacher_apply, teacher_apply, teacher_config,
+                                            teacher_config, route)
+    model_obs = obs_to_model_input(obs, prev_actions, config)
+    value, dist, _ = recurrent_policy_sequence(model.apply, params, model_obs, h0, done)
+    action = jnp.argmax(dist.logits_parameter(), axis=-1)
+    transition = Transition(
+        done=done, task_done=jnp.zeros_like(done), action=action, value=value[..., 0],
+        reward=jnp.zeros((seqs, steps)), log_prob=dist.log_prob(action), obs=obs,
+        prev_actions=prev_actions, prev_reward=jnp.zeros((seqs, steps)),
+    )
+    rows = lambda x: x.reshape((seqs * steps,) + x.shape[2:])
+    _, teacher_logits = teacher_fn(teacher_params, jtu.tree_map(rows, obs), rows(prev_actions))
+    teacher_logp = jax.nn.log_softmax(teacher_logits, axis=-1)
+    student_logp = jax.nn.log_softmax(rows(dist.logits_parameter()), axis=-1)
+    expected = jnp.sum(jnp.exp(teacher_logp) * (teacher_logp - student_logp), axis=-1)
+
+    def update(state, batch, hidden):
+        return ppo_update_networks(state, batch, jnp.zeros((seqs, steps)),
+                                   batch.value, config, actor_hidden_init=hidden,
+                                   teacher_apply_fn=teacher_fn, teacher_params=teacher_params,
+                                   kickstart_kl_coef=1.0, kickstart_value_coef=0.0)
+
+    add_device = lambda leaf: jnp.asarray(leaf)[None]
+    _, info = jax.vmap(update, axis_name="devices")(
+        jtu.tree_map(add_device, train_state), jtu.tree_map(add_device, transition), h0[None])
+    assert jnp.allclose(info["kickstart/kl"][0], expected.mean(), rtol=1e-5, atol=1e-6)
+    foundation = rows(obs[FAMILY_KEY]) == 3
+    assert jnp.allclose(info["kickstart/foundation_kl_sum"][0],
+                        jnp.where(foundation, expected, 0).sum(), rtol=1e-5, atol=1e-6)
+    assert info["kickstart/trench_selected_count"][0] == 3
+    assert info["diagnostics/grads_all_finite"].item() == 1.0

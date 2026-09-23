@@ -396,10 +396,12 @@ def ppo_update_networks(
             raise ValueError(
                 "actor_core='gru' pilot does not support action-logit masking"
             )
-        if teacher_apply_fn is not None:
+        if teacher_apply_fn is not None and not task_teachers:
             raise ValueError(
-                "actor_core='gru' pilot does not support kickstart teachers"
+                "actor_core='gru' supports frozen feed-forward task teachers only"
             )
+        if foundation_kickstart_kl_coef is not None:
+            raise ValueError("actor_core='gru' does not support the foundation teacher release")
 
     raw_advantages_finite = _finite_fraction(advantages)
     raw_targets_finite = _finite_fraction(targets)
@@ -495,15 +497,32 @@ def ppo_update_networks(
         log_prob = dist.log_prob(policy_actions)
         log_prob_finite = _finite_fraction(log_prob)
 
+        if actor_core == "gru":
+            # A recurrent minibatch keeps [sequence, time]; the frozen
+            # feed-forward teachers score every row independently.
+            def _rows(x):
+                return jnp.reshape(x, (x.shape[0] * x.shape[1], *x.shape[2:]))
+
+            teacher_raw_obs = jax.tree_util.tree_map(_rows, transitions_obs_reshaped)
+            teacher_prev_actions = jax.tree_util.tree_map(
+                _rows, transitions_prev_actions_flat
+            )
+            kickstart_logits = _rows(student_logits)
+            kickstart_value = _rows(value)
+        else:
+            teacher_raw_obs = transitions_obs_reshaped
+            teacher_prev_actions = transitions_prev_actions_flat
+            kickstart_logits = student_logits
+            kickstart_value = value
+
         if teacher_apply_fn is not None:
             def _compute_kickstart(_):
-                if "teacher_cached_logits" in transitions_obs_reshaped:
-                    teacher_value = transitions_obs_reshaped["teacher_cached_value"]
-                    teacher_logits = transitions_obs_reshaped["teacher_cached_logits"]
+                if "teacher_cached_logits" in teacher_raw_obs:
+                    teacher_value = teacher_raw_obs["teacher_cached_value"]
+                    teacher_logits = teacher_raw_obs["teacher_cached_logits"]
                 elif task_teachers:
                     teacher_value, teacher_logits = teacher_apply_fn(
-                        teacher_params, transitions_obs_reshaped,
-                        transitions_prev_actions_flat,
+                        teacher_params, teacher_raw_obs, teacher_prev_actions,
                     )
                 else:
                     teacher_obs = downsample_teacher_obs(obs, teacher_obs_downsample)
@@ -514,7 +533,7 @@ def ppo_update_networks(
                 teacher_value = jax.lax.stop_gradient(teacher_value[:, 0])
                 teacher_logits = jax.lax.stop_gradient(teacher_logits)
                 teacher_logp = jax.nn.log_softmax(teacher_logits, axis=-1)
-                student_logp = jax.nn.log_softmax(student_logits, axis=-1)
+                student_logp = jax.nn.log_softmax(kickstart_logits, axis=-1)
                 teacher_p = jnp.exp(teacher_logp)
                 per_row_kl = jnp.sum(
                     teacher_p * (teacher_logp - student_logp), axis=-1
@@ -526,13 +545,13 @@ def ppo_update_networks(
                 weighted_kl = jnp.zeros((), dtype=jnp.float32)
                 if foundation_kickstart_kl_coef is not None:
                     coefficient = jnp.where(
-                        transitions_obs_reshaped[FAMILY_KEY] == config.task_teacher_family_ids["foundation"],
+                        teacher_raw_obs[FAMILY_KEY] == config.task_teacher_family_ids["foundation"],
                         foundation_kickstart_kl_coef, kickstart_kl_coef,
                     )
                     weighted_kl = (coefficient * per_row_kl).mean()
-                vmse = jnp.mean((value - teacher_value) ** 2)
+                vmse = jnp.mean((kickstart_value - teacher_value) ** 2)
                 task_stats = task_teacher_kl_stats(
-                    per_row_kl, transitions_obs_reshaped[FAMILY_KEY],
+                    per_row_kl, teacher_raw_obs[FAMILY_KEY],
                     config.task_teacher_family_ids,
                 ) if task_teachers else {}
                 return (
@@ -548,8 +567,8 @@ def ppo_update_networks(
 
             def _zero_kickstart(_):
                 task_stats = task_teacher_kl_stats(
-                    jnp.zeros_like(transitions_obs_reshaped[FAMILY_KEY], dtype=jnp.float32),
-                    transitions_obs_reshaped[FAMILY_KEY], config.task_teacher_family_ids,
+                    jnp.zeros_like(teacher_raw_obs[FAMILY_KEY], dtype=jnp.float32),
+                    teacher_raw_obs[FAMILY_KEY], config.task_teacher_family_ids,
                 ) if task_teachers else {}
                 return (
                     jnp.zeros((), dtype=jnp.float32),

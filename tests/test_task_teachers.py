@@ -97,13 +97,20 @@ def test_known_family_ids_come_from_actual_names():
 
 @pytest.mark.parametrize("override", [
     {"teacher_checkpoint": None}, {"teacher_obs_downsample": 2},
-    {"kickstart_value_coef": .5}, {"actor_core": "gru"},
+    {"kickstart_value_coef": .5},
     {"agent_types_override": (0, 0)}, {"action_types_override": (1,)},
     {"executable_dig_observation": False}, {"action_logit_masking": True},
+    {"actor_core": "gru", "num_steps": 32, "num_minibatches": 32, "cache_teacher_outputs": True},
+    {"actor_core": "gru", "num_steps": 32, "num_minibatches": 32, "trench_teacher_checkpoint": None},
 ])
 def test_narrow_mode_rejects_unsupported_interfaces(override):
     with pytest.raises(ValueError):
         _config(**override)
+
+
+def test_gru_student_accepts_task_teachers():
+    cfg = _config(actor_core="gru", num_steps=32, num_minibatches=32, num_envs_per_device=64)
+    assert cfg.actor_core == "gru" and cfg.trench_teacher_checkpoint == "trench.pkl"
 
 
 def test_native_config_checks_history_and_uses_each_teachers_preprocessing():

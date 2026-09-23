@@ -2146,10 +2146,16 @@ class MixedAgentTrainConfig:
                 )
             if float(self.aux_coef) > 0.0:
                 raise ValueError("actor_core='gru' pilot does not support aux_coef")
-            if self.teacher_checkpoint is not None:
+            # Frozen feed-forward task teachers build their own native inputs
+            # from raw rows; the single-teacher path reuses the student's
+            # model inputs, which a recurrent student cannot share.
+            if self.teacher_checkpoint is not None and self.trench_teacher_checkpoint is None:
                 raise ValueError(
-                    "actor_core='gru' pilot does not support kickstart teachers"
+                    "actor_core='gru' supports task teachers only; set "
+                    "--trench_teacher_checkpoint (it may equal --teacher_checkpoint)"
                 )
+            if self.foundation_teacher_release_updates:
+                raise ValueError("actor_core='gru' does not support the foundation teacher release")
             if self.action_logit_masking:
                 raise ValueError(
                     "actor_core='gru' pilot does not support action-logit masking"
@@ -3357,11 +3363,13 @@ def _load_task_teachers(config, env, env_params, rng, checkpoint=None):
         validate_model_params_match(initialized, saved["model"], f"{role} teacher")
         _assert_finite_tree(saved["model"], f"{role} teacher params")
         apply_fns[role], params[role] = model.apply, saved["model"]
+    shared = config.teacher_checkpoint_sha256 == config.trench_teacher_checkpoint_sha256
     teacher_apply_fn = make_task_teacher_apply_fn(
         apply_fns["foundation"], apply_fns["trench"],
-        teacher_configs["foundation"], teacher_configs["trench"], route,
+        teacher_configs["foundation"], teacher_configs["trench"], route, shared=shared,
     )
-    print(f"Frozen task teachers loaded; pre-action family routing: {route}", flush=True)
+    print(f"Frozen task teachers loaded; pre-action family routing: {route}; "
+          f"shared checkpoint: {shared}", flush=True)
     return rng, teacher_apply_fn, params
 
 
@@ -4429,6 +4437,10 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                             config=config,
                             ent_coef_override=ent_coef_current,
                             actor_hidden_init=actor_h0,
+                            teacher_apply_fn=teacher_apply_fn if teacher_updates_active else None,
+                            teacher_params=teacher_params,
+                            kickstart_kl_coef=kickstart_kl_coef_current,
+                            kickstart_value_coef=kickstart_value_coef_current,
                         )
                         return new_train_state, update_info
 
