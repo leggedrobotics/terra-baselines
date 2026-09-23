@@ -18,11 +18,11 @@ TERRA_REPO="${TERRA_REPO:-$(dirname "$REPO")/terra}"
 # Environment code must equal the corrected-geometry runtime; tool-only
 # commits on the Terra branch are allowed.
 TERRA_ENV_REVISION=2122b2dfc97bb04facc100e0e51905e4aea9d1b7
-BANK_ARCHIVE="${BANK_ARCHIVE:-/home/lorenzo/moleworks/.artifacts/terra_gru_bigbank_20260923/bank/train_v3_generalist_512.tar.zst}"
-BANK_ARCHIVE_SHA="${BANK_ARCHIVE_SHA:?set the bank archive sha256}"
+BANK_ARCHIVE="${BANK_ARCHIVE:-/home/lorenzo/moleworks/.artifacts/terra_gru_bigbank_20260923/train_v3_generalist_512.tar.zst}"
+BANK_ARCHIVE_SHA="${BANK_ARCHIVE_SHA:-3ddaaf538f1e7a091123ca1491c7f305e03835822d4f4c83c17d1f5916f6fc74}"
 BANK_MAPS_PATH=train_v3_generalist_512
 BANK_DATASET_SIZE="${BANK_DATASET_SIZE:-20480}"
-BANK_DISTANCE_SIDECAR_SHA="${BANK_DISTANCE_SIDECAR_SHA:?set the bank distance sidecar sha256}"
+BANK_DISTANCE_SIDECAR_SHA="${BANK_DISTANCE_SIDECAR_SHA:-d9a8c9e61346e319b3ffead150ca44c7e85d016cb5853997cf1ee721286d4506}"
 TEACHER_LOCAL=/home/lorenzo/moleworks/.artifacts/terra_instance_efficiency_20260922/inputs/generalist_u110000.pkl
 TEACHER_SHA=3fd74795794dbf27a3c2fce01c91414bfb211b913dc9b018bc540d8a7acd7057
 EXPECTED_PARAMETERS=2359445

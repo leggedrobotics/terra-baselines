@@ -76,7 +76,22 @@ distinct maps per condition. It is a combined capability run, not an ablation.
 
 ## Bank build
 
-Pending.
+`train_v3_generalist_512`: 20,480 slots, 15,112 distinct maps. Archive
+SHA-256 `3ddaaf53…`, built under `.artifacts/terra_gru_bigbank_20260923/`
+(README there has the full receipts).
+
+- 24 conditions (all trenches, procedural and strip foundations, V7
+  foundations): 512 distinct maps, the original 96 plus 416 new.
+- 15 slab-footprint conditions: 178 distinct maps (96 + 82); large slab 154.
+  The building-outline source pool is exhausted at generator index 541. Slots
+  are equalized at 512 per condition by repeating these maps 2–4 times, so
+  condition exposure matches the incumbent recipe (62.5% foundation resets).
+- New maps come from the generator revision of the original pool (60d01307),
+  at never-used indices; 814 existing maps were first regenerated
+  byte-identically. Old maps are byte-identical to the September bank.
+- No new map shares an identity or an exact target raster with any of 32,983
+  evaluation maps. R2 distance recomputed exactly on 300 sampled new maps.
+  The trainer loads all 20,480 slots with verified finite trench metadata.
 
 ## Status
 
