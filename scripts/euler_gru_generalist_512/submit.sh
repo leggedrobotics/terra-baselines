@@ -27,7 +27,7 @@ TEACHER_LOCAL=/home/lorenzo/moleworks/.artifacts/terra_instance_efficiency_20260
 TEACHER_SHA=3fd74795794dbf27a3c2fce01c91414bfb211b913dc9b018bc540d8a7acd7057
 EXPECTED_PARAMETERS=2359445
 SEED="${TERRA_SEED:-20260923}"
-NUM_DEVICES=4
+NUM_DEVICES="${TERRA_NUM_DEVICES:-4}"
 ENVS_PER_DEVICE="${TERRA_ENVS_PER_DEVICE:-512}"
 GPU_TYPE="${GPU_TYPE:-rtx_4090}"
 # Teacher guidance covers 655,360,000 transitions, as in the 2026-09-15 restart.
