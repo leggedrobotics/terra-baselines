@@ -414,3 +414,22 @@ Held-out u1000 (256 eval maps, 512 first episodes, seed 0; Euler eval job
 |---|---:|---:|---:|---:|
 | warm | 98.6% | 42 | 93.0% | 41 |
 | scratch | 9.0% | 313 | 3.3% | 381 |
+
+Held-out u2500 (Euler eval job 15021113): warm 98.8% sampled (median 36
+steps) / 95.9% greedy (35); scratch 13.5% sampled (327) / 1.8% greedy.
+
+Training by 2026-09-24 13:50 (online, train bank, episode-weighted over the
+last 100 updates):
+
+| update | warm success | warm length | scratch success | scratch length | scratch entropy coef |
+|---:|---:|---:|---:|---:|---:|
+| 1000 | 98.4% | 55 | 9% | 438 | 0.138 |
+| 2000 | 98.4% | 48 | 16% | 424 | 0.105 |
+| 3000 | 96.8% | 55 | 24% | 401 | 0.065 |
+| 4000 | 98.4% | 46 | – | – | – |
+| 5000 | 98.6% | 44 | – | – | – |
+| 7000 | 98.5% | 44 | 33% (u3811) | 373 | – |
+
+The warm arm plateaus in success from u1000 and keeps shortening episodes;
+scratch improves steadily as its entropy bonus anneals. Segments queue on
+Euler priority between 4 h runs (warm 2 of 6 done, scratch 1 of 6).
