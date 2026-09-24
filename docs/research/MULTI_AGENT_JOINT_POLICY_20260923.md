@@ -292,6 +292,40 @@ single-machine (share 0.88, speedup 1.01); 200–400 units reach 1.64. The
 training reward counts rounds, in which a move and a full-workspace DO cost the
 same, so it does not target the makespan the robot experiences.
 
+### Team milestones u5000–u10000 (2026-09-24 04:15)
+
+Run 4749240 (CSCS, 4 GH200, 20,000-update target), paired with the single
+agent u110000 on the same 512 reset maps (seed 0). The maps are drawn from the
+training bank `train_v2_pooled_generalist`, the bank both the parent and the
+team trained on: an in-distribution comparison, not a held-out test. Speedups
+are medians over maps both solve (507 sampled, 501–502 greedy). Executed-plan
+time: 0.5 m/s travel between work poses, 30 s per 0.3 m³ scoop, a unit =
+0.571 m cube, team time = slower machine (waiting not modeled).
+
+| (sampled / greedy) | u5000 | u7500 | u10000 |
+|---|---:|---:|---:|
+| success (single 99.4 / 99.6%) | 99.4 / 98.0% | 99.4 / 98.2% | 99.4 / 98.2% |
+| maps gained / lost vs single, greedy | 1 / 9 | 1 / 8 | 1 / 8 |
+| round speedup | 1.19 / 1.23 | 1.27 / 1.34 | 1.31 / 1.31 |
+| executed-plan speedup | 1.43 / 1.45 | 1.47 / 1.53 | 1.46 / 1.54 |
+| team faster on | 86 / 90% | 88 / 87% | 90 / 90% |
+| throughput, m³/h (single 34.7) | 48.8 / 49.1 | 49.0 / 51.2 | 49.8 / 50.8 |
+| busier machine's scooping share, median | 0.64 / 0.65 | 0.64 / 0.62 | 0.63 / 0.63 |
+| maps where one machine scoops > 80% | 30 / 27% | 23 / 23% | 24 / 22% |
+
+Executed-plan speedup by job size (sampled; units of required excavation):
+
+| units | u5000 | u7500 | u10000 |
+|---|---:|---:|---:|
+| < 100 (n≈155) | 1.03 | 1.06 | 1.15 |
+| 100–200 (n≈200) | 1.45 | 1.48 | 1.49 |
+| 200–400 (n≈130) | 1.65 | 1.65 | 1.65 |
+| ≥ 400 (n≈23) | 1.65 | 1.69 | 1.78 |
+
+Gains since u5000 come from splitting work better (small jobs and fewer
+lopsided splits); the bound for two machines is 2.0. Scooped volume equals the
+single agent's (ratio 1.00): no double handling.
+
 ## Skid steer, solo (2026-09-24)
 
 Step toward excavator + skid-steer teams: train the skid steer alone on
@@ -355,3 +389,20 @@ scratch 15008881–90; project storage
 Evaluation: `scripts/team/evaluate.py --types 2` on the eval bank. Work events
 now include skid-steer pickups (any own-load change), so the executed-plan
 model covers both machines.
+
+Early training (online episodes on the train bank, sampled policy; W&B
+offline runs `igzj8p6i` warm, `e0tf7sz4` scratch), 2026-09-24 ~04:10:
+
+| update | warm success | warm episode length | scratch success | scratch episode length |
+|---:|---:|---:|---:|---:|
+| 50 | 9% | 428 | 0% | 450 |
+| 100 | 78% | 235 | 1% | 448 |
+| 150 | 93% | 148 | 11%* | 431 |
+| 300 | 98% | 84 | 2% | 447 |
+| ~370 | 98% | 76 | 2% | 448 |
+| 650 | 98% | 61 | – | – |
+
+(*few ended episodes.) The warm start transfers within about 100 updates
+(entropy rises from 0.46 to 1.9 while the cabin habit is dropped, then falls
+to 0.6). Scratch stays near uniform (entropy 2.0 of 2.08 at coefficient 0.15).
+Held-out eval-bank panels follow at u1000, u2500, u5000, ...
