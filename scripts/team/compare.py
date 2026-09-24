@@ -12,8 +12,9 @@ successes gained/lost, and on maps both solve:
   time is straight-line travel between successive work poses at --nav-speed
   plus scoop cycles for every scooped unit (digs and relifts): --scoop-s per
   --scoop-m3, with a unit of tile_size² × --unit-depth-m (default: a cubic
-  cell). Machines of a team work in parallel, so the team time is its slowest
-  machine's; waiting for each other is not modeled (optimistic for teams).
+  cell), plus --setup-s per work pose. Machines of a team work in parallel, so
+  the team time is its slowest machine's; waiting for each other is not
+  modeled (optimistic for teams).
 """
 import argparse
 import json
@@ -36,7 +37,8 @@ def machine_seconds(result, per_env, args):
     unit_m3 = cell * cell * depth
     travel = per_env["travel_m"] / args.nav_speed
     scoops = per_env["scooped_units"] * unit_m3 / args.scoop_m3 * args.scoop_s
-    return travel + scoops, travel, scoops, unit_m3
+    setups = per_env.get("work_setups", np.zeros_like(travel)) * args.setup_s
+    return travel + scoops + setups, travel, scoops, unit_m3
 
 
 def main():
@@ -45,6 +47,8 @@ def main():
     parser.add_argument("--nav-speed", type=float, default=0.5, help="m/s")
     parser.add_argument("--scoop-m3", type=float, default=0.3)
     parser.add_argument("--scoop-s", type=float, default=30.0)
+    parser.add_argument("--setup-s", type=float, default=0.0,
+                        help="overhead seconds per work pose (workspace)")
     parser.add_argument("--unit-depth-m", type=float, default=None,
                         help="metres of depth per material unit (default: cell size)")
     args = parser.parse_args()

@@ -20,6 +20,9 @@ paths = list(Path(sys.argv[1]).glob("segments/*/checkpoints/*_update_*.pkl"))
 print(max(paths, key=lambda p: int(p.stem.rsplit("_", 1)[1])) if paths else "")
 PY
 )"
+# A fine-tune experiment first resumes START_CHECKPOINT (another run's
+# checkpoint); later allocations continue from their own newest one.
+LATEST="${LATEST:-${START_CHECKPOINT:-}}"
 RESUME=()
 [[ -z "$LATEST" ]] || RESUME=(--resume "$LATEST")
 printf '%s\n' "${LATEST:-$PARENT_CHECKPOINT}" > "$OUTPUT/start_checkpoint.txt"

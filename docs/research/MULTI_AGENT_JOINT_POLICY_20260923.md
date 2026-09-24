@@ -352,6 +352,48 @@ The executed-plan speedup stopped improving after u15000 while the round
 speedup kept rising: the reward counts rounds. Next lever: a reward aligned
 with the executed-plan time (makespan), fine-tuned from u20000.
 
+### Makespan cost: reward tied to each machine's soil and workspaces (2026-09-24)
+
+Lorenzo: uneven work splitting is about the soil each machine moves and its
+number of workspaces; tie the reward to that. The round reward cannot see it
+(a move and a full-workspace dig cost one round each), and the executed-plan
+speedup plateaued at ~1.5 after u15000 while the round speedup kept rising.
+
+Design (terra `State.machine_work_s`, `_get_reward_v2`; docs/ENVIRONMENT.md):
+
+- Every machine accumulates executed-plan seconds on its effective DO events:
+  loaded units × 18.7 s (0.187 m³ unit, 30 s per 0.3 m³), + travel from its
+  previous work pose at 0.5 m/s, + `makespan_setup_s` per new work pose
+  (workspace).
+- `F = max_i W_i / (V × 18.7 s)`: the busiest machine's time over the
+  single-machine loading time of the job. Reward per round
+  `-makespan_cost × (F' − F)`: only growth of the busiest machine is charged,
+  so work by the other machine is free until it becomes the busiest. Summed:
+  `-makespan_cost × F_final` (≈ −κ for one machine doing everything, ≈ −κ/2
+  for an even split).
+- Observation: `agent_states[..., 9] = W_i / (V × 18.7 s)` for every machine,
+  own first (model flag `machine_work_observation`).
+- Off by default; the reward is bitwise unchanged at 0 (tested), frozen
+  benchmark hash unchanged (inert defaults excluded).
+- Fine-tune from team u20000: `utils/machine_work.py` appends a zero input row
+  (policy and value identical, tested) and zero Adam slots; `run.py` detects a
+  resume without the observation (migrate once) and a change of the makespan
+  settings (declared reward fine-tune), later segments resume ordinarily.
+- Evaluation: `compare.py --setup-s` adds the same per-workspace overhead.
+
+Smoke (CSCS debug 4759878, from u20000, 2 updates): migration, reward
+fine-tune and settings in effect (config and env κ = 2, setup 30 s, R2
+receipt records both), finite parameters, KL 0.014, clip fraction 0.08,
+explained variance 0.78 (value adapting to the new term). The first smoke
+(4759733) failed the episode-aggregate integrity check: the makespan term was
+in the reward but not in the logged per-agent split; it is now shared equally
+among the agents (test: components reconstruct the step reward).
+
+Proposed run (needs CSCS approval): κ = 2, setup 30 s, from u20000 to u30000
+on one 4-GH200 node (~9 h), panels at u22500/u25000/u27500/u30000 against
+the single agent with `--setup-s 0` and `30`. The old recipe plateaued between
+u15000 and u20000, so a rise above ~1.52 is attributable to the new term.
+
 ## Skid steer, solo (2026-09-24)
 
 Step toward excavator + skid-steer teams: train the skid steer alone on

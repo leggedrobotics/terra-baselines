@@ -751,6 +751,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "resnet_stage_channels": None,
         "resnet_blocks_per_stage": None,
         "carry_work_observation": False,
+        "machine_work_observation": False,
         "stall_age_observation": False,
         "time_observation_mode": "none",
         "retained_work_context_observation": False,
@@ -813,6 +814,9 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
                 continue
             if (field_name == "retained_work_context_observation" and not saved and current
                     and getattr(config, "migrate_retained_work_context", False)):
+                continue
+            if (field_name == "machine_work_observation" and not saved and current
+                    and getattr(config, "migrate_machine_work_observation", False)):
                 continue
             if field_name == "executable_dig_observation" and bool(
                 getattr(config, "finetune_foundation_behavior", False)
@@ -1344,6 +1348,8 @@ def _r2_protocol_receipt(config) -> dict | None:
     if any(behavior.values()):
         receipt["foundation_behavior"] = behavior
     retained = {name: float(getattr(config, name, 0.0)) for name in helpers.RETAINED_WORK_COST_DEFAULTS}
+    retained = {name: value for name, value in retained.items()
+                if value or name not in helpers.MAKESPAN_COST_NAMES}
     if any(retained.values()):
         receipt["retained_work_costs"] = retained
     return receipt
@@ -1915,6 +1921,11 @@ class MixedAgentTrainConfig:
     retained_work_setup_cost: float = 0.0
     retained_work_travel_cost: float = 0.0  # per straight-line metre between work poses
     retained_work_turn_cost: float = 0.0  # per radian between work poses
+    # Team makespan cost: -makespan_cost times the growth of the busiest
+    # machine's executed-plan time over the job time; setup seconds per new
+    # work pose enter every machine's executed-plan time.
+    makespan_cost: float = 0.0
+    makespan_setup_s: float = 0.0
     behavior_cost_ramp_updates: int = 0  # new ramp duration; saved ramps restore automatically
     executable_dig_observation: bool = False
     # Preserve Adam and absolute update while explicitly changing only the
@@ -1929,6 +1940,10 @@ class MixedAgentTrainConfig:
     migrate_remaining_time: bool = False  # explicit one-time native checkpoint growth
     retained_work_context_observation: bool = False
     migrate_retained_work_context: bool = False
+    # Every machine's executed-plan time (agent state index 9), and its
+    # one-way native-resume growth (zero input weights, zero Adam slots).
+    machine_work_observation: bool = False
+    migrate_machine_work_observation: bool = False
     actor_residual_head: bool = False
     grow_actor_capacity: bool = False  # explicit one-time native checkpoint growth
     movement_feasibility_observation: bool = False
@@ -2096,6 +2111,10 @@ class MixedAgentTrainConfig:
                 or self.warm_start_from or self.resume_update is not None
                 or self.migrate_remaining_time or self.grow_actor_capacity):
             raise ValueError("migrate_retained_work_context requires native resume and only context growth")
+        if self.migrate_machine_work_observation and (
+                not self.machine_work_observation or not self.resume_from
+                or self.warm_start_from or self.resume_update is not None):
+            raise ValueError("migrate_machine_work_observation requires native resume and the observation")
         if self.grow_actor_capacity and (
                 not self.actor_residual_head or not self.resume_from
                 or self.warm_start_from or self.resume_update is not None):
@@ -3545,6 +3564,11 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                 checkpoint = migrate_retained_work_context_checkpoint(checkpoint, train_state.params)
                 config.migrate_retained_work_context = False
                 print("Added zero actor/critic retained-pose projections; retained existing parameters and Adam slots.", flush=True)
+            if config.migrate_machine_work_observation:
+                from utils.machine_work import migrate_machine_work_observation_checkpoint
+                checkpoint = migrate_machine_work_observation_checkpoint(checkpoint, train_state.params)
+                config.migrate_machine_work_observation = False
+                print("Added zero machine-work input weights; retained existing parameters and Adam slots.", flush=True)
             if num_agents > 1 and "intent_decoder" not in checkpoint["model"]["params"]:
                 if checkpoint_mode != "warm_start":
                     raise ValueError(
@@ -6122,6 +6146,16 @@ if __name__ == "__main__":
         help="Consume normalized carry work from agent_states[..., 8].",
     )
     parser.add_argument(
+        "--machine_work_observation",
+        action="store_true",
+        help="Consume every machine's normalized executed-plan time from agent_states[..., 9].",
+    )
+    parser.add_argument(
+        "--migrate_machine_work_observation",
+        action="store_true",
+        help="With --resume_from, add zero input weights for --machine_work_observation.",
+    )
+    parser.add_argument(
         "--stall_age_observation",
         action="store_true",
         help="Append Terra's normalized material-stall age after v6.1 fusion.",
@@ -6159,6 +6193,10 @@ if __name__ == "__main__":
         ("retained_work_setup_cost", "Reward-v2 cost per retained effective work setup."),
         ("retained_work_travel_cost", "Reward-v2 cost per straight-line metre between retained work poses."),
         ("retained_work_turn_cost", "Reward-v2 cost per heading radian between retained work poses."),
+        ("makespan_cost", "Reward-v2 team cost on the growth of the busiest machine's "
+         "executed-plan time, normalized by the single-machine job time."),
+        ("makespan_setup_s", "Executed-plan seconds per new work pose in every "
+         "machine's time (makespan cost)."),
     ):
         parser.add_argument(f"--{name}", type=float, default=0.0, help=help_text)
     parser.add_argument(
@@ -6669,6 +6707,8 @@ if __name__ == "__main__":
         retained_work_setup_cost=args.retained_work_setup_cost,
         retained_work_travel_cost=args.retained_work_travel_cost,
         retained_work_turn_cost=args.retained_work_turn_cost,
+        makespan_cost=args.makespan_cost,
+        makespan_setup_s=args.makespan_setup_s,
         base_travel_cost=args.base_travel_cost,
         base_turn_cost=args.base_turn_cost,
         behavior_cost_ramp_updates=args.behavior_cost_ramp_updates,
@@ -6681,6 +6721,8 @@ if __name__ == "__main__":
         migrate_remaining_time=args.migrate_remaining_time,
         retained_work_context_observation=args.retained_work_context_observation,
         migrate_retained_work_context=args.migrate_retained_work_context,
+        machine_work_observation=args.machine_work_observation,
+        migrate_machine_work_observation=args.migrate_machine_work_observation,
         actor_residual_head=args.actor_residual_head,
         grow_actor_capacity=args.grow_actor_capacity,
         movement_feasibility_observation=(

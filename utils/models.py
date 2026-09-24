@@ -324,6 +324,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         carry_work_observation=bool(
             _config_option(config, "carry_work_observation", False)
         ),
+        machine_work_observation=bool(
+            _config_option(config, "machine_work_observation", False)
+        ),
         stall_age_observation=bool(
             _config_option(config, "stall_age_observation", False)
         ),
@@ -607,6 +610,8 @@ class AgentStateNet(nn.Module):
     agent_types_max: int  # Maximum agent type value (0..agent_types_max), e.g., 2 includes skidsteer
     mlp_use_layernorm: bool
     carry_work_observation: bool = False
+    # Index 9: every machine's executed-plan time over the job time.
+    machine_work_observation: bool = False
     num_embedding_features: int = 8
     hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
     hidden_dim_layers_mlp_continuous: Sequence[int] = (16, 32)
@@ -683,6 +688,14 @@ class AgentStateNet(nn.Module):
                 )
             continuous.append(
                 agent_state_obs[..., [8]].astype(dtype=jnp.float32)
+            )
+        if self.machine_work_observation:
+            if agent_state_obs.shape[-1] < 10:
+                raise ValueError(
+                    "machine_work_observation requires agent state width >= 10"
+                )
+            continuous.append(
+                agent_state_obs[..., [9]].astype(dtype=jnp.float32)
             )
         x_continuous = jnp.concatenate(continuous, axis=-1)
         x_continuous = self.mlp_continuous(x_continuous)
@@ -1653,6 +1666,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     attention_compute_dtype: Any = None
     token_mixer_residual_init_scale: float = 0.0
     carry_work_observation: bool = False
+    machine_work_observation: bool = False
     stall_age_observation: bool = False
     reward_v2_reset_context_observation: bool = False
     trench_alignment_observation: bool = False
@@ -1837,6 +1851,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             agent_types_max=self.agent_types_max,
             mlp_use_layernorm=self.mlp_use_layernorm,
             carry_work_observation=self.carry_work_observation,
+            machine_work_observation=self.machine_work_observation,
         )
 
         self.maps_net = MapsNet(

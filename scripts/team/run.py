@@ -11,6 +11,10 @@ recipe from a fresh initialization, and --maps-path selects another bank
 Smoke: python scripts/team/run.py --checkpoint PARENT.pkl --bank BANK_DIR \
            --output OUT --agents 2 --devices 1 --envs 32 --updates 2
 Skid steer: ... --types 2 --maps-path train --dataset-size 2048
+Makespan fine-tune of a team: ... --resume TEAM.pkl --makespan-cost 2
+    --makespan-setup-s 30 --machine-work-observation (a checkpoint without the
+    observation is migrated and the reward change is declared once; later
+    segments resume ordinarily)
 """
 import argparse
 import dataclasses
@@ -35,6 +39,12 @@ def main():
     parser.add_argument("--scratch", action="store_true", help="fresh initialization")
     parser.add_argument("--ent-schedule", type=float, nargs=3, metavar=("START", "END", "UPDATES"),
                         help="entropy coefficient cosine schedule (default: the parent's)")
+    parser.add_argument("--makespan-cost", type=float, default=0.0,
+                        help="team cost on the growth of the busiest machine's executed-plan time")
+    parser.add_argument("--makespan-setup-s", type=float, default=0.0,
+                        help="executed-plan seconds per new work pose")
+    parser.add_argument("--machine-work-observation", action="store_true",
+                        help="observe every machine's executed-plan time")
     parser.add_argument("--devices", type=int, default=4)
     parser.add_argument("--envs", type=int, default=256, help="environments per device")
     parser.add_argument("--updates", type=int, required=True)
@@ -79,7 +89,22 @@ def main():
             "retained_work_turn_cost",
         )
     }
-    diagnostic = args.updates <= 5
+    costs.update(makespan_cost=args.makespan_cost, makespan_setup_s=args.makespan_setup_s)
+    # A resumed checkpoint without the observation is grown once, and a change
+    # of the makespan settings is declared as a reward fine-tune; checkpoints
+    # of the same treatment resume ordinarily.
+    migrate_machine_work = finetune = False
+    start_update = 0
+    if args.resume:
+        resumed_checkpoint = load_pkl_object(str(args.resume))
+        resumed = resumed_checkpoint["train_config"]
+        start_update = int(resumed_checkpoint["next_update"])
+        migrate_machine_work = args.machine_work_observation and not getattr(
+            resumed, "machine_work_observation", False)
+        finetune = any(float(getattr(resumed, name, 0.0)) != float(costs[name])
+                       for name in ("makespan_cost", "makespan_setup_s"))
+        del resumed_checkpoint
+    diagnostic = args.updates - start_update <= 5
     values.update(
         name=args.name,
         agent_types_override=team, action_types_override=(0,) * len(team),
@@ -106,8 +131,9 @@ def main():
         cache_teacher_outputs=False, foundation_teacher_release_updates=0,
         demonstration_npz=None, demonstration_coef=0.0,
         demonstration_fade_transitions=0,
-        behavior_cost_ramp_updates=0, finetune_foundation_behavior=False,
-        finetune_task_bank=False, **costs,
+        behavior_cost_ramp_updates=0, finetune_foundation_behavior=finetune,
+        finetune_task_bank=False, machine_work_observation=args.machine_work_observation,
+        migrate_machine_work_observation=migrate_machine_work, **costs,
     )
     output.mkdir(parents=True, exist_ok=True)
     train_mixed_agents(MixedAgentTrainConfig(**values))
