@@ -119,6 +119,7 @@ Euler RTX 4090, GRU checkpoints on the local RTX 4090 (JAX 0.4.33 on both).
 | FF u110000 (teacher) | 598 | 381/384 | 217/224 | 32/32 | 19 | 14 (18 stalls) | 29 | 32 |
 | GRU u2500 (KL weight 0.85) | 597 | 380/384 | 217/224 | 30/32 | 15 | 12 (22 stalls) | 30 | 32 |
 | GRU u5000 (KL weight 0.50) | 597 | 378/384 | 219/224 | 32/32 | 18 | 18 (14 stalls) | 32 | 32 |
+| GRU u7500 (KL weight 0.15) | 597 | 377/384 | 220/224 | 30/32 | 17 | 11 (21 stalls) | 31 | 32 |
 
 At u2500 the student has cloned the teacher (policy KL 0.12): it gains seven
 maps and loses eight against u110000, and repeats the teacher's road stalls.
@@ -130,3 +131,9 @@ above the teacher's 14/32 and 29/32, while the full panel holds at 597/608
 (seven gains, eight losses versus u110000).
 Training speed on 4 × RTX 3090 is about 9 s per update (7.3–7.9k environment
 steps/s), about half the RTX 4090 rate; the teacher forward costs about 10%.
+
+The road-start gain at u5000 did not persist at u7500 (18 → 11 of 32). This
+panel moves as a block between nearby checkpoints (the teacher lineage went
+24, 0 and 14 of 32 at u100000, u109250 and u110000), so single-checkpoint
+changes on it are weak evidence; the development panel holds at 597/608 with
+trenches rising 217 → 220.
