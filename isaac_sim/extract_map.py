@@ -13,10 +13,28 @@ from typing import Any
 # Add the parent directory to the path so we can import utils
 sys.path.append(str(Path(__file__).parent.parent))
 
-from utils.models import load_neural_network
-from utils.helpers import load_pkl_object
+from utils.models import load_neural_network_for_checkpoint
+from utils.helpers import (
+    checkpoint_evaluation_config,
+    checkpoint_foundation_behavior,
+    checkpoint_retained_work_costs,
+    load_pkl_object,
+    overlay_foundation_behavior,
+    replicate_checkpoint_env_config,
+    validate_foundation_behavior_env,
+)
 from terra.env import TerraEnvBatch
-from terra.config import BatchConfig, CurriculumGlobalConfig, RewardsType
+from terra.config import (
+    REWARD_V2_DISTANCE_BOUND,
+    REWARD_V2_DISTANCE_REF_M,
+    BatchConfig,
+    CurriculumGlobalConfig,
+    RewardsType,
+)
+from terra.env_generation.distance import (
+    REWARD_V2_DISTANCE_PROTOCOL_ID,
+    compute_reward_v2_distance_map,
+)
 from terra.actions import TrackedAction, WheeledAction, TrackedActionType, WheeledActionType
 import jax.numpy as jnp
 from utils.utils_ppo import obs_to_model_input, wrap_action
@@ -25,6 +43,17 @@ from train import TrainConfig  # needed for unpickling checkpoints
 from train_mixed import MixedAgentTrainConfig
 from eval_mcts import fix_env_cfg_dtypes, make_mcts_step_fn
 sys.modules['__main__'].MixedAgentTrainConfig = MixedAgentTrainConfig
+
+LEGACY_DISTANCE_PROTOCOL_ID = "legacy_dataset_distance"  # terra.maps_buffer
+# Terra places the centre of cell (row, col) at (row, col); pos_base in the PKL
+# and in every post-processing step uses that raw convention. The schema-v2
+# runtime contract (moleworks_ros terra_planner docs/terra_frames.md) measures
+# from tile corners, plan_x = pos_base[0] * meters_per_tile, so the JSON adds
+# half a tile.
+TERRA_CELL_CENTRE_TO_TILE_CORNER = 0.5
+# Map and policy tile sizes are equal when they agree to this relative
+# tolerance; TerraMapMaker stores its spin box value to 5 decimals.
+TILE_SIZE_RELATIVE_TOLERANCE = 1e-4
 
 STEP_TEXT_POSITION = "top_right"  # Options: top_left, top_right, bottom_left, bottom_right, or (x, y).
 STEP_TEXT_FONT_SIZE = 24
@@ -114,67 +143,58 @@ def _workspace_type_for_pair(dig_entry: dict[str, Any]) -> str:
     return "excavate"
 
 
+def _read_map_json(map_path: Path) -> dict[str, Any]:
+    path = map_path / "metadata" / "map.json"
+    if not path.is_file():
+        return {}
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _read_terra_metadata(map_path: Path) -> dict[str, Any]:
+    path = map_path / "metadata" / "terra_metadata.yaml"
+    if not path.is_file():
+        return {}
+    import yaml
+
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _declared_meters_per_tile(map_path: Path) -> dict[str, float]:
+    """Tile sizes the map declares, by file; empty when it declares none."""
+    declared = {}
+    for name, metadata in (
+        ("metadata/terra_metadata.yaml", _read_terra_metadata(map_path)),
+        ("metadata/map.json", _read_map_json(map_path)),
+    ):
+        if metadata.get("meters_per_tile") is not None:
+            declared[name] = float(metadata["meters_per_tile"])
+    return declared
+
+
 def _load_plan_alignment(map_path: Path) -> dict[str, Any]:
-    """Read TerraMapMaker alignment metadata, with conservative defaults."""
+    """Read the TerraMapMaker alignment: top-level terra_metadata.yaml keys.
+
+    meters_per_tile is terra_metadata.yaml's, else map.json's, else None.
+    source_gridmap.resolution_m_per_cell is the source GridMap's resolution,
+    not the Terra tile size, and is ignored.
+    """
+    terra_metadata = _read_terra_metadata(map_path)
+    declared = _declared_meters_per_tile(map_path)
     alignment = {
-        "meters_per_tile": 0.1,
+        "meters_per_tile": next(iter(declared.values()), None),
         "origin_map_xy_m": [0.0, 0.0],
         "yaw_map_from_plan_rad": 0.0,
+        "origin_from_terra_metadata": False,
     }
-    origin_from_terra_metadata = False
-
-    map_json_path = map_path / "metadata" / "map.json"
-    try:
-        with map_json_path.open("r", encoding="utf-8") as f:
-            map_metadata = json.load(f)
-        if "meters_per_tile" in map_metadata:
-            alignment["meters_per_tile"] = float(map_metadata["meters_per_tile"])
-    except Exception:
-        pass
-
-    terra_metadata_path = map_path / "metadata" / "terra_metadata.yaml"
-    if not terra_metadata_path.exists():
-        alignment["origin_from_terra_metadata"] = origin_from_terra_metadata
-        return alignment
-
-    lines = terra_metadata_path.read_text(encoding="utf-8").splitlines()
-    source_resolution = None
-    source_size_rows_cols = []
-    for idx, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith("meters_per_tile:"):
-            alignment["meters_per_tile"] = float(stripped.split(":", 1)[1].strip())
-        elif stripped.startswith("rotation_deg:"):
-            rotation_deg = float(stripped.split(":", 1)[1].strip())
-            alignment["yaw_map_from_plan_rad"] = math.radians(rotation_deg)
-        elif stripped.startswith("terra_origin_map_m:"):
-            values = []
-            for next_line in lines[idx + 1: idx + 3]:
-                item = next_line.strip()
-                if item.startswith("-"):
-                    values.append(float(item[1:].strip()))
-            if len(values) == 2:
-                alignment["origin_map_xy_m"] = values
-                origin_from_terra_metadata = True
-        elif stripped.startswith("resolution_m_per_cell:"):
-            source_resolution = float(stripped.split(":", 1)[1].strip())
-        elif stripped.startswith("size_rows_cols:"):
-            source_size_rows_cols = []
-            for next_line in lines[idx + 1: idx + 3]:
-                item = next_line.strip()
-                if item.startswith("-"):
-                    source_size_rows_cols.append(float(item[1:].strip()))
-
-    if source_resolution is not None:
-        alignment["meters_per_tile"] = source_resolution
-        if len(source_size_rows_cols) == 2 and not origin_from_terra_metadata:
-            rows, cols = source_size_rows_cols
-            alignment["origin_map_xy_m"] = [
-                -cols * source_resolution / 2.0,
-                -rows * source_resolution / 2.0,
-            ]
-
-    alignment["origin_from_terra_metadata"] = origin_from_terra_metadata
+    if terra_metadata.get("rotation_deg") is not None:
+        alignment["yaw_map_from_plan_rad"] = math.radians(float(terra_metadata["rotation_deg"]))
+    origin = terra_metadata.get("terra_origin_map_m")
+    if origin is not None:
+        if len(origin) != 2:
+            raise ValueError(f"{map_path}: terra_origin_map_m must hold two values, got {origin!r}")
+        alignment["origin_map_xy_m"] = [float(origin[0]), float(origin[1])]
+        alignment["origin_from_terra_metadata"] = True
     return alignment
 
 
@@ -199,7 +219,11 @@ def _to_schema_v2_waypoint(entry: dict[str, Any], workspace_type: str) -> dict[s
         "agent_type": int(_to_serializable(entry.get("agent_type", 0))),
         "agent_index": int(_to_serializable(entry.get("agent_index", 0))),
         "agent_state": {
-            "pos_base": [float(pos_base[0]), float(pos_base[1])],
+            # Raw Terra cell index -> schema-v2 tile-corner coordinates.
+            "pos_base": [
+                float(pos_base[0]) + TERRA_CELL_CENTRE_TO_TILE_CORNER,
+                float(pos_base[1]) + TERRA_CELL_CENTRE_TO_TILE_CORNER,
+            ],
             "angle_base_rad": float(angle_base_rad),
             "angle_cabin_rad": float(angle_cabin_rad),
             "wheel_angle_rad": _wheel_bucket_to_rad(agent_state.get("wheel_angle", 0.0)),
@@ -274,28 +298,33 @@ def _schema_v2_waypoints_and_metadata(plan: list[dict[str, Any]]) -> tuple[list[
 
 
 def _plan_to_schema_v2(
-    plan: list[dict[str, Any]], map_path: Path, env_cfgs: Any | None
+    plan: list[dict[str, Any]], map_path: Path, policy_tile_size: float
 ) -> dict[str, Any]:
+    """Schema-v2 plan with the map's own alignment.
+
+    check_map_tile_size has already refused a map declaring another tile size,
+    so the map's value is kept verbatim (it must equal terra_metadata.yaml for
+    the converter); a map that declares none gets the policy's.
+    """
     waypoints, metadata = _schema_v2_waypoints_and_metadata(plan)
+    metadata["pos_base_convention"] = "tile_corner"
     alignment = _load_plan_alignment(map_path)
     origin_from_terra_metadata = alignment.pop("origin_from_terra_metadata", False)
-    if env_cfgs is not None:
-        tile_size = _scalar_float(
-            getattr(env_cfgs, "tile_size", None), alignment["meters_per_tile"]
-        )
-        alignment["meters_per_tile"] = tile_size
-        if not origin_from_terra_metadata:
-            # No real-world origin available, so fall back to a centered origin
-            # derived from the in-use map resolution.
-            try:
-                map_shape = np.load(map_path / "images" / "img_1.npy").shape[:2]
-                rows, cols = map_shape
-                alignment["origin_map_xy_m"] = [
-                    -cols * tile_size / 2.0,
-                    -rows * tile_size / 2.0,
-                ]
-            except Exception:
-                pass
+    if alignment["meters_per_tile"] is None:
+        alignment["meters_per_tile"] = float(policy_tile_size)
+    tile_size = alignment["meters_per_tile"]
+    if not origin_from_terra_metadata:
+        # No real-world origin available, so fall back to a centered origin
+        # derived from the in-use map resolution.
+        try:
+            map_shape = np.load(map_path / "images" / "img_1.npy").shape[:2]
+            rows, cols = map_shape
+            alignment["origin_map_xy_m"] = [
+                -cols * tile_size / 2.0,
+                -rows * tile_size / 2.0,
+            ]
+        except Exception:
+            pass
     return {
         "schema_version": 2,
         "source_map_frame_id": "map",
@@ -762,37 +791,16 @@ def _paired_dig_dump_indices(plan: list[dict[str, Any]]) -> tuple[dict[int, int]
     return dig_to_dump, dump_to_dig
 
 
-def _load_trench_axes(map_path: Path) -> np.ndarray:
-    metadata_dir = map_path / "metadata"
-    candidates = [metadata_dir / "map.json", map_path / "metadata.json"]
-    if metadata_dir.exists():
-        candidates.extend(sorted(metadata_dir.glob("*.json")))
+def _terra_trench_axes(env) -> np.ndarray:
+    """The single map's trench axes [A, B, C] exactly as Terra loaded them.
 
-    axes = []
-    seen = set()
-    for candidate in candidates:
-        if candidate in seen or not candidate.exists():
-            continue
-        seen.add(candidate)
-        try:
-            with candidate.open("r", encoding="utf-8") as f:
-                metadata = json.load(f)
-        except Exception:
-            continue
-        for axis in metadata.get("axes_ABC", []) or []:
-            try:
-                if isinstance(axis, dict):
-                    abc = [float(axis["A"]), float(axis["B"]), float(axis["C"])]
-                else:
-                    abc = [float(axis[0]), float(axis[1]), float(axis[2])]
-            except Exception:
-                continue
-            if np.linalg.norm(abc[:2]) > 1e-6 and not np.allclose(abc, -97.0):
-                axes.append(abc)
-
-    if not axes:
-        return np.zeros((0, 3), dtype=np.float64)
-    return np.asarray(axes, dtype=np.float64)
+    Terra's convention (A*col + B*row + C = 0, cell centres at integer
+    indices) is the frame of the raw pos_base the post-processing edits, and
+    these are the axes the policy and the fresh-trench gate saw.
+    """
+    records = np.asarray(env.maps_buffer.trench_axes, dtype=np.float64)[0, 0]
+    count = int(np.asarray(env.maps_buffer.trench_types)[0, 0])
+    return records[: max(count, 0), :3].copy()
 
 
 def _trench_axis_distance(pos_row_col: np.ndarray, axis_abc: np.ndarray) -> float:
@@ -914,12 +922,13 @@ def _postprocess_trench_align(
     plan: list[dict[str, Any]],
     map_path: Path,
     env_cfgs: Any,
+    axes: np.ndarray,
     max_pos_delta_tiles: float,
     max_yaw_delta_steps: int,
     ambiguity_margin_tiles: float,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     _, occupancy, _ = _load_single_map_arrays(map_path)
-    axes = _load_trench_axes(map_path)
+    axes = np.asarray(axes, dtype=np.float64).reshape((-1, 3))
     stats = {
         "axes": int(len(axes)),
         "aligned_digs": 0,
@@ -1972,6 +1981,137 @@ def extract_plan(
     return plan
 
 
+def _single_map_family(map_path: Path, trench_types: Any) -> str:
+    """The task family Terra's fresh-trench gate needs as provenance.
+
+    Bank maps take it from their manifest. A single map takes map.json
+    "family" (TerraMapMaker writes it), else foundation when Terra loaded no
+    trench sections and trench when it did; the gate then still checks that a
+    trench carries finite sections.
+    """
+    has_sections = int(np.max(np.asarray(trench_types))) > 0
+    family = _read_map_json(map_path).get("family")
+    if family is None:
+        family = "trench" if has_sections else "foundation"
+    if family not in ("foundation", "trench"):
+        raise ValueError(
+            f"{map_path}/metadata/map.json family must be foundation or trench, got {family!r}"
+        )
+    if family == "foundation" and has_sections:
+        raise ValueError(
+            f"{map_path}/metadata/map.json declares a foundation but carries trench axes"
+        )
+    return family
+
+
+def make_single_map_env(config, batch_cfg, map_path, *, rendering: bool = False):
+    """TerraEnvBatch for one map, built as the checkpoint was evaluated on its bank.
+
+    - the checkpoint's static observation selectors;
+    - Terra's single-map loader accepts only the legacy distance protocol, so
+      for a reward-v2 checkpoint the relocation distance the policy observes
+      is recomputed from the map with Terra's R2 definition instead of taken
+      from distance/img_1.npy (TerraMapMaker writes taxicab / 24 tiles there);
+    - the family provenance a bank manifest would supply.
+    """
+    map_path = Path(map_path)
+    env = TerraEnvBatch(
+        batch_cfg=batch_cfg,
+        rendering=rendering,
+        n_envs_x_rendering=1,
+        n_envs_y_rendering=1,
+        display=False,
+        shuffle_maps=False,
+        single_map_path=str(map_path),
+        movement_feasibility_observation=bool(
+            getattr(config, "movement_feasibility_observation", False)
+        ),
+        previous_outcome_observation=bool(
+            getattr(config, "previous_outcome_observation", False)
+        ),
+        executable_dig_observation=bool(
+            getattr(config, "executable_dig_observation", False)
+        ),
+    )
+    buffer = env.maps_buffer
+    protocol = getattr(config, "distance_protocol_id", None) or LEGACY_DISTANCE_PROTOCOL_ID
+    if protocol == REWARD_V2_DISTANCE_PROTOCOL_ID:
+        tile_size_m = env.batch_cfg.maps.edge_length_m / env.batch_cfg.maps_dims.maps_edge_length
+        distance = compute_reward_v2_distance_map(
+            np.asarray(buffer.maps[0, 0]),
+            np.asarray(buffer.padding_mask[0, 0]) == 1,
+            tile_size_m=tile_size_m,
+            distance_ref_m=REWARD_V2_DISTANCE_REF_M,
+            distance_bound=REWARD_V2_DISTANCE_BOUND,
+        )
+        buffer = buffer._replace(
+            distance_maps=jnp.broadcast_to(
+                jnp.asarray(distance, dtype=jnp.float32), buffer.distance_maps.shape
+            )
+        )
+        distance_source = f"recomputed with {protocol}"
+    elif protocol == LEGACY_DISTANCE_PROTOCOL_ID:
+        distance_source = "distance/img_1.npy"
+    else:
+        raise ValueError(f"unsupported checkpoint distance_protocol_id {protocol!r}")
+    family = _single_map_family(map_path, buffer.trench_types)
+    env.maps_buffer = buffer._replace(
+        family_names=("unknown", family),
+        family_ids=jnp.ones_like(buffer.family_ids),
+    )
+    print(
+        f"Single-map env: family={family}, "
+        f"trench_axes={int(np.max(np.asarray(buffer.trench_types)))}, "
+        f"relocation distance {distance_source}, "
+        f"executable_dig_observation={env.executable_dig_observation}"
+    )
+    return env
+
+
+def check_map_tile_size(map_path: Path, env, env_cfgs, policy_path) -> float:
+    """Refuse a map authored at another scale than the policy; return the policy tile size.
+
+    The policy sizes the excavator, its reach and its moves in tiles of the
+    checkpoint's tile_size. Terra derives the tile size from the map edge, so
+    the map must have the policy's grid, and any meters_per_tile the map
+    declares must equal the policy's: a plan on other tiles has workspaces at
+    the wrong physical scale.
+    """
+    edge_m = float(env.batch_cfg.maps.edge_length_m)
+    edge_tiles = int(env.batch_cfg.maps_dims.maps_edge_length)
+    env_tile_size = edge_m / edge_tiles
+    saved_tile_size = _scalar_float(getattr(env_cfgs, "tile_size", None), 0.0)
+    policy_tile_size = saved_tile_size if saved_tile_size > 0.0 else env_tile_size
+    policy_edge_tiles = int(round(edge_m / policy_tile_size))
+    remedy = (
+        f"Author the map in TerraMapMaker as {policy_edge_tiles} x {policy_edge_tiles} "
+        f"tiles at {policy_tile_size:.6f} m/tile."
+    )
+
+    def same(value):
+        return math.isclose(value, policy_tile_size, rel_tol=TILE_SIZE_RELATIVE_TOLERANCE)
+
+    declared = _declared_meters_per_tile(map_path)
+    for source, value in declared.items():
+        if not same(value):
+            raise ValueError(
+                f"{map_path / source} declares meters_per_tile={value:g}, but {policy_path} "
+                f"plans on {policy_tile_size:.6f} m tiles: its workspaces would be "
+                f"{value / policy_tile_size:.3f}x the machine's scale on the site. {remedy}"
+            )
+    if not same(env_tile_size):
+        raise ValueError(
+            f"{map_path} is {edge_tiles} x {edge_tiles} tiles, which Terra runs at "
+            f"{edge_m:.4f} m / {edge_tiles} = {env_tile_size:.6f} m/tile, but {policy_path} "
+            f"was trained at {policy_tile_size:.6f} m/tile. {remedy}"
+        )
+    print(
+        f"Map scale: {edge_tiles} x {edge_tiles} tiles at {policy_tile_size:.6f} m/tile "
+        f"(declared: {declared or 'none, using the policy tile size'})"
+    )
+    return policy_tile_size
+
+
 def main():
     def _canon_lists(x):
         """Convert Python lists to tuples/arrays so JAX pytrees stay replace-able."""
@@ -2173,7 +2313,8 @@ def main():
     args = parser.parse_args()
 
     log = load_pkl_object(args.policy_path)
-    config = jax.tree_util.tree_map(_canon_lists, log["train_config"])
+    # The checkpoint's effective settings, as eval_fixed_bank.py evaluates it.
+    config = jax.tree_util.tree_map(_canon_lists, checkpoint_evaluation_config(log))
     config.num_test_rollouts = 1  # Only one environment
     config.num_devices = 1
     config.num_embeddings_agent_min = 60
@@ -2184,19 +2325,14 @@ def main():
         config.gamma = 0.99
     print(f"clip_action_maps setting: {config.clip_action_maps}")
 
-    # Create environment
-    env_cfgs = jax.tree_util.tree_map(_canon_lists, log["env_config"])
-    def _extract_single_env(x):
-        """Extract first env config, handling scalars/bools that can't be subscripted.
-        
-        Ensures output has at least rank 1 for vmap compatibility.
-        """
-        try:
-            return x[0][None, ...]
-        except (TypeError, IndexError):
-            # Scalar or bool - wrap in 1D array for vmap compatibility
-            return jnp.atleast_1d(x)
-    env_cfgs = jax.tree_util.tree_map(_extract_single_env, env_cfgs)
+    # Create environment: the checkpoint's own EnvConfig with its effective
+    # behavior settings, batched for one environment as eval.py/eval_mcts.py
+    # do (agent_types/action_types keep their per-agent axis).
+    env_cfgs = overlay_foundation_behavior(
+        log["env_config"],
+        {**checkpoint_foundation_behavior(log), **checkpoint_retained_work_costs(log)},
+    )
+    env_cfgs = replicate_checkpoint_env_config(env_cfgs, 1)
 
     batch_cfg = None
     if args.config is not None:
@@ -2276,14 +2412,11 @@ def main():
 
     if args.use_mcts:
         env_cfgs = fix_env_cfg_dtypes(env_cfgs)
-    env = TerraEnvBatch(
-        batch_cfg=batch_cfg,
+    env = make_single_map_env(
+        config,
+        batch_cfg,
+        args.map_path,
         rendering=args.render_rollout_gif,
-        n_envs_x_rendering=1,
-        n_envs_y_rendering=1,
-        display=False,
-        shuffle_maps=False,
-        single_map_path=args.map_path,
     )
 
     # Match inference_single_map.py: keep checkpoint env_cfgs fixed during rollout.
@@ -2295,9 +2428,13 @@ def main():
             return timesteps
 
     env.curriculum_manager = _NoopCurriculumManager()
+    policy_tile_size = check_map_tile_size(Path(args.map_path), env, env_cfgs, args.policy_path)
+    validate_foundation_behavior_env(config, env_cfgs, env=env)
 
-    # Load neural network
-    model = load_neural_network(config, env)
+    # Load neural network, proving the rebuild matches the checkpoint parameters
+    model = load_neural_network_for_checkpoint(
+        config, env, log["model"], context=str(args.policy_path)
+    )
     model_params = log["model"]
 
     # Extract plan
@@ -2331,12 +2468,13 @@ def main():
             plan,
             Path(args.map_path),
             postprocess_env_cfgs,
+            _terra_trench_axes(env),
             max_pos_delta_tiles=args.trench_align_max_pos_delta_tiles,
             max_yaw_delta_steps=args.trench_align_max_yaw_delta_steps,
             ambiguity_margin_tiles=args.trench_align_ambiguity_margin_tiles,
         )
         if trench_align_stats["axes"] == 0:
-            print("Trench align requested, but no axes_ABC metadata was found; plan left unchanged.")
+            print("Trench align requested, but Terra loaded no trench axes for this map; plan left unchanged.")
         else:
             print(
                 "Trench align post-processing: "
@@ -2484,7 +2622,7 @@ def main():
     else:
         json_path = output_path.parent / f"{output_path.name}.json"
 
-    plan_json = _plan_to_schema_v2(plan, Path(args.map_path), env_cfgs)
+    plan_json = _plan_to_schema_v2(plan, Path(args.map_path), policy_tile_size)
     schema_metadata = plan_json.get("metadata", {})
     unpaired_loads = schema_metadata.get("unpaired_load_waypoints", [])
     unpaired_unloads = schema_metadata.get("unpaired_unload_waypoints", [])

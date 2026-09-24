@@ -94,7 +94,27 @@ conda run -n terra python -u -s isaac_sim/extract_map.py \
 - `--render_plan_gif`: write a lightweight DO-waypoints plan GIF.
 - `--render_rollout_gif`: write a full rollout GIF using Terra’s renderer.
 - `--rollout_gif_every`: subsample rollout frames for smaller GIFs.
-- `--trench_align`: post-process saved DO waypoints by locally snapping fresh-dig `pos_base` and `angle_base` toward the nearest current trench axis from `metadata/*` `axes_ABC`. The corresponding dump waypoint is forced to reuse its dig pose.
+- `--trench_align`: post-process saved DO waypoints by locally snapping fresh-dig `pos_base` and `angle_base` toward the nearest trench axis Terra loaded for the map (`metadata/map.json` `axes_ABC`). The corresponding dump waypoint is forced to reuse its dig pose.
+
+### Environment and map scale
+
+The environment is built as the checkpoint was evaluated: its recorded
+`train_config` with the effective behavior settings (`checkpoint_evaluation_config`),
+its own `env_config` batched for one environment, and its static observation
+selectors. Terra's single-map loader reads only the legacy distance map, so for
+a reward-v2 checkpoint the relocation distance the policy observes is recomputed
+from the map with Terra's `obstacle_geodesic_8_physical_global_v1` definition.
+A single map has no bank manifest, so its task family comes from
+`metadata/map.json` `family` (TerraMapMaker writes `foundation` or `trench`), or
+else from whether the map carries trench sections; with the fresh-trench gate
+enabled, a trench still needs Terra's finite sections (`trench_segments_yx`,
+`trench_half_width_tiles`).
+
+The map must have the policy's scale: Terra derives the tile size from the map
+edge, and `extract_map.py` refuses a map whose grid or declared `meters_per_tile`
+(`metadata/terra_metadata.yaml`, `metadata/map.json`) differs from the
+checkpoint's `env_config.tile_size` (0.5714 m, 64 x 64 tiles for current
+policies). The JSON alignment carries the map's own `terra_metadata.yaml` values.
 
 ### Output naming
 
@@ -132,3 +152,9 @@ Terra uses `pos_base = [x, y]` where:
 - `y` is the **second** map index (axis 1, “cols”, increases **right** in images)
 
 So `(x=0, y=0)` is the **top-left** tile.
+
+The `.pkl` keeps Terra's raw `pos_base`: the centre of cell `(row, col)` is
+`(row, col)`, the convention of Terra's trench axes and of every post-processing
+step. The schema-v2 `.json` uses the runtime's tile-corner convention
+(`plan_x = pos_base[0] * meters_per_tile`), so its `pos_base` is the raw value
+plus 0.5 (`metadata.pos_base_convention: tile_corner`).
