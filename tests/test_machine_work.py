@@ -12,7 +12,7 @@ from utils.utils_ppo import joint_obs_to_model_input, random_agent_order
 
 
 def _with_work_column(obs, rng):
-    work = jax.random.uniform(rng, obs["agent_states"].shape[:-1] + (1,))
+    work = jax.random.uniform(rng, obs["agent_states"].shape[:-1] + (2,))
     return {**obs, "agent_states": jnp.concatenate((obs["agent_states"], work), axis=-1)}
 
 
@@ -31,9 +31,9 @@ def test_migration_adds_a_zero_input_and_keeps_policy_and_value():
     kernel, base_kernel = migrated["model"], base_params
     for key in KERNEL_PATH:
         kernel, base_kernel = kernel[key], base_kernel[key]
-    assert kernel.shape == (base_kernel.shape[0] + 1, base_kernel.shape[1])
-    np.testing.assert_array_equal(kernel[:-1], base_kernel)
-    assert not np.any(np.asarray(kernel[-1]))
+    assert kernel.shape == (base_kernel.shape[0] + 2, base_kernel.shape[1])
+    np.testing.assert_array_equal(kernel[:-2], base_kernel)
+    assert not np.any(np.asarray(kernel[-2:]))
     assert migrated["train_config"]["machine_work_observation"] is True
     assert jax.tree_util.tree_structure(migrated["optimizer_state"]) == jax.tree_util.tree_structure(
         optimizer.init(grown_init))

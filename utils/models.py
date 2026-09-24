@@ -610,7 +610,8 @@ class AgentStateNet(nn.Module):
     agent_types_max: int  # Maximum agent type value (0..agent_types_max), e.g., 2 includes skidsteer
     mlp_use_layernorm: bool
     carry_work_observation: bool = False
-    # Index 9: every machine's executed-plan time over the job time.
+    # Indices 9-10: each machine's executed-plan time and the team's fair
+    # share, both over the job time (makespan balance).
     machine_work_observation: bool = False
     num_embedding_features: int = 8
     hidden_dim_layers_mlp_one_hot: Sequence[int] = (16, 32)
@@ -690,12 +691,12 @@ class AgentStateNet(nn.Module):
                 agent_state_obs[..., [8]].astype(dtype=jnp.float32)
             )
         if self.machine_work_observation:
-            if agent_state_obs.shape[-1] < 10:
+            if agent_state_obs.shape[-1] < 11:
                 raise ValueError(
-                    "machine_work_observation requires agent state width >= 10"
+                    "machine_work_observation requires agent state width >= 11"
                 )
             continuous.append(
-                agent_state_obs[..., [9]].astype(dtype=jnp.float32)
+                agent_state_obs[..., 9:11].astype(dtype=jnp.float32)
             )
         x_continuous = jnp.concatenate(continuous, axis=-1)
         x_continuous = self.mlp_continuous(x_continuous)

@@ -1,9 +1,10 @@
 """Native checkpoint migration adding the machine-work observation.
 
-The observation is one more continuous agent-state feature (index 9): each
-machine's executed-plan time over the job time. It enters the first layer of
-the agent-state continuous MLP, so the migration appends one zero input row to
-that kernel (the policy and value are unchanged) and zero Adam slots.
+The observation is two more continuous agent-state features (indices 9-10):
+each machine's executed-plan time and the team's fair share, over the job
+time. They enter the first layer of the agent-state continuous MLP, so the
+migration appends zero input rows to that kernel (the policy and value are
+unchanged) and zero Adam slots.
 """
 
 import copy
@@ -15,16 +16,17 @@ from flax.core import FrozenDict
 from flax.traverse_util import flatten_dict
 
 KERNEL_PATH = ("params", "agent_state_net", "mlp_continuous", "layers_0", "kernel")
+NEW_FEATURES = 2
 
 
-def _add_zero_input_row(tree):
+def _add_zero_input_rows(tree):
     mutable = tree.unfreeze() if isinstance(tree, FrozenDict) else copy.deepcopy(tree)
     node = mutable
     for key in KERNEL_PATH[:-1]:
         node = node[key]
     kernel = jnp.asarray(node[KERNEL_PATH[-1]])
     node[KERNEL_PATH[-1]] = jnp.concatenate(
-        (kernel, jnp.zeros((1, kernel.shape[1]), dtype=kernel.dtype)), axis=0
+        (kernel, jnp.zeros((NEW_FEATURES, kernel.shape[1]), dtype=kernel.dtype)), axis=0
     )
     return FrozenDict(mutable) if isinstance(tree, FrozenDict) else mutable
 
@@ -42,11 +44,11 @@ def migrate_machine_work_observation_checkpoint(checkpoint, rebuilt_params):
     for key in ("model", "optimizer_state", "train_state_step", "next_update"):
         if key not in checkpoint:
             raise ValueError(f"machine-work migration requires native checkpoint field {key}")
-    model = _add_zero_input_row(checkpoint["model"])
+    model = _add_zero_input_rows(checkpoint["model"])
     grown = {k: jnp.shape(v) for k, v in flatten_dict(model).items()}
     target = {k: jnp.shape(v) for k, v in flatten_dict(rebuilt_params).items()}
     if grown != target:
-        raise ValueError("machine-work migration may only add one agent-state input row")
+        raise ValueError("machine-work migration may only add the machine-work input rows")
 
     adam_count = 0
 
@@ -56,7 +58,7 @@ def migrate_machine_work_observation_checkpoint(checkpoint, rebuilt_params):
             return state
         adam_count += 1
         return state._replace(
-            mu=_add_zero_input_row(state.mu), nu=_add_zero_input_row(state.nu)
+            mu=_add_zero_input_rows(state.mu), nu=_add_zero_input_rows(state.nu)
         )
 
     optimizer = jax.tree.map(
@@ -78,6 +80,6 @@ def migrate_machine_work_observation_checkpoint(checkpoint, rebuilt_params):
         "machine_work_migration": {
             "origin_update": int(checkpoint["next_update"]),
             "parameter": "/".join(KERNEL_PATH),
-            "feature": "agent_states[..., 9] = executed-plan seconds / job seconds",
+            "features": "agent_states[..., 9:11] = executed-plan seconds, fair share / job seconds",
         },
     }

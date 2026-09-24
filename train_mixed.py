@@ -1940,7 +1940,8 @@ class MixedAgentTrainConfig:
     migrate_remaining_time: bool = False  # explicit one-time native checkpoint growth
     retained_work_context_observation: bool = False
     migrate_retained_work_context: bool = False
-    # Every machine's executed-plan time (agent state index 9), and its
+    # Every machine's executed-plan time and the team fair share (agent
+    # state indices 9-10), and its
     # one-way native-resume growth (zero input weights, zero Adam slots).
     machine_work_observation: bool = False
     migrate_machine_work_observation: bool = False
@@ -6148,7 +6149,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--machine_work_observation",
         action="store_true",
-        help="Consume every machine's normalized executed-plan time from agent_states[..., 9].",
+        help="Consume each machine's executed-plan time and the team fair share from agent_states[..., 9:11].",
     )
     parser.add_argument(
         "--migrate_machine_work_observation",

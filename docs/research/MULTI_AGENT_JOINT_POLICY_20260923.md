@@ -389,7 +389,20 @@ explained variance 0.78 (value adapting to the new term). The first smoke
 in the reward but not in the logged per-agent split; it is now shared equally
 among the agents (test: components reconstruct the step reward).
 
-Proposed run (needs CSCS approval): κ = 2, setup 30 s, from u20000 to u30000
+Revision after a literature review (2026-09-25, see
+`MAKESPAN_CREDIT_ASSIGNMENT_20260925.md`): charging only the growth of the
+busiest machine lets the other machine waste setups for free and charges
+necessary early work. The cost now follows the dense lower-bound reward of
+job-shop RL (L2D) with Graham's parallel-machine bound:
+`B = max(max_i W_i, (Σ W + R)/A) / T_job` with R the remaining loading time,
+reward `−κ ΔB`. Balanced loading is free, any machine's overhead costs the
+team, imbalance costs past the fair share; the sum is
+`−κ (final makespan / T_job − 1/A)`. The observation adds the fair share
+(`agent_states[..., 10]`), the equity context of Equity-Transformer; the
+migration adds two zero input rows. Run with κ = 4 (balanced work is now free,
+so the charges are smaller than under the first form).
+
+Originally proposed: κ = 2, setup 30 s, from u20000 to u30000
 on one 4-GH200 node (~9 h), panels at u22500/u25000/u27500/u30000 against
 the single agent with `--setup-s 0` and `30`. The old recipe plateaued between
 u15000 and u20000, so a rise above ~1.52 is attributable to the new term.
