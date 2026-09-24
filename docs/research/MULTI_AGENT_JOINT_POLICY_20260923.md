@@ -326,6 +326,32 @@ Gains since u5000 come from splitting work better (small jobs and fewer
 lopsided splits); the bound for two machines is 2.0. Scooped volume equals the
 single agent's (ratio 1.00): no double handling.
 
+### Team run complete: u15000 and u20000 (2026-09-24 14:15)
+
+Run 4749240 completed 20,000 updates in 17 h (ended 12:17). Same pairing as
+above (512 training-bank maps, seed 0, single agent u110000):
+
+| (sampled / greedy) | u15000 | u20000 |
+|---|---:|---:|
+| success | 99.2 / 98.4% | 99.6 / 98.4% |
+| maps gained / lost vs single | 2/3 · 1/7 | 2/1 · 1/7 |
+| round speedup | 1.32 / 1.37 | 1.36 / 1.39 |
+| executed-plan speedup | 1.52 / 1.55 | 1.51 / 1.53 |
+| team faster on | 88 / 90% | 89 / 90% |
+| throughput, m³/h (single 34.7) | 50.9 / 51.6 | 50.9 / 51.3 |
+| busier machine's share, median | 0.62 / 0.62 | 0.62 / 0.62 |
+| maps where one machine loads > 80% | 20 / 20% | 19 / 19% |
+
+Speedup by job size (sampled), u15000 / u20000: < 100 units 1.14 / 1.17,
+100–200 1.54 / 1.54, 200–400 1.75 / 1.69, ≥ 400 1.76 / 1.73.
+
+Training curve (online, train bank): success 97.6% (u1000) → 99.5% (u20000);
+rounds per episode 102 → 62.5; entropy 1.02 → 0.59 (parent 0.17); KL 0.004–0.009.
+
+The executed-plan speedup stopped improving after u15000 while the round
+speedup kept rising: the reward counts rounds. Next lever: a reward aligned
+with the executed-plan time (makespan), fine-tuned from u20000.
+
 ## Skid steer, solo (2026-09-24)
 
 Step toward excavator + skid-steer teams: train the skid steer alone on
