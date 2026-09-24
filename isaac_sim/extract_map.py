@@ -17,7 +17,6 @@ from utils.models import load_neural_network_for_checkpoint
 from utils.helpers import (
     checkpoint_evaluation_config,
     checkpoint_foundation_behavior,
-    checkpoint_retained_work_costs,
     load_pkl_object,
     overlay_foundation_behavior,
     replicate_checkpoint_env_config,
@@ -577,6 +576,9 @@ def _postprocess_reassign_isolated_workspace_tiles(
 
     workspaces = []
     for idx, entry in enumerate(plan):
+        if _workspace_kind_for_reassignment(entry) == "dump":
+            # A dump mask records where Terra put the soil; it is never moved.
+            continue
         mask = _workspace_mask_for_adjustment(entry, shape).astype(bool)
         if not mask.any():
             continue
@@ -1444,8 +1446,20 @@ def extract_plan(
     rollout_gif_every: int = 1,
     use_mcts: bool = False,
     dump_diagnostics_limit: int = 5,
+    sample: bool = False,
 ):
-    """Extract plan by capturing action_map and robot state on DO actions."""
+    """Extract a plan by capturing the action map and robot state on DO actions.
+
+    Actions are the greedy argmax of the policy logits, as evaluation selects
+    them; sample=True draws from the policy distribution instead.
+
+    Every fresh dig and every dump records in terrain_modification_mask the
+    tiles Terra actually changed, as the bank exporter does: that is the
+    radial converter's input contract (moleworks_ros terra_planner). A dump
+    mask is where the soil went, not the reachable dump cone. A lift of
+    previously dumped soil keeps its reachable workspace, which the
+    converter's collection path reads as permission.
+    """
     rng = jax.random.PRNGKey(seed)
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, 1)  # Just one environment
@@ -1517,20 +1531,6 @@ def extract_plan(
         obstacle_mask = state.world.padding_mask.map == 1
         return jnp.logical_and(workspace_mask, ~obstacle_mask)
 
-    def _dilate_8_connected(mask):
-        padded = jnp.pad(mask.astype(jnp.bool_), 1, mode="constant", constant_values=False)
-        return (
-            padded[:-2, :-2]
-            | padded[:-2, 1:-1]
-            | padded[:-2, 2:]
-            | padded[1:-1, :-2]
-            | padded[1:-1, 1:-1]
-            | padded[1:-1, 2:]
-            | padded[2:, :-2]
-            | padded[2:, 1:-1]
-            | padded[2:, 2:]
-        )
-
     def _already_dug_foundation_mask(state):
         return jnp.logical_and(
             state.world.target_map.map < 0,
@@ -1542,12 +1542,6 @@ def extract_plan(
         workspace_mask = _full_workspace_mask(timestep, agent_index)
         already_dug_foundation = _already_dug_foundation_mask(state)
         return jnp.logical_and(workspace_mask, ~already_dug_foundation)
-
-    def _dump_workspace_mask(timestep, agent_index):
-        state = _state_for_agent(timestep, agent_index)
-        workspace_mask = _full_workspace_mask(timestep, agent_index)
-        buffered_foundation = _dilate_8_connected(_already_dug_foundation_mask(state))
-        return jnp.logical_and(workspace_mask, ~buffered_foundation)
 
     def _step_without_terminal_reset(timestep, action, action_cls, rng_step):
         rng_step = jax.random.split(rng_step, 1)
@@ -1694,16 +1688,12 @@ def extract_plan(
         else:
             action_type_label = f" (unchanged, loaded={bool(loaded_before)})"
 
-        if loaded_before and not loaded_after:
-            terrain_modification_mask = _dump_workspace_mask(
-                timestep_before, agent_index
-            )
-        elif dig_type == "lift_dug_dirt":
+        if dig_type == "lift_dug_dirt":
             terrain_modification_mask = _lift_dumped_dirt_workspace_mask(
                 timestep_before, agent_index
             )
         else:
-            # Keep normal foundation digging as the actually changed tiles.
+            # Fresh digs and dumps: the tiles Terra actually changed.
             terrain_modification_mask = changed_tiles.astype(jnp.bool_)
 
         changed_count = int(np.asarray(jnp.sum(changed_tiles)))
@@ -1908,8 +1898,13 @@ def extract_plan(
             # so we can treat the batch as size 1 and proceed as in single-agent.
             obs_model = obs_to_model_input(timestep.observation, prev_actions, rl_config)
             v, logits_pi = model.apply(model_params, obs_model)
-            pi = tfp.distributions.Categorical(logits=logits_pi)
-            action = pi.sample(seed=rng_act)
+            # Evaluate the masked distribution the policy trained under.
+            if getattr(rl_config, "action_logit_masking", False):
+                logits_pi = jnp.where(obs_model[-1], logits_pi, jnp.float32(-1e9))
+            if sample:
+                action = tfp.distributions.Categorical(logits=logits_pi).sample(seed=rng_act)
+            else:
+                action = jnp.argmax(logits_pi, axis=-1)
 
             # Check if DO action and record state BEFORE executing the action
             if action[0] == do_action:
@@ -2158,13 +2153,21 @@ def main():
         "--seed",
         type=int,
         default=0,
-        help="Random seed"
+        help="Random seed for the reset and, with --sample, the actions"
     )
     parser.add_argument(
         "--config",
         type=str,
         default=None,
         help="Named config preset to match inference_single_map.py behavior.",
+    )
+    parser.add_argument(
+        "--sample",
+        action="store_true",
+        help=(
+            "Sample actions from the policy distribution instead of taking the "
+            "greedy argmax that evaluation uses."
+        ),
     )
     parser.add_argument(
         "--use-mcts",
@@ -2264,8 +2267,9 @@ def main():
         action="store_false",
         default=True,
         help=(
-            "Disable the default-on final pass that moves isolated workspace tiles "
-            "to a closer, better-connected compatible workspace."
+            "Disable the default-on final pass that moves isolated dig workspace "
+            "tiles to a closer, better-connected compatible workspace. Dump "
+            "masks are never moved."
         ),
     )
     parser.add_argument(
@@ -2329,8 +2333,7 @@ def main():
     # behavior settings, batched for one environment as eval.py/eval_mcts.py
     # do (agent_types/action_types keep their per-agent axis).
     env_cfgs = overlay_foundation_behavior(
-        log["env_config"],
-        {**checkpoint_foundation_behavior(log), **checkpoint_retained_work_costs(log)},
+        log["env_config"], checkpoint_foundation_behavior(log)
     )
     env_cfgs = replicate_checkpoint_env_config(env_cfgs, 1)
 
@@ -2450,6 +2453,7 @@ def main():
         rollout_gif_every=args.rollout_gif_every,
         use_mcts=args.use_mcts,
         dump_diagnostics_limit=args.dump_diagnostics_limit,
+        sample=args.sample,
     )
 
     raw_len = len(plan)

@@ -88,7 +88,9 @@ conda run -n terra python -u -s isaac_sim/extract_map.py \
 - `--policy_path`: checkpoint `.pkl` produced by training (`train_mixed.py` / `train.py`).
 - `--map_path`: map directory (`MAP_DIR`) with `images/img_1.npy`, etc.
 - `--n_steps`: max rollout length.
-- `--seed`: RNG seed for action sampling.
+- `--seed`: RNG seed for the reset and, with `--sample`, the actions.
+- `--sample`: sample actions from the policy distribution. By default the rollout takes the greedy
+  argmax action, as evaluation does.
 - `--output_path`: where to write the plan `.pkl` (the `.json`/`.gif` names are derived from this).
 - `--serialize`: also write JSON (`.json`) next to the `.pkl`.
 - `--render_plan_gif`: write a lightweight DO-waypoints plan GIF.
@@ -115,6 +117,12 @@ edge, and `extract_map.py` refuses a map whose grid or declared `meters_per_tile
 (`metadata/terra_metadata.yaml`, `metadata/map.json`) differs from the
 checkpoint's `env_config.tile_size` (0.5714 m, 64 x 64 tiles for current
 policies). The JSON alignment carries the map's own `terra_metadata.yaml` values.
+
+Each fresh dig and each dump records in `terrain_modification_mask` the tiles
+Terra actually changed, as the bank exporter does; this is the input contract
+of the moleworks_ros radial converter. A dump mask is where the soil went, not
+the reachable dump cone, and the isolated-tile pass never moves it. A lift of
+previously dumped soil keeps its reachable workspace.
 
 ### Output naming
 

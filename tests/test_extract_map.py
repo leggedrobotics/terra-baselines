@@ -118,7 +118,7 @@ class SavedConfig:
 
 
 class MainWiringTest(unittest.TestCase):
-    def test_main_evaluates_the_checkpoints_own_config_on_one_environment(self):
+    def run_main(self, *extra_args):
         checkpoint = {
             "train_config": SavedConfig(),
             # Saved per environment: agent_types keeps its per-agent axis.
@@ -134,26 +134,39 @@ class MainWiringTest(unittest.TestCase):
 
         def build_env(config, batch_cfg, map_path, rendering=False):
             captured["config"] = config
-            return SimpleNamespace()
+            return SimpleNamespace(executable_dig_observation=config.executable_dig_observation)
 
         def check_scale(map_path, env, env_cfgs, policy_path):
             captured["env_cfgs"] = env_cfgs
+            return POLICY_TILE
+
+        def rollout(*args, **kwargs):
+            captured["rollout"] = kwargs
             raise StopBeforeRollout
 
-        argv = ["extract_map.py", "--policy_path", "u100000.pkl", "--map_path", "map"]
+        argv = ["extract_map.py", "--policy_path", "u100000.pkl", "--map_path", "map", *extra_args]
         with (
             patch.object(extract_map, "load_pkl_object", return_value=checkpoint),
             patch.object(extract_map, "make_single_map_env", side_effect=build_env),
             patch.object(extract_map, "check_map_tile_size", side_effect=check_scale),
+            patch.object(extract_map, "load_neural_network_for_checkpoint"),
+            patch.object(extract_map, "extract_plan", side_effect=rollout),
             patch("sys.argv", argv),
             self.assertRaises(StopBeforeRollout),
         ):
             extract_map.main()
+        return captured
+
+    def test_main_evaluates_the_checkpoints_own_config_on_one_environment(self):
+        captured = self.run_main()
         self.assertTrue(captured["config"].executable_dig_observation)
         env_cfgs = captured["env_cfgs"]
         self.assertEqual(np.shape(env_cfgs.agent_types), (1, 1))
         self.assertEqual(np.shape(env_cfgs.max_steps_in_episode), (1,))
         self.assertTrue(bool(np.asarray(env_cfgs.executable_dig_observation)[0]))
+        # Greedy actions as in evaluation; --sample restores sampling.
+        self.assertIs(captured["rollout"]["sample"], False)
+        self.assertIs(self.run_main("--sample")["rollout"]["sample"], True)
 
 
 class MapScaleTest(unittest.TestCase):
@@ -235,6 +248,43 @@ class SchemaV2Test(unittest.TestCase):
                 "yaw_map_from_plan_rad": math.radians(30.0),
             },
         )
+
+
+class DumpMaskTest(unittest.TestCase):
+    def test_isolated_tile_reassignment_never_moves_a_dump(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            map_dir, images, _ = write_map(Path(tmp) / "map")
+            env_cfgs = SimpleNamespace(
+                tile_size=np.float32(POLICY_TILE),
+                agent=SimpleNamespace(width=7, height=11, dig_radius_tiles=5),
+            )
+
+            def entry(step, before, cells, base):
+                mask = np.zeros(images.shape, dtype=bool)
+                for cell in cells:
+                    mask[cell] = True
+                return {
+                    "step": step,
+                    "agent_state": {"pos_base": list(base)},
+                    "loaded_state_change": {"before": before, "after": not before},
+                    "terrain_modification_mask": mask,
+                }
+
+            # Two dumps from one station: an isolated tile of the first dump is
+            # closer to the second, as an isolated dig tile would be moved.
+            plan = [
+                entry(1, False, [(24, 24)], (24, 16)),
+                entry(2, True, [(40, 20), (40, 21), (42, 26)], (32, 20)),
+                entry(3, False, [(25, 24)], (24, 16)),
+                entry(4, True, [(42, 27), (42, 28)], (35, 26)),
+            ]
+            before = [np.asarray(e["terrain_modification_mask"]).copy() for e in plan]
+            plan, stats = extract_map._postprocess_reassign_isolated_workspace_tiles(
+                plan, map_dir, env_cfgs
+            )
+        for original, waypoint in zip(before[1::2], plan[1::2]):
+            np.testing.assert_array_equal(waypoint["terrain_modification_mask"], original)
+        self.assertEqual(stats["moves"], [])
 
 
 class SingleMapEnvTest(unittest.TestCase):
