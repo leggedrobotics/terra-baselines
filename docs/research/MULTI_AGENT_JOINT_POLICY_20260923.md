@@ -406,3 +406,11 @@ offline runs `igzj8p6i` warm, `e0tf7sz4` scratch), 2026-09-24 ~04:10:
 (entropy rises from 0.46 to 1.9 while the cabin habit is dropped, then falls
 to 0.6). Scratch stays near uniform (entropy 2.0 of 2.08 at coefficient 0.15).
 Held-out eval-bank panels follow at u1000, u2500, u5000, ...
+
+Held-out u1000 (256 eval maps, 512 first episodes, seed 0; Euler eval job
+15019271):
+
+| u1000 | sampled success | median steps | greedy success | median steps |
+|---|---:|---:|---:|---:|
+| warm | 98.6% | 42 | 93.0% | 41 |
+| scratch | 9.0% | 313 | 3.3% | 381 |
