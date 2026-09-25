@@ -19,9 +19,9 @@ terra_euler_configure lterenzi
 TERRA_REPO="${TERRA_REPO:-$(dirname "$REPO")/terra}"
 
 # Environment code must equal the corrected-geometry runtime plus the 5.5 m
-# dump reach (da5bd656, switched in at u~19.5k); tool-only
+# dump reach (da5bd656, test fix 9b96e9a4; switched in at u~19.5k); tool-only
 # commits on the Terra branch are allowed.
-TERRA_ENV_REVISION=da5bd65652c935c5884804eabec59fcefc98b8d7
+TERRA_ENV_REVISION=9b96e9a47588c87def2fd48be946170eacc0cfd6
 BANK_ARCHIVE="${BANK_ARCHIVE:-/home/lorenzo/moleworks/.artifacts/terra_gru_bigbank_20260923/train_v3_generalist_512.tar.zst}"
 BANK_ARCHIVE_SHA="${BANK_ARCHIVE_SHA:-3ddaaf538f1e7a091123ca1491c7f305e03835822d4f4c83c17d1f5916f6fc74}"
 BANK_MAPS_PATH=train_v3_generalist_512
