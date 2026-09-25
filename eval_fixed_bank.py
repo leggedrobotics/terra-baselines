@@ -1444,6 +1444,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--dump-max-radius-m",
+        type=float,
+        default=None,
+        help=(
+            "Evaluate with this excavator dump reach in metres (0 = dig reach). "
+            "Default: the checkpoint's own treatment."
+        ),
+    )
+    parser.add_argument(
         "--gate-v1",
         action="store_true",
         help=(
@@ -1629,6 +1638,8 @@ def main() -> None:
         # from the checkpoint's env_config, so a checkpoint TRAINED under the v1
         # band but lacking the selector would otherwise be evaluated under v2.
         _ckpt_standoff = getattr(config, "trench_dig_standoff_enforced", None)
+        if args.dump_max_radius_m is not None:
+            config.dump_max_radius_m = float(args.dump_max_radius_m)
         if args.gate_v1:
             config.trench_dig_standoff_enforced = True
         if (

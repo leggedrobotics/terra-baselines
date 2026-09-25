@@ -27,6 +27,8 @@ def main():
     parser.add_argument("--maps-root", type=Path, default=ADAPTATION / "maps")
     parser.add_argument("--helper", type=Path, default=ADAPTATION / "evaluate.py")
     parser.add_argument("--cases", nargs="+", default=list(CASES))
+    parser.add_argument("--dump-max-radius-m", type=float, default=None,
+                        help="excavator dump reach in metres; default: the checkpoint's")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     os.environ.setdefault("EVAL_FORWARD_CHUNK", "32")
@@ -39,6 +41,8 @@ def main():
     spec.loader.exec_module(helper)
     register_checkpoint_config_classes()
     checkpoint = load_pkl_object(str(args.checkpoint))
+    if args.dump_max_radius_m is not None:
+        checkpoint["train_config"].dump_max_radius_m = args.dump_max_radius_m
     cases = {c["case_id"]: c for c in json.loads((args.maps_root / "maps.json").read_text())["cases"]}
     summary = dict(checkpoint=str(args.checkpoint), update=int(checkpoint["next_update"]), cases={})
     for name in args.cases:

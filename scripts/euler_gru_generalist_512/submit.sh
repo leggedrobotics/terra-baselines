@@ -35,6 +35,8 @@ ENVS_PER_DEVICE="${TERRA_ENVS_PER_DEVICE:-512}"
 GPU_TYPE="${GPU_TYPE:-rtx_4090}"
 # Teacher guidance covers 655,360,000 transitions, as in the 2026-09-15 restart.
 KL_ANNEAL_UPDATES=$((655360000 / (NUM_DEVICES * ENVS_PER_DEVICE * 32)))
+# Excavator dumps land within 5.5 m of the base (dig reach 6.5 m); 0 = dig reach.
+DUMP_MAX_RADIUS_M="${TERRA_DUMP_MAX_RADIUS_M:-5.5}"
 DEPENDENCY="${TERRA_SLURM_DEPENDENCY:-none}"
 SEGMENTS="${TERRA_SEGMENTS:-6}"
 TAKEOVER=0
@@ -72,7 +74,7 @@ test "$(sha256sum "$BANK_ARCHIVE" | awk '{print $1}')" = "$BANK_ARCHIVE_SHA"
 test "$(sha256sum "$TEACHER_LOCAL" | awk '{print $1}')" = "$TEACHER_SHA"
 grep -q "path: &gen512_bank $BANK_MAPS_PATH\$" "$REPO/configs/training_configs.yaml"
 echo "baselines=$BASELINES_REVISION terra=$RUNTIME_TERRA_REVISION seed=$SEED"
-echo "shape=${NUM_DEVICES}x$GPU_TYPE envs/device=$ENVS_PER_DEVICE kl_anneal_updates=$KL_ANNEAL_UPDATES"
+echo "shape=${NUM_DEVICES}x$GPU_TYPE envs/device=$ENVS_PER_DEVICE kl_anneal_updates=$KL_ANNEAL_UPDATES dump_max_radius_m=$DUMP_MAX_RADIUS_M"
 echo "target=$TARGET_UPDATE partition=$PARTITION walltime=$WALLTIME wandb=$WANDB_MODE resume=$RESUME_FROM"
 if [ "$SUBMIT" = 0 ]; then
     echo "SUBMIT=0: local checks passed; nothing staged"
@@ -136,6 +138,7 @@ EXPORTS+=",BANK_DATASET_SIZE=$BANK_DATASET_SIZE,BANK_DISTANCE_SIDECAR_SHA=$BANK_
 EXPORTS+=",TEACHER=$REMOTE_TEACHER,TEACHER_SHA=$TEACHER_SHA,NUM_DEVICES=$NUM_DEVICES"
 EXPORTS+=",ENVS_PER_DEVICE=$ENVS_PER_DEVICE,KL_ANNEAL_UPDATES=$KL_ANNEAL_UPDATES,GPU_TYPE=$GPU_TYPE"
 EXPORTS+=",EXPECTED_PARAMETERS=$EXPECTED_PARAMETERS,RESUME_FROM=$RESUME_FROM,TAKEOVER=$TAKEOVER"
+EXPORTS+=",DUMP_MAX_RADIUS_M=$DUMP_MAX_RADIUS_M"
 submit_job() {  # dependency (none or after...:<id>)
     local option=""
     [ "$1" = none ] || option="--dependency=$1"

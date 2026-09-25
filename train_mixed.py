@@ -1983,6 +1983,10 @@ class MixedAgentTrainConfig:
     # section axis must be at most this many metres (<= 0 disables it, i.e.
     # yaw-parallel only).  Inert under v1.  None leaves Terra's default.
     trench_dig_max_offset_m: float | None = None
+    # Excavator dump reach in metres (Terra agent.dump_max_radius_m; 0 = the
+    # dig reach). Overrides a resumed checkpoint's env config. None leaves the
+    # checkpoint's or Terra's value.
+    dump_max_radius_m: float | None = None
 
     # Curriculum/maps override (from YAML config)
     # Format: list of dicts with keys: maps_path, max_steps_in_episode, rewards_type, apply_trench_rewards
@@ -2951,6 +2955,19 @@ def make_mixed_agent_states(
     env_params = _overlay_env_foundation_behavior(env_params, config)
     print(f"Foundation behavior settings: {_foundation_behavior_settings(config)}")
     env_params = env_params._replace(terminal_reward_mix=0.0)
+    if getattr(config, "dump_max_radius_m", None) is not None:
+        if not hasattr(env_params.agent, "dump_max_radius_m"):
+            raise RuntimeError("this Terra runtime has no excavator dump reach")
+        env_params = env_params._replace(
+            agent=env_params.agent._replace(
+                dump_max_radius_m=float(config.dump_max_radius_m)
+            )
+        )
+    if hasattr(env_params.agent, "dump_max_radius_m"):
+        print(
+            "🪣 Excavator dump reach (effective, m; 0 = dig reach): "
+            f"{float(np.ravel(np.asarray(env_params.agent.dump_max_radius_m))[0])}"
+        )
 
     if config.require_trench_alignment_metadata:
         _preflight_trench_alignment_metadata(env, env_params, curriculum_levels)
@@ -6223,6 +6240,12 @@ if __name__ == "__main__":
             "model params. New checkpoints store this automatically."
         ),
     )
+    parser.add_argument(
+        "--dump_max_radius_m",
+        type=float,
+        default=None,
+        help="Excavator dump reach in metres (0 = dig reach); overrides a checkpoint's env.",
+    )
     env_group = parser.add_mutually_exclusive_group()
     env_group.add_argument(
         "--load_env_from_checkpoint",
@@ -6711,6 +6734,7 @@ if __name__ == "__main__":
         trench_alignment_observation=trench_alignment_observation,
         trench_dig_standoff_enforced=trench_dig_standoff_enforced,
         trench_dig_max_offset_m=trench_dig_max_offset_m,
+        dump_max_radius_m=args.dump_max_radius_m,
         curriculum_levels_override=curriculum_levels_override,
         curriculum_increase_level_threshold=curriculum_increase_level_threshold,
         curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,

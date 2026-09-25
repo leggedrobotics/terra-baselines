@@ -10,7 +10,7 @@ for REQUIRED in TARGET_UPDATE RUN_DIR RUN_NAME BASELINES_ROOT BASELINES_REVISION
     TERRA_EULER_USER TERRA_EULER_HOME_ROOT WANDB_ENTITY WANDB_PROJECT WANDB_MODE \
     BANK_ARCHIVE BANK_ARCHIVE_SHA BANK_MAPS_PATH BANK_DATASET_SIZE \
     BANK_DISTANCE_SIDECAR_SHA TEACHER TEACHER_SHA NUM_DEVICES ENVS_PER_DEVICE \
-    KL_ANNEAL_UPDATES GPU_TYPE EXPECTED_PARAMETERS SLURM_JOB_ID TMPDIR; do
+    KL_ANNEAL_UPDATES GPU_TYPE EXPECTED_PARAMETERS DUMP_MAX_RADIUS_M SLURM_JOB_ID TMPDIR; do
     test -n "${!REQUIRED:-}" || { echo "missing $REQUIRED" >&2; exit 2; }
 done
 
@@ -200,7 +200,7 @@ printf '%s\n' \
     "gpu=${NUM_DEVICES}x$GPU_TYPE" \
     "envs_per_device=$ENVS_PER_DEVICE" \
     "transitions_per_update=$TRANSITIONS_PER_UPDATE" \
-    "target_update=$TARGET_UPDATE" > "$RUN_DIR/run_contract.env"
+    "target_update=$TARGET_UPDATE" "dump_max_radius_m=$DUMP_MAX_RADIUS_M" > "$RUN_DIR/run_contract.env"
 cp "$RUN_DIR/run_contract.env" "$RUN_DIR/run_contract.job${SLURM_JOB_ID}.env"
 
 TRAIN_RC=0
@@ -249,6 +249,7 @@ TRAIN_RC=0
     --lateral_dig_cost 0 \
     --base_travel_cost 0 \
     --base_turn_cost 0 \
+    --dump_max_radius_m "$DUMP_MAX_RADIUS_M" \
     --teacher_checkpoint "$TEACHER" \
     --trench_teacher_checkpoint "$TEACHER" \
     --kickstart_start_update 0 \
