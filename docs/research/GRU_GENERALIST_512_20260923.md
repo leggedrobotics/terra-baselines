@@ -120,6 +120,7 @@ Euler RTX 4090, GRU checkpoints on the local RTX 4090 (JAX 0.4.33 on both).
 | GRU u2500 (KL weight 0.85) | 597 | 380/384 | 217/224 | 30/32 | 15 | 12 (22 stalls) | 30 | 32 |
 | GRU u5000 (KL weight 0.50) | 597 | 378/384 | 219/224 | 32/32 | 18 | 18 (14 stalls) | 32 | 32 |
 | GRU u7500 (KL weight 0.15) | 597 | 377/384 | 220/224 | 30/32 | 17 | 11 (21 stalls) | 31 | 32 |
+| GRU u10000 (KL weight 0) | 586 | 368/384 | 218/224 | 32/32 | 29 | **28 (4 stalls)** | 31 | 32 |
 
 At u2500 the student has cloned the teacher (policy KL 0.12): it gains seven
 maps and loses eight against u110000, and repeats the teacher's road stalls.
@@ -137,3 +138,12 @@ panel moves as a block between nearby checkpoints (the teacher lineage went
 24, 0 and 14 of 32 at u100000, u109250 and u110000), so single-checkpoint
 changes on it are weak evidence; the development panel holds at 597/608 with
 trenches rising 217 → 220.
+
+At u10000, where teacher guidance reaches zero, the two effects separate. The
+32-start road panel reaches 28/32 with 4 stalls (teacher 14/32 with 18), but
+19 development maps are lost since u7500 (8 gained), 13 of them foundations.
+Every one of the 19 losses is the same loop signature: 200–430 steps without
+task progress, a repeating 1–8-action pattern, and often hundreds of no-effect
+actions; several foundations stop with the dig complete and the soil still
+undisposed. The decision point is u15000: whether PPO recovers these without
+the teacher.
