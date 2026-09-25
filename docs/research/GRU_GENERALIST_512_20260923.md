@@ -121,6 +121,8 @@ Euler RTX 4090, GRU checkpoints on the local RTX 4090 (JAX 0.4.33 on both).
 | GRU u5000 (KL weight 0.50) | 597 | 378/384 | 219/224 | 32/32 | 18 | 18 (14 stalls) | 32 | 32 |
 | GRU u7500 (KL weight 0.15) | 597 | 377/384 | 220/224 | 30/32 | 17 | 11 (21 stalls) | 31 | 32 |
 | GRU u10000 (KL weight 0) | 586 | 368/384 | 218/224 | 32/32 | 29 | **28 (4 stalls)** | 31 | 32 |
+| GRU u12500 | 593 | 373/384 | 220/224 | 31/32 | 24 | 23 (9 stalls) | 29 | 32 |
+| GRU u15000 | **599** | 379/384 | 220/224 | 31/32 | 18 | 29 (5 stalls) | 32 | 32 |
 
 At u2500 the student has cloned the teacher (policy KL 0.12): it gains seven
 maps and loses eight against u110000, and repeats the teacher's road stalls.
@@ -147,3 +149,36 @@ task progress, a repeating 1–8-action pattern, and often hundreds of no-effect
 actions; several foundations stop with the dig complete and the soil still
 undisposed. The decision point is u15000: whether PPO recovers these without
 the teacher.
+
+By u15000 the foundations recovered (368 → 379/384) and the GRU passes its
+teacher on the development panel (599 vs 598) while keeping the road gain
+(29/32 vs 14/32).
+
+## Dump reach 5.5 m (switched in at about u20000)
+
+The machine digs out to 6.5 m but dumps reliably only within about 5.5 m.
+Terra used one cone for both, and a dump's soil lands within 2 tiles of the
+free cells' centroid, i.e. out to 6.5 m. Terra `da5bd656` adds
+`agent.dump_max_radius_m`: excavator dumps (and truck transfer and the
+free-space check) use only cone cells within that radius; the minimum stays at
+3.64 m. Soil is released within the reach; relaxation lets the pile edge
+slide under one tile further (the unit test measures a 4.6 m mean and 5.83 m
+maximum at 5.5). The default 0 keeps the frozen v1 benchmark; the trainer and
+evaluator take `--dump_max_radius_m` / `--dump-max-radius-m`.
+
+Admission (`tools/dump_reach_admission.py`, base positions where the footprint
+fits, dumping from the digging pose, relays through neutral cells allowed):
+every map of the development panel and of the 20,480-slot training bank stays
+fully serviceable at 5.5 m. Direct one-hop service drops mainly for
+`fnd-slab-apron-d16` (193 → 30 of 512 slots) and `fnd-proc-side1-road`
+(455 → 380), which now need relays.
+
+Existing policies depend on the far dumps:
+
+| Policy | Dumps to 6.5 m | Dumps to 5.5 m | Foundations at 5.5 | Trenches at 5.5 | Stalled episodes at 5.5 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| FF u110000 | 598 | 537 | 336/384 | 201/224 | 180 |
+| GRU u15000 | 599 | 540 | 332/384 | 208/224 | 108 |
+
+The run continues from its latest checkpoint under the 5.5 m reach (same run
+directory and W&B run name; the first resumed segment marks the switch).
