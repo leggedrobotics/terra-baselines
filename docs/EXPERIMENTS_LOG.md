@@ -1900,3 +1900,83 @@ native-state, panel/reset and integrity validation: 49/64 easy foundations,
 173/384 broad foundations, 175/224 trenches and 19/32 road trenches. The u5000
 replay is running, so the paired milestone comparison is incomplete. No new
 penalty-model quality or broad-generalist saturation conclusion is drawn.
+
+## September 26 evening: recovered makespan results and skid coordination screen
+
+CSCS access restored: makespan fine-tune 4761785 COMPLETED (8h30m, exit 0:0),
+u30000 saved. Evaluation 4795485 completed u22500/u25000; 4795498 evaluates
+zero-shot two-skid controls and u27500/u30000. This refresh supersedes the
+previous auth-limited status; no new CSCS long training is submitted.
+
+On the existing 512 training-bank reset episodes, sampled modeled speedup
+(setup 0 s / 30 s) improves from u20000 1.514/1.508 to u22500 1.809/1.810 and
+u25000 1.826/1.822. Sampled success is 99.61%, 99.61%, 99.41%, respectively.
+Median busier-machine soil share falls 0.621 -> 0.559 -> 0.552. These are
+common-success model estimates with no waiting, not measured physical speed
+or a held-out generalization result. A continued old-reward control is absent,
+so improvement is associated with the fine-tune, not a causal ablation.
+
+Euler final solo panel 15265590 COMPLETED, exit 0:0: warm u22000 sampled/greedy
+99.02/98.83%, median successful steps 32/32; scratch u20000 94.34/92.97%,
+88/82.5 steps. Each panel is 512 first episodes from 256 held-out relocation
+maps, horizon 450, seed 0. No extra solo segments submitted.
+
+User authorized overnight evaluations, agent brainstorming and a bounded new
+experiment. Two independent reviews selected two skid steers jointly trained
+from warm u15000 on the existing relocation bank. A mixed excavator/skid task
+should instead use flat-start excavation with distant disposal and an open
+staging/haul corridor: current generalist maps weakly exercise hauling, the
+makespan reward ignores skid work, and the time evaluator lacks type rates
+and waiting/precedence. Equal soil shares are not the objective for different
+roles.
+
+Implementation: scripts/team/run.py now accepts a single tracked skid parent;
+evaluate.py records initial loose units for relocation-volume strata. Eighteen
+launcher/team-model CPU tests and nine Terra joint/skid tests pass. Policies,
+dynamics and reward code are unchanged.
+
+Euler smoke 15266639 COMPLETED in 16m43s with exit 0:0. CUDA/cuDNN, two
+finite PPO updates, checkpoint save, and native resume through u4 all passed.
+Its wrapper submitted production 15269020 only after the PASSED marker.
+Production started at 23:29:29 CEST on eu-g6-025, one RTX 4090, 32 GiB RAM,
+12-hour limit. It is initially in reference/zero-shot qualification, not yet
+verified past a production training update. It uses 1x256 environments x32 steps,
+absolute target 20000, checkpoints every250, inherited PPO/R2, entropy
+0.05->0.02 over2000 updates, makespan off. It performs same-runtime zero-shot
+team evaluation, limits training to10h, and evaluates the newest saved team
+against the frozen solo parent before exiting. It needs no live chat or CSCS
+certificate. Queue estimates are volatile; smoke backfilled ahead of its
+03:00 estimate.
+
+Run root:
+`/cluster/scratch/lterenzi/codex_terra_edge_runs/terra_skid_team_20260926`.
+Source root:
+`/cluster/scratch/lterenzi/codex_terra_edge_validation/terra_skid_team_20260926`.
+Runtime:
+`/cluster/project/rsl/lterenzi/terra_runtime/terra_jax0433_cuda126_cudnn950_20260903`.
+Parent: project `terra_skid_solo_20260924/warm/segments/15008877/checkpoints/skid-solo-warm_update_015000.pkl`.
+Local handoff: `/home/lorenzo/moleworks/.artifacts/terra_multiagent_overnight_20260926/`.
+
+Primary new-team outcomes are fixed-horizon success and completion rounds.
+Skid retained-travel accounting uses pre-pickup poses and is not a qualified
+physical timing measure. Compare resource use and failed cases, not speedup
+only among successful episodes.
+
+Recommended next quality check: September 27 morning, around 08:00 CEST,
+to inspect training progress and saved checkpoints; final evaluation is expected
+after the bounded training phase, by the 11:29 CEST allocation end.
+No recurring assistant monitor is installed.
+
+Later makespan panels are now complete: sampled modeled speedups (setup 0/30)
+u27500=1.861/1.855 and u30000=1.864/1.860, with 99.41/99.02% sampled success.
+Greedy success falls to 97.46/96.88%, compared with 99.02% at u22500. Retain
+u22500 as the candidate for further evaluation; do not choose the final
+checkpoint solely for its speed. This is not a robot promotion.
+
+A separate CSCS skid zero-shot panel exposed a baseline discrepancy: the solo
+u15000 policy scores 0% there while the two-skid migration scores 92.58% sampled
+and 65.23% greedy. The validated Euler solo remains 99%. Do not use that CSCS
+panel as a fair solo/team benefit comparison. The new Euler production wrapper
+now evaluates its frozen solo reference before training and requires at least
+97% sampled / 95% greedy success; failing this blocks training. Numerical smoke
+success is separate from that policy-quality qualification.

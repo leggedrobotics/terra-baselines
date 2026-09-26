@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Jointly controlled team (or one machine), warm-started from a single-agent generalist.
+"""Jointly controlled team (or one machine), warm-started from a single-agent policy.
 
 Every agent starts as the parent policy (see utils/team_migration.py); the
 recipe (encoder, observations, reward, PPO layout) is the parent's. Teachers
@@ -24,6 +24,15 @@ import sys
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
+
+
+def validate_parent_config(config):
+    """Allow a tracked excavator or skid specialist as the shared team parent."""
+    if (
+        tuple(config.agent_types_override or (0,)) not in ((0,), (2,))
+        or tuple(config.action_types_override or (0,)) != (0,)
+    ):
+        raise ValueError("the parent must be a single tracked excavator or skid steer")
 
 
 def main():
@@ -63,8 +72,7 @@ def main():
     register_checkpoint_config_classes()
     parent = load_pkl_object(str(args.checkpoint))
     saved = parent["train_config"]
-    if tuple(saved.agent_types_override or (0,)) != (0,):
-        raise ValueError("the parent must be a single tracked excavator")
+    validate_parent_config(saved)
     values = {field.name: getattr(saved, field.name, field.default)
               for field in dataclasses.fields(MixedAgentTrainConfig) if field.init}
     team = tuple(int(t) for t in args.types.split(",")) if args.types else (0,) * args.agents

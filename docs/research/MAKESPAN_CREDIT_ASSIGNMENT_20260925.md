@@ -94,13 +94,16 @@ Behavior of the reward:
 | Event | Charge |
 |---|---|
 | Machines load in step (balanced) | none: R falls as fast as Σ W grows |
-| Either machine adds a setup, travel or a relift | the team pays its time / A |
+| Either machine adds a setup, travel or a relift | charged when it raises B; time / A while the average-work bound is active, possibly zero while the busiest machine dominates |
 | Staging soil outside the accepted region | R grows: the future relift is charged now |
 | One machine passes the fair share | the excess of the busiest machine |
 | One machine alone | only its overhead (loading moves W and R equally) |
 
 Not modeled: waiting for and interference between machines, dump time
-beyond the bucket cycle, and skid-steer pickups (FORWARD). The cost is 0 by
+beyond the bucket cycle, and skid-steer pickups (FORWARD). Overhead on a less-busy machine can remain uncharged while the busiest
+machine dominates the bound. The telescoping identity above is an undiscounted
+successful-episode identity; PPO discounting and unfinished terminal states
+qualify its interpretation. The cost is 0 by
 default and then leaves the reward bitwise unchanged (tested); the frozen
 benchmark hash excludes the inert defaults.
 
@@ -111,9 +114,10 @@ Fine-tune the team from u20000 with `makespan_cost = 4`,
 migrated with zero input weights: the policy and value are unchanged, tested).
 Evaluate at u22500, u25000, u27500 and u30000 against the single excavator on
 the same 512 maps, with `compare.py --setup-s 0` and `--setup-s 30`. The old
-recipe plateaued at about 1.52 between u15000 and u20000, so an executed-plan
-speedup clearly above that, at equal success, is attributable to the new
-reward; the busier machine's share should move toward 0.5. The run record is
+recipe plateaued at about 1.52 between u15000 and u20000. An executed-plan
+speedup clearly above that, at equal success, supports further investigation;
+a matched old-reward continuation is needed to attribute it causally to the
+new reward; the busier machine's share should move toward 0.5. The run record is
 in `MULTI_AGENT_JOINT_POLICY_20260923.md`.
 
 If balance stays poor: per-agent counterfactual credit (item 4) for the actor,

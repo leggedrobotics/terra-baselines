@@ -191,6 +191,9 @@ def main():
         return jax.vmap(one)(state)
 
     geometry = np.asarray(reset_geometry(timestep.state))  # [envs, agents, (dig, dump)]
+    initial_loose_units = np.maximum(
+        np.asarray(timestep.state.world.action_map.map), 0
+    ).reshape(args.envs, -1).sum(axis=1, dtype=np.int64)
 
     step = policy_step(env, config, agents, args.envs, args.greedy, args.idle_teammates)
     frozen = jnp.zeros(args.envs, bool)
@@ -274,6 +277,7 @@ def main():
         "action_counts": chosen.tolist(),
         "action_effective_counts": worked.tolist(),
         "per_env": {
+            "initial_loose_units": initial_loose_units.tolist(),
             "success": success.tolist(),
             "steps": steps.tolist(),
             "final_completion": completion.round(4).tolist(),
