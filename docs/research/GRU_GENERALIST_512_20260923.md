@@ -182,3 +182,14 @@ Existing policies depend on the far dumps:
 
 The run continues from its latest checkpoint under the 5.5 m reach (same run
 directory and W&B run name; the first resumed segment marks the switch).
+
+After the switch (resumed at u21000, 4 × RTX 4090 from 07:27 on September 26,
+4.2 s/update), scored with 5.5 m dumps:
+
+| Policy | Full 608 | Foundations | Trenches | Stalled episodes | Road 32 starts | Straight 32 | Tee 32 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| GRU u22500 | 590 | 374/384 | 216/224 | 26 | 24 | 32 | 32 |
+| GRU u25000 | 597 | 378/384 | 219/224 | 21 | 29 | 32 | 32 |
+
+Four thousand updates under the new reach recover the old-rule score (599 at
+u15000) to within two maps, 60 above the teacher under the same rule.
