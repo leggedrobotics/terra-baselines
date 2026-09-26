@@ -1903,6 +1903,20 @@ penalty-model quality or broad-generalist saturation conclusion is drawn.
 
 ## September 26 evening: recovered makespan results and skid coordination screen
 
+September 27 shortly after midnight: Euler 15269020 passed reference qualification
+and completed 24 production updates, about 3.9 s/update with finite checks enabled.
+Solo sampled/greedy 99.02/98.24%; zero-shot team 92.38/68.16%. Held-out CSCS 4795572
+finished six panels but reporting rejected zero common solo successes (job FAILED,
+10m31s). The same CSCS-only solo failure affects excavators; reference comparison
+is excluded. Team-only report regenerated: u20000 success 508/499 of 512 versus
+u22500 501/484 sampled/greedy. Relative modeled speed 1.078/1.067 on common n=498/475
+does not offset reliability regression for retention. Keep u20000 as reference;
+u22500 experimental. Source-disjoint bank: 608 slots / 304 sources, 512 sampled
+resets, not exact 608-case enumeration. Same skid checkpoint hash across CSCS,
+Euler and CPU, and identical 512 sampled scooped volumes suggest completion/state execution rather
+than wrong weights; root cause unresolved. Full report and handoff are in
+`.artifacts/terra_multiagent_overnight_20260926/` at the workspace root.
+
 CSCS access restored: makespan fine-tune 4761785 COMPLETED (8h30m, exit 0:0),
 u30000 saved. Evaluation 4795485 completed u22500/u25000; 4795498 evaluates
 zero-shot two-skid controls and u27500/u30000. This refresh supersedes the

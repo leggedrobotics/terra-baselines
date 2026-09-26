@@ -518,6 +518,27 @@ Euler priority between 4 h runs (warm 2 of 6 done, scratch 1 of 6).
 
 ## September 26 evening: recovered makespan results and skid coordination screen
 
+September 27 update: production Euler 15269020 passed reference qualification and
+completed 24 finite-checked updates (about 3.9 s/update). Its starting solo succeeds
+99.02/98.24% sampled/greedy; zero-shot two-skid 92.38/68.16%, so improved reliability
+is required before a fewer-rounds claim. Automatic final panels follow 10 h maximum
+training; 20k is a ceiling, not an overnight completion promise.
+
+Held-out development panels 4795572 supersede the provisional checkpoint selection
+below. All six JSONs completed, but CSCS solo reported 0% and the report correctly
+rejected an empty solo/team intersection (job FAILED after 10m31s). Regenerated
+team-only analysis keeps the invalid solo results visible and excludes absolute
+solo/team speedup. Old u20000 sampled/greedy success 508/499 of 512; u22500 501/484.
+New/old modeled speedup 1.078/1.067 on fixed common n=498/475, busy soil share
+60.6->57.6% / 61.5->57.1%. Retain u20000 as reliability reference; u22500 experimental.
+The 608-slot / 304-source development bank is disjoint from training on source,
+scenario and map IDs; 512 sampled resets do not enumerate 608 manifest cases.
+Checkpoint hashes match across CSCS/Euler/CPU, and CSCS solo skid scooped volumes
+match successful Euler in 512/512 sampled episodes. Investigate single-agent
+completion/state execution before more absolute speed comparisons. No root cause
+is confirmed. Local full report: workspace
+`.artifacts/terra_multiagent_overnight_20260926/makespan-eval/heldout/report.md`.
+
 CSCS access restored: makespan fine-tune 4761785 COMPLETED (8h30m, exit 0:0),
 u30000 saved. Evaluation 4795485 completed u22500/u25000; 4795498 evaluates
 zero-shot two-skid controls and u27500/u30000. This refresh supersedes the

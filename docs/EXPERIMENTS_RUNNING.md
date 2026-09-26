@@ -2,6 +2,31 @@
 
 ## September 26 evening: recovered makespan results and skid coordination screen
 
+**September 27, shortly after midnight update:** Euler 15269020 passed all
+reference/zero-shot qualification and completed at least 24 production updates,
+about 3.9 s/update, with finite checks enabled. Solo u15000 scores 99.02/98.24%
+sampled/greedy; zero-shot two-skid scores 92.38/68.16%. On common successes its
+median solo/team round ratio is 1.00/1.20, so success recovery remains essential.
+The 10 h training cap is expected to stop below the 20k update ceiling, followed by
+automatic matched final panels.
+
+New source-disjoint development panels 4795572 completed all six JSONs, then
+the report stopped on an empty solo/team success intersection (job FAILED after
+10m31s). CSCS solo excavator scored 0%, repeating the invalid CSCS skid reference.
+Euler reference quality is intact. Regenerated team-only report: old u20000
+success 508/512 sampled and 499/512 greedy; new u22500 success 501/512 and 484/512.
+The new team improves modeled speed relative to the old team 1.078x/1.067x on
+fixed common successes (n=498/475), with busier soil share 60.6->57.6% sampled
+and 61.5->57.1% greedy. **Retain u20000 as reliability reference; u22500 remains
+experimental.** This supersedes the provisional training-bank selection below.
+No held-out absolute solo/team speedup is valid from this run. The bank's 608
+slots / 304 sources have zero source/scenario/map overlap with training; these
+are 512 sampled resets, not exact 608-case enumeration. Local report:
+`.artifacts/terra_multiagent_overnight_20260926/makespan-eval/heldout/report.md`.
+CSCS/Euler/local skid parent hashes match; identical 512-episode scooped volumes
+despite divergent success point investigation toward single-agent completion
+accounting or compiled execution, with root cause still unresolved.
+
 CSCS access restored: makespan fine-tune 4761785 COMPLETED (8h30m, exit 0:0),
 u30000 saved. Evaluation 4795485 completed u22500/u25000; 4795498 evaluates
 zero-shot two-skid controls and u27500/u30000. This refresh supersedes the
