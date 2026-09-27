@@ -123,6 +123,67 @@ in `MULTI_AGENT_JOINT_POLICY_20260923.md`.
 If balance stays poor: per-agent counterfactual credit (item 4) for the actor,
 and the DARP-style split (item 6) as a baseline.
 
+## September 27: smallest useful paper ablation
+
+The cost4 run reached u30000. Its u22500 candidate improves modeled time but
+loses held-out reliability: on the same 512 initial development episodes,
+old u20000 versus cost4 u22500 succeeds 508/501 sampled and 499/484 greedy.
+On common successes the cost4 candidate is about 8% faster with 30-second
+setups. This is a speed/completion tradeoff, not a replacement for the old team.
+
+Lorenzo requested fast results with limited compute and enough ablation evidence
+for the paper. The next run is therefore **one cost0 continuation**, reusing
+the existing cost4 u22500 checkpoint and evaluation panels. Both continue
+native u20000 for 2,500 updates with workload observations enabled, setup30,
+four GH200s x256 environments x32 rounds, seed20260915, gamma0.9984 and constant
+entropy0.02. Model, Adam state and absolute schedules are preserved. The new
+allocation is capped at3h, including sampled/greedy held-out evaluation; a
+timeout evaluates the latest valid checkpoint and explicitly marks unequal
+training budgets. A cost0/cost2 pair was prepared but superseded before submission.
+
+This isolates the added makespan penalty from more training and the added
+observations. It is one training seed on a development panel, not evidence of
+seed robustness or a final untouched test. Report full-panel completion first,
+paired success gains/losses, then time and workload balance on the fixed
+common-success intersection. The old u20000 remains the reliability reference.
+Defer another reward weight, a new critic, and heterogeneous-team training until
+this comparison changes a decision. A balanced connected-area split with the
+solo planner is the next useful baseline without new policy training.
+
+The underlying reward remains material-progress shaping, success +6,
+horizon failure -1, a total step cost of1 over the450-round horizon, and the
+inherited local behavior costs. The makespan term is additional; its weight
+is the only intervention in this comparison.
+
+The large-batch CSCS solo evaluation has a separate completion discrepancy:
+`dump_mask_integrity` reports0 although saved maps have no dump/obstacle overlap.
+Do not use the invalid solo panel as a speedup denominator. The team-only
+ablation uses the existing successful two-agent path; any evaluation workaround
+must be explicit and checked independently.
+
+That reference was recovered in GPU job4811857 by replacing the Boolean
+not-any reduction with an equivalent int32 overlap count. Solo excavator now
+succeeds503/512 sampled and505/512 greedy. Replaying old-team greedy with the
+workaround gives exactly the same ten per-episode arrays as before, including
+success, steps, soil and travel. Seven CPU completion-contract tests pass,
+including rejection of obstructed declared dump cells. Local Terra fix04a64d98
+does not alter the frozen training snapshot used for the control.
+
+The repaired comparison gives modeled solo/team speedups1.563/1.766 for old
+team/cost4 sampled, and1.556/1.757 greedy, with30-second setups, on fixed
+three-policy common successes (n492/n473). Completion counts above remain the
+primary qualification. Large-job sampled speedups are1.75/1.83, versus1.26/1.60
+on small jobs; most cost4 reliability loss is in the small-job stratum. These
+volume thirds are descriptive development-set analysis, not a trained fleet
+selection rule. Report and raw panels are under `heldout_repaired/` below.
+
+Control job4811962 is submitted with the3h cap; qualification4811852 passed
+finite updates, saving, native resume and optimizer continuity in12m50s.
+At07:22UTC on September27 it was pending with an11:40CEST start estimate.
+
+Launch/evidence directory:
+`/home/lorenzo/moleworks/.artifacts/terra_multiagent_parallel_20260927/`.
+
 ## Sources
 
 - Zhang, Song, Cao, Zhang, Tan, Xu. Learning to Dispatch for Job Shop

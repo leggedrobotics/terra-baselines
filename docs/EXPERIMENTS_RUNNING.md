@@ -1,5 +1,62 @@
 # Experiments — geometry comparison complete; efficiency comparison running (2026-09-21)
 
+## September 27 morning: one compute-limited reward control and repaired solo reference
+
+User prioritized fast results, scarce compute and a paper ablation. Only one
+new production run was submitted: **CSCS 4811962**, d130/lterenzi, one node,
+four GH200 GPUs, 64 CPU cores, normal, **3 h cap**. It continues native team
+u20000 to u22500 with makespan weight 0, workload observations on and setup
+30 s. Reuse the existing weight-4 u22500 treatment. The original 4 × 256 × 32
+batch, seed 20260915, constant entropy 0.02, gamma 0.9984, PPO recipe and Adam
+clocks are retained. The prepared weight-0/weight-2 pair was superseded and
+never submitted. Maximum new production allocation is 12 GH200 GPU-hours.
+
+At **07:22 UTC**, job 4811962 was **PENDING/Priority** with a September 27
+**11:40 CEST** start estimate. That supersedes earlier test-only tomorrow
+estimates; it is not a reservation. Smoke **4811852 COMPLETED in 12m50s**,
+exit 0: finite two-update migration, checkpoint save and two-update native
+resume, correct feature/Adam shapes and counters, actual makespan settings,
+and four-GPU cuDNN/NCCL preflight. Production policy quality is not yet known.
+
+The job automatically evaluates the latest complete checkpoint after training
+(sampled and greedy, 512 initial reset episodes, seed 0, horizon 450), reusing
+parent and cost-4 panels. A training timeout produces an explicitly partial
+unequal-budget ablation. W&B is disabled; file logs/checkpoints/JSONs are the
+record. Recommended next production check is 10:00 UTC (12:00 CEST) for startup, then
+completion around 14:15–14:40 if the estimate holds. No assistant wakeup is set.
+
+**Solo completion defect repaired for evaluation.** Diagnostic 4811842 found
+that the fused CSCS solo-512 path returned dump-mask integrity 0 despite no
+obstacle overlap. Runtime-only integer-overlap counting in job **4811857**
+(COMPLETED, 5m33s, exit 0) restores solo excavator to **503/512 sampled and
+505/512 greedy**. Patched old-team greedy reproduces all ten shared per-episode
+arrays exactly. Solo skid is 503/512, the same aggregate as Euler, but two
+success labels and 50 step counts differ across runtimes; bit-exact cross-
+runtime parity is not claimed. Seven CPU completion-contract tests pass,
+including invalid-zone rejection. Local Terra fix **04a64d98** is committed;
+the frozen snapshot used for the controlled training run remains unchanged.
+
+The repaired held-out comparison gives median modeled solo/team speedups with
+30 s setups of **1.563 old / 1.766 cost4 sampled** (492 common successes) and
+**1.556 / 1.757 greedy** (473 common successes). Full success remains
+508→501 sampled and 499→484 greedy. Direct paired old/new time ratios are
+1.0815 / 1.0748; do not divide the two headline medians. The cost4 run loses
+most reliability on the smallest material-volume third. Large-job sampled
+speedups are 1.75 / 1.83. These are descriptive development results from one
+training seed, not measured physical time or a causal reward result. Await
+control u22500 before attribution; retain u20000 as reliability reference.
+
+**Euler 15269020** was RUNNING at 06:49 UTC, u8250 saved, about 3.88 s/update.
+Its existing automatic final evaluation is expected around 09:50 CEST; that
+is the next useful skid quality check. No extra skid training was added.
+
+Evidence and handoff:
+`/home/lorenzo/moleworks/.artifacts/terra_multiagent_parallel_20260927/HANDOFF.md`.
+Repaired raw panels/report/volume strata are in `heldout_repaired/`; launch
+scripts, smoke evidence and completion diagnostics are in the same artifact
+root. Remote root:
+`/ritom/scratch/cscs/lterenzi/terra-training/runs/terra-multiagent-parallel-20260927`.
+
 ## September 26 evening: recovered makespan results and skid coordination screen
 
 **September 27, shortly after midnight update:** Euler 15269020 passed all
