@@ -194,6 +194,9 @@ After the switch (resumed at u21000, 4 × RTX 4090 from 07:27 on September 26,
 | GRU u35000 | 596 | 377/384 | 219/224 | 16 | 32 | 32 | 32 |
 | GRU u40000 | **600** | 378/384 | 222/224 | 18 | **32** | 32 | 32 |
 | GRU u45000 | **600** | 379/384 | 221/224 | 17 | **32** | 32 | 32 |
+| GRU u50000 | 594 | 373/384 | 221/224 | 26 | 32 | 32 | 32 |
+| GRU u60000 | 601 | 381/384 | 220/224 | 15 | 25 | 32 | 32 |
+| GRU u70000 | **603** | 381/384 | 222/224 | 12 | 28 | 32 | 32 |
 
 Four thousand updates under the new reach recover the old-rule score (599 at
 u15000) to within two maps, 60 above the teacher under the same rule.
