@@ -1,5 +1,29 @@
 # Experiments — geometry comparison complete; efficiency comparison running (2026-09-21)
 
+## September29,08:37UTC: corrected excavator–skid restart queued
+
+Euler **15549409**, `lterenzi`, `gpuhe.4h`, one RTX4090,4CPUs,32GiB,4h.
+PENDING/Priority, live estimate today14:05–18:05Paris. CPU reward/model/curriculum
+checks pass; GPU qualification and real updates are not yet verified. One
+allocation qualifies for at most45min, then runs matched750-update arms from
+native u3010/Adam: common teammate visibility, carried-distance shaping1.0,
+handling effort0.25, loose-relift cap52 and20%prepared-reset curriculum. Only
+armB adds long-haul corrections (500-update fade,250-update hold). World reset
+at this MDP transition is deliberate; native subsequent resumes preserve it.
+
+Code commits: Terra ba5e12d8, baselines model60e8d27. Fourteen native CPU
+contracts and function-preserving migration pass; all40scripted cases succeed;
+128reset states pass sampler execution and native-scan shape checks. This is
+a short signal screen, not a saturation test or calibrated physical-time claim.
+W&B will start only after qualification; no new W&B history exists yet.
+
+Campaign: `/home/lorenzo/moleworks/.artifacts/terra_mixed_coordination_fix_20260929/README.md`.
+Paper: `/home/lorenzo/moleworks/MULTIAGENT_RESEARCH.md`.
+Next recommended check13:00UTC: qualify startup/first checkpoint or refreshqueue.
+No assistant wakeup is configured. Old correction jobs15481101/15481102 completed;
+no continuation was active to cancel.
+
+
 ## September 27 morning: one compute-limited reward control and repaired solo reference
 
 User prioritized fast results, scarce compute and a paper ablation. Only one
