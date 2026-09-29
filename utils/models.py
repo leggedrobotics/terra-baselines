@@ -60,7 +60,7 @@ def _config_option(config, name: str, default):
     except (AttributeError, KeyError):
         try:
             value = config[name]
-        except (TypeError, KeyError, IndexError):
+        except (AttributeError, TypeError, KeyError, IndexError):
             return default
     return value if value is not None else default
 
@@ -355,6 +355,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             _config_option(config, "retained_work_context_observation", False)
         ),
         actor_residual_head=bool(_config_option(config, "actor_residual_head", False)),
+        specialist_teammate_visibility=bool(
+            _config_option(config, "specialist_teammate_visibility", False)
+        ),
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
         use_aux_decoder=use_aux_decoder,
@@ -1682,6 +1685,10 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     time_observation_mode: str = "none"
     retained_work_context_observation: bool = False
     actor_residual_head: bool = False
+    # Separate solo actors can condition on native own-first teammate states.
+    # This explicit variant preserves the historical feature/context path and
+    # adds zero-output projections before the actor and critic heads.
+    specialist_teammate_visibility: bool = False
     attn_latent_queries: int = 4
     flatten_reduce_channels: int | None = None
     use_aux_decoder: bool = False
@@ -1695,6 +1702,20 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
+        if self.specialist_teammate_visibility:
+            if self.num_agents != 1 or self.actor_core != "mlp" or self.model_core != "mlp":
+                raise ValueError("specialist teammate adapters require one MLP actor per role")
+            # AgentStateNet concatenates 32 position, 32 orientation,
+            # 32 load/shovel and 16 type features. Project all three padded
+            # teammate slots into one equally sized feature block. Existing
+            # trained context embeddings also use the masked feature slots,
+            # so zeroing old head weights would NOT preserve the parent.
+            self.teammate_actor_adapter = nn.Dense(
+                112, use_bias=False, kernel_init=nn.initializers.zeros_init(),
+            )
+            self.teammate_critic_adapter = nn.Dense(
+                112, use_bias=False, kernel_init=nn.initializers.zeros_init(),
+            )
         if self.num_agents > 1:
             if self.actor_core != "mlp" or self.model_core != "mlp":
                 raise ValueError("joint team control requires the MLP actor/core")
@@ -1921,6 +1942,14 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         active_mask = active_mask.reshape((B, MAX_AGENTS))
         # Zero out inactive agent embeddings
         x_agents = jnp.where(active_mask[..., None], x_agents, 0)
+        teammate_features = None
+        if self.specialist_teammate_visibility:
+            if x_agents.shape[1:] != (4, 112):
+                raise ValueError("specialist teammate adapters require four 112-wide agent slots")
+            teammate_features = x_agents[:, 1:, :].reshape(B, 336)
+            # The original solo/context path is unchanged. Teammates enter
+            # only through the zero-initialized adapters below.
+            x_agents = x_agents.at[:, 1:, :].set(0)
         # Concatenate all agent embeddings into a single vector
         x_agents_concat = x_agents.reshape(B, -1)
         
@@ -2174,6 +2203,16 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             context = jnp.asarray(obs[extra_index], jnp.float32).reshape((B, 5))
             actor_x = actor_x + context @ self.retained_work_context_actor_embedding
             critic_x = critic_x + context @ self.retained_work_context_critic_embedding
+
+        if self.specialist_teammate_visibility:
+            if actor_x.shape[-1] != 704:
+                raise ValueError("specialist teammate adapters require the 704-wide fused features")
+            actor_x = actor_x.at[:, 112:224].add(
+                self.teammate_actor_adapter(teammate_features)
+            )
+            critic_x = critic_x.at[:, 112:224].add(
+                self.teammate_critic_adapter(teammate_features)
+            )
 
         return actor_x, critic_x
 
