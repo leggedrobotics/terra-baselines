@@ -1,5 +1,28 @@
 # Experiments — geometry comparison complete; efficiency comparison running (2026-09-21)
 
+## September 29, 10:24 UTC: 3090/4090 eligibility broadened in place
+
+At **2026-09-29 12:23:59 Paris / 10:23:59 UTC**, Euler **15549409** is
+**PENDING / Priority**, with **no current start estimate**. Its GPU request was
+broadened in place from 4090-only to **one RTX 3090 or RTX 4090**. Job ID,
+10:37:08 Paris submission time, account, priority, 4 CPUs, 32 GiB RAM and
+four-hour ceiling were preserved. Live inventory verifies 30 RTX 3090 nodes
+and 80 RTX 4090 nodes eligible before availability/drain filtering. Quadro/Titan
+nodes are excluded; the runtime accepts exactly one of the two approved names.
+The GPU preflight, finite updates in both arms and resume qualification still
+run on the actual allocation before production. No new GPU result exists.
+
+Read-only scheduler probes estimated September 30 at 08:27 Paris for a new
+3090-only request and 08:34 for a new either-family request. These probes are
+not submitted jobs or promises; the existing job currently has no ETA.
+Recommended next check: **September 29 at 18:00 Paris / 16:00 UTC**, to inspect
+allocation/startup or refresh the queue. No assistant wakeup is configured.
+A 3090 may finish fewer updates within the same four-hour cap; compare the
+arms at equal completed update counts. Paused arms retain resumable checkpoints
+but the current launcher defers their evaluation.
+
+Historical observations below are superseded where they differ.
+
 ## September29,08:37UTC: corrected excavator–skid restart queued
 
 Euler **15549409**, `lterenzi`, `gpuhe.4h`, one RTX4090,4CPUs,32GiB,4h.
