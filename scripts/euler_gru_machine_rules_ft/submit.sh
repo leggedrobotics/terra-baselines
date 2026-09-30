@@ -14,7 +14,8 @@
 #   SUBMIT=smoke  3-update finite smoke from u100000, W&B disabled, 4 h queue
 #   SUBMIT=1      24 h segment of the fine-tune, resuming its newest checkpoint
 #                 (the parent u100000 on the first segment); rerun after a
-#                 timeout to continue
+#                 timeout to continue. TERRA_TARGET_UPDATE (default 110000)
+#                 extends the same run past u110000.
 # Milestones are scored locally: eval_milestones.sh.
 set -euo pipefail
 
@@ -57,12 +58,13 @@ GPU_TYPE=rtx_4090
 if [ "$SUBMIT" = smoke ]; then
     TARGET_UPDATE=$((PARENT_UPDATE + 3)) PARTITION=gpuhe.4h WALLTIME=01:30:00 WANDB_MODE=disabled
 else
-    TARGET_UPDATE=$((PARENT_UPDATE + 10000))
+    TARGET_UPDATE="${TERRA_TARGET_UPDATE:-$((PARENT_UPDATE + 10000))}"
     WANDB_MODE="${WANDB_MODE:-online}"
     PARTITION="${TERRA_PARTITION:-gpuhe.24h}"
     WALLTIME="${TERRA_WALLTIME:-24:00:00}"
 fi
 [[ "$NUM_DEVICES" =~ ^[1-4]$ ]]
+[[ "$TARGET_UPDATE" =~ ^[0-9]+$ ]] && [ "$TARGET_UPDATE" -gt "$PARENT_UPDATE" ]
 [ "$SUBMIT" = smoke ] || [ "$NUM_DEVICES" = 4 ]
 REMOTE_HOST=euler-lterenzi
 REMOTE_VENV=/cluster/project/rsl/lterenzi/terra_runtime/terra_jax0433_cuda126_cudnn950_20260903

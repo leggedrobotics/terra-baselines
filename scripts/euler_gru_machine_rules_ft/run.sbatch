@@ -38,16 +38,20 @@ release_lock() {
 trap release_lock EXIT
 trap 'release_lock; exit 143' TERM INT
 
-if compgen -G "$RUN_DIR/checkpoints/*_FINAL.pkl" > /dev/null; then
-    echo "run already reached its target update"
-    exit 0
-fi
 # Checkpoint names carry zero-padded updates and are written atomically. The
-# first segment resumes the parent; later ones this run's newest checkpoint.
+# first segment resumes the parent; later ones this run's newest checkpoint,
+# unless that already reached TARGET_UPDATE (a larger target extends the run).
 RESUME_FROM="$( (ls "$RUN_DIR"/checkpoints/*_update_*.pkl 2>/dev/null || true) | sort | tail -n 1)"
 if [ -z "$RESUME_FROM" ]; then
     RESUME_FROM="$PARENT"
     test "$(sha256sum "$PARENT" | awk '{print $1}')" = "$PARENT_SHA"
+else
+    LAST_UPDATE="$(basename "$RESUME_FROM" .pkl)"
+    LAST_UPDATE="$((10#${LAST_UPDATE##*_update_}))"
+    if [ "$LAST_UPDATE" -ge "$TARGET_UPDATE" ]; then
+        echo "run already reached u$LAST_UPDATE (target u$TARGET_UPDATE)"
+        exit 0
+    fi
 fi
 test -r "$RESUME_FROM"
 echo "resume_from=$RESUME_FROM"
