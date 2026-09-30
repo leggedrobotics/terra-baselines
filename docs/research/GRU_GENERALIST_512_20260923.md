@@ -199,6 +199,7 @@ After the switch (resumed at u21000, 4 × RTX 4090 from 07:27 on September 26,
 | GRU u70000 | **603** | 381/384 | 222/224 | 12 | 28 | 32 | 32 |
 | GRU u80000 | 601 | 378/384 | 223/224 | 14 | 27 | 32 | 32 |
 | GRU u90000 | 600 | 379/384 | 221/224 | 18 | 17 | 32 | 32 |
+| GRU u100000 | 602 | 381/384 | 221/224 | 13 | **32** | 32 | 32 |
 
 Four thousand updates under the new reach recover the old-rule score (599 at
 u15000) to within two maps, 60 above the teacher under the same rule.
@@ -213,3 +214,21 @@ COMPLETED, dump reach 5.5 m). The development panel has held at 600–603 since
 u40000, while the 32-start road panel swings between 17 and 32 of 32 across
 checkpoints. The release checkpoint is chosen on the promotion panel (608 maps,
 5.5 m dumps) among u40000, u45000, u70000, u80000 and u100000.
+
+Promotion panel (608 maps, greedy, 450 actions, 5.5 m dumps):
+
+| Policy | Promotion | Foundations | Trenches | Stalled episodes | Worst cell | Development |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| FF u110000 (teacher) | 517 | 323/384 | 194/224 | 196 | 0.573 | 537 |
+| GRU u40000 | 594 | 375/384 | 219/224 | 22 | 0.841 | 600 |
+| GRU u45000 | 597 | 376/384 | 221/224 | 21 | 0.928 | 600 |
+| GRU u70000 | 593 | 374/384 | 219/224 | 19 | 0.758 | 603 |
+| GRU u80000 | 598 | 380/384 | 218/224 | 17 | 0.852 | 601 |
+| GRU u100000 | 597 | 378/384 | 219/224 | 17 | 0.928 | 602 |
+
+Release checkpoint: **u100000**. It ties u80000 on development plus promotion
+(1,199 of 1,216), has the best worst-cell score (tied with u45000) and is the
+only candidate that also solves all 32 starts of the road, straight and tee
+panels. u70000's development lead (603) does not hold on promotion (593).
+Differences of one or two maps between u45000, u80000 and u100000 are within
+checkpoint-to-checkpoint noise.
