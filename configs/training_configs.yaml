@@ -1123,6 +1123,32 @@ gru_generalist_512:
       rewards_type: DENSE
       apply_trench_rewards: false
 
+# The same bank and environment under Terra's machine working rules: dig
+# 4.0-6.5 m, dump 4.0-6.0 m, chassis raster centred on the base cell. The
+# clearance from dug ground (agent.dug_clearance_m) is the launcher's
+# parameter: scripts/euler_gru_machine_rules_ft/ passes --dug_clearance_m.
+gru_generalist_512_machine_rules:
+  description: v2 generalist conditions at 512 maps per condition, machine working rules
+  agent_types: [0]
+  action_types: [0]
+  relocation_progress_mult: 1.5
+  trench_alignment_observation: true
+  require_trench_alignment_metadata: true
+  enforce_trench_dig_alignment: true
+  trench_dig_standoff_enforced: false
+  dig_min_radius_m: 4.0
+  dump_max_radius_m: 6.0
+  centre_chassis_on_base: true
+  curriculum:
+    increase_level_threshold: 20
+    decrease_level_threshold: 80
+    last_level_type: none
+  maps:
+    - path: *gen512_bank
+      max_steps: 450
+      rewards_type: DENSE
+      apply_trench_rewards: false
+
 # v2 trench specialist: trench-only (all 15 trench conditions incl. net4,
 # re-admitted under v2), fresh-trench gate ON under the corrected semantics
 # (parallel to the axis AND on the line, bound EnvConfig default 2.0 m).
