@@ -29,6 +29,12 @@ def main():
     parser.add_argument("--cases", nargs="+", default=list(CASES))
     parser.add_argument("--dump-max-radius-m", type=float, default=None,
                         help="excavator dump reach in metres; default: the checkpoint's")
+    # Terra's machine working rules (metres; 0 = off); default: the checkpoint's.
+    for flag in ("--dig-min-radius-m", "--dump-min-radius-m", "--dug-clearance-m",
+                 "--dump-min-dug-distance-m"):
+        parser.add_argument(flag, type=float, default=None)
+    parser.add_argument("--centre-chassis-on-base", action=argparse.BooleanOptionalAction,
+                        default=None, help="chassis raster centred on the base cell")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     os.environ.setdefault("EVAL_FORWARD_CHUNK", "32")
@@ -43,8 +49,16 @@ def main():
     checkpoint = load_pkl_object(str(args.checkpoint))
     if args.dump_max_radius_m is not None:
         checkpoint["train_config"].dump_max_radius_m = args.dump_max_radius_m
+    from train_mixed import MACHINE_RULE_FIELDS
+    for name, cast in MACHINE_RULE_FIELDS.items():
+        if getattr(args, name) is not None:
+            setattr(checkpoint["train_config"], name, cast(getattr(args, name)))
     cases = {c["case_id"]: c for c in json.loads((args.maps_root / "maps.json").read_text())["cases"]}
     summary = dict(checkpoint=str(args.checkpoint), update=int(checkpoint["next_update"]), cases={})
+    rules = {name: getattr(checkpoint["train_config"], name, None)
+             for name in ("dump_max_radius_m", *MACHINE_RULE_FIELDS)}
+    if any(rules[name] for name in MACHINE_RULE_FIELDS):
+        summary["agent_rules"] = rules
     for name in args.cases:
         started = time.monotonic()
         evaluator = helper.FixedEvaluation(checkpoint, cases[name], args.maps_root,

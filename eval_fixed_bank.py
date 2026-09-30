@@ -22,9 +22,11 @@ import numpy as np
 from eval_mcts import rollout_episode
 from train import TrainConfig
 from train_mixed import (
+    MACHINE_RULE_FIELDS,
     MixedAgentTrainConfig,
     PARTIAL_RESET_CURRICULUM_SCHEMA,
     _validate_checkpoint_architecture,
+    machine_rules_effective,
     make_mixed_agent_states,
 )
 from utils.accepted_bank import (
@@ -1452,6 +1454,22 @@ def main() -> None:
             "Default: the checkpoint's own treatment."
         ),
     )
+    # Terra's machine working rules, set like --dump-max-radius-m. Default:
+    # the checkpoint's own treatment.
+    for flag, text in (
+        ("--dig-min-radius-m", "inner radius (m) of the dig and dump annulus"),
+        ("--dump-min-radius-m", "extra inner radius (m) for excavator dumps"),
+        ("--dug-clearance-m", "clearance (m) of moves and turns from dug cells"),
+        ("--dump-min-dug-distance-m", "distance (m) of dump centroids from dug cells"),
+    ):
+        parser.add_argument(
+            flag, type=float, default=None,
+            help=f"Evaluate with this {text} (0 = off). Default: the checkpoint's own treatment.",
+        )
+    parser.add_argument(
+        "--centre-chassis-on-base", action=argparse.BooleanOptionalAction, default=None,
+        help="Evaluate with the chassis raster centred on the base cell. Default: the checkpoint's own treatment.",
+    )
     parser.add_argument(
         "--gate-v1",
         action="store_true",
@@ -1640,6 +1658,9 @@ def main() -> None:
         _ckpt_standoff = getattr(config, "trench_dig_standoff_enforced", None)
         if args.dump_max_radius_m is not None:
             config.dump_max_radius_m = float(args.dump_max_radius_m)
+        for name, cast in MACHINE_RULE_FIELDS.items():
+            if getattr(args, name) is not None:
+                setattr(config, name, cast(getattr(args, name)))
         if args.gate_v1:
             config.trench_dig_standoff_enforced = True
         if (
@@ -1680,6 +1701,15 @@ def main() -> None:
             env_params=env_config_override,
         )
         env_params = jax.tree_util.tree_map(lambda value: value[0], env_params)
+        # Recorded only when a machine working rule is on, so outputs of
+        # release-rule evaluations keep their historical keys.
+        agent_rules = machine_rules_effective(env_params)
+        if any(agent_rules.values()):
+            agent_rules["dump_max_radius_m"] = float(
+                np.ravel(np.asarray(env_params.agent.dump_max_radius_m))[0]
+            )
+        else:
+            agent_rules = None
         validate_foundation_behavior_env(config, env_params, env=env)
         expected_trench_gate = bool(
             getattr(config, "enforce_trench_dig_alignment", None) or False
@@ -2041,6 +2071,7 @@ def main() -> None:
                 "checkpoint_sha256": sha256_file(checkpoint_path),
                 "checkpoint_update": int(checkpoint.get("next_update", 0)),
                 "treatment_fingerprint": reference_treatment,
+                **({} if agent_rules is None else {"agent_rules": agent_rules}),
                 "r2_protocol_receipt": checkpoints[0][1].get("r2_protocol_receipt"),
                 "behavior_cost_ramp_state": checkpoint.get("behavior_cost_ramp_state"),
                 "foundation_teacher_release_state": checkpoint.get("foundation_teacher_release_state"),

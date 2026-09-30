@@ -582,6 +582,41 @@ def _assert_finite_tree(tree, label: str, max_items: int = 8) -> None:
         )
 
 
+# Terra's opt-in machine working rules: TrainConfig field (= Terra
+# agent.<field>) and its type. Applied to env_params.agent like
+# dump_max_radius_m when the config value is not None.
+MACHINE_RULE_FIELDS = {
+    "dig_min_radius_m": float,
+    "dump_min_radius_m": float,
+    "dug_clearance_m": float,
+    "dump_min_dug_distance_m": float,
+    "centre_chassis_on_base": bool,
+}
+
+
+def apply_machine_rules(env_params, config):
+    """Set each machine working rule the config gives (None leaves the field)."""
+    for name, cast in MACHINE_RULE_FIELDS.items():
+        value = getattr(config, name, None)
+        if value is None:
+            continue
+        if not hasattr(env_params.agent, name):
+            raise RuntimeError(f"this Terra runtime has no agent.{name}")
+        env_params = env_params._replace(
+            agent=env_params.agent._replace(**{name: cast(value)})
+        )
+    return env_params
+
+
+def machine_rules_effective(env_params) -> dict:
+    """The machine working rules an EnvConfig carries (the fields this Terra has)."""
+    return {
+        name: cast(np.ravel(np.asarray(getattr(env_params.agent, name)))[0])
+        for name, cast in MACHINE_RULE_FIELDS.items()
+        if hasattr(env_params.agent, name)
+    }
+
+
 def _strip_checkpoint_env_axis(env_config, num_envs_per_device: int):
     """Store/load EnvConfig without a leading vectorized-env axis when present."""
     del num_envs_per_device
@@ -1987,6 +2022,14 @@ class MixedAgentTrainConfig:
     # dig reach). Overrides a resumed checkpoint's env config. None leaves the
     # checkpoint's or Terra's value.
     dump_max_radius_m: float | None = None
+    # Terra's opt-in machine working rules (agent.<name>; 0/False = off),
+    # applied like dump_max_radius_m: each overrides a resumed checkpoint's env
+    # config, and None leaves the checkpoint's or Terra's value. Metres.
+    dig_min_radius_m: float | None = None
+    dump_min_radius_m: float | None = None
+    dug_clearance_m: float | None = None
+    dump_min_dug_distance_m: float | None = None
+    centre_chassis_on_base: bool | None = None
 
     # Curriculum/maps override (from YAML config)
     # Format: list of dicts with keys: maps_path, max_steps_in_episode, rewards_type, apply_trench_rewards
@@ -2968,6 +3011,10 @@ def make_mixed_agent_states(
             "🪣 Excavator dump reach (effective, m; 0 = dig reach): "
             f"{float(np.ravel(np.asarray(env_params.agent.dump_max_radius_m))[0])}"
         )
+    env_params = apply_machine_rules(env_params, config)
+    effective_rules = machine_rules_effective(env_params)
+    if effective_rules:
+        print(f"🚧 Machine working rules (effective): {effective_rules}")
 
     if config.require_trench_alignment_metadata:
         _preflight_trench_alignment_metadata(env, env_params, curriculum_levels)
@@ -6246,6 +6293,29 @@ if __name__ == "__main__":
         default=None,
         help="Excavator dump reach in metres (0 = dig reach); overrides a checkpoint's env.",
     )
+    # Terra's machine working rules; each overrides a checkpoint's env (and a
+    # preset's value) like --dump_max_radius_m. Omitted: the checkpoint's,
+    # preset's or Terra's value.
+    parser.add_argument(
+        "--dig_min_radius_m", type=float, default=None,
+        help="Inner radius (m) of the excavator's dig and dump annulus (0 = 3.64 m chassis limit).",
+    )
+    parser.add_argument(
+        "--dump_min_radius_m", type=float, default=None,
+        help="Extra inner radius (m) for excavator dumps only (0 = off).",
+    )
+    parser.add_argument(
+        "--dug_clearance_m", type=float, default=None,
+        help="Refuse moves and turns ending closer than this (m) to dug cells (0 = off).",
+    )
+    parser.add_argument(
+        "--dump_min_dug_distance_m", type=float, default=None,
+        help="Refuse excavator dumps centred closer than this (m) to dug cells (0 = off).",
+    )
+    parser.add_argument(
+        "--centre_chassis_on_base", action=argparse.BooleanOptionalAction, default=None,
+        help="Rotate the chassis raster about the base cell centre (Terra agent.centre_chassis_on_base).",
+    )
     env_group = parser.add_mutually_exclusive_group()
     env_group.add_argument(
         "--load_env_from_checkpoint",
@@ -6290,6 +6360,8 @@ if __name__ == "__main__":
         args.load_env_from_checkpoint = True
 
     # Initialize config values from preset if --config is provided
+    # Preset machine working rules and dump reach; the CLI flags win.
+    preset_agent_rules = {}
     agent_types_override = None
     action_types_override = None
     relocation_progress_mult = None
@@ -6372,6 +6444,11 @@ if __name__ == "__main__":
             )
             trench_dig_standoff_enforced = preset.trench_dig_standoff_enforced
             trench_dig_max_offset_m = preset.trench_dig_max_offset_m
+            preset_agent_rules = {
+                name: getattr(preset, name)
+                for name in ("dump_max_radius_m", *MACHINE_RULE_FIELDS)
+                if getattr(preset, name) is not None
+            }
 
             # Apply maps/curriculum from preset (convert MapLevel objects to dict format)
             if preset.maps and len(preset.maps) > 0:
@@ -6734,7 +6811,11 @@ if __name__ == "__main__":
         trench_alignment_observation=trench_alignment_observation,
         trench_dig_standoff_enforced=trench_dig_standoff_enforced,
         trench_dig_max_offset_m=trench_dig_max_offset_m,
-        dump_max_radius_m=args.dump_max_radius_m,
+        **{
+            name: getattr(args, name) if getattr(args, name) is not None
+            else preset_agent_rules.get(name)
+            for name in ("dump_max_radius_m", *MACHINE_RULE_FIELDS)
+        },
         curriculum_levels_override=curriculum_levels_override,
         curriculum_increase_level_threshold=curriculum_increase_level_threshold,
         curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,
