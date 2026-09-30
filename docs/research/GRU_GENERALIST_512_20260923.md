@@ -232,3 +232,10 @@ only candidate that also solves all 32 starts of the road, straight and tee
 panels. u70000's development lead (603) does not hold on promotion (593).
 Differences of one or two maps between u45000, u80000 and u100000 are within
 checkpoint-to-checkpoint noise.
+
+All evaluations above are collected by
+`scripts/euler_gru_generalist_512/collect_results.py` into
+`GRU_GENERALIST_512_20260923_evaluations.csv` (27 rows) and logged to W&B as
+run `gru_gen512_s20260923_evals` (project `mixed-agents`, group
+`gru_gen512_s20260923`). Raw outputs: `.artifacts/terra_gru_bigbank_20260923/`
+on the workstation and `evaluations/local_4090/` next to the run on Euler.
