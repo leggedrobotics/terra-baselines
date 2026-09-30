@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # usage: eval_local.sh CHECKPOINT OUTPUT_DIR
 # Same milestone evaluation as eval.sbatch, on the local RTX 4090 (forward only).
-# DUMP_MAX_RADIUS_M=5.5 evaluates under that excavator dump reach.
+# DUMP_MAX_RADIUS_M=5.5 evaluates under that excavator dump reach; PANEL=promotion
+# scores the promotion panel instead of development (no 32-start panels).
 set -euo pipefail
 [[ $# == 2 ]] || { echo "usage: eval_local.sh CHECKPOINT OUTPUT_DIR" >&2; exit 2; }
 test -r "$1"
@@ -20,11 +21,12 @@ DUMP_ARGS=()
 [ -z "${DUMP_MAX_RADIUS_M:-}" ] || DUMP_ARGS=(--dump-max-radius-m "$DUMP_MAX_RADIUS_M")
 EVAL_FORWARD_CHUNK=120 "$PYTHON" -u "$REPO/eval_fixed_bank.py" \
     --checkpoint "$1" --bank-root /home/lorenzo/moleworks/.artifacts/terra_v8_trench_finite_enriched_20260819 \
-    --accepted-panel development --panel-family gate_main \
+    --accepted-panel "${PANEL:-development}" --panel-family gate_main \
     --terra-revision a6e6e5bc1cd29e4f3a5c8d99a7fbd9fe855ba1b4 \
     --horizon 450 --seed 20260724 \
     --expect-completion-contract exact_visible_dump_v1 \
     --output "$2/full608.json" "${DUMP_ARGS[@]}" > "$2/full608.log" 2>&1
+[ "${PANEL:-development}" != development ] || \
 EVAL_FORWARD_CHUNK=32 "$PYTHON" -u "$REPO/scripts/euler_gru_generalist_512/eval_known_starts.py" \
     --checkpoint "$1" --output "$2/known_starts" "${DUMP_ARGS[@]}" > "$2/known_starts.log" 2>&1
 touch "$2/EVAL_DONE"
