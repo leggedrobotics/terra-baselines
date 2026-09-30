@@ -5,7 +5,7 @@ usage: collect_results.py OUTPUT_CSV [--wandb]
 
 Every row is one policy evaluated on one panel (greedy, 450 actions). The
 dump reach is 6.5 m (the dig reach, frozen v1 benchmark) or 5.5 m (the machine
-rule, used for training from u21000 on).
+rule, used for training from u19500 on).
 """
 import argparse
 import csv
@@ -66,7 +66,7 @@ def log_to_wandb(rows):
                      group="gru_gen512_s20260923", job_type="evaluation", resume="allow",
                      config=dict(training_run="gru_gen512_s20260923",
                                  release_checkpoint="u100000",
-                                 dump_reach_switch_update=21000, horizon=450, greedy=True))
+                                 dump_reach_switch_update=19500, horizon=450, greedy=True))
     run.log({"evaluations": wandb.Table(columns=list(rows[0]), data=[list(r.values()) for r in rows])})
     by_update = {}
     for r in rows:

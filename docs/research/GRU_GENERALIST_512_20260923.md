@@ -154,7 +154,7 @@ By u15000 the foundations recovered (368 → 379/384) and the GRU passes its
 teacher on the development panel (599 vs 598) while keeping the road gain
 (29/32 vs 14/32).
 
-## Dump reach 5.5 m (switched in at about u20000)
+## Dump reach 5.5 m (from u19500)
 
 The machine digs out to 6.5 m but dumps reliably only within about 5.5 m.
 Terra used one cone for both, and a dump's soil lands within 2 tiles of the
@@ -183,8 +183,8 @@ Existing policies depend on the far dumps:
 The run continues from its latest checkpoint under the 5.5 m reach (same run
 directory and W&B run name; the first resumed segment marks the switch).
 
-After the switch (resumed at u21000, 4 × RTX 4090 from 07:27 on September 26,
-4.2 s/update), scored with 5.5 m dumps:
+After the switch (resumed from u19500 on 4 × RTX 3090 at 03:19 on September 26;
+4 × RTX 4090 from u21000 at 07:27, 4.2 s/update), scored with 5.5 m dumps:
 
 | Policy | Full 608 | Foundations | Trenches | Stalled episodes | Road 32 starts | Straight 32 | Tee 32 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -201,8 +201,9 @@ After the switch (resumed at u21000, 4 × RTX 4090 from 07:27 on September 26,
 | GRU u90000 | 600 | 379/384 | 221/224 | 18 | 17 | 32 | 32 |
 | GRU u100000 | 602 | 381/384 | 221/224 | 13 | **32** | 32 | 32 |
 
-Four thousand updates under the new reach recover the old-rule score (599 at
-u15000) to within two maps, 60 above the teacher under the same rule.
+About 5,500 updates under the new reach (u19500 to u25000) recover the
+old-rule score (599 at u15000) to within two maps, 60 above the teacher under
+the same rule.
 
 From u40000 the GRU solves the held-out four-section road from all 32 starts
 (teacher 14/32) and scores 600/608 under the stricter dump reach, above the
