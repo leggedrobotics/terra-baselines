@@ -13,16 +13,6 @@ set -euo pipefail
 [[ $# == 2 ]] || { echo "usage: eval_local.sh CHECKPOINT OUTPUT_DIR" >&2; exit 2; }
 test -r "$1"
 test ! -e "$2"
-mkdir -p "$2"
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PYTHON="${TERRA_EVAL_PYTHON:-/home/lorenzo/moleworks/.artifacts/terra_foundation_sweep_20260907/runtime/bin/python}"
-export PYTHONPATH="${TERRA_ROOT:-/home/lorenzo/moleworks/.worktrees/terra_machine_rules_20260930/terra}:$REPO:/home/lorenzo/moleworks/.artifacts/terra_test_time_compute_20260921/adaptation"
-export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
-export SDL_VIDEODRIVER=dummy MPLBACKEND=Agg WANDB_MODE=disabled
-export JAX_PLATFORMS=cuda,cpu XLA_PYTHON_CLIENT_PREALLOCATE=false JAX_THREEFRY_PARTITIONABLE=true
-export XLA_FLAGS="--xla_gpu_enable_latency_hiding_scheduler=true --xla_gpu_enable_triton_gemm=false --xla_gpu_mlir_emitter_level=0"
-CUDA_PATHS="$("$PYTHON" -c 'import glob,site; print(":".join(glob.glob(site.getsitepackages()[0]+"/nvidia/*/lib")))')"
-export LD_LIBRARY_PATH="$CUDA_PATHS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 RULE_ARGS=()
 [ -z "${DUMP_MAX_RADIUS_M:-}" ] || RULE_ARGS+=(--dump-max-radius-m "$DUMP_MAX_RADIUS_M")
 [ -z "${DIG_MIN_RADIUS_M:-}" ] || RULE_ARGS+=(--dig-min-radius-m "$DIG_MIN_RADIUS_M")
@@ -35,6 +25,16 @@ case "${CENTRE_CHASSIS_ON_BASE:-}" in
     0) RULE_ARGS+=(--no-centre-chassis-on-base) ;;
     *) echo "CENTRE_CHASSIS_ON_BASE must be 1 or 0" >&2; exit 2 ;;
 esac
+mkdir -p "$2"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PYTHON="${TERRA_EVAL_PYTHON:-/home/lorenzo/moleworks/.artifacts/terra_foundation_sweep_20260907/runtime/bin/python}"
+export PYTHONPATH="${TERRA_ROOT:-/home/lorenzo/moleworks/.worktrees/terra_machine_rules_20260930/terra}:$REPO:/home/lorenzo/moleworks/.artifacts/terra_test_time_compute_20260921/adaptation"
+export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYGAME_HIDE_SUPPORT_PROMPT=1
+export SDL_VIDEODRIVER=dummy MPLBACKEND=Agg WANDB_MODE=disabled
+export JAX_PLATFORMS=cuda,cpu XLA_PYTHON_CLIENT_PREALLOCATE=false JAX_THREEFRY_PARTITIONABLE=true
+export XLA_FLAGS="--xla_gpu_enable_latency_hiding_scheduler=true --xla_gpu_enable_triton_gemm=false --xla_gpu_mlir_emitter_level=0"
+CUDA_PATHS="$("$PYTHON" -c 'import glob,site; print(":".join(glob.glob(site.getsitepackages()[0]+"/nvidia/*/lib")))')"
+export LD_LIBRARY_PATH="$CUDA_PATHS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 EVAL_FORWARD_CHUNK=120 "$PYTHON" -u "$REPO/eval_fixed_bank.py" \
     --checkpoint "$1" --bank-root /home/lorenzo/moleworks/.artifacts/terra_v8_trench_finite_enriched_20260819 \
     --accepted-panel "${PANEL:-development}" --panel-family gate_main \
