@@ -197,6 +197,8 @@ After the switch (resumed at u21000, 4 × RTX 4090 from 07:27 on September 26,
 | GRU u50000 | 594 | 373/384 | 221/224 | 26 | 32 | 32 | 32 |
 | GRU u60000 | 601 | 381/384 | 220/224 | 15 | 25 | 32 | 32 |
 | GRU u70000 | **603** | 381/384 | 222/224 | 12 | 28 | 32 | 32 |
+| GRU u80000 | 601 | 378/384 | 223/224 | 14 | 27 | 32 | 32 |
+| GRU u90000 | 600 | 379/384 | 221/224 | 18 | 17 | 32 | 32 |
 
 Four thousand updates under the new reach recover the old-rule score (599 at
 u15000) to within two maps, 60 above the teacher under the same rule.
@@ -205,3 +207,9 @@ From u40000 the GRU solves the held-out four-section road from all 32 starts
 (teacher 14/32) and scores 600/608 under the stricter dump reach, above the
 teacher's 598 under the original one. u30000 dipped (583) and recovered by
 u35000, so a release checkpoint is chosen from a plateau, not the last one.
+
+The run reached u100000 on September 30 at 05:00 (job 15202067, status
+COMPLETED, dump reach 5.5 m). The development panel has held at 600–603 since
+u40000, while the 32-start road panel swings between 17 and 32 of 32 across
+checkpoints. The release checkpoint is chosen on the promotion panel (608 maps,
+5.5 m dumps) among u40000, u45000, u70000, u80000 and u100000.
