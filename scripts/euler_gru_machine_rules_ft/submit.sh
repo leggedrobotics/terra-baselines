@@ -35,8 +35,9 @@ TERRA_REPO="${TERRA_REPO:-/home/lorenzo/moleworks/.worktrees/terra_machine_rules
 
 # Environment code must equal the dump-reach release env (9b96e9a4) plus the
 # opt-in machine working rules (4c49f274, 15f7cc47) and the chassis centring
-# (9300543d); tool-only commits on the Terra branch are allowed.
-TERRA_ENV_REVISION=9300543dafee6b1a7fe104cbf964401b5737fa04
+# on the exact rectangle (9300543d, ef406998); tool-only commits on the Terra
+# branch are allowed.
+TERRA_ENV_REVISION=ef406998616d4e06ea2b2b485dce2a1c2143c0e9
 PRESET=gru_generalist_512_machine_rules
 BANK_ARCHIVE=/home/lorenzo/moleworks/.artifacts/terra_gru_bigbank_20260923/train_v3_generalist_512.tar.zst
 BANK_ARCHIVE_SHA=3ddaaf538f1e7a091123ca1491c7f305e03835822d4f4c83c17d1f5916f6fc74
