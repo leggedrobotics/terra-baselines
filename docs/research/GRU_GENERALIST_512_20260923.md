@@ -228,9 +228,11 @@ Promotion panel (608 maps, greedy, 450 actions, 5.5 m dumps):
 | GRU u100000 | 597 | 378/384 | 219/224 | 17 | 0.928 | 602 |
 
 Release checkpoint: **u100000**. It ties u80000 on development plus promotion
-(1,199 of 1,216), has the best worst-cell score (tied with u45000) and is the
-only candidate that also solves all 32 starts of the road, straight and tee
-panels. u70000's development lead (603) does not hold on promotion (593).
+(1,199 of 1,216) and, unlike u80000 (27/32 on the road), solves all 32 starts
+of the road, straight and tee panels. The other candidates that solve all
+starts score lower on the two panels (u45000 1,197, u40000 1,194). It shares
+the best promotion worst-cell score with u45000. u70000's development lead
+(603) does not hold on promotion (593).
 Differences of one or two maps between u45000, u80000 and u100000 are within
 checkpoint-to-checkpoint noise.
 
