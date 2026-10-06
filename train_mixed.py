@@ -171,7 +171,7 @@ from utils.wandb_human import (
     FOUNDATION_ROLLOUT_METRICS,
     CONDITION_COLUMNS,
     LOGGING_SCHEMA,
-    TRAINING_SCALAR_KEYS,
+    TRAINING_SCALAR_KEYS as BASE_TRAINING_SCALAR_KEYS,
     condition_rows,
     curriculum_metrics,
     episode_metrics,
@@ -190,6 +190,13 @@ from types import SimpleNamespace
 from train import calculate_gae, ppo_update_networks
 
 jax.config.update("jax_threefry_partitionable", True)
+
+
+WORKSPACE_BLOCKED_RATE_KEYS = tuple(
+    f"behavior/workspace_blocked_rate/{role}"
+    for role in ("excavator", "truck", "skidsteer")
+)
+TRAINING_SCALAR_KEYS = BASE_TRAINING_SCALAR_KEYS | frozenset(WORKSPACE_BLOCKED_RATE_KEYS)
 
 
 def kickstart_coef_schedule(
@@ -437,6 +444,8 @@ class Transition(struct.PyTreeNode):
     transition_mass_residual: jax.Array
     target_mutation: jax.Array
     obstacle_mutation: jax.Array
+    workspace_blocked: jax.Array
+    workspace_conflicts: jax.Array
     log_prob: jax.Array
     obs: jax.Array
     prev_actions: jax.Array
@@ -465,6 +474,7 @@ _OPTIONAL_FINITE_LOSS_KEYS = (
     "imitation/action_accuracy",
     "aux_loss",
     "diagnostics/grad_global_norm",
+    *WORKSPACE_BLOCKED_RATE_KEYS,
 )
 _FINITE_FRACTION_KEYS = (
     "diagnostics/grads_all_finite",
@@ -507,6 +517,7 @@ def _assert_transition_integrity(integrity: dict) -> None:
         "maximum_mass_residual",
         "target_mutation_count",
         "obstacle_mutation_count",
+        "workspace_conflict_count",
     ):
         value = int(np.asarray(integrity[field]))
         if value:
@@ -515,6 +526,17 @@ def _assert_transition_integrity(integrity: dict) -> None:
         raise RuntimeError(
             "Terra rollout transition integrity failed: " + ", ".join(failures)
         )
+
+
+def _workspace_blocked_rates(blocked, agent_types, agent_active):
+    """Global rejected/requested ratios by native role; absent roles report zero."""
+    rates = {}
+    for role, key in enumerate(WORKSPACE_BLOCKED_RATE_KEYS):
+        selected = (agent_types == role) & agent_active.astype(jnp.bool_)
+        rejected = jax.lax.psum(jnp.sum(blocked & selected[None, ...]), "devices")
+        requested = jax.lax.psum(jnp.sum(selected) * blocked.shape[0], "devices")
+        rates[key] = rejected.astype(jnp.float32) / jnp.maximum(requested, 1)
+    return rates
 
 
 def _nonfinite_count(value) -> int:
@@ -4263,6 +4285,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                         ],
                         target_mutation=timestep.info["target_mutation"],
                         obstacle_mutation=timestep.info["obstacle_mutation"],
+                        workspace_blocked=timestep.info["workspace_blocked"],
+                        workspace_conflicts=timestep.info["workspace_conflicts"],
                         log_prob=log_prob,
                         obs=rollout_observation,
                         prev_actions=prev_actions,
@@ -4314,7 +4338,20 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                         jnp.sum(transitions.obstacle_mutation.astype(jnp.int32)),
                         "devices",
                     ),
+                    "workspace_conflict_count": jax.lax.psum(
+                        jnp.sum(transitions.workspace_conflicts),
+                        "devices",
+                    ),
                 }
+                # Role/activity slots are fixed throughout this rollout,
+                # including autoresets; diagnostics remain in slot order.
+                rollout_agents = runner_state[2].state.agent
+                workspace_rates = _workspace_blocked_rates(
+                    transitions.workspace_blocked,
+                    jnp.stack([a.agent_type[..., 0]
+                               for a in rollout_agents.agent_states[:num_agents]], axis=-1),
+                    rollout_agents.agent_active[..., :num_agents],
+                )
                 reset_exposure_count = jax.lax.psum(
                     reset_exposure_histogram(
                         transitions.done,
@@ -4595,6 +4632,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                 # Attach to loss_info for logging
                 loss_info = dict(loss_info)
                 loss_info["explained_variance"] = explained_var
+                loss_info.update(workspace_rates)
                 for component_index, component_name in enumerate(FOUNDATION_ROLLOUT_METRICS):
                     loss_info[component_name] = jax.lax.pmean(
                         behavior_components[..., component_index].mean(), "devices"
@@ -5038,6 +5076,8 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                                     kickstart_kl_coef=kickstart_kl_coef_current,
                                     kickstart_value_coef=kickstart_value_coef_current,
                                 ),
+                                **{key: float(loss_info_single[key])
+                                   for key in WORKSPACE_BLOCKED_RATE_KEYS},
                                 "reward/terminal_objective_mix": current_reward_mix,
                             }
                         )

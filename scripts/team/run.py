@@ -54,6 +54,9 @@ def main():
                         help="executed-plan seconds per new work pose")
     parser.add_argument("--machine-work-observation", action="store_true",
                         help="observe every machine's executed-plan time")
+    parser.add_argument("--workspace-guard-enabled", action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help="override the checkpoint's full-workspace separation rule")
     parser.add_argument("--devices", type=int, default=4)
     parser.add_argument("--envs", type=int, default=256, help="environments per device")
     parser.add_argument("--updates", type=int, required=True)
@@ -103,15 +106,21 @@ def main():
     # of the same treatment resume ordinarily.
     migrate_machine_work = finetune = False
     start_update = 0
+    workspace_cfg = parent["env_config"]
     if args.resume:
         resumed_checkpoint = load_pkl_object(str(args.resume))
         resumed = resumed_checkpoint["train_config"]
+        workspace_cfg = resumed_checkpoint["env_config"]
         start_update = int(resumed_checkpoint["next_update"])
         migrate_machine_work = args.machine_work_observation and not getattr(
             resumed, "machine_work_observation", False)
         finetune = any(float(getattr(resumed, name, 0.0)) != float(costs[name])
                        for name in ("makespan_cost", "makespan_setup_s"))
         del resumed_checkpoint
+    workspace_guard = args.workspace_guard_enabled
+    if workspace_guard is None:
+        workspace_guard = bool(np.ravel(np.asarray(
+            getattr(workspace_cfg, "workspace_guard_enabled", True)))[0])
     diagnostic = args.updates - start_update <= 5
     values.update(
         name=args.name,
@@ -142,6 +151,9 @@ def main():
         behavior_cost_ramp_updates=0, finetune_foundation_behavior=finetune,
         finetune_task_bank=False, machine_work_observation=args.machine_work_observation,
         migrate_machine_work_observation=migrate_machine_work, **costs,
+        # Persist the effective rule explicitly. Tracked excavator/skid teams
+        # have no registered excavator-to-truck loading interactions.
+        workspace_guard_enabled=workspace_guard, workspace_loading_pairs=(),
     )
     output.mkdir(parents=True, exist_ok=True)
     train_mixed_agents(MixedAgentTrainConfig(**values))

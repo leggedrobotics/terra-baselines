@@ -198,6 +198,7 @@ class TrainingAccountingTest(unittest.TestCase):
             "maximum_mass_residual": 0,
             "target_mutation_count": 0,
             "obstacle_mutation_count": 0,
+            "workspace_conflict_count": 0,
         }
         _assert_transition_integrity(passing)
 

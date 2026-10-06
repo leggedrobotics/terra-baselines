@@ -21,14 +21,15 @@ sys.path.insert(0, str(REPO))
 
 
 def build(checkpoint_path, bank, dataset_size, agents, envs, render_grid=None, types=None,
-          maps_path=None):
+          maps_path=None, workspace_guard_enabled=None):
     """Environment, batched env params, config and TrainState for ``agents``.
 
     ``types`` are the agent types (default: ``agents`` excavators), all
     tracked. A single-agent checkpoint used with ``agents > 1`` is migrated
     first. ``render_grid`` (n) enables the pygame renderer for an n x n env
     grid. ``maps_path`` replaces the bank subdirectory of the checkpoint's
-    curriculum (e.g. a held-out split).
+    curriculum (e.g. a held-out split). ``workspace_guard_enabled`` overrides
+    the checkpoint rule before reset and applies throughout the evaluation.
     """
     types = tuple(types) if types else (0,) * agents
     agents = len(types)
@@ -38,10 +39,12 @@ def build(checkpoint_path, bank, dataset_size, agents, envs, render_grid=None, t
 
     import jax
     import jax.numpy as jnp
+    import numpy as np
     import optax
     from flax.training.train_state import TrainState
     from terra.config import BatchConfig, CurriculumGlobalConfig
     from terra.env import TerraEnvBatch
+    from terra.workspace_interactions import validate_loading_pair_mask
 
     from utils.helpers import load_pkl_object, register_checkpoint_config_classes
     from utils.models import get_model_ready
@@ -74,6 +77,10 @@ def build(checkpoint_path, bank, dataset_size, agents, envs, render_grid=None, t
     env_cfg = checkpoint["env_config"]._replace(
         agent_types=types, action_types=(0,) * agents
     )
+    if workspace_guard_enabled is not None:
+        env_cfg = env_cfg._replace(workspace_guard_enabled=bool(workspace_guard_enabled))
+    config.workspace_guard_enabled = bool(env_cfg.workspace_guard_enabled)
+    validate_loading_pair_mask(types, np.asarray(env_cfg.workspace_loading_pairs).item())
     env_params = jax.tree_util.tree_map(
         lambda x: jnp.asarray(x)[None].repeat(envs, 0), env_cfg
     )
@@ -153,6 +160,9 @@ def main():
     parser.add_argument("--greedy", action="store_true")
     parser.add_argument("--idle-teammates", action="store_true",
                         help="diagnostic: agents other than slot 0 always do nothing")
+    parser.add_argument("--workspace-guard-enabled", action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help="override the checkpoint's full-workspace separation rule")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -164,8 +174,9 @@ def main():
     agents = len(types)
     env, env_cfg, env_params, config, state = build(
         args.checkpoint, args.bank, args.dataset_size, agents, args.envs, types=types,
-        maps_path=args.maps_path,
+        maps_path=args.maps_path, workspace_guard_enabled=args.workspace_guard_enabled,
     )
+    workspace_guard = bool(env_cfg.workspace_guard_enabled)
     horizon = int(np.max(np.asarray(env_cfg.max_steps_in_episode)))
     rng = jax.random.PRNGKey(args.seed)
     rng, reset_key = jax.random.split(rng)
@@ -204,6 +215,11 @@ def main():
     tile_size = float(np.ravel(np.asarray(env_cfg.tile_size))[0])
     angles_base = int(np.ravel(np.asarray(env_cfg.agent.angles_base))[0])
     start = timestep.state.agent.agent_states[:agents]
+    reset_agent_poses = np.concatenate([
+        np.stack([np.asarray(a.pos_base) for a in start], axis=1),
+        np.stack([np.asarray(a.angle_base) for a in start], axis=1),
+        np.stack([np.asarray(a.angle_cabin) for a in start], axis=1),
+    ], axis=-1)  # [envs, agents, (x, y, base heading bin, cabin heading bin)]
     last_pose = np.concatenate([
         np.stack([np.asarray(a.pos_base) for a in start], axis=1),
         np.stack([np.asarray(a.angle_base)[..., 0] for a in start], axis=1)[..., None],
@@ -222,6 +238,13 @@ def main():
     # Per agent and action index: times chosen and times it changed pose/load.
     chosen = np.zeros((agents, 8), np.int64)
     worked = np.zeros((agents, 8), np.int64)
+    # Unlike the legacy effective-action counters, these include the terminal
+    # action of each initial episode and exclude all auto-reset episodes.
+    requested = np.zeros((agents, 8), np.int64)
+    blocked_actions = np.zeros((agents, 8), np.int64)
+    initial_rounds = np.zeros(args.envs, np.int64)
+    workspace_blocked = np.zeros((args.envs, agents), np.int64)
+    workspace_conflicts = np.zeros(args.envs, np.int64)
     success = np.zeros(args.envs, bool)
     steps = np.full(args.envs, horizon, np.int32)
     completion = np.zeros(args.envs, np.float32)
@@ -231,6 +254,22 @@ def main():
         done = np.asarray(timestep.done)
         # Work events count until the step that ends the first episode.
         counting = ~ended
+        taken = np.asarray(taken).reshape(args.envs, agents)
+        blocked = np.asarray(timestep.info["workspace_blocked"]).reshape(args.envs, agents)
+        conflicts = np.asarray(timestep.info["workspace_conflicts"]).reshape(args.envs)
+        invalid = counting & (conflicts > 0)
+        if workspace_guard and invalid.any():
+            raise RuntimeError(
+                f"Accepted workspace conflict at step {t + 1}, initial episodes "
+                f"{np.flatnonzero(invalid).tolist()}: {conflicts[invalid].tolist()}"
+            )
+        initial_rounds[counting] += 1
+        workspace_blocked[counting] += blocked[counting]
+        workspace_conflicts[counting] += conflicts[counting]
+        for slot in range(agents):
+            np.add.at(requested[slot], taken[counting, slot], 1)
+            np.add.at(blocked_actions[slot], taken[counting, slot],
+                      blocked[counting, slot].astype(np.int64))
         pos, heading, load_before, load_after = (np.asarray(x) for x in work)
         pose = np.concatenate([pos, heading[..., None]], axis=-1).astype(np.int64)
         work_event = counting[:, None] & (load_before != load_after)
@@ -243,7 +282,6 @@ def main():
         last_pose = np.where(work_event[..., None], pose, last_pose)
         live = ~ended & ~done
         moved = np.asarray(moved)
-        taken = np.asarray(taken).reshape(args.envs, agents)
         effective[live] += moved[live]
         acted[live] += 1
         for slot in range(agents):
@@ -269,6 +307,15 @@ def main():
         "median_steps_success": float(np.median(steps[success])) if success.any() else None,
         "mean_final_completion": float(completion.mean()),
         "idle_teammates": bool(args.idle_teammates),
+        "workspace_guard_enabled": workspace_guard,
+        "workspace_loading_pairs": int(env_cfg.workspace_loading_pairs),
+        "requested_action_counts": requested.tolist(),
+        "workspace_blocked_action_counts": blocked_actions.tolist(),
+        "workspace_blocked_counts": workspace_blocked.sum(0).tolist(),
+        "workspace_blocked_fraction": (
+            workspace_blocked.sum(0) / max(int(initial_rounds.sum()), 1)
+        ).round(6).tolist(),
+        "workspace_conflicts": int(workspace_conflicts.sum()),
         # Fraction of each agent's actions that changed its own pose or load.
         "effective_action_fraction": (
             effective.sum(0) / max(int(acted.sum()), 1)
@@ -281,6 +328,10 @@ def main():
             "success": success.tolist(),
             "steps": steps.tolist(),
             "final_completion": completion.round(4).tolist(),
+            "requested_rounds": initial_rounds.tolist(),
+            "workspace_blocked_counts": workspace_blocked.tolist(),
+            "workspace_conflicts": workspace_conflicts.tolist(),
+            "reset_agent_poses": reset_agent_poses.tolist(),
             # [agent][dig cells, dump cells] under each chassis at reset.
             "reset_target_overlap": geometry.tolist(),
             # Executed plan per machine (first episode): straight-line travel
