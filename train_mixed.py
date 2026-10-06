@@ -1963,6 +1963,8 @@ class MixedAgentTrainConfig:
     truck_capacity: int | None = None
     skidsteer_capacity: int | None = None
     truck_road_restricted: bool | None = None
+    workspace_guard_enabled: bool | None = None
+    workspace_loading_pairs: tuple | None = None
     enforce_foundation_border_alignment: bool | None = None
     # Fresh-trench dig-alignment pilot (C0/T1). The three observations and the
     # finite-metadata requirement are identical in both arms; only the gate
@@ -2444,6 +2446,8 @@ def create_mixed_agent_env_config(
     truck_capacity=None,
     skidsteer_capacity=None,
     truck_road_restricted=None,
+    workspace_guard_enabled=None,
+    workspace_loading_pairs=None,
     enforce_foundation_border_alignment=None,
     enforce_trench_dig_alignment=None,
     trench_dig_standoff_enforced=None,
@@ -2486,6 +2490,12 @@ def create_mixed_agent_env_config(
 
     # Set the action types from the training configuration
     env_config = env_config._replace(action_types=action_types)
+    from terra.workspace_interactions import loading_pair_mask
+    if workspace_guard_enabled is not None:
+        env_config = env_config._replace(workspace_guard_enabled=bool(workspace_guard_enabled))
+    if workspace_loading_pairs is not None:
+        env_config = env_config._replace(
+            workspace_loading_pairs=loading_pair_mask(agent_types, workspace_loading_pairs))
     # Only tracked skid steers load (wheeled FORWARD has no pickup), and the
     # int8 load cannot hold more than 127 units.
     if any(agent == 2 and action != 0 for agent, action in zip(agent_types, action_types)):
@@ -2950,6 +2960,19 @@ def make_mixed_agent_states(
     env_params = _overlay_env_foundation_behavior(env_params, config)
     print(f"Foundation behavior settings: {_foundation_behavior_settings(config)}")
     env_params = env_params._replace(terminal_reward_mix=0.0)
+
+    # One persisted authority for reset placement and transitions, including
+    # checkpoint resumes. An explicit CLI value overrides the saved setting.
+    from terra.workspace_interactions import loading_pair_mask, validate_loading_pair_mask
+    if config.workspace_guard_enabled is not None:
+        env_params = env_params._replace(workspace_guard_enabled=bool(config.workspace_guard_enabled))
+    if config.workspace_loading_pairs is not None:
+        env_params = env_params._replace(workspace_loading_pairs=loading_pair_mask(
+            tuple(int(x) for x in env_params.agent_types), config.workspace_loading_pairs))
+    validate_loading_pair_mask(
+        tuple(int(x) for x in env_params.agent_types), np.asarray(env_params.workspace_loading_pairs).item())
+    print(f"Workspace separation: {bool(env_params.workspace_guard_enabled)}; "
+          f"directed loading pairs bitset: {int(env_params.workspace_loading_pairs)}")
 
     if config.require_trench_alignment_metadata:
         _preflight_trench_alignment_metadata(env, env_params, curriculum_levels)
@@ -5841,6 +5864,14 @@ if __name__ == "__main__":
         help="Override skidsteer_capacity (tile-count volume; x4 at 128). Overrides --config.",
     )
     parser.add_argument(
+        "--workspace_guard_enabled", action=argparse.BooleanOptionalAction, default=None,
+        help="Reserve every machine's body and full workspace (on for new environments).",
+    )
+    parser.add_argument(
+        "--workspace_loading_pairs", type=json.loads, default=None,
+        help='Explicit directed excavator/truck slot pairs as JSON, e.g. "[[0,1]]". Default: none.',
+    )
+    parser.add_argument(
         "--loaded_max_override",
         type=int,
         default=None,
@@ -6738,6 +6769,8 @@ if __name__ == "__main__":
         truck_capacity=truck_capacity,
         skidsteer_capacity=skidsteer_capacity,
         truck_road_restricted=truck_road_restricted,
+        workspace_guard_enabled=args.workspace_guard_enabled,
+        workspace_loading_pairs=args.workspace_loading_pairs,
         enforce_foundation_border_alignment=enforce_foundation_border_alignment,
         enforce_trench_dig_alignment=enforce_trench_dig_alignment,
         require_trench_alignment_metadata=require_trench_alignment_metadata,
