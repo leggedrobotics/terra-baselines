@@ -52,6 +52,10 @@ def main():
                         help="team cost on the growth of the busiest machine's executed-plan time")
     parser.add_argument("--makespan-setup-s", type=float, default=0.0,
                         help="executed-plan seconds per new work pose")
+    parser.add_argument("--elapsed-time-cost", type=float, default=0.0,
+                        help="team cost on the growth of the latest machine clock over T_ref")
+    parser.add_argument("--busy-time-cost", type=float, default=0.0,
+                        help="team cost on executed action seconds over T_ref")
     parser.add_argument("--machine-work-observation", action="store_true",
                         help="observe every machine's executed-plan time")
     parser.add_argument("--workspace-guard-enabled", action=argparse.BooleanOptionalAction,
@@ -100,7 +104,8 @@ def main():
             "retained_work_turn_cost",
         )
     }
-    costs.update(makespan_cost=args.makespan_cost, makespan_setup_s=args.makespan_setup_s)
+    costs.update(makespan_cost=args.makespan_cost, makespan_setup_s=args.makespan_setup_s,
+                 elapsed_time_cost=args.elapsed_time_cost, busy_time_cost=args.busy_time_cost)
     # A resumed checkpoint without the observation is grown once, and a change
     # of the makespan settings is declared as a reward fine-tune; checkpoints
     # of the same treatment resume ordinarily.
@@ -115,7 +120,8 @@ def main():
         migrate_machine_work = args.machine_work_observation and not getattr(
             resumed, "machine_work_observation", False)
         finetune = any(float(getattr(resumed, name, 0.0)) != float(costs[name])
-                       for name in ("makespan_cost", "makespan_setup_s"))
+                       for name in ("makespan_cost", "makespan_setup_s",
+                                    "elapsed_time_cost", "busy_time_cost"))
         del resumed_checkpoint
     workspace_guard = args.workspace_guard_enabled
     if workspace_guard is None:

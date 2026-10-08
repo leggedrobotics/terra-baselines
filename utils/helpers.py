@@ -21,10 +21,12 @@ RETAINED_WORK_COST_DEFAULTS = {
     "retained_work_turn_cost": 0.0,
     "makespan_cost": 0.0,
     "makespan_setup_s": 0.0,
+    "elapsed_time_cost": 0.0,
+    "busy_time_cost": 0.0,
 }
 # Receipts written before the makespan cost existed omit these keys, so they
 # are recorded only when set.
-MAKESPAN_COST_NAMES = ("makespan_cost", "makespan_setup_s")
+MAKESPAN_COST_NAMES = ("makespan_cost", "makespan_setup_s", "elapsed_time_cost", "busy_time_cost")
 
 
 def _config_field(config, name, default=None):

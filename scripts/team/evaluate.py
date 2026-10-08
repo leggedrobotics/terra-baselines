@@ -169,6 +169,7 @@ def main():
     import jax
     import jax.numpy as jnp
     import numpy as np
+    from terra.config import TIME_DIG_S_PER_M3 as time_dig_s_per_m3
 
     types = tuple(int(t) for t in args.types.split(",")) if args.types else (0,) * args.agents
     agents = len(types)
@@ -246,6 +247,12 @@ def main():
     workspace_blocked = np.zeros((args.envs, agents), np.int64)
     workspace_conflicts = np.zeros(args.envs, np.int64)
     success = np.zeros(args.envs, bool)
+    # Elapsed-time clock at the end of each first episode (Terra
+    # State.machine_clock_s): latest machine finish T, summed busy seconds
+    # and the episode's T_ref.
+    clock_finish_s = np.zeros(args.envs, np.float64)
+    clock_busy_s = np.zeros(args.envs, np.float64)
+    tile = float(np.ravel(np.asarray(env_cfg.tile_size))[0])
     steps = np.full(args.envs, horizon, np.int32)
     completion = np.zeros(args.envs, np.float32)
     start = time.time()
@@ -288,6 +295,9 @@ def main():
             np.add.at(chosen[slot], taken[live, slot], 1)
             np.add.at(worked[slot], taken[live, slot], moved[live, slot].astype(np.int64))
         new = done & ~ended
+        components = timestep.info["reward_components"]
+        clock_finish_s[new] = np.asarray(components["reward_v2_time_finish_s"])[new]
+        clock_busy_s[new] = np.asarray(components["reward_v2_time_busy_s"])[new]
         success[new] = np.asarray(timestep.info["task_done"])[new]
         steps[new] = t + 1
         completion[new] = np.asarray(final)[new]
@@ -344,6 +354,11 @@ def main():
             "scooped_units": scooped_units.tolist(),
             "work_setups": setups.tolist(),
             "required_units": required_units.tolist(),
+            # Elapsed-time clock (seconds): T and summed busy time at the end of
+            # the first episode; T_ref is required units at the dig rate.
+            "clock_finish_s": clock_finish_s.round(2).tolist(),
+            "clock_busy_s": clock_busy_s.round(2).tolist(),
+            "clock_reference_s": (required_units * tile ** 3 * time_dig_s_per_m3).round(2).tolist(),
         },
         "wall_seconds": time.time() - start,
     }

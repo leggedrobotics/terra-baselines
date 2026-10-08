@@ -1948,6 +1948,11 @@ class MixedAgentTrainConfig:
     # work pose enter every machine's executed-plan time.
     makespan_cost: float = 0.0
     makespan_setup_s: float = 0.0
+    # Elapsed-time objective (Terra elapsed-time clock): -elapsed_time_cost *
+    # growth of the latest machine clock and -busy_time_cost * executed action
+    # seconds, both over the episode's T_ref.
+    elapsed_time_cost: float = 0.0
+    busy_time_cost: float = 0.0
     behavior_cost_ramp_updates: int = 0  # new ramp duration; saved ramps restore automatically
     executable_dig_observation: bool = False
     # Preserve Adam and absolute update while explicitly changing only the
@@ -6269,6 +6274,9 @@ if __name__ == "__main__":
          "executed-plan time, normalized by the single-machine job time."),
         ("makespan_setup_s", "Executed-plan seconds per new work pose in every "
          "machine's time (makespan cost)."),
+        ("elapsed_time_cost", "Reward-v2 cost on the growth of the latest machine clock "
+         "(dependency-aware elapsed time) over T_ref."),
+        ("busy_time_cost", "Reward-v2 cost on executed action seconds over T_ref."),
     ):
         parser.add_argument(f"--{name}", type=float, default=0.0, help=help_text)
     parser.add_argument(
@@ -6781,6 +6789,8 @@ if __name__ == "__main__":
         retained_work_turn_cost=args.retained_work_turn_cost,
         makespan_cost=args.makespan_cost,
         makespan_setup_s=args.makespan_setup_s,
+        elapsed_time_cost=args.elapsed_time_cost,
+        busy_time_cost=args.busy_time_cost,
         base_travel_cost=args.base_travel_cost,
         base_turn_cost=args.base_turn_cost,
         behavior_cost_ramp_updates=args.behavior_cost_ramp_updates,
