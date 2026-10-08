@@ -2284,6 +2284,7 @@ def main():
         display=False,
         shuffle_maps=False,
         single_map_path=args.map_path,
+        pull_direction_alignment=bool(_first_scalar(getattr(env_cfgs, "pull_direction_alignment", False))),
     )
 
     # Match inference_single_map.py: keep checkpoint env_cfgs fixed during rollout.

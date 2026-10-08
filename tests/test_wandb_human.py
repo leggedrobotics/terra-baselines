@@ -198,6 +198,10 @@ def test_bounded_logging_schema_and_manual_workspace():
             "reward_v2_fresh_dig_volume": np.array(0.6),
             "reward_v2_base_travel_m": np.array(0.7),
             "reward_v2_base_turn_rad": np.array(0.8),
+            "train/bulk_episode_count": np.array(4),
+            "train/precision_episode_success_rate": np.array(0.5),
+            "kickstart/eligible_transition_fraction": np.array(0.25),
+            "kickstart/bulk_compatible_fraction": np.array(0.5),
         },
         entropy_coef=0.02,
         teacher_enabled=True,
@@ -212,11 +216,15 @@ def test_bounded_logging_schema_and_manual_workspace():
     assert metrics["behavior/fresh_dig_volume_per_step"] == pytest.approx(0.6)
     assert metrics["behavior/base_travel_m_per_step"] == pytest.approx(0.7)
     assert metrics["behavior/base_turn_rad_per_step"] == pytest.approx(0.8)
+    assert metrics["train/bulk_episode_count"] == 4
+    assert metrics["train/precision_episode_success_rate"] == 0.5
+    assert metrics["kickstart/eligible_transition_fraction"] == 0.25
+    assert metrics["kickstart/bulk_compatible_fraction"] == 0.5
     assert not any(key.startswith("diagnostics/") for key in metrics)
 
     # Optional imitation has four group diagnostics; retained costs add three
-    # explicit coefficients without enabling unbounded diagnostic logging.
-    assert len(TRAINING_SCALAR_KEYS) <= 115
+    # explicit coefficients. The cutting-space mix and teacher gate add eight metrics.
+    assert len(TRAINING_SCALAR_KEYS) <= 123
     assert {"imitation/loss", "imitation/foundation/target_entropy",
             "imitation/expert/sample_fraction"}.issubset(TRAINING_SCALAR_KEYS)
     assert "reward/terminal_objective_mix" in TRAINING_SCALAR_KEYS

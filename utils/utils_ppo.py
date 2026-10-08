@@ -61,6 +61,16 @@ def scale_local_maps_in_obs(obs, scale):
 
 def obs_to_model_input(obs, prev_actions, train_cfg):
     validate_executable_dig_observation(train_cfg)
+    precision_required_band = None
+    if _config_option(train_cfg, "precision_required_band_observation", False):
+        if "precision_required_band" not in obs:
+            raise ValueError(
+                "precision_required_band_observation requires Terra "
+                "obs['precision_required_band']"
+            )
+        precision_required_band = jnp.asarray(obs["precision_required_band"])
+        if precision_required_band.shape != jnp.shape(obs["target_map"]):
+            raise ValueError("precision_required_band must match the target_map shape")
     retained_work_context = None
     if _config_option(train_cfg, "retained_work_context_observation", False):
         if "retained_work_context" not in obs:
@@ -235,6 +245,10 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         obs.append(remaining_time[..., None])
     if retained_work_context is not None:
         obs.append(retained_work_context)
+    if precision_required_band is not None:
+        # Immutable binary task requirement; append after every existing
+        # feature so old policies/teachers retain their exact input ordering.
+        obs.append(precision_required_band)
     if _config_option(train_cfg, "action_logit_masking", False):
         # Effect-based action mask from the env (D3). Appended last; the model
         # consumes no fixed index for it, only policy() masking reads it.

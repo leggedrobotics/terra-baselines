@@ -245,6 +245,7 @@ class FoundationBehaviorLoadingTest(unittest.TestCase):
 
     def test_eval_mcts_main_forwards_recovered_metadata_and_static_selector(self):
         checkpoint = treated_checkpoint()
+        checkpoint["env_config"] = checkpoint["env_config"]._replace(pull_direction_alignment=True)
         for name in FOUNDATION_BEHAVIOR_DEFAULTS:
             del checkpoint["train_config"].__dict__[name]
         with (
@@ -257,10 +258,13 @@ class FoundationBehaviorLoadingTest(unittest.TestCase):
         ):
             eval_mcts.main()
         self.assertIs(env_factory.call_args.kwargs["executable_dig_observation"], True)
+        self.assertIs(env_factory.call_args.kwargs["pull_direction_alignment"], True)
         restored = model_loader.call_args.args[0]
         env_cfgs = rollout.call_args.args[3]
         self.assertTrue(restored.executable_dig_observation)
+        self.assertTrue(restored.pull_direction_alignment)
         self.assertEqual(env_cfgs.executable_dig_observation.shape, (3,))
+        np.testing.assert_array_equal(env_cfgs.pull_direction_alignment, np.ones(3, dtype=bool))
         validate_foundation_behavior_env(restored, env_cfgs)
         self.assertNotIn("executable_dig_observation", vars(checkpoint["train_config"]))
 
@@ -278,6 +282,9 @@ class FoundationBehaviorLoadingTest(unittest.TestCase):
                     checkpoint = treated_checkpoint() if executable else {
                         "train_config": SavedConfig(), "env_config": EnvConfig(),
                     }
+                    checkpoint["env_config"] = checkpoint["env_config"]._replace(
+                        pull_direction_alignment=executable
+                    )
                     # Model a checkpoint whose new dataclass fields were not saved.
                     for name in FOUNDATION_BEHAVIOR_DEFAULTS:
                         del checkpoint["train_config"].__dict__[name]
@@ -286,6 +293,11 @@ class FoundationBehaviorLoadingTest(unittest.TestCase):
 
                     def capture_environment(**kwargs):
                         self.assertIs(kwargs["executable_dig_observation"], executable)
+                        self.assertIs(kwargs["pull_direction_alignment"], executable)
+                        self.assertEqual(
+                            bool(np.asarray(namespace["env_cfgs"].pull_direction_alignment).flat[0]),
+                            executable,
+                        )
                         validate_foundation_behavior_env(
                             namespace["config"], namespace["env_cfgs"],
                             env=SimpleNamespace(executable_dig_observation=executable),

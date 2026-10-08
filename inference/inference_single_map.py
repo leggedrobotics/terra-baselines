@@ -365,6 +365,7 @@ if __name__ == "__main__":
         shuffle_maps=False,
         single_map_path=map_path,
         executable_dig_observation=config.executable_dig_observation,
+        pull_direction_alignment=config.pull_direction_alignment,
     )
 
     # Match visualize_mixed behavior exactly: freeze curriculum/config updates

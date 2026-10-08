@@ -1,5 +1,176 @@
 # Experiments — completed log
 
+## October 8: native finishing failure diagnosis
+
+Matched frozen GRU110000 control confirms a substantial bulk-rule regression:
+old rules 31/32 complete (12/12 trenches); new rules with accurate native
+observations 0/32 (0/12 trenches, 4.61% mean trench excavation). The saved
+teacher-view control also completes 0/32. All 176 initial-episode replays and
+bounded diagnostics completed with integrity checks; no remaining local job.
+Fresh scheduler check at 09:47 UTC: scratch 5000386 still RUNNING.
+
+Artifact report: [REPORT.md](/home/lorenzo/moleworks/.artifacts/terra_pull_scratch_teacher_20261007/failure_diagnosis_20261008/REPORT.md).
+Eighty fixed native episodes on eight predeclared training sources: warm u16500
+0/40 completions, 79.9% mean dug; scratch u8000 0/40, 71.2%. These are unequal-age
+mechanism diagnostics, not held-out policy rankings. Integrity and current-heading
+executable fresh-dig observations passed.
+
+Two demonstrated mechanisms: (1) loaded action loops, with native accepted
+unloads available in 12/13 warm and 20/21 scratch final loaded states within
+five/four cabin-plus-DO actions; (2) irreversible loss of required digging
+stances after early cuts, even with all spoil hypothetically removed. First
+loss occurs at action 33 in a precision rectangle and 35 in a bulk straight
+trench. All initial panel maps pass only optimistic necessary coverage checks.
+Precision edge approach order and the full-annulus 2.5 m stroke restriction
+show distinct sensitivities. An inherited dump-feature/native-feasibility gap
+is reproduced in actual stalled states, including reach and last-dig vetoes.
+
+Next gate is correct unload feedback and complete native finishing witnesses,
+including disposal and the 450-action horizon, before another full training
+allocation. Source behavior and frozen CSCS runs were not changed. See the
+report for exact maps, counterfactual limits, replay tapes and figures.
+
+## October 8 morning: scratch training active; warm-start allocation ended
+
+Scratch **5000386 RUNNING / VERIFIED**, W&B
+[qu62lftk](https://wandb.ai/aless-weber-eth/mixed-agents/runs/qu62lftk), started
+October 7 20:19:59 UTC on nid006017. At October 8 08:30 UTC it has about 8087
+updates after 12h, roughly 12500 transitions/s, and verified checkpoint8000:
+finite model/optimizer/losses, optimizer512000, zero integrity violations. True
+scratch initialization confirmed. Cosine teacher fade ended after3000 updates;
+guidance is now off (stale W&B summary KL keys are not current teacher loss).
+
+Warm **4994593 TIMEOUT** after24h at October 8 06:45:57 UTC, observed update16560.
+Checkpoint16500 is finite and loadable with optimizer1056000 and zero integrity
+violations: CONTINUABLE, not a numerical failure. No continuation submitted.
+Recent contiguous training windows show warm bulk2/72711 and precision0/72704
+(updates15561–16560), scratch bulk3/73726 and precision0/73728 (7087–8087).
+Finishing remains near zero; these are online evolving-policy outcomes at
+unequal training ages, not held-out comparisons.
+
+Artifacts: `.artifacts/terra_pull_scratch_teacher_20261007/status_20261008/`.
+Scratch ends October 8 20:19 UTC /22:19 Paris. Recommended next check20:45 UTC,
+to verify final checkpoint and full24h outcome; no scheduled monitor. Inspect
+native finishing failures before extending the warm-start allocation.
+
+## October 7: separate scratch student / compatible bulk teacher experiment
+
+User authorized a separate experiment; comparison job 4994593 / W&B qbh06dnp
+and its frozen source remain unchanged. New pair:
+`.worktrees/terra_pull_scratch_teacher_20261007/{terra,terra-baselines}`,
+branch `pull-direction-scratch-teacher`, bases d1d128bb / 5d52f9f plus staged
+experimental changes. See [design](research/PULL_SCRATCH_TEACHER_20261007.md).
+
+The actor and critic initialize randomly. Frozen GRU110000 guides only candidate
+bulk foundation states with identical immediate DO semantics under saved and
+new rules; precision is always excluded. Teacher features use saved rules and
+original generator axes. KL 1 fades to 0 over 3,000 updates; value imitation 0.
+Same seed 20261006, 50/50 lanes, 95 precision slots and full 20,480-slot bulk bank
+as the warm-start experiment. Candidate teacher pool: 12,800 training slots,
+4,428 source geometries, 25 conditions. Candidate membership is not competence
+qualification. Both initialization and guidance differ between the recipes.
+
+Focused CPU native/teacher/PPO checks passed (36 tests + 21 subtests); an
+independent actual-u110000 initialization test verified distinct actor and
+critic parameters before optimization. Independent review found no blocker.
+The 32-episode / 8-source GPU teacher probe completed: 0/32 successes, 11.0%
+mean excavation/disposal, 16.8% eligible decisions and 2.09% eligible teacher DO
+actions, with passing state/mass checks. This is a restricted temporary prior;
+its learning benefit remains unproved. The actual local scratch PPO CUDA smoke
+passed update 1 and saved/reloaded a finite checkpoint (optimizer step 2, 37.5%
+eligible transitions). Initial actor/critic weights differ from the teacher and
+optimizer step was zero. Numerical smoke only, not learning-quality evidence.
+Four-GPU smoke **4998588 COMPLETED / PASS**, exit 0, elapsed 17m38s. Update 1
+saved/reloaded with optimizer step 2; model/optimizer/losses finite; transition
+integrity passed. Fresh actor/critic confirmed; teacher eligible fraction
+0.265625 and policy KL 1.73717. This proves runtime operation, not policy quality.
+
+Production **5000386** submitted October 7 at 20:03:26 UTC and **PENDING
+(Priority)** as of 20:04 UTC. One node / four GH200s / 24 hours, project d130,
+normal partition. Estimated start **21:54 UTC / 23:54 Paris**, subject to change.
+Source and run name `gru-pull-scratch-teacher-s20261006` under the standard
+`/ritom/scratch/cscs/lterenzi/terra-training/{snapshots,runs}/` roots. No production
+update/checkpoint/W&B run exists yet. Recommended next check **22:30 UTC /
+October 8, 00:30 Paris**, to verify finite startup and the first saved checkpoint.
+No unattended monitor is configured.
+
+The preserved warm-start job 4994593 remains running after about 13 hours,
+latest saved update 9100. Recent W&B training window 8101–9111 (1011 contiguous
+rows) reports bulk 3/72729 completions and precision 0/72704. Core PPO losses
+remain finite; full-task online completion is near zero. These changing-policy
+training metrics are not held-out quality or proof of geometry infeasibility.
+
+Artifacts and prepared launch files:
+`.artifacts/terra_pull_scratch_teacher_20261007/`. No monitor configured.
+
+## October 7: W&B failure repaired; same experiment restarted
+
+CSCS **4993246 FAILED** after 33 seconds at `wandb.init` (HTTP401 Unauthorized),
+before dataset/model initialization or any PPO update. Checkpoint directory
+was empty. CUDA convolution and four-GPU NCCL preflight passed. The failed
+segment provides no learning evidence.
+
+The CSCS W&B credential was repaired from a verified local login; remote
+viewer/project access and actual retry `wandb.init` both passed. Retry
+**4994593 RUNNING / STARTUP_UNVERIFIED** on `nid006318`, started October 7,
+06:45:51 UTC / 08:45:51 Paris. Same frozen source, seed, GRU110000 warm-start,
+50/50 precision/bulk lanes, disabled teacher KL, four GH200s and 24-hour limit.
+No model/training changes or additional seed. Failed logs preserved.
+
+[W&B qbh06dnp](https://wandb.ai/aless-weber-eth/mixed-agents/runs/qbh06dnp) is
+online. Parent weights have loaded and the dataset is loading. Production
+first update, capacity and checkpoint remain unverified. Recommended next
+check: October 7 07:30 UTC / 09:30 Paris, to verify finite optimization and
+checkpoint progress. No unattended monitor is configured. Updated handoff:
+`.artifacts/terra_pull_direction_20261006/cscs_training_20261006/README.md`.
+
+## October 6: mixed cutting-space / precision-edge adaptation
+
+CSCS production job **4993246** is **PENDING (Priority)** as of October 6,
+21:12 UTC. Estimated start is October 6, 22:11 UTC (October 7, 00:11 Paris),
+subject to scheduler changes. One node, four GH200 GPUs, 24-hour limit, seed
+20261006. Production update 1, capacity, checkpoint, and W&B startup remain
+unverified. Recommended next check: October 6, 22:45 UTC. No unattended monitor
+is configured.
+
+Run and frozen source snapshot are named `gru-pull-edges-s20261006` under
+`/ritom/scratch/cscs/lterenzi/terra-training/{runs,snapshots}/`. Source pair:
+`.worktrees/terra_pull_direction_20261006/{terra,terra-baselines}`, base revisions
+`d1d128bb` / `5d52f9f` plus staged experimental changes. See
+[experiment design](research/PULL_DIRECTION_MIXED_20261006.md).
+
+The student warm-starts machine-rules GRU u110000 with a fresh optimizer and a
+zero-initialized precision-band input. Four devices each use 512 environments:
+50% precision lanes sample 95 broad rectangular training foundations; 50% bulk
+lanes sample the full 20,480-slot bank. Both use the new 2.5 m cutting-space
+rule. Precision adds a 0.6 m boundary band and 25-degree pull tolerance.
+The teacher completed 0/32 qualification episodes across eight training
+conditions (two source geometries), so the production teacher whitelist is
+empty: teacher execution and effective KL are disabled. No offline demos.
+
+Local RTX 4090 and CSCS four-GH200 numerical smokes completed update 1 and
+reloaded finite model/optimizer/rollout state. CSCS smoke **4993163 COMPLETED
+0:0**. The smokes deliberately forced teacher KL on 50% of transitions; their
+weights and whitelist are not used for production. Predecessor 4993145 failed
+before training because the image lacked `zstd`; using the existing extracted
+bank fixed that staging issue.
+
+All 95 precision candidates passed per-cell static coverage, which is only a
+necessary condition. A synthetic two-row precise straight trench completed
+70/70 excavation and accepted disposal at step270, with egress at281. A broad
+foundation native tape ended at 275 actions, with 226/480 cells excavated and
+legally disposed. Spoil placement blocked later stances; native relocation
+recovered one corner, but the full plan remains incomplete. Complete ordered plans within450
+steps have not been established for the broad pool. Narrow precision endcaps
+with uncovered cells are excluded. Physical ramps and bucket swept volume are
+not represented by this rule.
+
+Local evidence and handoff:
+`.artifacts/terra_pull_direction_20261006/cscs_training_20261006/README.md`.
+A subsequent segment must resume the saved optimizer and update clock; do not
+rerun the fresh warm-start launch script as a continuation.
+
+
 ## September 21, 21:05 UTC: control reaches110k; final panel running
 
 CSCS4729577 remains RUNNING on nid006413, fourGH200s, elapsed3h44m56s.

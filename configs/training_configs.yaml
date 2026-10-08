@@ -1127,7 +1127,7 @@ gru_generalist_512:
 # 4.0-6.5 m, dump 4.0-6.0 m, chassis raster centred on the base cell. The
 # clearance from dug ground (agent.dug_clearance_m) is the launcher's
 # parameter: scripts/euler_gru_machine_rules_ft/ passes --dug_clearance_m.
-gru_generalist_512_machine_rules:
+gru_generalist_512_machine_rules: &gru_generalist_512_machine_rules
   description: v2 generalist conditions at 512 maps per condition, machine working rules
   agent_types: [0]
   action_types: [0]
@@ -1148,6 +1148,26 @@ gru_generalist_512_machine_rules:
       max_steps: 450
       rewards_type: DENSE
       apply_trench_rewards: false
+
+# Connected radial excavation-space experiment; same bank, machine rules,
+# observation shapes and rewards. Fresh cuts require a 2.5 m interval.
+# Precise edges are separately selected by enforce_foundation_border_alignment.
+# This macro approximation is not a calibrated physical model.
+gru_generalist_512_pull_direction: &gru_generalist_512_pull_direction
+  <<: *gru_generalist_512_machine_rules
+  description: Experimental 2.5 m radial cutting-space rule; not qualified for u110000 retention
+  pull_direction_alignment: true
+  edge_band_width_m: 0.6
+  edge_pull_tolerance_rad: 0.436332313
+  trench_pull_tolerance_rad: 0.261799388
+  dig_pull_min_length_m: 2.5
+
+gru_generalist_512_pull_direction_mixed:
+  <<: *gru_generalist_512_pull_direction
+  description: Half bulk and half qualified precision lanes under the 2.5 m cutting-space rule
+  enforce_foundation_border_alignment: false
+  precision_episode_fraction: 0.5
+  precision_required_band_observation: true
 
 # v2 trench specialist: trench-only (all 15 trench conditions incl. net4,
 # re-admitted under v2), fresh-trench gate ON under the corrected semantics

@@ -291,6 +291,7 @@ if __name__ == "__main__":
         rendering=False,
         shuffle_maps=shuffle_maps,
         executable_dig_observation=config.executable_dig_observation,
+        pull_direction_alignment=config.pull_direction_alignment,
     )
     config.num_embeddings_agent_min = 60
 

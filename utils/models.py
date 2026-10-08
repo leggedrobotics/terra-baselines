@@ -344,6 +344,9 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
             _config_option(config, "retained_work_context_observation", False)
         ),
         actor_residual_head=bool(_config_option(config, "actor_residual_head", False)),
+        precision_required_band_observation=bool(
+            _config_option(config, "precision_required_band_observation", False)
+        ),
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
         use_aux_decoder=use_aux_decoder,
@@ -411,6 +414,8 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         obs.append(jnp.zeros((init_batch_size, 1), dtype=jnp.float32))
     if model.retained_work_context_observation:
         obs.append(jnp.zeros((init_batch_size, 5), dtype=jnp.float32))
+    if model.precision_required_band_observation:
+        obs.append(jnp.zeros((init_batch_size, map_width, map_height), dtype=jnp.bool_))
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
     # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
@@ -983,6 +988,34 @@ class _PerCellAuxDecoder(nn.Module):
         return x.astype(jnp.float32)
 
 
+class PrecisionInputConv(nn.Module):
+    """Add one input without changing the pretrained stem's bf16 reduction.
+
+    The parameter stays a single ordinary HWIO kernel. Computing its old and
+    new input slices separately preserves the old convolution's exact shape;
+    an all-zero new slice then adds exactly zero, including in bf16.
+    """
+
+    features: int
+    compute_dtype: Any = jnp.float32
+
+    @nn.compact
+    def __call__(self, x):
+        kernel = self.param(
+            "kernel", nn.initializers.lecun_normal(),
+            (3, 3, x.shape[-1], self.features), jnp.float32,
+        ).astype(self.compute_dtype)
+        x = x.astype(self.compute_dtype)
+
+        def conv(inputs, weights):
+            return jax.lax.conv_general_dilated(
+                inputs, weights, (1, 1), "SAME",
+                dimension_numbers=("NHWC", "HWIO", "NHWC"),
+            )
+
+        return conv(x[..., :-1], kernel[:, :, :-1]) + conv(x[..., -1:], kernel[:, :, -1:])
+
+
 class Spatial8x8MapResNet(nn.Module):
     """Residual map encoder with a flattened 8x8 spatial readout.
 
@@ -1025,6 +1058,7 @@ class Spatial8x8MapResNet(nn.Module):
     token_mixer_residual_init_scale: float = 0.0
     flatten_reduce_channels: int | None = None
     use_aux_decoder: bool = False
+    split_last_input_channel: bool = False
 
     @nn.compact
     def __call__(self, x, agent_embedding=None):
@@ -1033,14 +1067,20 @@ class Spatial8x8MapResNet(nn.Module):
             if self.attention_compute_dtype is None
             else self.attention_compute_dtype
         )
-        x = nn.Conv(
-            features=self.stage_channels[0],
-            kernel_size=(3, 3),
-            padding="SAME",
-            use_bias=False,
-            dtype=self.compute_dtype,
-            param_dtype=jnp.float32,
-        )(x)
+        if self.split_last_input_channel:
+            x = PrecisionInputConv(
+                features=self.stage_channels[0], compute_dtype=self.compute_dtype,
+                name="Conv_0",
+            )(x)
+        else:
+            x = nn.Conv(
+                features=self.stage_channels[0],
+                kernel_size=(3, 3),
+                padding="SAME",
+                use_bias=False,
+                dtype=self.compute_dtype,
+                param_dtype=jnp.float32,
+            )(x)
         x = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(x)
         x = nn.relu(x)
 
@@ -1123,6 +1163,7 @@ class Spatial8x8MapResNet(nn.Module):
                 use_bias=False,
                 dtype=self.compute_dtype,
                 param_dtype=jnp.float32,
+                name="Conv_1" if self.split_last_input_channel else None,
             )(h)
             h = nn.LayerNorm(dtype=self.compute_dtype, param_dtype=jnp.float32)(h)
             h = nn.relu(h)
@@ -1280,6 +1321,8 @@ class MapsNet(nn.Module):
     # dump zone, scaled by REWARD_V2_DISTANCE_BOUND to [0, 1]. Changes the
     # stem conv's fan-in only.
     relocation_distance_observation: bool = False
+    # Explicit optional input variant; disabled preserves the old encoder tree.
+    precision_required_band_observation: bool = False
 
     def setup(self) -> None:
         encoder_type = canonical_map_encoder(self.encoder_type)
@@ -1331,6 +1374,7 @@ class MapsNet(nn.Module):
                 token_mixer_residual_init_scale=self.token_mixer_residual_init_scale,
                 flatten_reduce_channels=self.flatten_reduce_channels,
                 use_aux_decoder=self.use_aux_decoder,
+                split_last_input_channel=self.precision_required_band_observation,
             )
             return
         raise AssertionError(f"Unhandled map encoder: {encoder_type}")
@@ -1340,6 +1384,7 @@ class MapsNet(nn.Module):
         obs: dict[str, Array],
         agent_embedding: Array = None,
         relocation_distance_map: Array | None = None,
+        precision_required_band: Array | None = None,
     ):
         """
         Expects 7 global maps in order:
@@ -1349,6 +1394,9 @@ class MapsNet(nn.Module):
         ``relocation_distance_map`` ([B, H, W], metres / REWARD_V2_DISTANCE_REF_M,
         clipped at REWARD_V2_DISTANCE_BOUND) is required exactly when
         ``relocation_distance_observation`` is set and appended as a channel.
+
+        ``precision_required_band`` is the immutable binary precision-task
+        mask. Its optional channel follows all existing channels.
 
         ``agent_embedding`` is the active agent's AgentStateNet output and is
         consumed only by the cross-attention (xattn) encoder (F13); every other
@@ -1454,6 +1502,17 @@ class MapsNet(nn.Module):
                 jnp.float32
             ) / jnp.float32(REWARD_V2_DISTANCE_BOUND)
             channels.append(distance[..., None].astype(compute_dtype))
+
+        if self.precision_required_band_observation:
+            if precision_required_band is None:
+                raise ValueError(
+                    "precision_required_band_observation requires the binary "
+                    "precision_required_band map"
+                )
+            precision = as_map_batch(precision_required_band)
+            if precision.shape != target_map.shape:
+                raise ValueError("precision_required_band must match the target_map shape")
+            channels.append(precision[..., None].astype(compute_dtype))
 
         x = jnp.concatenate(channels, axis=-1)
         if is_spatial_xattn:
@@ -1607,6 +1666,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     transformer_num_layers: int = 2
     transformer_num_heads: int = 4
     transformer_ffn_dim: int = 256
+    precision_required_band_observation: bool = False
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
@@ -1782,6 +1842,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             flatten_reduce_channels=self.flatten_reduce_channels,
             use_aux_decoder=self.use_aux_decoder,
             relocation_distance_observation=self.relocation_distance_observation,
+            precision_required_band_observation=self.precision_required_band_observation,
         )
 
         self.actions_net = PreviousActionsNet(
@@ -1868,6 +1929,19 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             local_maps_1.append(obs[extra_index])
             extra_index += 1
         x_local_active = self.local_map_net(local_maps_1)
+
+        precision_required_band = None
+        if self.precision_required_band_observation:
+            # Time/context inputs are consumed by the heads below. The map
+            # follows them without moving any of their existing positions.
+            precision_index = (extra_index + int(self.time_observation_mode != "none")
+                               + int(self.retained_work_context_observation))
+            if len(obs) <= precision_index:
+                raise ValueError(
+                    "precision_required_band_observation requires the [H, W] "
+                    f"precision mask at obs[{precision_index}]"
+                )
+            precision_required_band = obs[precision_index]
         
         # Process global maps. Support both observation layouts:
         # - New layout (len=22): includes reachability at [13]
@@ -1907,6 +1981,7 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             map_obs,
             agent_embedding=maps_agent_embedding,
             relocation_distance_map=relocation_distance_map,
+            precision_required_band=precision_required_band,
         )
         x_actions = self.actions_net(obs)
         

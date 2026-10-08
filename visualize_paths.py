@@ -482,6 +482,7 @@ if __name__ == "__main__":
         display=False,
         shuffle_maps=False,
         executable_dig_observation=config.executable_dig_observation,
+        pull_direction_alignment=config.pull_direction_alignment,
     )
 
     model_params = log["model"]

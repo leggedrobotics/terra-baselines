@@ -324,6 +324,7 @@ if __name__ == "__main__":
         display=False,
         shuffle_maps=shuffle_maps,
         executable_dig_observation=config.executable_dig_observation,
+        pull_direction_alignment=config.pull_direction_alignment,
     )
 
     # For visualization, freeze curriculum: use the checkpoint env_config as-is

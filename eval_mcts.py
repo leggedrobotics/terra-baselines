@@ -1471,6 +1471,9 @@ def main():
     env_kwargs["executable_dig_observation"] = bool(
         getattr(config, "executable_dig_observation", False)
     )
+    env_kwargs["pull_direction_alignment"] = bool(
+        getattr(config, "pull_direction_alignment", False)
+    )
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,
         rendering=False,

@@ -23,10 +23,12 @@ from eval_mcts import rollout_episode
 from train import TrainConfig
 from train_mixed import (
     MACHINE_RULE_FIELDS,
+    PULL_DIRECTION_RULE_FIELDS,
     MixedAgentTrainConfig,
     PARTIAL_RESET_CURRICULUM_SCHEMA,
     _validate_checkpoint_architecture,
     machine_rules_effective,
+    pull_direction_rules_effective,
     make_mixed_agent_states,
 )
 from utils.accepted_bank import (
@@ -40,6 +42,7 @@ from utils.explicit_episode_bank import load_explicit_episode_panel
 from utils.helpers import (
     checkpoint_retained_work_costs,
     checkpoint_evaluation_config,
+    checkpoint_pull_direction_rules,
     checkpoint_foundation_behavior,
     load_pkl_object,
     validate_foundation_behavior_env,
@@ -222,6 +225,14 @@ def checkpoint_treatment_fingerprint(checkpoint: dict) -> dict:
             )
     if bool(_field(config, "movement_feasibility_observation", False)):
         contract["architecture"]["movement_feasibility_observation"] = True
+    if bool(_field(config, "precision_required_band_observation", False)):
+        contract["architecture"]["precision_required_band_observation"] = True
+    pull_rules = checkpoint_pull_direction_rules(checkpoint)
+    if pull_rules["pull_direction_alignment"]:
+        contract["pull_direction_rules"] = {
+            name: value if isinstance(value, bool) else float(np.float32(value))
+            for name, value in pull_rules.items()
+        }
     if bool(_field(config, "previous_outcome_observation", False)):
         contract["architecture"]["previous_outcome_observation"] = True
     time_mode = _field(config, "time_observation_mode", "none")
@@ -376,8 +387,14 @@ def load_manifest(directory: Path) -> list[dict]:
     return rows
 
 
-def configure_for_bank(train_config, relative_path: str, count: int):
+def configure_for_bank(train_config, relative_path: str, count: int, *, precision_mode=None):
+    if precision_mode not in (None, "bulk", "precision"):
+        raise ValueError("precision_mode must be bulk or precision")
+    if float(getattr(train_config, "precision_episode_fraction", 0.0)) > 0 and precision_mode is None:
+        raise ValueError("mixed precision checkpoints require --precision-mode bulk or precision")
     config = copy.deepcopy(train_config)
+    if precision_mode is not None:
+        config.enforce_foundation_border_alignment = precision_mode == "precision"
     config.num_devices = 1
     config.num_envs_per_device = count
     config.num_test_rollouts = count
@@ -412,6 +429,12 @@ def configure_for_bank(train_config, relative_path: str, count: int):
     config.replay_map_count = 0
     config.target_map_repeat = 0
     config.teacher_checkpoint = None
+    config.recurrent_teacher = False
+    config.teacher_bulk_compatibility = False
+    config.precision_episode_fraction = 0.0
+    config.pull_direction_training_slots = None
+    config.precision_slots = None
+    config.teacher_slots = None
     config.demonstration_npz = None
     config.demonstration_coef = 0.0
     config.demonstration_fade_transitions = 0
@@ -427,7 +450,8 @@ def configure_for_bank(train_config, relative_path: str, count: int):
     # enforce_trench_dig_alignment (the arm's env treatment) and
     # require_trench_alignment_metadata (fail-closed bank contract) are
     # properties of the trained policy, so they ride along from the checkpoint's
-    # own train_config and make the eval env auto-match the trained one.
+    # own train_config and make the eval env auto-match the trained one. The
+    # resolved pull-direction mode, band and tolerances also ride along.
     return config
 
 
@@ -1471,6 +1495,18 @@ def main() -> None:
         help="Evaluate with the chassis raster centred on the base cell. Default: the checkpoint's own treatment.",
     )
     parser.add_argument(
+        "--pull-direction-alignment", action=argparse.BooleanOptionalAction, default=None,
+        help="Use the radial cutting-space rule. Default: the checkpoint's own treatment.",
+    )
+    parser.add_argument(
+        "--precision-mode", choices=("bulk", "precision"), default=None,
+        help="Evaluate without/with precise edge alignment; required for mixed precision checkpoints.",
+    )
+    for name in PULL_DIRECTION_RULE_FIELDS:
+        if name != "pull_direction_alignment":
+            parser.add_argument(f"--{name.replace('_', '-')}", type=float, default=None,
+                                help="Override the checkpoint's pull-direction rule setting.")
+    parser.add_argument(
         "--gate-v1",
         action="store_true",
         help=(
@@ -1651,7 +1687,8 @@ def main() -> None:
         count = len(rows)
         os.environ["DATASET_PATH"] = str(bank_root)
         os.environ["DATASET_SIZE"] = str(count)
-        config = configure_for_bank(reference_train_config, relative_path, count)
+        config = configure_for_bank(reference_train_config, relative_path, count,
+                                    precision_mode=args.precision_mode)
         # Gate semantics: the evaluator rebuilds the env from train_config, not
         # from the checkpoint's env_config, so a checkpoint TRAINED under the v1
         # band but lacking the selector would otherwise be evaluated under v2.
@@ -1659,6 +1696,9 @@ def main() -> None:
         if args.dump_max_radius_m is not None:
             config.dump_max_radius_m = float(args.dump_max_radius_m)
         for name, cast in MACHINE_RULE_FIELDS.items():
+            if getattr(args, name) is not None:
+                setattr(config, name, cast(getattr(args, name)))
+        for name, cast in PULL_DIRECTION_RULE_FIELDS.items():
             if getattr(args, name) is not None:
                 setattr(config, name, cast(getattr(args, name)))
         if args.gate_v1:
@@ -1689,6 +1729,11 @@ def main() -> None:
             from terra.benchmark_protocol import frozen_benchmark_protocol
 
             env_config_override, _ = frozen_benchmark_protocol()
+            if bool(getattr(config, "pull_direction_alignment", False)):
+                raise ValueError(
+                    "explicit-episode panels use the frozen benchmark protocol; "
+                    "pull-direction alignment requires a gate-capable --accepted-panel"
+                )
             if bool(getattr(config, "enforce_trench_dig_alignment", None)):
                 raise ValueError(
                     "explicit-episode panels replace the env config with the "
@@ -1710,6 +1755,11 @@ def main() -> None:
             )
         else:
             agent_rules = None
+        pull_rules = pull_direction_rules_effective(env_params)
+        if not pull_rules.get("pull_direction_alignment", False) and not any(
+            getattr(args, name) is not None for name in PULL_DIRECTION_RULE_FIELDS
+        ):
+            pull_rules = None
         validate_foundation_behavior_env(config, env_params, env=env)
         expected_trench_gate = bool(
             getattr(config, "enforce_trench_dig_alignment", None) or False
@@ -2071,7 +2121,9 @@ def main() -> None:
                 "checkpoint_sha256": sha256_file(checkpoint_path),
                 "checkpoint_update": int(checkpoint.get("next_update", 0)),
                 "treatment_fingerprint": reference_treatment,
+                **({} if args.precision_mode is None else {"precision_mode": args.precision_mode}),
                 **({} if agent_rules is None else {"agent_rules": agent_rules}),
+                **({} if pull_rules is None else {"pull_direction_rules": pull_rules}),
                 "r2_protocol_receipt": checkpoints[0][1].get("r2_protocol_receipt"),
                 "behavior_cost_ramp_state": checkpoint.get("behavior_cost_ramp_state"),
                 "foundation_teacher_release_state": checkpoint.get("foundation_teacher_release_state"),

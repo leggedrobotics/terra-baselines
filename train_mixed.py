@@ -96,6 +96,7 @@ import jax.tree_util as jtu
 import numpy as np
 from utils.models import MAP_ENCODER_ALIASES, canonical_map_encoder, get_model_ready
 from terra.env import TerraEnvBatch
+from terra.maps_buffer import MapsBuffer
 from terra.config import (
     EnvConfig,
     BatchConfig,
@@ -129,16 +130,24 @@ from utils.utils_ppo import (
     wrap_action,
 )
 from utils.task_teachers import (
+    CANDIDATE_KEY,
+    ELIGIBLE_KEY,
+    PRECISION_KEY,
     bind_task_teacher_checkpoints,
+    bulk_teacher_observation_and_compatibility,
     cache_task_teacher_outputs,
     finalize_task_teacher_metrics,
     load_task_teacher_checkpoint,
     make_task_teacher_apply_fn,
     resolve_task_teacher_families,
+    recurrent_teacher_rollout_observation,
+    reset_recurrent_teacher_hidden,
     task_teacher_rollout_observation,
     validate_task_teacher_configs,
     validate_task_teacher_mode,
     validate_task_teacher_resume,
+    validate_recurrent_teacher_mode,
+    validate_bulk_teacher_environment,
 )
 from utils.episode_aggregates import (
     aggregate_to_payload,
@@ -592,6 +601,136 @@ MACHINE_RULE_FIELDS = {
     "dump_min_dug_distance_m": float,
     "centre_chassis_on_base": bool,
 }
+PULL_DIRECTION_RULE_FIELDS = helpers.PULL_DIRECTION_RULE_FIELDS
+
+
+def apply_pull_direction_rules(env_params, config):
+    """Overlay explicit settings; None preserves the runtime or checkpoint value."""
+    updates = {}
+    for name in PULL_DIRECTION_RULE_FIELDS:
+        value = getattr(config, name, None)
+        if value is None:
+            continue
+        if not hasattr(env_params, name):
+            raise RuntimeError(f"this Terra runtime has no EnvConfig.{name}")
+        updates[name] = helpers.pull_direction_rule_scalar(value, name)
+    return env_params._replace(**updates) if updates else env_params
+
+
+def pull_direction_rules_effective(env_params):
+    return {
+        name: helpers.pull_direction_rule_scalar(getattr(env_params, name), name)
+        for name in PULL_DIRECTION_RULE_FIELDS if hasattr(env_params, name)
+    }
+
+
+def restore_pull_direction_rules(config, checkpoint):
+    """Keep a resumed treatment unless the current CLI/preset explicitly overrides it."""
+    for name, value in helpers.checkpoint_pull_direction_rules(checkpoint).items():
+        if getattr(config, name, None) is None:
+            setattr(config, name, value)
+
+
+def resolve_pull_direction_training_slots(config, checkpoint=None):
+    """Persist the actual qualified manifest slots, not only a local JSON path."""
+    slot_path = config.pull_direction_training_slots
+    if (checkpoint is None and slot_path is not None
+            and (not config.resume_from or Path(slot_path).is_file())):
+        with Path(config.pull_direction_training_slots).open() as stream:
+            recipe = json.load(stream)
+        if set(recipe) != {"precision_slots", "teacher_slots"}:
+            raise ValueError("training slot JSON requires precision_slots and teacher_slots only")
+        for field in ("precision_slots", "teacher_slots"):
+            values = recipe[field]
+            if (not isinstance(values, list) or any(type(x) is not int or x < 0 for x in values)
+                    or len(values) != len(set(values))):
+                raise ValueError(f"{field} must be distinct nonnegative 0-based manifest slots")
+            setattr(config, field, sorted(values))
+    if checkpoint is not None:
+        saved_fraction = float(_checkpoint_config_value(checkpoint, "precision_episode_fraction", 0.0))
+        if saved_fraction != 0.0 or config.precision_episode_fraction != 0.0:
+            if config.precision_episode_fraction not in (0.0, saved_fraction):
+                raise ValueError("native resume must retain precision_episode_fraction")
+            config.precision_episode_fraction = saved_fraction
+            for field in ("precision_slots", "teacher_slots"):
+                saved = _checkpoint_config_value(checkpoint, field, None)
+                current = getattr(config, field)
+                if current is not None and current != saved:
+                    raise ValueError(f"native resume must retain resolved {field}")
+                setattr(config, field, saved)
+
+
+def precision_lane_flags(num_devices, num_envs_per_device, fraction):
+    count = int(round(num_envs_per_device * fraction))
+    if not np.isclose(count, num_envs_per_device * fraction):
+        raise ValueError("precision_episode_fraction must produce an integer number of lanes per device")
+    return jnp.broadcast_to(
+        jnp.arange(num_envs_per_device) < count,
+        (num_devices, num_envs_per_device),
+    )
+
+
+class PrecisionMapsBuffer(MapsBuffer):
+    """Native one-level sampler with an explicit precision-only slot pool."""
+
+    __hash__ = object.__hash__
+    __eq__ = object.__eq__
+
+    def _select_index(self, key, env_cfg):
+        level, index, next_key = super()._select_index(key, env_cfg)
+        selected = jax.random.randint(
+            jax.random.fold_in(key, 7103), (), 0, self.precision_indices.shape[0],
+        )
+        index = jnp.where(
+            env_cfg.enforce_foundation_border_alignment,
+            self.precision_indices[selected], index,
+        )
+        return level, index, next_key
+
+
+def configure_pull_direction_training(env, env_params, config):
+    mixed = config.precision_episode_fraction > 0.0
+    if not mixed and not config.recurrent_teacher:
+        return env_params
+    if not np.all(np.asarray(env_params.pull_direction_alignment)):
+        raise ValueError("precision mixing/recurrent guidance requires pull_direction_alignment")
+    if env.maps_buffer.maps.shape[0] != 1 or config.partial_reset_root is not None:
+        raise ValueError("precision mixing supports one training level and full resets")
+    if (config.pooled_sampler or {}).get("enabled", False):
+        raise ValueError("precision mixing does not support the pooled condition sampler")
+    available = np.asarray(env.maps_buffer.slot_indices[0])
+    for field in ("precision_slots", "teacher_slots"):
+        slots = getattr(config, field)
+        if slots is None:
+            if field == "teacher_slots" and not config.recurrent_teacher:
+                continue
+            raise ValueError(f"explicit resolved {field} required; use the training slot JSON")
+        if not set(slots).issubset(set(available.tolist())):
+            raise ValueError(f"{field} contains slots absent from the loaded training bank")
+    if config.teacher_bulk_compatibility:
+        if not config.teacher_slots:
+            raise ValueError("bulk compatibility requires a nonempty foundation teacher candidate pool")
+        foundation_id = env.maps_buffer.family_names.index("foundation")
+        selected = np.isin(available, config.teacher_slots)
+        if not np.all(np.asarray(env.maps_buffer.family_ids[0])[selected] == foundation_id):
+            raise ValueError("bulk teacher candidate slots must all be training foundations")
+    if mixed:
+        if not config.precision_required_band_observation:
+            raise ValueError("precision mixing requires precision_required_band_observation")
+        if not config.precision_slots:
+            raise ValueError("precision mixing requires at least one qualified precision slot")
+        buffer = PrecisionMapsBuffer(*env.maps_buffer)
+        buffer.precision_indices = jnp.asarray(
+            np.flatnonzero(np.isin(available, config.precision_slots)), dtype=jnp.int32,
+        )
+        env.maps_buffer = buffer
+        flags = precision_lane_flags(config.num_devices, config.num_envs_per_device, config.precision_episode_fraction)
+        env_params = env_params._replace(enforce_foundation_border_alignment=flags)
+        print(f"Precision lane fraction {config.precision_episode_fraction:g}; "
+              f"{len(config.precision_slots)} qualified precision slots; "
+              f"{len(config.teacher_slots or [])} "
+              f"{'candidate' if config.teacher_bulk_compatibility else 'qualified'} bulk teacher slots.", flush=True)
+    return env_params
 
 
 def apply_machine_rules(env_params, config):
@@ -684,6 +823,10 @@ def _validate_teacher_resume(checkpoint, config):
     contents and family roles while allowing relocated checkpoint paths.
     """
     validate_task_teacher_resume(checkpoint, config)
+    if bool(_checkpoint_config_value(checkpoint, "recurrent_teacher", False)) != bool(getattr(config, "recurrent_teacher", False)):
+        raise ValueError("native resume must retain recurrent_teacher; use warm_start_from for a new experiment")
+    if bool(_checkpoint_config_value(checkpoint, "teacher_bulk_compatibility", False)) != bool(config.teacher_bulk_compatibility):
+        raise ValueError("native resume must retain teacher_bulk_compatibility")
     if _checkpoint_config_value(checkpoint, "teacher_checkpoint", None) is None:
         return
     if getattr(config, "teacher_checkpoint", None) is None:
@@ -781,6 +924,7 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
         "stall_age_observation": False,
         "time_observation_mode": "none",
         "retained_work_context_observation": False,
+        "precision_required_band_observation": False,
         "actor_residual_head": False,
         "reward_v2_reset_context_observation": False,
         # Fresh-trench alignment adds two (3, 704) embeddings.
@@ -831,6 +975,9 @@ def _validate_checkpoint_architecture(checkpoint, config) -> None:
             saved = int(saved)
             current = int(current)
         if saved != current:
+            if (field_name == "precision_required_band_observation" and not saved and current
+                    and getattr(config, "warm_start_from", None) is not None):
+                continue
             if (field_name == "time_observation_mode" and saved == "none"
                     and current in ("remaining", "constant")
                     and getattr(config, "migrate_remaining_time", False)):
@@ -2018,6 +2165,13 @@ class MixedAgentTrainConfig:
     # section axis must be at most this many metres (<= 0 disables it, i.e.
     # yaw-parallel only).  Inert under v1.  None leaves Terra's default.
     trench_dig_max_offset_m: float | None = None
+    # Per-cell workspace-to-base pull alignment. None inherits checkpoint/runtime
+    # settings; when enabled, this replaces both legacy pose-alignment gates.
+    pull_direction_alignment: bool | None = None
+    edge_band_width_m: float | None = None
+    edge_pull_tolerance_rad: float | None = None
+    trench_pull_tolerance_rad: float | None = None
+    dig_pull_min_length_m: float | None = None
     # Excavator dump reach in metres (Terra agent.dump_max_radius_m; 0 = the
     # dig reach). Overrides a resumed checkpoint's env config. None leaves the
     # checkpoint's or Terra's value.
@@ -2130,6 +2284,17 @@ class MixedAgentTrainConfig:
     # 2 subsamples the teacher's obs to its native (half-resolution) world.
     teacher_obs_downsample: int = 1
 
+    # New cutting-space experiment. Fixed lane strata preserve the requested
+    # transition exposure even when the qualified precision pool is small.
+    precision_required_band_observation: bool = False
+    precision_episode_fraction: float = 0.0
+    pull_direction_training_slots: str | None = None
+    precision_slots: list[int] | None = None
+    teacher_slots: list[int] | None = None
+    recurrent_teacher: bool = False
+    # Scratch experiment only: legacy teacher features and immediate DO agreement.
+    teacher_bulk_compatibility: bool = False
+
     def __post_init__(self):
         if self.cache_clear_interval != 0:
             warnings.warn(
@@ -2146,6 +2311,9 @@ class MixedAgentTrainConfig:
         if self.kickstart_lr_warmup_updates < 0:
             raise ValueError("kickstart_lr_warmup_updates must be nonnegative")
         validate_task_teacher_mode(self)
+        validate_recurrent_teacher_mode(self)
+        if not 0.0 <= self.precision_episode_fraction <= 1.0:
+            raise ValueError("precision_episode_fraction must be between 0 and 1")
         validate_demonstration_config(self)
         if self.time_observation_mode not in ("none", "remaining", "constant"):
             raise ValueError("time_observation_mode must be none, remaining, or constant")
@@ -2196,7 +2364,8 @@ class MixedAgentTrainConfig:
             # Frozen feed-forward task teachers build their own native inputs
             # from raw rows; the single-teacher path reuses the student's
             # model inputs, which a recurrent student cannot share.
-            if self.teacher_checkpoint is not None and self.trench_teacher_checkpoint is None:
+            if (self.teacher_checkpoint is not None and self.trench_teacher_checkpoint is None
+                    and not self.recurrent_teacher):
                 raise ValueError(
                     "actor_core='gru' supports task teachers only; set "
                     "--trench_teacher_checkpoint (it may equal --teacher_checkpoint)"
@@ -2627,7 +2796,12 @@ def _preflight_trench_alignment_metadata(env, env_params, curriculum_levels) -> 
     1. the canonical loader contract (``require_finite_segments``), which
        rejects inconsistent counts, stale axis/endpoint pairs, and bad widths;
     2. Terra's own array-level reset validator, forced on regardless of arm.
+
+    The radial cutting-space mode derives geometry from the raster target and
+    does not use trench axes, including when resuming this saved pilot flag.
     """
+    if bool(np.ravel(np.asarray(getattr(env_params, "pull_direction_alignment", False)))[0]):
+        return
     from terra.maps_buffer import _trench_records_from_metadata
 
     dataset_root = os.getenv("DATASET_PATH", "")
@@ -2856,8 +3030,21 @@ def make_mixed_agent_states(
         batch_cfg = BatchConfig()
         print("📍 Using default maps from config.py")
 
+    # Resolve the static geometry selector before constructing TerraEnvBatch.
+    # Resume may carry an enabled mode solely in env_params_override.
+    direction_env = env_params if env_params is not None else env_params_override
+    if direction_env is None:
+        direction_env = EnvConfig()
+    direction_rules = pull_direction_rules_effective(
+        apply_pull_direction_rules(direction_env, config)
+    )
+    for name, value in direction_rules.items():
+        setattr(config, name, value)  # Checkpoints store the resolved settings.
+
     # Initialize environment with configurable agents
     env_kwargs = {}
+    if "pull_direction_alignment" in direction_rules:
+        env_kwargs["pull_direction_alignment"] = direction_rules["pull_direction_alignment"]
     if config.distance_protocol_id is not None:
         env_kwargs["distance_protocol_id"] = config.distance_protocol_id
     if config.partial_reset_root is not None:
@@ -3012,35 +3199,44 @@ def make_mixed_agent_states(
             f"{float(np.ravel(np.asarray(env_params.agent.dump_max_radius_m))[0])}"
         )
     env_params = apply_machine_rules(env_params, config)
+    env_params = apply_pull_direction_rules(env_params, config)
+    if direction_rules.get("pull_direction_alignment", False):
+        print(f"Pull-direction alignment (effective): {direction_rules}")
     effective_rules = machine_rules_effective(env_params)
     if effective_rules:
         print(f"🚧 Machine working rules (effective): {effective_rules}")
 
     if config.require_trench_alignment_metadata:
         _preflight_trench_alignment_metadata(env, env_params, curriculum_levels)
-    print(
-        "🧭 Fresh-trench dig gate (effective): "
-        f"{bool(np.ravel(np.asarray(env_params.enforce_trench_dig_alignment))[0])}"
-    )
-    _standoff_enforced = getattr(env_params, "trench_dig_standoff_enforced", None)
-    print(
-        "🧭 Fresh-trench gate semantics (effective): "
-        + (
-            "pre-v2 Terra runtime (band always enforced)"
-            if _standoff_enforced is None
-            else (
-                "v1 (perpendicular standoff band enforced)"
-                if bool(np.ravel(np.asarray(_standoff_enforced))[0])
-                else "v2 (yaw-parallel and on the line; reach left to the dig cone)"
+    if direction_rules.get("pull_direction_alignment", False):
+        print(
+            "🧭 Fresh excavation uses radial cutting-space permission; "
+            "legacy trench pose gates and trench metadata preflight are bypassed."
+        )
+    else:
+        print(
+            "🧭 Fresh-trench dig gate (effective): "
+            f"{bool(np.ravel(np.asarray(env_params.enforce_trench_dig_alignment))[0])}"
+        )
+        _standoff_enforced = getattr(env_params, "trench_dig_standoff_enforced", None)
+        print(
+            "🧭 Fresh-trench gate semantics (effective): "
+            + (
+                "pre-v2 Terra runtime (band always enforced)"
+                if _standoff_enforced is None
+                else (
+                    "v1 (perpendicular standoff band enforced)"
+                    if bool(np.ravel(np.asarray(_standoff_enforced))[0])
+                    else "v2 (yaw-parallel and on the line; reach left to the dig cone)"
+                )
             )
         )
-    )
-    _max_offset = getattr(env_params, "trench_dig_max_offset_m", None)
-    if _max_offset is not None:
-        print(
-            "🧭 Fresh-trench on-the-line bound (effective): "
-            f"{float(np.ravel(np.asarray(_max_offset))[0]):.2f} m (<= 0 disables)"
-        )
+        _max_offset = getattr(env_params, "trench_dig_max_offset_m", None)
+        if _max_offset is not None:
+            print(
+                "🧭 Fresh-trench on-the-line bound (effective): "
+                f"{float(np.ravel(np.asarray(_max_offset))[0]):.2f} m (<= 0 disables)"
+            )
 
     # Report the effective value after preset, CLI, and checkpoint precedence.
     print(
@@ -3440,6 +3636,7 @@ def _load_task_teachers(config, env, env_params, rng, checkpoint=None):
 def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=None):
     """Main training function for mixed agents - with full feature parity to original train.py"""
 
+    resolve_pull_direction_training_slots(config)
     bind_task_teacher_checkpoints(config)
     print("PPO advantage normalization: " + (
         "global minibatch across devices" if config.global_minibatch_advantage_norm
@@ -3508,6 +3705,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
             if "model" not in checkpoint:
                 raise KeyError("checkpoint has no 'model' parameters")
             if checkpoint_mode == "resume":
+                resolve_pull_direction_training_slots(config, checkpoint)
                 _validate_advantage_normalization_resume(checkpoint, config)
                 _validate_teacher_resume(checkpoint, config)
                 _validate_r2_resume_checkpoint(checkpoint, r2_protocol_receipt, config)
@@ -3534,12 +3732,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
             if (
                 checkpoint_mode == "resume"
                 and config.load_env_from_checkpoint
-                and "env_config" in checkpoint
             ):
-                env_params_override = _strip_checkpoint_env_axis(
-                    checkpoint["env_config"],
-                    config.num_envs_per_device,
-                )
+                restore_pull_direction_rules(config, checkpoint)
+                if "env_config" in checkpoint:
+                    env_params_override = _strip_checkpoint_env_axis(
+                        checkpoint["env_config"],
+                        config.num_envs_per_device,
+                    )
             if checkpoint_mode == "resume":
                 if "next_update" in checkpoint:
                     resume_update = int(checkpoint["next_update"])
@@ -3589,6 +3788,12 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
     rng, env, env_params, train_state = make_mixed_agent_states(
         config, env_params_override=env_params_override
     )
+    env_params = configure_pull_direction_training(env, env_params, config)
+    wandb.config.update({name: getattr(config, name) for name in (
+        "precision_episode_fraction", "precision_slots", "teacher_slots",
+        "precision_required_band_observation", "recurrent_teacher",
+        "teacher_bulk_compatibility",
+    )}, allow_val_change=True)
     if behavior_cost_ramp_state is not None:
         config.behavior_cost_ramp_updates = behavior_cost_ramp_state["duration_updates"]
         env_params = helpers.overlay_foundation_behavior(env_params, {
@@ -3605,6 +3810,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
             "resolved_map_edge_px": resolved_map_edge_px,
             "resolved_edge_length_m": resolved_edge_length_m,
             "resolved_meters_per_tile": resolved_meters_per_tile,
+            **pull_direction_rules_effective(env_params),
         },
         allow_val_change=True,
     )
@@ -3641,7 +3847,13 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                 checkpoint = migrate_retained_work_context_checkpoint(checkpoint, train_state.params)
                 config.migrate_retained_work_context = False
                 print("Added zero actor/critic retained-pose projections; retained existing parameters and Adam slots.", flush=True)
-            train_state = train_state.replace(params=checkpoint["model"])
+            restored_params = checkpoint["model"]
+            if (checkpoint_mode == "warm_start" and config.precision_required_band_observation
+                    and not _checkpoint_config_value(checkpoint, "precision_required_band_observation", False)):
+                from utils.precision_required_band import migrate_precision_required_band_params
+                restored_params = migrate_precision_required_band_params(restored_params, train_state.params)
+                print("Added a zero-initialized precision-band input channel; optimizer remains fresh.", flush=True)
+            train_state = train_state.replace(params=restored_params)
             print("Replaced model parameters from checkpoint.")
             if checkpoint_mode == "resume" and "optimizer_state" in checkpoint:
                 train_state = train_state.replace(
@@ -3708,7 +3920,62 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
     # pmapped update below (~1M params replicated per device).
     teacher_apply_fn = None
     teacher_params = None
-    if config.trench_teacher_checkpoint is not None:
+    recurrent_teacher_config = None
+    recurrent_teacher_env_cfg = None
+    teacher_legacy_axes_by_slot = None
+    if config.recurrent_teacher:
+        if not config.teacher_slots:
+            print("No qualified bulk teacher slots: recurrent teacher execution and KL are disabled.", flush=True)
+        else:
+            from utils.models import validate_model_params_match
+            teacher_ckpt = helpers.load_pkl_object(config.teacher_checkpoint)
+            recurrent_teacher_config = helpers.checkpoint_evaluation_config(teacher_ckpt)
+            if _checkpoint_config_value(teacher_ckpt, "actor_core", "mlp") != "gru":
+                raise ValueError("recurrent_teacher checkpoint must have actor_core='gru'")
+            if _checkpoint_config_value(teacher_ckpt, "num_prev_actions", None) != config.num_prev_actions:
+                raise ValueError("recurrent teacher action-history width differs from student")
+            if _teacher_maps_edge_length(teacher_ckpt) != resolved_map_edge_px:
+                raise ValueError("recurrent teacher must share the student's map resolution")
+            if _num_agents_from_env_params(env_params) != 1:
+                raise ValueError("recurrent teacher supports one tracked excavator")
+            for field in ("agent_types", "action_types"):
+                if not np.all(np.asarray(getattr(env_params, field)) == 0):
+                    raise ValueError("recurrent teacher supports one tracked excavator")
+            if config.teacher_bulk_compatibility:
+                recurrent_teacher_env_cfg = teacher_ckpt.get("env_config")
+                effective_student_cfg = env.update_env_cfgs(
+                    jax.tree_util.tree_map(lambda x: x[0], env_params),
+                )
+                validate_bulk_teacher_environment(
+                    recurrent_teacher_env_cfg, effective_student_cfg, recurrent_teacher_config,
+                )
+                slots = np.asarray(env.maps_buffer.slot_indices[0], dtype=np.int32)
+                original_axes = np.asarray(env.legacy_foundation_border_axes[0])
+                by_slot = np.full((int(slots.max()) + 1, *original_axes.shape[1:]), -97.0, np.float32)
+                by_slot[slots] = original_axes
+                teacher_legacy_axes_by_slot = jnp.asarray(by_slot)
+            rng, rng_teacher = jax.random.split(rng)
+            teacher_model, initialized = get_model_ready(
+                rng_teacher, recurrent_teacher_config,
+                _teacher_model_env_from_checkpoint(teacher_ckpt, env),
+            )
+            validate_model_params_match(initialized, teacher_ckpt["model"], "recurrent teacher")
+            _assert_finite_tree(teacher_ckpt["model"], "recurrent teacher params")
+            teacher_apply_fn, teacher_params = teacher_model.apply, teacher_ckpt["model"]
+            print(f"Frozen recurrent teacher: {config.teacher_checkpoint}; "
+                  f"policy KL only on {len(config.teacher_slots)} "
+                  f"{'candidate' if config.teacher_bulk_compatibility else 'qualified'} bulk map slots.", flush=True)
+            if config.teacher_bulk_compatibility:
+                print("Teacher guidance uses saved legacy local features and identical immediate DO "
+                      "selection/volume/relift/admission. This does not qualify future planning competence.", flush=True)
+                if checkpoint_mode != "resume":
+                    from utils.scratch_teacher import verify_scratch_student_initialization
+
+                    receipt = verify_scratch_student_initialization(config, train_state, teacher_params)
+                    receipt_path = Path.cwd() / "scratch_initialization.json"
+                    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
+                    print(f"Verified independent scratch actor/critic initialization: {receipt_path}", flush=True)
+    elif config.trench_teacher_checkpoint is not None:
         rng, teacher_apply_fn, teacher_params = _load_task_teachers(
             config, env, env_params, rng,
             checkpoint if checkpoint_mode == "resume" else None,
@@ -4068,11 +4335,16 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
             )
             provenance_fn = jax.vmap(jax.vmap(env.maps_buffer.get_map_provenance))
             (
-                _,
+                initial_slot_id,
                 initial_family_id,
                 initial_primary_cell_id,
                 _,
             ) = provenance_fn(reset_rng, env_params_reset)
+            teacher_hidden = initial_actor_hidden(
+                config.num_devices * config.num_envs_per_device,
+                recurrent_teacher_config or {"actor_core": "mlp"},
+            ).reshape(config.num_devices, config.num_envs_per_device, -1)
+            teacher_state = (teacher_hidden, initial_slot_id)
             episode_accumulator = new_episode_accumulator(
                 initial_family_id,
                 initial_primary_cell_id,
@@ -4120,12 +4392,34 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                         prev_reward,
                         episode_accumulator,
                         pending_aggregate,
+                        teacher_state,
                         actor_hidden,
                     ) = runner_state
 
                     # Preserve pre-action provenance and geometry, before an
                     # ending episode is replaced by env.step's auto-reset.
                     rollout_observation = prev_timestep.observation
+                    current_teacher_hidden, current_slot_id = teacher_state
+                    next_teacher_hidden = current_teacher_hidden
+                    if config.precision_episode_fraction > 0.0:
+                        rollout_observation = dict(rollout_observation)
+                        rollout_observation[PRECISION_KEY] = prev_timestep.env_cfg.enforce_foundation_border_alignment
+                    if config.recurrent_teacher and teacher_updates_active:
+                        teacher_observation, bulk_compatible = None, None
+                        if config.teacher_bulk_compatibility:
+                            teacher_observation, bulk_compatible = jax.vmap(
+                                lambda state, axes: bulk_teacher_observation_and_compatibility(
+                                    state, recurrent_teacher_env_cfg, axes,
+                                    executable_dig_observation=bool(recurrent_teacher_env_cfg.executable_dig_observation),
+                                )
+                            )(prev_timestep.state, teacher_legacy_axes_by_slot[current_slot_id])
+                        rollout_observation, next_teacher_hidden = recurrent_teacher_rollout_observation(
+                            rollout_observation, prev_actions, current_teacher_hidden,
+                            teacher_apply_fn, teacher_params, recurrent_teacher_config,
+                            prev_timestep.env_cfg.enforce_foundation_border_alignment,
+                            current_slot_id, jnp.asarray(config.teacher_slots, dtype=jnp.int32),
+                            teacher_observation=teacher_observation, bulk_compatible=bulk_compatible,
+                        )
                     if config.trench_teacher_checkpoint is not None and teacher_updates_active:
                         rollout_observation = task_teacher_rollout_observation(
                             rollout_observation, prev_timestep.state,
@@ -4177,13 +4471,17 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                         ],
                     )
                     (
-                        _,
+                        next_slot_id,
                         next_family_id,
                         next_primary_cell_id,
                         _,
                     ) = jax.vmap(
                         env.maps_buffer.get_map_provenance
                     )(_rng_env, timestep.env_cfg)
+                    teacher_state = (
+                        reset_recurrent_teacher_hidden(next_teacher_hidden, timestep.done),
+                        jnp.where(timestep.done, next_slot_id, current_slot_id),
+                    )
                     episode_step = EpisodeStep(
                         done=timestep.done,
                         task_done=timestep.info["task_done"],
@@ -4296,6 +4594,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                         timestep.reward,
                         episode_accumulator,
                         pending_aggregate,
+                        teacher_state,
                         actor_hidden,
                     )
                     behavior_components = jnp.stack(
@@ -4433,6 +4732,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                     prev_reward,
                     episode_accumulator,
                     pending_aggregate,
+                    teacher_state,
                     actor_hidden,
                 ) = runner_state
                 rng, _rng = jax.random.split(rng)
@@ -4625,6 +4925,29 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                     loss_info[component_name] = jax.lax.pmean(
                         behavior_components[..., component_index].mean(), "devices"
                     )
+                if config.precision_episode_fraction > 0.0:
+                    for label, precise in (("bulk", False), ("precision", True)):
+                        completed = transitions.done & (transitions.obs[PRECISION_KEY] == precise)
+                        count = jax.lax.psum(jnp.sum(completed), "devices")
+                        successes = jax.lax.psum(jnp.sum(completed & transitions.task_done), "devices")
+                        loss_info[f"train/{label}_episode_count"] = count
+                        loss_info[f"train/{label}_episode_success_count"] = successes
+                        loss_info[f"train/{label}_episode_success_rate"] = jnp.where(
+                            count > 0, successes / jnp.maximum(count, 1), jnp.nan,
+                        )
+                if config.recurrent_teacher:
+                    eligible_fraction = (transitions.obs[ELIGIBLE_KEY].mean()
+                                         if teacher_updates_active else jnp.asarray(0.0))
+                    loss_info["kickstart/eligible_transition_fraction"] = jax.lax.pmean(
+                        eligible_fraction, "devices",
+                    )
+                    if config.teacher_bulk_compatibility:
+                        compatible_fraction = jnp.float32(0)
+                        if teacher_updates_active:
+                            candidate_count = jax.lax.psum(transitions.obs[CANDIDATE_KEY].sum(), "devices")
+                            compatible_count = jax.lax.psum(transitions.obs[ELIGIBLE_KEY].sum(), "devices")
+                            compatible_fraction = compatible_count / jnp.maximum(candidate_count, 1)
+                        loss_info["kickstart/bulk_compatible_fraction"] = compatible_fraction
 
                 rng, train_state = update_state[:2]
                 # EVALUATE AGENT
@@ -4648,6 +4971,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                     prev_reward,
                     episode_accumulator,
                     pending_aggregate,
+                    teacher_state,
                     actor_hidden,
                 )
                 return (
@@ -4688,6 +5012,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                         "prev_actions": prev_actions,
                         "prev_reward": prev_reward,
                         "actor_hidden": actor_hidden,
+                        "teacher_hidden": teacher_state[0],
                     },
                 )
                 print(f"Saved initialization receipt: {config.initialization_receipt}", flush=True)
@@ -4702,6 +5027,7 @@ def train_mixed_agents(config: MixedAgentTrainConfig, *, checkpoint_callback=Non
                 prev_reward,
                 episode_accumulator,
                 pending_aggregate,
+                teacher_state,
                 actor_hidden,
             )
 
@@ -5780,6 +6106,16 @@ if __name__ == "__main__":
             "unset the feature is disabled entirely."
         ),
     )
+    parser.add_argument("--recurrent_teacher", action="store_true",
+                        help="Frozen GRU teacher on qualified bulk slots; policy KL only.")
+    parser.add_argument("--teacher_bulk_compatibility", action="store_true",
+                        help="Scratch student; restore legacy teacher features and gate KL on identical immediate DO effects.")
+    parser.add_argument("--pull_direction_training_slots", default=None,
+                        help="JSON containing 0-based manifest precision_slots and teacher_slots lists.")
+    parser.add_argument("--precision_episode_fraction", type=float, default=None,
+                        help="Fixed precision lane fraction; precision resets sample only qualified slots.")
+    parser.add_argument("--precision_required_band_observation", action=argparse.BooleanOptionalAction,
+                        default=None, help="Append the immutable precise-edge requirement mask to global maps.")
     parser.add_argument(
         "--trench_teacher_checkpoint",
         type=str,
@@ -6316,6 +6652,18 @@ if __name__ == "__main__":
         "--centre_chassis_on_base", action=argparse.BooleanOptionalAction, default=None,
         help="Rotate the chassis raster about the base cell centre (Terra agent.centre_chassis_on_base).",
     )
+    parser.add_argument(
+        "--pull_direction_alignment", action=argparse.BooleanOptionalAction, default=None,
+        help="Require connected radial excavation space, with optional precise-edge alignment; replaces legacy pose gates.",
+    )
+    for name, description in (
+        ("edge_band_width_m", "Width in metres of the precise edge band"),
+        ("edge_pull_tolerance_rad", "Allowed edge-tangent pull error in radians"),
+        ("trench_pull_tolerance_rad", "Reserved legacy draft setting; unused by the radial cutting-space rule"),
+        ("dig_pull_min_length_m", "Minimum connected radial excavation-space length in metres"),
+    ):
+        parser.add_argument(f"--{name}", type=float, default=None,
+                            help=f"{description}; omitted preserves checkpoint/preset/runtime value.")
     env_group = parser.add_mutually_exclusive_group()
     env_group.add_argument(
         "--load_env_from_checkpoint",
@@ -6362,6 +6710,9 @@ if __name__ == "__main__":
     # Initialize config values from preset if --config is provided
     # Preset machine working rules and dump reach; the CLI flags win.
     preset_agent_rules = {}
+    preset_pull_direction_rules = {}
+    preset_precision_fraction = 0.0
+    preset_precision_observation = False
     agent_types_override = None
     action_types_override = None
     relocation_progress_mult = None
@@ -6449,6 +6800,12 @@ if __name__ == "__main__":
                 for name in ("dump_max_radius_m", *MACHINE_RULE_FIELDS)
                 if getattr(preset, name) is not None
             }
+            preset_pull_direction_rules = {
+                name: getattr(preset, name) for name in PULL_DIRECTION_RULE_FIELDS
+                if getattr(preset, name) is not None
+            }
+            preset_precision_fraction = preset.precision_episode_fraction
+            preset_precision_observation = preset.precision_required_band_observation
 
             # Apply maps/curriculum from preset (convert MapLevel objects to dict format)
             if preset.maps and len(preset.maps) > 0:
@@ -6816,6 +7173,11 @@ if __name__ == "__main__":
             else preset_agent_rules.get(name)
             for name in ("dump_max_radius_m", *MACHINE_RULE_FIELDS)
         },
+        **{
+            name: getattr(args, name) if getattr(args, name) is not None
+            else preset_pull_direction_rules.get(name)
+            for name in PULL_DIRECTION_RULE_FIELDS
+        },
         curriculum_levels_override=curriculum_levels_override,
         curriculum_increase_level_threshold=curriculum_increase_level_threshold,
         curriculum_decrease_level_threshold=curriculum_decrease_level_threshold,
@@ -6846,6 +7208,13 @@ if __name__ == "__main__":
         use_value_clip=args.use_value_clip,
         flat_minibatch_shuffle=args.flat_minibatch_shuffle,
         teacher_checkpoint=args.teacher_checkpoint,
+        recurrent_teacher=args.recurrent_teacher,
+        teacher_bulk_compatibility=args.teacher_bulk_compatibility,
+        pull_direction_training_slots=args.pull_direction_training_slots,
+        precision_episode_fraction=(args.precision_episode_fraction
+                                    if args.precision_episode_fraction is not None else preset_precision_fraction),
+        precision_required_band_observation=(args.precision_required_band_observation
+                                            if args.precision_required_band_observation is not None else preset_precision_observation),
         trench_teacher_checkpoint=args.trench_teacher_checkpoint,
         kickstart_start_update=args.kickstart_start_update,
         kickstart_kl_coef=args.kickstart_kl_coef,

@@ -116,6 +116,13 @@ class TrainingConfig:
     # perpendicular base-centre-to-axis offset ceiling in metres; <= 0 disables
     # it (yaw-parallel only).  Inert under v1.  None leaves Terra's default.
     trench_dig_max_offset_m: Optional[float] = None
+    # Workspace-to-base pull direction replaces the two legacy pose gates.
+    # None inherits checkpoint/runtime settings; existing presets stay unchanged.
+    pull_direction_alignment: Optional[bool] = None
+    edge_band_width_m: Optional[float] = None
+    edge_pull_tolerance_rad: Optional[float] = None
+    trench_pull_tolerance_rad: Optional[float] = None
+    dig_pull_min_length_m: Optional[float] = None
     # Excavator dump reach and Terra's machine working rules (agent.<name>),
     # as train_mixed's flags of the same names, which override these. None
     # leaves the checkpoint's or Terra's value.
@@ -125,6 +132,8 @@ class TrainingConfig:
     dug_clearance_m: Optional[float] = None
     dump_min_dug_distance_m: Optional[float] = None
     centre_chassis_on_base: Optional[bool] = None
+    precision_episode_fraction: float = 0.0
+    precision_required_band_observation: bool = False
 
 
 # Cache for loaded configs
@@ -236,9 +245,16 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
             ),
             trench_dig_standoff_enforced=cfg.get("trench_dig_standoff_enforced"),
             trench_dig_max_offset_m=cfg.get("trench_dig_max_offset_m"),
+            precision_episode_fraction=cfg.get("precision_episode_fraction", 0.0),
+            precision_required_band_observation=cfg.get("precision_required_band_observation", False),
             **{
                 name: cfg.get(name)
                 for name in (
+                    "pull_direction_alignment",
+                    "edge_band_width_m",
+                    "edge_pull_tolerance_rad",
+                    "trench_pull_tolerance_rad",
+                    "dig_pull_min_length_m",
                     "dump_max_radius_m",
                     "dig_min_radius_m",
                     "dump_min_radius_m",

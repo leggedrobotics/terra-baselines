@@ -60,9 +60,18 @@ EVAL_CONDITION_COLUMNS = (
     "zero_completion_rate",
 )
 
+PULL_DIRECTION_METRIC_KEYS = frozenset({
+    "kickstart/eligible_transition_fraction",
+    "kickstart/bulk_compatible_fraction",
+    *{f"train/{mode}_episode_{metric}"
+      for mode in ("bulk", "precision")
+      for metric in ("count", "success_count", "success_rate")},
+})
+
 TRAINING_SCALAR_KEYS = frozenset(
     {
         *FOUNDATION_ROLLOUT_METRICS.values(),
+        *PULL_DIRECTION_METRIC_KEYS,
         "train/episode_success_rate",
         "train/episode_timeout_rate",
         "train/ended_episodes",
@@ -268,6 +277,9 @@ def loss_metrics(
             key = f"kickstart/{family}_{metric}"
             if key in loss_info:
                 metrics[key] = scalar(key)
+    for key in PULL_DIRECTION_METRIC_KEYS:
+        if key in loss_info:
+            metrics[key] = scalar(key)
     return metrics
 
 

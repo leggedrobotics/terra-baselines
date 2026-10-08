@@ -25,7 +25,7 @@ from utils.utils_ppo import (
     policy_with_intermediates,
     recurrent_policy_sequence,
 )
-from utils.task_teachers import FAMILY_KEY, task_teacher_kl_stats
+from utils.task_teachers import ELIGIBLE_KEY, FAMILY_KEY, masked_teacher_kl, task_teacher_kl_stats
 from utils.demonstrations import DEMONSTRATION_GROUPS
 import os
 
@@ -373,6 +373,7 @@ def ppo_update_networks(
     # a Python-static int, so the transform is traced/specialized at compile.
     teacher_obs_downsample = int(getattr(config, "teacher_obs_downsample", 1))
     task_teachers = _config_option(config, "trench_teacher_checkpoint", None) is not None
+    recurrent_teacher = bool(_config_option(config, "recurrent_teacher", False))
     if foundation_kickstart_kl_coef is not None and not task_teachers:
         raise ValueError("foundation KL override requires dual task teachers")
     # V6 dense per-cell auxiliary supervision. 0.0 = off, and the branch is
@@ -396,7 +397,7 @@ def ppo_update_networks(
             raise ValueError(
                 "actor_core='gru' pilot does not support action-logit masking"
             )
-        if teacher_apply_fn is not None and not task_teachers:
+        if teacher_apply_fn is not None and not task_teachers and not recurrent_teacher:
             raise ValueError(
                 "actor_core='gru' supports frozen feed-forward task teachers only"
             )
@@ -538,7 +539,8 @@ def ppo_update_networks(
                 per_row_kl = jnp.sum(
                     teacher_p * (teacher_logp - student_logp), axis=-1
                 )
-                kl = per_row_kl.mean()
+                kl = (masked_teacher_kl(per_row_kl, teacher_raw_obs[ELIGIBLE_KEY], axis_name="devices")
+                      if recurrent_teacher else per_row_kl.mean())
                 # Retain the existing scalar-mean arithmetic unless the
                 # foundation-only release was explicitly enabled. Family
                 # exposure remains transition-weighted, not renormalized.
@@ -549,7 +551,8 @@ def ppo_update_networks(
                         foundation_kickstart_kl_coef, kickstart_kl_coef,
                     )
                     weighted_kl = (coefficient * per_row_kl).mean()
-                vmse = jnp.mean((kickstart_value - teacher_value) ** 2)
+                vmse = (jnp.zeros((), dtype=jnp.float32) if recurrent_teacher else
+                        jnp.mean((kickstart_value - teacher_value) ** 2))
                 task_stats = task_teacher_kl_stats(
                     per_row_kl, teacher_raw_obs[FAMILY_KEY],
                     config.task_teacher_family_ids,

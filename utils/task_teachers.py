@@ -19,6 +19,9 @@ FAMILY_KEY = "teacher_episode_family_id"
 LEGACY_DIG_KEY = "teacher_legacy_local_map_admissible_dig"
 CACHED_LOGITS_KEY = "teacher_cached_logits"
 CACHED_VALUE_KEY = "teacher_cached_value"
+ELIGIBLE_KEY = "teacher_eligible"
+PRECISION_KEY = "episode_precision_required"
+CANDIDATE_KEY = "teacher_bulk_candidate"
 IDENTITY_FIELDS = (
     "teacher_checkpoint_sha256",
     "trench_teacher_checkpoint_sha256",
@@ -28,6 +31,159 @@ IDENTITY_FIELDS = (
 
 def option(config, name, default=None):
     return config.get(name, default) if isinstance(config, dict) else getattr(config, name, default)
+
+
+def validate_recurrent_teacher_mode(config):
+    if option(config, "teacher_bulk_compatibility", False):
+        if not option(config, "recurrent_teacher", False):
+            raise ValueError("teacher_bulk_compatibility requires recurrent_teacher")
+        if option(config, "warm_start_from") is not None:
+            raise ValueError("teacher_bulk_compatibility starts a scratch student; omit warm_start_from")
+    if not option(config, "recurrent_teacher", False):
+        return
+    if option(config, "teacher_checkpoint") is None:
+        raise ValueError("recurrent_teacher requires teacher_checkpoint")
+    if option(config, "actor_core", "mlp") != "gru":
+        raise ValueError("recurrent_teacher requires a GRU student")
+    if option(config, "trench_teacher_checkpoint") is not None:
+        raise ValueError("recurrent_teacher cannot be combined with dual task teachers")
+    if float(option(config, "kickstart_value_coef", 0.5)) != 0.0:
+        raise ValueError("recurrent_teacher requires kickstart_value_coef=0 (policy KL only)")
+    if option(config, "cache_teacher_outputs", False):
+        raise ValueError("recurrent_teacher caches each rollout step; omit cache_teacher_outputs")
+    if int(option(config, "teacher_obs_downsample", 1)) != 1:
+        raise ValueError("recurrent_teacher requires teacher_obs_downsample=1")
+    if option(config, "action_logit_masking", False):
+        raise ValueError("recurrent_teacher requires an unmasked policy")
+
+
+def validate_bulk_teacher_environment(teacher_env_cfg, student_env_cfg, teacher_config):
+    """The legacy view changes dig rules, never the physical machine or dump.
+
+    Both configs must describe the effective reset-time geometry. In particular,
+    the student's width, height and tile size must already have been resolved.
+    """
+    if teacher_env_cfg is None or np.asarray(teacher_env_cfg.tile_size).ndim != 0:
+        raise ValueError("bulk teacher requires a saved single-environment EnvConfig")
+    if bool(teacher_env_cfg.pull_direction_alignment):
+        raise ValueError("bulk teacher must use the legacy pull_direction_alignment=False rules")
+    for cfg in (teacher_env_cfg, student_env_cfg):
+        for field in ("agent_types", "action_types"):
+            raw = getattr(cfg, field)
+            values = np.asarray(raw)
+            count = len(raw) if isinstance(raw, (tuple, list)) else values.shape[-1]
+            if count != 1 or not np.all(values == 0):
+                raise ValueError("bulk teacher supports exactly one tracked excavator")
+    if not np.all(np.asarray(student_env_cfg.pull_direction_alignment)):
+        raise ValueError("bulk compatibility requires the student's pull-direction rules")
+    for field in teacher_env_cfg.agent._fields:
+        if field == "random_init_state":
+            continue
+        if not np.allclose(np.asarray(getattr(teacher_env_cfg.agent, field)),
+                           np.asarray(getattr(student_env_cfg.agent, field)), rtol=1e-6, atol=1e-7):
+            raise ValueError(f"bulk teacher/student machine setting differs: agent.{field}")
+    for field in ("tile_size", "foundation_dump_min_free_fraction"):
+        if not np.allclose(np.asarray(getattr(teacher_env_cfg, field)),
+                           np.asarray(getattr(student_env_cfg, field)), rtol=1e-6, atol=1e-7):
+            raise ValueError(f"bulk teacher/student setting differs: {field}")
+    for field in teacher_env_cfg.maps._fields:
+        if not np.allclose(np.asarray(getattr(teacher_env_cfg.maps, field)),
+                           np.asarray(getattr(student_env_cfg.maps, field)), rtol=1e-6, atol=1e-7):
+            raise ValueError(f"bulk teacher/student map geometry differs: maps.{field}")
+    for field in ("movement_feasibility_observation", "previous_outcome_observation", "action_logit_masking"):
+        if option(teacher_config, field, False):
+            raise ValueError(f"bulk teacher legacy observation view does not support {field}")
+
+
+def legacy_teacher_state_view(state, teacher_env_cfg, legacy_foundation_border_axes):
+    """Same live terrain/pose/history with the teacher's saved rules and axes."""
+    return state._replace(
+        env_cfg=teacher_env_cfg,
+        world=state.world._replace(foundation_border_axes=legacy_foundation_border_axes),
+    )
+
+
+def bulk_teacher_do_compatible(state, legacy_state):
+    """Immediate DO agreement, not future workspace or navigation competence.
+
+    Loaded DO is identical because startup checks all machine/dump settings.
+    Empty DO must select exactly the same cells, volume, relift and admission;
+    two allowed digs with different selected cells are deliberately excluded.
+    """
+    def compare_dig():
+        current = state._dig_eligibility(state._build_dig_dump_cone())
+        legacy = legacy_state._dig_eligibility(legacy_state._build_dig_dump_cone())
+        return jnp.all(jnp.stack([jnp.all(a == b) for a, b in zip(current, legacy)]))
+
+    return jax.lax.cond(
+        state._get_current_agent_state().loaded[0] > 0,
+        lambda: jnp.bool_(True), compare_dig,
+    )
+
+
+def bulk_teacher_observation_and_compatibility(
+    state, teacher_env_cfg, legacy_foundation_border_axes, *, executable_dig_observation,
+):
+    """Single-lane pre-action teacher view; vmap this over the rollout lanes."""
+    from terra.env import TerraEnv
+    from terra.wrappers import LocalMapWrapper
+
+    legacy_state = legacy_teacher_state_view(state, teacher_env_cfg, legacy_foundation_border_axes)
+    compatible = bulk_teacher_do_compatible(state, legacy_state)
+    legacy_state = LocalMapWrapper.wrap(
+        legacy_state, executable_dig_observation=executable_dig_observation,
+    )
+    return TerraEnv._state_to_obs_dict(legacy_state), compatible
+
+
+def recurrent_teacher_rollout_observation(
+    observation, prev_actions, hidden, apply_fn, params, teacher_config,
+    precision_required, slot_id, eligible_slots, *, teacher_observation=None,
+    bulk_compatible=None,
+):
+    """Advance the frozen teacher on the current student-state observation.
+
+    This is called before the student's action and before any native auto-reset.
+    The teacher uses its own preprocessing and its own recurrent carry. Cached
+    outputs and the pre-action eligibility label follow the PPO sequence shuffle.
+    """
+    teacher_input = obs_to_model_input(
+        observation if teacher_observation is None else teacher_observation,
+        prev_actions, teacher_config,
+    )
+    value, logits, next_hidden = apply_fn(
+        params, teacher_input, hidden, method="actor_step",
+    )
+    eligible = (~jnp.asarray(precision_required, dtype=jnp.bool_)) & jnp.any(
+        jnp.asarray(slot_id)[..., None] == jnp.asarray(eligible_slots), axis=-1,
+    )
+    result = dict(observation)
+    if bulk_compatible is not None:
+        result[CANDIDATE_KEY] = jax.lax.stop_gradient(eligible)
+        eligible &= jnp.asarray(bulk_compatible, dtype=jnp.bool_)
+    result[CACHED_VALUE_KEY] = jax.lax.stop_gradient(value.astype(jnp.float32))
+    result[CACHED_LOGITS_KEY] = jax.lax.stop_gradient(logits.astype(jnp.float32))
+    result[ELIGIBLE_KEY] = jax.lax.stop_gradient(eligible)
+    return result, jax.lax.stop_gradient(next_hidden)
+
+
+def reset_recurrent_teacher_hidden(hidden, done):
+    return jnp.where(jnp.asarray(done)[..., None], jnp.zeros_like(hidden), hidden)
+
+
+def masked_teacher_kl(per_row_kl, eligible, *, axis_name=None):
+    """Mean over selected rows, including unequal exposure across devices.
+
+    PPO pmeans gradients after this loss. Multiplying each local numerator by
+    the device count makes that pmean equal the pooled selected-row gradient.
+    Globally empty selections have exactly zero loss and gradient.
+    """
+    numerator = jnp.sum(jnp.where(eligible, per_row_kl, jnp.zeros_like(per_row_kl)))
+    count = jnp.sum(jnp.asarray(eligible, dtype=jnp.float32))
+    if axis_name is not None:
+        count = jax.lax.psum(count, axis_name)
+        numerator = numerator * jax.lax.psum(jnp.float32(1), axis_name)
+    return numerator / jnp.maximum(count, 1)
 
 
 def validate_task_teacher_mode(config):

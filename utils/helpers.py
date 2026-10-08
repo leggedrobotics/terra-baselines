@@ -20,6 +20,16 @@ RETAINED_WORK_COST_DEFAULTS = {
     "retained_work_travel_cost": 0.0,
     "retained_work_turn_cost": 0.0,
 }
+PULL_DIRECTION_RULE_DEFAULTS = {
+    "pull_direction_alignment": False,
+    "edge_band_width_m": 0.6,
+    "edge_pull_tolerance_rad": 0.436332313,
+    "trench_pull_tolerance_rad": 0.261799388,
+    "dig_pull_min_length_m": 2.5,
+}
+PULL_DIRECTION_RULE_FIELDS = {
+    name: type(value) for name, value in PULL_DIRECTION_RULE_DEFAULTS.items()
+}
 
 
 def _config_field(config, name, default=None):
@@ -64,6 +74,46 @@ def _foundation_scalar(value, name):
 def _foundation_values_match(left, right):
     # Saved EnvConfig leaves may be float32 while train_config keeps Python floats.
     return bool(np.isclose(left, right, rtol=1e-6, atol=0.0))
+
+
+def pull_direction_rule_scalar(value, name):
+    """Validate one uniform pull-direction setting from config or saved leaves."""
+    array = np.asarray(value)
+    if array.size == 0 or not np.all(array == array.flat[0]):
+        raise ValueError(f"{name} must be uniform across checkpoint environments")
+    value = array.flat[0]
+    if name == "pull_direction_alignment":
+        if value not in (False, True):
+            raise ValueError(f"{name} must be a boolean")
+        return bool(value)
+    value = float(value)
+    is_length = name in ("edge_band_width_m", "dig_pull_min_length_m")
+    valid_range = value > 0 if is_length else 0 <= value < np.pi / 2
+    if not np.isfinite(value) or not valid_range:
+        bound = "positive" if is_length else "in [0, pi/2)"
+        raise ValueError(f"{name} must be finite and {bound}")
+    return value
+
+
+def checkpoint_pull_direction_rules(checkpoint):
+    """Recover effective rules; absent/None train fields inherit saved env values."""
+    config = checkpoint.get("train_config")
+    saved = config if isinstance(config, dict) else vars(config) if config is not None else {}
+    env = checkpoint.get("env_config")
+    settings = {}
+    for name, default in PULL_DIRECTION_RULE_DEFAULTS.items():
+        trained = saved.get(name)
+        actual = _config_field(env, name)
+        if trained is not None:
+            trained = pull_direction_rule_scalar(trained, name)
+        if actual is not None:
+            actual = pull_direction_rule_scalar(actual, name)
+        if trained is not None and actual is not None and not _foundation_values_match(trained, actual):
+            raise ValueError(
+                f"checkpoint {name} mismatch: train_config={trained}, env_config={actual}"
+            )
+        settings[name] = trained if trained is not None else actual if actual is not None else default
+    return settings
 
 
 def _checkpoint_behavior_config(checkpoint):
@@ -130,7 +180,8 @@ def checkpoint_foundation_behavior(checkpoint):
 def checkpoint_evaluation_config(checkpoint):
     """Copy the recorded config with its effective behavior and retained costs."""
     settings = {**checkpoint_foundation_behavior(checkpoint),
-                **checkpoint_retained_work_costs(checkpoint)}
+                **checkpoint_retained_work_costs(checkpoint),
+                **checkpoint_pull_direction_rules(checkpoint)}
     config = copy.deepcopy(checkpoint["train_config"])
     if isinstance(config, dict):
         config.update(settings)

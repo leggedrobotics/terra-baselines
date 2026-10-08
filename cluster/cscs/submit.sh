@@ -121,6 +121,7 @@ image = "${IMAGE_PATH}"
 mounts = [
     "/capstor/",
     "/iopsstor/",
+    "/ritom/",
     "/users/",
     "${SNAPSHOT_ROOT}/terra:/workspace/terra",
     "${SNAPSHOT_ROOT}/terra-baselines:/workspace/terra-baselines",

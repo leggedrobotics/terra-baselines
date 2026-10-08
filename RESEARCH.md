@@ -14,6 +14,10 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Scratch student with compatible bulk teacher guidance](docs/research/PULL_SCRATCH_TEACHER_20261007.md): separate scratch/teacher experiment: CSCS5000386 running and checkpoint8000 finite; teacher off after3000 updates, finishing remains unproved.
+
+- [Mixed cutting-space and precision-edge adaptation](docs/research/PULL_DIRECTION_MIXED_20261006.md): warm-start GRU110000, explicit edge mask, screened precision lanes, CSCS validation in progress.
+
 - [GRU generalist on a 512-map bank](docs/research/GRU_GENERALIST_512_20260923.md): scratch GRU actor (2.36 M parameters) with the u110000 teacher's KL fading to zero by u10000, on a 20,480-slot bank with 5.3 times more distinct maps per condition; trained with a 5.5 m excavator dump reach from u19500 (Terra `9b96e9a4`). Release u100000: development 602/608, promotion 597/608, all 32 starts of the road, straight and tee panels; u110000 under the same reach scores 537 and 517. All evaluations: [CSV](docs/research/GRU_GENERALIST_512_20260923_evaluations.csv), W&B run `gru_gen512_s20260923_evals` in `mixed-agents`.
 - [Delayed retained-work efficiency](docs/research/RETAINED_EFFICIENCY_20260921.md): CSCS4729577 runs on one four-GPU node; both arms pass native update/resume qualification. Control reached and savedu110000; final evaluation is running. Its completedu107500 panel passes381F/212T/31roads. The25% retained-work arm is qualified throughu105002 and awaits its sequential turn. Ramp2500 updates, hold2500, native Adam preserved; selected parentu105000, previous frozen geometry retained.
 - [Current-policy test-time compute](docs/research/TEST_TIME_COMPUTE_20260921.md): Euler14791590 completedPASS. Same u109250 policy improves straight32 from2/32 to26/32 after geometry correction; full608 changes383→382foundations,208→211trenches,29→29roads. Six straight failures and two lost full-panel cases remain. The correction is excluded from the active matched efficiency comparison.

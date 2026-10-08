@@ -35,30 +35,52 @@ def main():
         parser.add_argument(flag, type=float, default=None)
     parser.add_argument("--centre-chassis-on-base", action=argparse.BooleanOptionalAction,
                         default=None, help="chassis raster centred on the base cell")
+    parser.add_argument("--pull-direction-alignment", action=argparse.BooleanOptionalAction,
+                        default=None, help="per-cell edge/trench pull alignment; default: the checkpoint's")
+    for flag in ("--edge-band-width-m", "--edge-pull-tolerance-rad", "--trench-pull-tolerance-rad", "--dig-pull-min-length-m"):
+        parser.add_argument(flag, type=float, default=None)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     os.environ.setdefault("EVAL_FORWARD_CHUNK", "32")
     os.environ["WANDB_MODE"] = "disabled"
 
-    from utils.helpers import load_pkl_object, register_checkpoint_config_classes
+    from utils.helpers import (
+        checkpoint_evaluation_config, checkpoint_pull_direction_rules,
+        load_pkl_object, register_checkpoint_config_classes,
+    )
 
     spec = importlib.util.spec_from_file_location("fixed_start_helper", args.helper)
     helper = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(helper)
     register_checkpoint_config_classes()
     checkpoint = load_pkl_object(str(args.checkpoint))
+    checkpoint["train_config"] = checkpoint_evaluation_config(checkpoint)
     if args.dump_max_radius_m is not None:
         checkpoint["train_config"].dump_max_radius_m = args.dump_max_radius_m
-    from train_mixed import MACHINE_RULE_FIELDS
+    from train_mixed import MACHINE_RULE_FIELDS, PULL_DIRECTION_RULE_FIELDS, apply_pull_direction_rules
     for name, cast in MACHINE_RULE_FIELDS.items():
         if getattr(args, name) is not None:
             setattr(checkpoint["train_config"], name, cast(getattr(args, name)))
+    for name, cast in PULL_DIRECTION_RULE_FIELDS.items():
+        if getattr(args, name) is not None:
+            setattr(checkpoint["train_config"], name, cast(getattr(args, name)))
+    # The helper resolves its own evaluation config from both saved copies.
+    # Apply deliberate CLI overrides to its in-memory env copy as well.
+    if checkpoint.get("env_config") is not None:
+        checkpoint["env_config"] = apply_pull_direction_rules(
+            checkpoint["env_config"], checkpoint["train_config"]
+        )
     cases = {c["case_id"]: c for c in json.loads((args.maps_root / "maps.json").read_text())["cases"]}
     summary = dict(checkpoint=str(args.checkpoint), update=int(checkpoint["next_update"]), cases={})
     rules = {name: getattr(checkpoint["train_config"], name, None)
              for name in ("dump_max_radius_m", *MACHINE_RULE_FIELDS)}
     if any(rules[name] for name in MACHINE_RULE_FIELDS):
         summary["agent_rules"] = rules
+    pull_rules = checkpoint_pull_direction_rules(checkpoint)
+    if pull_rules["pull_direction_alignment"] or any(
+        getattr(args, name) is not None for name in PULL_DIRECTION_RULE_FIELDS
+    ):
+        summary["pull_direction_rules"] = pull_rules
     for name in args.cases:
         started = time.monotonic()
         evaluator = helper.FixedEvaluation(checkpoint, cases[name], args.maps_root,
