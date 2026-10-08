@@ -3049,11 +3049,16 @@ def make_mixed_agent_states(
     if "pull_direction_alignment" in direction_rules:
         env_kwargs["pull_direction_alignment"] = direction_rules["pull_direction_alignment"]
     if direction_rules.get("native_dump_observation", False):
-        if any(getattr(config, name, None) is not None
-               for name in ("teacher_checkpoint", "trench_teacher_checkpoint")):
+        # The recurrent bulk teacher rebuilds its whole observation from its own
+        # saved EnvConfig, so it keeps the dig-cone dumpability count. Other
+        # teachers read the student's observation and would see the new meaning.
+        own_view = bool(getattr(config, "recurrent_teacher", False)) and bool(
+            getattr(config, "teacher_bulk_compatibility", False))
+        if getattr(config, "trench_teacher_checkpoint", None) is not None or (
+                getattr(config, "teacher_checkpoint", None) is not None and not own_view):
             raise ValueError(
-                "native_dump_observation changes local_map_dumpability; frozen teachers "
-                "were trained on the dig-cone dumpability count"
+                "native_dump_observation changes local_map_dumpability; only the recurrent "
+                "bulk teacher (own legacy observation view) may guide this student"
             )
         env_kwargs["native_dump_observation"] = True
     # Compile the optional rules in only when enabled (per-lane conds would

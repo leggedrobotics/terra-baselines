@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Scratch student under the +-30 degree pull cone, turn-keeping moves and the
-# native dump observation (preset gru_generalist_512_pull_cone). No teacher:
-# the dump observation changes a policy input the frozen teachers were trained on.
+# native dump observation (preset gru_generalist_512_pull_cone). GRU110000
+# guides only compatible bulk foundation states (no precision lanes, no
+# trenches) through its own legacy observation view, fading out over 3000
+# updates, as in the scratch-teacher campaign.
 set -euo pipefail
 PHASE="${1:?smoke or production}"
 [[ "$PHASE" == smoke || "$PHASE" == production ]]
@@ -20,9 +22,10 @@ mkdir -p "$TERRA_RUN_DIR/checkpoints" "$WANDB_DIR" "$JAX_COMPILATION_CACHE_DIR"
 cd "$TERRA_RUN_DIR"
 NUM_DEVICES="${NUM_DEVICES:-4}"
 python -u "$BASELINES_ROOT/cluster/cscs/check_jax_runtime.py" --min-devices "$NUM_DEVICES"
+PARENT="$TERRA_EXPERIMENT_INPUTS/gru_rules_ft_c057_s20260930_update_110000.pkl"
 ARGS=(
     --config gru_generalist_512_pull_cone
-    --name "gru_pull_cone_s20261006_${PHASE}" --exact_run_name --seed 20261006
+    --name "gru_pull_cone_teacher_s20261006_${PHASE}" --exact_run_name --seed 20261006
     --machine daint --num_devices "$NUM_DEVICES" --num_envs_per_device 512
     --num_steps 32 --update_epochs 2 --num_minibatches 32 --total_timesteps 50000000000
     --lr 3e-4 --model_size medium --model_core mlp --actor-core gru --actor-gru-hidden-dim 64
@@ -42,6 +45,9 @@ ARGS=(
     --dug_clearance_m 0.57 --pull_direction_alignment --dig_pull_min_length_m 2.5
     --precision_required_band_observation --precision_episode_fraction 0.5
     --pull_direction_training_slots "${TERRA_TRAINING_SLOTS:-$TERRA_EXPERIMENT_INPUTS/training_slots.json}"
+    --teacher_checkpoint "$PARENT" --recurrent_teacher --teacher_bulk_compatibility
+    --kickstart_start_update 0 --kickstart_kl_coef 1 --kickstart_kl_anneal_updates 3000
+    --kickstart_value_coef 0 --kickstart_value_anneal_updates 0 --kickstart_lr_warmup_updates 0
     --no-load-env-from-checkpoint
     --fail_on_nonfinite --finite_check_interval 100
     --log_train_interval 1 --log_eval_interval 0 --cache_clear_interval 0
@@ -55,3 +61,8 @@ if [[ "$PHASE" == smoke ]]; then
 fi
 printf '%s\n' "${ARGS[@]}" > "$TERRA_RUN_DIR/arguments.txt"
 python -u "$BASELINES_ROOT/train_mixed.py" "${ARGS[@]}"
+if [[ "$PHASE" == smoke ]]; then
+    JAX_PLATFORMS=cpu python "$BASELINES_ROOT/scripts/pull_cone/verify_smoke.py" \
+        "$TERRA_RUN_DIR/checkpoints/gru_pull_cone_teacher_s20261006_smoke_FINAL.pkl" \
+        "$TERRA_RUN_DIR/verification.json"
+fi

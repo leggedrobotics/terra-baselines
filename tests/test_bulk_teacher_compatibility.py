@@ -129,3 +129,24 @@ def test_compatibility_mask_changes_kl_selection_without_skipping_teacher_carry(
     np.testing.assert_array_equal(cached["signal"], raw["signal"])
     np.testing.assert_array_equal(reset_recurrent_teacher_hidden(advanced, jnp.array([False, True, False])),
                                   [[5.], [0.], [17.]])
+
+
+def test_teacher_view_keeps_legacy_semantics_under_cone_and_native_dump_observation():
+    current, original_axes = fixture(position=(16, 13), cabin=3)
+    current = current._replace(env_cfg=current.env_cfg._replace(
+        pull_half_angle_rad=float(np.pi / 6), tracked_move_keeps_turn=True, native_dump_observation=True,
+    ))
+    reference, _ = fixture(legacy=True, position=(16, 13), cabin=3)
+    view = jax.jit(lambda s, axes: bulk_teacher_observation_and_compatibility(
+        s, reference.env_cfg, axes, executable_dig_observation=True,
+    ))(current, original_axes)[0]
+    expected = jax.jit(lambda s: TerraEnv._state_to_obs_dict(LocalMapWrapper.wrap(
+        s, executable_dig_observation=True,
+    )))(reference)
+    for key in [key for key in expected if key.startswith("local_map_") or key.startswith("fresh_trench_")]:
+        np.testing.assert_array_equal(view[key], expected[key], err_msg=key)
+    student = jax.jit(lambda s: LocalMapWrapper.wrap(
+        s, executable_dig_observation=True, native_dump_observation=True,
+    ).world.local_map_dumpability.map)(current)
+    assert np.any(np.asarray(student) != np.asarray(view["local_map_dumpability"])), \
+        "the student sees the native dump outcome, the teacher its dig-cone count"
