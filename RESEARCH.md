@@ -14,6 +14,8 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Pull cone, turn-keeping moves, native dump observation](docs/research/PULL_CONE_20261008.md): intended +-30 degree pull rule plus trap and dump-observation fixes (opt-in, preset `gru_generalist_512_pull_cone`); a native oracle finishes 5/7 panel maps (3 within 450 actions), against 2/7 under the radial rule; one-update GPU smoke passes. Not yet trained.
+
 - [Scratch student with compatible bulk teacher guidance](docs/research/PULL_SCRATCH_TEACHER_20261007.md): separate scratch/teacher experiment: CSCS5000386 running and checkpoint8000 finite; teacher off after3000 updates, finishing remains unproved.
 
 - [Mixed cutting-space and precision-edge adaptation](docs/research/PULL_DIRECTION_MIXED_20261006.md): warm-start GRU110000, explicit edge mask, screened precision lanes, CSCS validation in progress.

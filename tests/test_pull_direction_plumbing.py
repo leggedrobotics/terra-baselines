@@ -36,6 +36,9 @@ TREATMENT = {
     "edge_pull_tolerance_rad": 0.4,
     "trench_pull_tolerance_rad": 0.2,
     "dig_pull_min_length_m": 2.0,
+    "pull_half_angle_rad": 0.5,
+    "tracked_move_keeps_turn": True,
+    "native_dump_observation": True,
 }
 
 

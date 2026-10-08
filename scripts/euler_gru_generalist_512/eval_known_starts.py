@@ -37,8 +37,11 @@ def main():
                         default=None, help="chassis raster centred on the base cell")
     parser.add_argument("--pull-direction-alignment", action=argparse.BooleanOptionalAction,
                         default=None, help="per-cell edge/trench pull alignment; default: the checkpoint's")
-    for flag in ("--edge-band-width-m", "--edge-pull-tolerance-rad", "--trench-pull-tolerance-rad", "--dig-pull-min-length-m"):
+    for flag in ("--edge-band-width-m", "--edge-pull-tolerance-rad", "--trench-pull-tolerance-rad",
+                 "--dig-pull-min-length-m", "--pull-half-angle-rad"):
         parser.add_argument(flag, type=float, default=None)
+    for flag in ("--tracked-move-keeps-turn", "--native-dump-observation"):
+        parser.add_argument(flag, action=argparse.BooleanOptionalAction, default=None)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     os.environ.setdefault("EVAL_FORWARD_CHUNK", "32")

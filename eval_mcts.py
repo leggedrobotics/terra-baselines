@@ -1474,6 +1474,11 @@ def main():
     env_kwargs["pull_direction_alignment"] = bool(
         getattr(config, "pull_direction_alignment", False)
     )
+    env_kwargs["native_dump_observation"] = bool(
+        getattr(config, "native_dump_observation", False)
+    )
+    env_kwargs["pull_cone"] = float(getattr(config, "pull_half_angle_rad", None) or 0.0) > 0.0
+    env_kwargs["tracked_move_keeps_turn"] = bool(getattr(config, "tracked_move_keeps_turn", None))
     env = TerraEnvBatch(
         batch_cfg=batch_cfg,
         rendering=False,

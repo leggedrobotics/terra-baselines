@@ -26,7 +26,15 @@ PULL_DIRECTION_RULE_DEFAULTS = {
     "edge_pull_tolerance_rad": 0.436332313,
     "trench_pull_tolerance_rad": 0.261799388,
     "dig_pull_min_length_m": 2.5,
+    # +-cone of pull directions; pi/6 is the cabin workspace half-angle.
+    "pull_half_angle_rad": 0.0,
+    # Tracked moves keep a turn option; native per-heading dump observation.
+    "tracked_move_keeps_turn": False,
+    "native_dump_observation": False,
 }
+PULL_DIRECTION_BOOL_FIELDS = (
+    "pull_direction_alignment", "tracked_move_keeps_turn", "native_dump_observation",
+)
 PULL_DIRECTION_RULE_FIELDS = {
     name: type(value) for name, value in PULL_DIRECTION_RULE_DEFAULTS.items()
 }
@@ -82,7 +90,7 @@ def pull_direction_rule_scalar(value, name):
     if array.size == 0 or not np.all(array == array.flat[0]):
         raise ValueError(f"{name} must be uniform across checkpoint environments")
     value = array.flat[0]
-    if name == "pull_direction_alignment":
+    if name in PULL_DIRECTION_BOOL_FIELDS:
         if value not in (False, True):
             raise ValueError(f"{name} must be a boolean")
         return bool(value)

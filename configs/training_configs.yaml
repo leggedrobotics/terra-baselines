@@ -1162,6 +1162,22 @@ gru_generalist_512_pull_direction: &gru_generalist_512_pull_direction
   trench_pull_tolerance_rad: 0.261799388
   dig_pull_min_length_m: 2.5
 
+# Intended rule: pulls within the +-30 degree cabin sector may supply the 2.5 m
+# room; tracked moves keep a turn option; native per-heading dump observation.
+gru_generalist_512_pull_cone: &gru_generalist_512_pull_cone
+  <<: *gru_generalist_512_pull_direction
+  description: 2.5 m cutting room over a +-30 degree pull cone, turn-keeping moves, native dump observation
+  pull_half_angle_rad: 0.523598776
+  tracked_move_keeps_turn: true
+  native_dump_observation: true
+
+gru_generalist_512_pull_cone_mixed:
+  <<: *gru_generalist_512_pull_cone
+  description: Half bulk and half precision lanes under the +-30 degree pull cone
+  enforce_foundation_border_alignment: false
+  precision_episode_fraction: 0.5
+  precision_required_band_observation: true
+
 gru_generalist_512_pull_direction_mixed:
   <<: *gru_generalist_512_pull_direction
   description: Half bulk and half qualified precision lanes under the 2.5 m cutting-space rule

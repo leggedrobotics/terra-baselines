@@ -483,6 +483,9 @@ if __name__ == "__main__":
         shuffle_maps=False,
         executable_dig_observation=config.executable_dig_observation,
         pull_direction_alignment=config.pull_direction_alignment,
+        native_dump_observation=bool(getattr(config, "native_dump_observation", False)),
+        pull_cone=float(getattr(config, "pull_half_angle_rad", None) or 0.0) > 0.0,
+        tracked_move_keeps_turn=bool(getattr(config, "tracked_move_keeps_turn", None)),
     )
 
     model_params = log["model"]

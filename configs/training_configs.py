@@ -123,6 +123,9 @@ class TrainingConfig:
     edge_pull_tolerance_rad: Optional[float] = None
     trench_pull_tolerance_rad: Optional[float] = None
     dig_pull_min_length_m: Optional[float] = None
+    pull_half_angle_rad: Optional[float] = None
+    tracked_move_keeps_turn: Optional[bool] = None
+    native_dump_observation: Optional[bool] = None
     # Excavator dump reach and Terra's machine working rules (agent.<name>),
     # as train_mixed's flags of the same names, which override these. None
     # leaves the checkpoint's or Terra's value.
@@ -255,6 +258,9 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
                     "edge_pull_tolerance_rad",
                     "trench_pull_tolerance_rad",
                     "dig_pull_min_length_m",
+                    "pull_half_angle_rad",
+                    "tracked_move_keeps_turn",
+                    "native_dump_observation",
                     "dump_max_radius_m",
                     "dig_min_radius_m",
                     "dump_min_radius_m",

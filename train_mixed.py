@@ -2172,6 +2172,9 @@ class MixedAgentTrainConfig:
     edge_pull_tolerance_rad: float | None = None
     trench_pull_tolerance_rad: float | None = None
     dig_pull_min_length_m: float | None = None
+    pull_half_angle_rad: float | None = None
+    tracked_move_keeps_turn: bool | None = None
+    native_dump_observation: bool | None = None
     # Excavator dump reach in metres (Terra agent.dump_max_radius_m; 0 = the
     # dig reach). Overrides a resumed checkpoint's env config. None leaves the
     # checkpoint's or Terra's value.
@@ -3045,6 +3048,18 @@ def make_mixed_agent_states(
     env_kwargs = {}
     if "pull_direction_alignment" in direction_rules:
         env_kwargs["pull_direction_alignment"] = direction_rules["pull_direction_alignment"]
+    if direction_rules.get("native_dump_observation", False):
+        if any(getattr(config, name, None) is not None
+               for name in ("teacher_checkpoint", "trench_teacher_checkpoint")):
+            raise ValueError(
+                "native_dump_observation changes local_map_dumpability; frozen teachers "
+                "were trained on the dig-cone dumpability count"
+            )
+        env_kwargs["native_dump_observation"] = True
+    # Compile the optional rules in only when enabled (per-lane conds would
+    # otherwise evaluate both branches every step).
+    env_kwargs["pull_cone"] = float(direction_rules.get("pull_half_angle_rad", 0.0)) > 0.0
+    env_kwargs["tracked_move_keeps_turn"] = bool(direction_rules.get("tracked_move_keeps_turn", False))
     if config.distance_protocol_id is not None:
         env_kwargs["distance_protocol_id"] = config.distance_protocol_id
     if config.partial_reset_root is not None:
@@ -6661,9 +6676,18 @@ if __name__ == "__main__":
         ("edge_pull_tolerance_rad", "Allowed edge-tangent pull error in radians"),
         ("trench_pull_tolerance_rad", "Reserved legacy draft setting; unused by the radial cutting-space rule"),
         ("dig_pull_min_length_m", "Minimum connected radial excavation-space length in metres"),
+        ("pull_half_angle_rad", "Pull directions within this angle of the cell-to-base line may supply the room; pi/6 = cabin sector"),
     ):
         parser.add_argument(f"--{name}", type=float, default=None,
                             help=f"{description}; omitted preserves checkpoint/preset/runtime value.")
+    parser.add_argument(
+        "--tracked_move_keeps_turn", action=argparse.BooleanOptionalAction, default=None,
+        help="Tracked moves stop where the chassis can still turn when the longest clear stop cannot.",
+    )
+    parser.add_argument(
+        "--native_dump_observation", action=argparse.BooleanOptionalAction, default=None,
+        help="local_map_dumpability reports native per-heading dump outcomes (+accepted / -off-zone cells).",
+    )
     env_group = parser.add_mutually_exclusive_group()
     env_group.add_argument(
         "--load_env_from_checkpoint",

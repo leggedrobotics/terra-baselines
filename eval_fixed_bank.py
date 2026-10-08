@@ -1502,8 +1502,13 @@ def main() -> None:
         "--precision-mode", choices=("bulk", "precision"), default=None,
         help="Evaluate without/with precise edge alignment; required for mixed precision checkpoints.",
     )
-    for name in PULL_DIRECTION_RULE_FIELDS:
-        if name != "pull_direction_alignment":
+    for name, cast in PULL_DIRECTION_RULE_FIELDS.items():
+        if name == "pull_direction_alignment":
+            continue
+        if cast is bool:
+            parser.add_argument(f"--{name.replace('_', '-')}", action=argparse.BooleanOptionalAction,
+                                default=None, help="Override the checkpoint's pull-direction rule setting.")
+        else:
             parser.add_argument(f"--{name.replace('_', '-')}", type=float, default=None,
                                 help="Override the checkpoint's pull-direction rule setting.")
     parser.add_argument(
