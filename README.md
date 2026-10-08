@@ -24,7 +24,7 @@ opt-in preserves the native optimizer and update clocks.
 ## Features
 - Train on multiple devices using PPO with `train.py` (based on [XLand-MiniGrid](https://github.com/corl-team/xland-minigrid))
 - Generate metrics for your checkpoint with `eval.py`
-- Visualize rollouts of your checkpoint with `visualize.py`
+- Inspect compatible checkpoints with the 2D GIF tool `visualize_mixed.py`; export saved 3D recordings with Terra's `terra-postprocess render`
 - Run a grid search on the hyperparameters with `train_sweep.py` (orchestrated with [wandb](https://wandb.ai/))
 
 ## Installation
@@ -270,10 +270,36 @@ python -m pip install --no-deps mctx==0.0.5
 ```
 
 ## Visualize
-Visualize the rollout of your policy with
+
+The standard saved-recording path lives in Terra: capture the native episode
+with `terra.viewer3d.ReplayRecorder`, optionally postprocess its plan, then use
+the shared renderer for native or metric recordings:
+
+```bash
+terra-postprocess render episode.json.gz --out episode.html
+terra-postprocess render episode.json.gz --out episode.mp4
 ```
-DATASET_PATH=/path/to/dataset DATASET_SIZE=<num_maps_per_type> python visualize.py -run <checkpoint_path> -nx <num_environments_x> -ny <num_environments_y> -steps <num_steps> -o <output_path.gif>
+
+See the [Terra media workflow](https://github.com/leggedrobotics/terra/blob/main/terra/postprocess/README.md)
+for video dependencies, fleet processing and galleries, and its
+[recording guide](https://github.com/leggedrobotics/terra/blob/main/terra/viewer3d/README.md#record-from-a-rollout)
+for sequential and explicit joint-round capture. Model loading, policy state,
+native environment configuration, resets and RNG remain the responsibility of
+the matching evaluation adapter. There is no generic joint-checkpoint export
+command in this repository.
+
+For a 2D diagnostic GIF from a checkpoint compatible with the existing
+visualizer, run:
+
+```bash
+DATASET_PATH=/path/to/dataset DATASET_SIZE=<num_maps_per_type> python visualize_mixed.py -run <checkpoint_path> -nx <num_environments_x> -ny <num_environments_y> -steps <num_steps> -o <output_path.gif>
 ```
+
+`--config` selects a named map/agent preset. See the
+[inference guide](inference/README.md) for single-map diagnostics. These commands run
+new policy episodes and write Pygame GIFs; they do not replay saved 3D recordings.
+The legacy `cluster/visualize_srun.sh` wrapper forwards its arguments to
+`visualize_mixed.py` inside an already selected allocation and runtime.
 
 ## Baselines
 We train 2 models capable of solving both foundation and trench type of environments. They differentiate themselves based on the type of agent (wheeled or tracked), and the type of curriculum used to train them (dense reward with single level, or sparse reward with curriculum). All models are trained on 64x64 maps and are stored in the `checkpoints/` folder.
@@ -313,14 +339,6 @@ $$
 
 ### Model Details
 All the models we train share the same structure. We encode the maps with a CNN, and the agent state and local maps with MLPs. The latent features are concatenated and shared by the two MLP heads of the model (value and action). In total, the model has ~130k parameters counting both value and action weights.
-
-## Policy Rollouts 😄
-Here's a collection of rollouts for the models we trained.
-####  `tracked-dense.pkl`
-![img](assets/tracked-dense.gif)
-#### `wheeled-dense.pkl`
-![img](assets/wheeled-dense.gif)
-
 
 ## 🏗️ Terra Environment Setup Catalog
 

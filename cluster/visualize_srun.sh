@@ -5,15 +5,11 @@ set -euo pipefail
 : "${TERRA_BASELINES_ROOT:?Set TERRA_BASELINES_ROOT to the staged terra-baselines checkout}"
 : "${DATASET_PATH:?Set DATASET_PATH to the selected readable map bank}"
 
-# Recommended srun command (if running from login node):
-# srun --cpus-per-task=1 --mem-per-cpu=4G --gres=gpu:rtx_4090:2 --time=2:00:00 terra-baselines/cluster/visualize_srun.sh --run_name experiment-local-2025-06-28-21-43-50.pkl
-#
-# Or use sbatch for full resource allocation:
-# sbatch terra-baselines/cluster/train_cluster.sh
-#
-# Or request interactive session first:
-# salloc --cpus-per-task=4 --mem-per-cpu=4G --gres=gpu:rtx_4090:2 --time=2:00:00
-# srun terra-baselines/cluster/visualize_srun.sh --run_name experiment-local-2025-06-28-21-43-50.pkl
+# Legacy 2D policy GIF wrapper. Run inside an allocation selected through
+# cluster/README.md; this script does not request resources or submit a job.
+# Example inside that allocation:
+# srun cluster/visualize_srun.sh --run_name checkpoint.pkl -nx 1 -ny 1 -o rollout.gif
+# Saved 3D recordings use terra-postprocess render, without policy inference.
 
 # Set up environment
 module load eth_proxy
@@ -27,9 +23,9 @@ eval "$("$CONDA_ROOT/bin/conda" shell.bash hook)"
 conda activate "$CONDA_ENV"
 
 export DATASET_PATH
-export DATASET_SIZE=200
+export DATASET_SIZE="${DATASET_SIZE:-200}"
 
 
 # Change to the correct directory
 cd "$TERRA_BASELINES_ROOT"
-python visualize.py
+exec python visualize_mixed.py "$@"
