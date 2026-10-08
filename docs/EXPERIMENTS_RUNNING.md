@@ -1,5 +1,23 @@
 # Experiments — geometry comparison complete; efficiency comparison running (2026-09-21)
 
+## October 8 night: pull-cone scratch run submitted (CSCS)
+
+Branch `pull-cone-trap-dumpobs` (Terra `0eaaccb4`, baselines `e4f5682`), see
+[PULL_CONE_20261008](research/PULL_CONE_20261008.md). The scratch student uses
+preset `gru_generalist_512_pull_cone`: the +-30 degree pull cone, turn-keeping
+moves and the native dump observation. GRU110000 guides it as a recurrent bulk
+teacher with KL fading over 3000 updates. Seed 20261006, the campaign's
+architecture, bank, 450-action horizon and half precision lanes.
+
+- Smoke **5008011 COMPLETED** (debug, 4 GH200): update 1, scratch initialization,
+  teacher-eligible fraction 0.266, policy KL 1.74, finite losses/model/optimizer,
+  transition integrity passed, rule settings stored.
+- Production **5008012** (normal, 4 GH200, 24 h, `afterok:5008011`): PENDING
+  (Priority) at 22:07 UTC, estimated start October 9 09:06 UTC.
+- Snapshot `/ritom/scratch/cscs/lterenzi/terra-training/snapshots/gru-pull-cone-teacher-s20261006/`,
+  run `/ritom/scratch/cscs/lterenzi/terra-training/runs/gru-pull-cone-teacher-s20261006/`.
+- Earlier scratch-teacher job 5000386 reached its 24 h limit at October 8 20:19 UTC.
+
 ## October 8: native finishing failure diagnosis
 
 Matched frozen GRU110000 control confirms a substantial bulk-rule regression:
