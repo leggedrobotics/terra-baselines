@@ -123,6 +123,13 @@ update proves implementation startup, not policy quality or map finishability.
 
 ## Checkpoints and evaluation
 
+`eval_structured.py --checkpoint CKPT --initial-states BANK --output OUT.json`
+runs every start of a saved bank (greedy starts only when the bank records
+decoders) to termination under the checkpoint's own rules, time budgets and
+decision limits, greedily or with `--sampled`, and reports success,
+completion, modeled hours and decisions per start. On the manual game's
+bank it is directly comparable with the October 8 oracle panel.
+
 `--warm-start-from LEGACY.pkl` reuses a shape-compatible encoder, recurrent core
 and type head. It initializes new argument/context parameters, resets the critic
 and optimizer, and starts fresh environments. Move arguments initially favor five
