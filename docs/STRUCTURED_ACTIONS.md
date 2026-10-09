@@ -57,8 +57,9 @@ heads never contribute to a selected action's log probability.
 ## Time and return objective
 
 The provisional defaults are 14,400 modeled seconds and a 450-decision guard.
-`--time-budget-factor F` instead gives every episode F times its map's
-dig-only time (dig units x tile^3 x `dig_s_per_m3`), at least `--time-budget-s`.
+`--time-budget-factor F` instead gives every episode `--time-budget-offset-s`
+plus F times its map's dig-only time (dig units x tile^3 x `dig_s_per_m3`), at
+least `--time-budget-s`.
 A fixed budget cannot serve the generalist bank: under the default timing,
 digging alone takes 0.9 h for a median trench, 2.4 h for a median foundation
 and 7-9 h for every qualified precision slot. The time reward and remaining-time

@@ -208,20 +208,22 @@ def map_start_sampler(static_cfg):
 
 
 def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_limit, timing, allow_wait,
-                        time_budget_factor=0., decisions_per_dig_unit=0.):
+                        time_budget_factor=0., time_budget_offset_s=0., decisions_per_dig_unit=0.):
     """Per-lane observation, transition and episode limits, traced under ``static_rules``.
 
     Every lane runs the bank's static rules with its own precision-mode flag.
-    With ``time_budget_factor`` > 0 an episode's time budget is that multiple of
-    its map's dig-only time (dig units * tile**3 * dig_s_per_m3), at least
-    ``time_budget_s``; with ``decisions_per_dig_unit`` > 0 its decision limit is
+    With ``time_budget_factor`` > 0 an episode's time budget is
+    ``time_budget_offset_s`` plus that multiple of its map's dig-only time (dig
+    units * tile**3 * dig_s_per_m3), at least ``time_budget_s``; with
+    ``decisions_per_dig_unit`` > 0 its decision limit is
     that many decisions per dig unit, at least ``decision_limit``.
     """
     unit_s = float(static_cfg.tile_size) ** 3 * timing.dig_s_per_m3
 
     def limits(state):
         units = jnp.sum(jnp.maximum(-state.world.target_map.map.astype(jnp.float32), 0.))
-        budget = (jnp.maximum(jnp.float32(time_budget_s), time_budget_factor * unit_s * units)
+        budget = (jnp.maximum(jnp.float32(time_budget_s),
+                              time_budget_offset_s + time_budget_factor * unit_s * units)
                   if time_budget_factor else jnp.float32(time_budget_s))
         decisions = (jnp.maximum(decision_limit, jnp.ceil(decisions_per_dig_unit * units).astype(jnp.int32))
                      if decisions_per_dig_unit else jnp.int32(decision_limit))
@@ -466,7 +468,9 @@ def parse_args(argv=None):
     parser.add_argument("--time-budget-s", type=float, default=14400.,
                         help="Episode time budget; with --time-budget-factor the minimum budget")
     parser.add_argument("--time-budget-factor", type=float, default=0.,
-                        help="Budget = this multiple of the map's dig-only modeled time (0 = fixed budget)")
+                        help="Budget = offset + this multiple of the map's dig-only modeled time (0 = fixed budget)")
+    parser.add_argument("--time-budget-offset-s", type=float, default=0.,
+                        help="Constant part of a map-scaled budget (setups and travel)")
     parser.add_argument("--decision-limit", type=int, default=450,
                         help="Episode decision limit; with --decisions-per-dig-unit the minimum limit")
     parser.add_argument("--decisions-per-dig-unit", type=float, default=0.,
@@ -512,7 +516,7 @@ def parse_args(argv=None):
         if not np.isfinite(getattr(args, name)) or getattr(args, name) <= 0:
             parser.error(f"{name} must be positive and finite")
     for name in ("vf_coef", "entropy_type", "entropy_move", "entropy_turn", "entropy_heading",
-                 "time_budget_factor", "decisions_per_dig_unit"):
+                 "time_budget_factor", "time_budget_offset_s", "decisions_per_dig_unit"):
         if not np.isfinite(getattr(args, name)) or getattr(args, name) < 0:
             parser.error(f"{name} must be nonnegative and finite")
     if args.maps_path is None:
@@ -700,7 +704,7 @@ def main(argv=None):
     observe, advance = environment_kernels(static_cfg, model_config,
         time_budget_s=args.time_budget_s, decision_limit=args.decision_limit,
         timing=timing, allow_wait=args.allow_wait, time_budget_factor=args.time_budget_factor,
-        decisions_per_dig_unit=args.decisions_per_dig_unit)
+        time_budget_offset_s=args.time_budget_offset_s, decisions_per_dig_unit=args.decisions_per_dig_unit)
     rollout = make_rollout(model, model_config, observe, advance, sample, num_steps=args.num_steps)
     iteration = jax.pmap(make_iteration(model, model_config, observe, rollout, args),
                          axis_name=AXIS, donate_argnums=(0, 1))
