@@ -119,6 +119,35 @@ class StructuredModelTests(unittest.TestCase):
         self.assertTrue(all(np.isfinite(x).all() for x in jax.tree.leaves((state.params,state.opt_state,metrics))))
         self.assertAlmostEqual(float(metrics["approx_kl"]), 0., places=5)
 
+    def test_device_axis_update_matches_single_device(self):
+        env = _env()
+        cfg = _config()
+        cfg.update(structured_actions=True)
+        model, params = get_model_ready(jax.random.PRNGKey(1), cfg, env)
+        obs = _observation((2,3), env)
+        obs["structured_context"] = jnp.zeros((2,3,19))
+        prev = jnp.zeros((2,3,5), jnp.int32)
+        done = jnp.array([[False,True,False], [False,False,False]])
+        hidden = jnp.zeros((2,64))
+        values, logits, _ = model.apply(params, obs_to_model_input(obs, prev, cfg), hidden, done,
+                                        method="actor_sequence")
+        _, masks = logits_and_masks((2,3))
+        action, old_lp = sample_action(logits, masks, jax.random.PRNGKey(3))
+        rollout = StructuredRollout(obs, masks, prev, action, old_lp, values[...,0],
+            jnp.ones((2,3)), jnp.ones((2,3))*30, done, jnp.zeros_like(done))
+        advantages = jnp.array([[1.,2.,3.],[-1.,-2.,-3.]])
+        state = TrainState.create(apply_fn=model.apply, params=params, tx=optax.adam(3e-4))
+        for value_clip in (True, False):
+            single, expected = jax.jit(lambda state: ppo_update(state, model, rollout, advantages,
+                values[...,0]+.25, hidden, cfg, value_clip=value_clip))(state)
+            batched = jax.tree.map(lambda x: jnp.asarray(x)[None], (state, rollout, advantages, values[...,0]+.25, hidden))
+            device, actual = jax.pmap(lambda s, r, a, t, h: ppo_update(s, model, r, a, t, h, cfg,
+                value_clip=value_clip, axis_name="devices"), axis_name="devices")(*batched)
+            for key, want in expected.items():
+                np.testing.assert_allclose(actual[key][0], want, rtol=1e-5, atol=1e-6, err_msg=key)
+            for want, got in zip(jax.tree.leaves(single.params), jax.tree.leaves(device.params)):
+                np.testing.assert_allclose(got[0], want, rtol=1e-5, atol=1e-6)
+
     def test_legacy_migration_preserves_encoder_and_gru(self):
         env = _env()
         cfg = _config()

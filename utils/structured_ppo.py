@@ -154,8 +154,20 @@ def forward_step(model, params, observation, previous_actions, hidden, config):
 
 
 def ppo_update(train_state, model, rollout, advantages, targets, initial_hidden,
-               config, *, clip_eps=0.2, vf_coef=2., entropy_coefs=(0.01, 0.01, 0.01, 0.01)):
-    """One minibatch; the probability ratio uses the full sampled action."""
+               config, *, clip_eps=0.2, vf_coef=2., entropy_coefs=(0.01, 0.01, 0.01, 0.01),
+               value_clip=True, axis_name=None):
+    """One minibatch; the probability ratio uses the full sampled action.
+
+    Under pmap, ``axis_name`` normalizes advantages over the global minibatch
+    and averages gradients and metrics across devices.
+    """
+    if axis_name is None:
+        adv_mean, adv_std = advantages.mean(), advantages.std()
+    else:
+        adv_mean = jax.lax.pmean(advantages.mean(), axis_name)
+        adv_std = jnp.sqrt(jax.lax.pmean(((advantages - adv_mean) ** 2).mean(), axis_name))
+    norm_adv = (advantages - adv_mean) / (adv_std + 1e-8)
+
     def loss(params):
         inputs = obs_to_model_input(rollout.obs, rollout.prev_actions, config)
         if config["actor_core"] == "gru":
@@ -169,10 +181,12 @@ def ppo_update(train_state, model, rollout, advantages, targets, initial_hidden,
         values = values[..., 0]
         log_prob = joint_log_prob(logits, rollout.masks, rollout.action)
         ratio = jnp.exp(log_prob - rollout.log_prob)
-        norm_adv = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         actor_loss = -jnp.minimum(ratio * norm_adv, jnp.clip(ratio, 1-clip_eps, 1+clip_eps) * norm_adv).mean()
-        clipped_value = rollout.value + jnp.clip(values - rollout.value, -clip_eps, clip_eps)
-        value_loss = 0.5 * jnp.maximum((values-targets)**2, (clipped_value-targets)**2).mean()
+        if value_clip:
+            clipped_value = rollout.value + jnp.clip(values - rollout.value, -clip_eps, clip_eps)
+            value_loss = 0.5 * jnp.maximum((values-targets)**2, (clipped_value-targets)**2).mean()
+        else:
+            value_loss = 0.5 * ((values-targets)**2).mean()
         components = entropy_components(logits, rollout.masks)
         entropy_bonus = sum(coef * components[name].mean() for coef, name in zip(entropy_coefs, ("action", "move", "turn", "do")))
         total = actor_loss + vf_coef * value_loss - entropy_bonus
@@ -185,6 +199,9 @@ def ppo_update(train_state, model, rollout, advantages, targets, initial_hidden,
         }
         return total, metrics
     (_, metrics), grads = jax.value_and_grad(loss, has_aux=True)(train_state.params)
+    if axis_name is not None:
+        grads = jax.lax.pmean(grads, axis_name)
+        metrics = jax.lax.pmean(metrics, axis_name)
     train_state = train_state.apply_gradients(grads=grads)
     metrics["grads_finite"] = jnp.stack([jnp.all(jnp.isfinite(x)) for x in jax.tree.leaves(grads)]).all()
     return train_state, metrics

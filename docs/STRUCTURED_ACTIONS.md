@@ -1,11 +1,18 @@
 # Structured Terra actions (opt-in)
 
-`train_structured.py` is the direct experimental training entrypoint for the
-solo tracked excavator's `terra_structured_v1` action space. It consumes a
-saved native initial-state bank (`initial` list, optionally `episodes` metadata),
-including the cone/perpendicular-edge game bank. `train_mixed.py` remains the
-legacy eight-way training path. This initial implementation is one-device,
-vectorized across environments; it does not submit jobs or enable W&B.
+`train_structured.py` is the training entrypoint for the solo tracked
+excavator's `terra_structured_v1` action space. `train_mixed.py` remains the
+legacy eight-way training path. Episodes start either from a saved native
+initial-state bank (`--initial-states`: `initial` list, optionally `episodes`
+metadata) or from a training map level under `DATASET_PATH` (`--maps-path`).
+In map mode, `--env-template` is a saved bank whose native rules every lane
+uses (for example the manual game's bank), the level is loaded through
+`TerraEnvBatch` with the `--distance-protocol-id` sidecar and pull boundary
+geometry, and `--precision-episode-fraction` of the lanes on every device run
+precision episodes on the `precision_slots` of `--training-slots`. Other lanes
+sample the whole level. Rollout (`lax.scan`), GAE and PPO run in one `pmap`
+over `--num-devices`; gradients and minibatch advantage statistics are averaged
+across devices. `--wandb-project` enables W&B logging.
 
 The runner preserves the bank's pull-length and other native environment
 settings. Native digging has no bucket-width constraint: trenches are widened
@@ -50,8 +57,15 @@ heads never contribute to a selected action's log probability.
 ## Time and return objective
 
 The provisional defaults are 14,400 modeled seconds and a 450-decision guard.
-The observation contains both remaining budgets because zero-duration actions
-still consume the guard. `StructuredClock` charges setup once per actual visit;
+`--time-budget-factor F` instead gives every episode F times its map's
+dig-only time (dig units x tile^3 x `dig_s_per_m3`), at least `--time-budget-s`.
+A fixed budget cannot serve the generalist bank: under the default timing,
+digging alone takes 0.9 h for a median trench, 2.4 h for a median foundation
+and 7-9 h for every qualified precision slot. The time reward and remaining-time
+observation are relative to the episode's own budget. Likewise
+`--decisions-per-dig-unit R` sets the decision limit to R per dig unit, at
+least `--decision-limit`; the October 8 oracle needs about 0.5. The observation contains
+both remaining budgets because zero-duration actions still consume the guard. `StructuredClock` charges setup once per actual visit;
 movement away and back opens another visit. `--timing-json` accepts fields from
 `terra.structured_actions.StructuredTimeConfig`; timing estimates need physical
 calibration. Changing these values changes the training problem.
@@ -74,7 +88,7 @@ including timeouts and the decision guard, never bootstrap into a reset state.
 
 ## Bounded smoke
 
-From this `terra-baselines` worktree:
+From this `terra-baselines` worktree (saved-bank mode):
 
 ```bash
 export PYTHONPATH="../terra:.:${PYTHONPATH:-}"
@@ -86,11 +100,20 @@ export JAX_PLATFORMS=cpu
   --num-envs 2 --num-steps 2 --epochs 1 --updates 1
 ```
 
-The initial native masks/observation and transition kernels take time to compile.
-This runner uses a Python rollout loop around vectorized JIT kernels to keep the
-first implementation inspectable. It is not yet a throughput-qualified replacement
-for the production `pmap` trainer. `metrics.jsonl` records finite update evidence;
-`config.json` records the resolved protocol. `checkpoint.pkl` is written atomically.
+The native masks/observation and transition kernels take minutes to compile on
+CPU. `metrics.jsonl` records every update (losses, per-head entropy, episodes and
+successes by mode, completion, modeled hours, budget, decisions, action mix and
+throughput); `config.json` records the resolved protocol. `checkpoint.pkl` is
+written atomically every `--checkpoint-interval` updates, with live
+environments; `--keep-checkpoint-every` also keeps parameter-only
+`checkpoint_update_NNNNNN.pkl` files.
+
+`scripts/structured/run.sh {smoke,probe,production}` is the CSCS launcher for
+the map-mode scratch run (campaign encoder and observations from
+`scripts/structured/campaign_model.json`, 4 x 512 lanes, 32 decisions per lane
+per update). `smoke` checks two updates plus a resume, `probe` measures
+production-size throughput, and `production` resumes from its own rolling
+checkpoint when one exists.
 
 For CUDA, use `.venv-terra-gpu-uv`, export its NVIDIA library directories, disable
 JAX preallocation on a shared GPU, and run the Terra RL `check_jax_runtime.py`
