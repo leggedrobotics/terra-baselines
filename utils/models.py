@@ -347,6 +347,7 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         precision_required_band_observation=bool(
             _config_option(config, "precision_required_band_observation", False)
         ),
+        structured_actions=bool(_config_option(config, "structured_actions", False)),
         attn_latent_queries=attn_latent_queries,
         flatten_reduce_channels=flatten_reduce_channels,
         use_aux_decoder=use_aux_decoder,
@@ -416,6 +417,10 @@ def get_model_ready(rng, config, env: TerraEnvBatch, speed=False):
         obs.append(jnp.zeros((init_batch_size, 5), dtype=jnp.float32))
     if model.precision_required_band_observation:
         obs.append(jnp.zeros((init_batch_size, map_width, map_height), dtype=jnp.bool_))
+    if model.structured_actions:
+        # Remaining time, decision budget, timing visit state, then full
+        # argument/duration history alongside the existing type history.
+        obs.append(jnp.zeros((init_batch_size, 4 + 3 * config["num_prev_actions"])))
     print(f"model.init obs_len = {len(obs)}")
     print(f"model.init obs_shapes = {[tuple(x.shape) for x in obs]}")
     # Initialize on host: eager per-op GPU init repeatedly tripped cuDNN on
@@ -1613,6 +1618,33 @@ class ResettableGRUCell(nn.Module):
         return carry, output
 
 
+class StructuredContext(nn.Module):
+    @nn.compact
+    def __call__(self, actor, critic, context):
+        context = jnp.asarray(context, jnp.float32).reshape((actor.shape[0], -1))
+        # Zero residuals let a legacy trunk start without changing its outputs.
+        actor = actor + nn.Dense(actor.shape[-1], kernel_init=nn.initializers.zeros,
+                                bias_init=nn.initializers.zeros, name="actor")(context)
+        critic = critic + nn.Dense(critic.shape[-1], kernel_init=nn.initializers.zeros,
+                                  bias_init=nn.initializers.zeros, name="critic")(context)
+        return actor, critic
+
+
+class StructuredHeads(nn.Module):
+    @nn.compact
+    def __call__(self, features, action_logits):
+        def head(name, width):
+            return nn.Dense(width, kernel_init=nn.initializers.orthogonal(0.01),
+                            name=name)(features).astype(jnp.float32)
+        shape = action_logits.shape[:-1]
+        return {
+            "action": action_logits.astype(jnp.float32),
+            "move": head("move", 10).reshape(shape + (2, 5)),
+            "turn": head("turn", 12).reshape(shape + (2, 6)),
+            "do": head("do", 12),
+        }
+
+
 class SimplifiedCoupledCategoricalNet(nn.Module):
     """
     The full net for centralized dual-agent policy.
@@ -1667,9 +1699,15 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
     transformer_num_heads: int = 4
     transformer_ffn_dim: int = 256
     precision_required_band_observation: bool = False
+    structured_actions: bool = False
 
     def setup(self) -> None:
         num_actions = self.action_type.get_num_actions()
+        if self.structured_actions:
+            if num_actions != 8:
+                raise ValueError("structured actions require tracked 8-action excavators")
+            self.structured_context = StructuredContext()
+            self.structured_heads = StructuredHeads()
         if self.actor_residual_head:
             if self.actor_core != "mlp":
                 raise ValueError("actor_residual_head requires actor_core='mlp'")
@@ -2160,6 +2198,8 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             actor_x = actor_x + context @ self.retained_work_context_actor_embedding
             critic_x = critic_x + context @ self.retained_work_context_critic_embedding
 
+        if self.structured_actions:
+            actor_x, critic_x = self.structured_context(actor_x, critic_x, obs[-1])
         return actor_x, critic_x
 
     def __call__(self, obs: Array) -> Array:
@@ -2173,6 +2213,8 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
         value, logits = self.mlp_v(critic_x), self.mlp_pi(actor_x)
         if self.actor_residual_head:
             logits = logits + self.actor_residual_net(actor_x)
+        if self.structured_actions:
+            logits = self.structured_heads(actor_x, logits)
         return value, logits
 
     def value(self, obs: Array) -> Array:
@@ -2197,11 +2239,12 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
                 jnp.zeros((actor_input.shape[0], 1), dtype=jnp.bool_),
             ),
         )
-        logits = self.actor_post_gru(
-            jnp.concatenate(
-                [actor_output[:, 0].astype(jnp.float32), actor_input], axis=-1
-            )
+        features = jnp.concatenate(
+            [actor_output[:, 0].astype(jnp.float32), actor_input], axis=-1
         )
+        logits = self.actor_post_gru(features)
+        if self.structured_actions:
+            logits = self.structured_heads(features, logits)
         value = self.mlp_v(critic_x)
         return value, logits, next_hidden
 
@@ -2239,11 +2282,12 @@ class SimplifiedCoupledCategoricalNet(nn.Module):
             actor_hidden.astype(jnp.float32),
             (actor_input, dones),
         )
-        logits = self.actor_post_gru(
-            jnp.concatenate(
-                [actor_output.astype(jnp.float32), actor_input], axis=-1
-            )
+        features = jnp.concatenate(
+            [actor_output.astype(jnp.float32), actor_input], axis=-1
         )
+        logits = self.actor_post_gru(features)
+        if self.structured_actions:
+            logits = self.structured_heads(features, logits)
         value = self.mlp_v(critic_x).reshape(batch_size, sequence_length, -1)
         return value, logits, final_hidden
 

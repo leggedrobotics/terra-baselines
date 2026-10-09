@@ -61,6 +61,11 @@ def scale_local_maps_in_obs(obs, scale):
 
 def obs_to_model_input(obs, prev_actions, train_cfg):
     validate_executable_dig_observation(train_cfg)
+    structured_context = None
+    if _config_option(train_cfg, "structured_actions", False):
+        structured_context = jnp.asarray(obs["structured_context"], jnp.float32)
+        if structured_context.shape[-1] != 4 + 3 * int(train_cfg["num_prev_actions"]):
+            raise ValueError("structured_context must contain time, visit state and argument history")
     precision_required_band = None
     if _config_option(train_cfg, "precision_required_band_observation", False):
         if "precision_required_band" not in obs:
@@ -253,6 +258,8 @@ def obs_to_model_input(obs, prev_actions, train_cfg):
         # Effect-based action mask from the env (D3). Appended last; the model
         # consumes no fixed index for it, only policy() masking reads it.
         obs = obs + [action_mask]
+    if structured_context is not None:
+        obs.append(structured_context)
     return obs
 
 

@@ -14,6 +14,13 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Structured move/turn/work actions](docs/STRUCTURED_ACTIONS.md): opt-in
+  `train_structured.py` pilot using saved native initial states, exact argument
+  masks, recurrent joint-action PPO, modeled-time budgets and native resume.
+  Separate dig/unload decisions; no fused work or teacher mapping. This is a
+  diagnostic training path, not the full-bank production trainer or a qualified
+  policy. The legacy `train_mixed.py` action contract is unchanged.
+
 - [Pull cone, turn-keeping moves, native dump observation](docs/research/PULL_CONE_20261008.md): intended +-30 degree pull rule plus trap and dump-observation fixes (opt-in, preset `gru_generalist_512_pull_cone`); a native oracle finishes 5/7 panel maps (3 within 450 actions), against 2/7 under the radial rule; one-update GPU smoke passes. Not yet trained.
 
 - [Scratch student with compatible bulk teacher guidance](docs/research/PULL_SCRATCH_TEACHER_20261007.md): separate scratch/teacher experiment: CSCS5000386 running and checkpoint8000 finite; teacher off after3000 updates, finishing remains unproved.
