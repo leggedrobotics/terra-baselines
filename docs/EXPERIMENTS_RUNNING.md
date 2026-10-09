@@ -12,8 +12,11 @@ architecture, bank, 450-action horizon and half precision lanes.
 - Smoke **5008011 COMPLETED** (debug, 4 GH200): update 1, scratch initialization,
   teacher-eligible fraction 0.266, policy KL 1.74, finite losses/model/optimizer,
   transition integrity passed, rule settings stored.
-- Production **5008012** (normal, 4 GH200, 24 h, `afterok:5008011`): PENDING
-  (Priority) at 22:07 UTC, estimated start October 9 09:06 UTC.
+- Production **5008012** (normal, 4 GH200, 24 h, `afterok:5008011`): RUNNING
+  since October 9 04:11 UTC on nid005343, W&B `a6ty4is2` (`mixed-agents`).
+  Rolling checkpoint update 100 written, no error lines; about 7300
+  steps/s (radial campaign about 12500) while the teacher is active.
+  Allocation ends October 10 04:11 UTC.
 - Snapshot `/ritom/scratch/cscs/lterenzi/terra-training/snapshots/gru-pull-cone-teacher-s20261006/`,
   run `/ritom/scratch/cscs/lterenzi/terra-training/runs/gru-pull-cone-teacher-s20261006/`.
 - Earlier scratch-teacher job 5000386 reached its 24 h limit at October 8 20:19 UTC.
