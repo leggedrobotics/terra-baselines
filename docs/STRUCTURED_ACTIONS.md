@@ -7,15 +7,12 @@ including the cone/perpendicular-edge game bank. `train_mixed.py` remains the
 legacy eight-way training path. This initial implementation is one-device,
 vectorized across environments; it does not submit jobs or enable W&B.
 
-The runner preserves the saved bank's environment rules; structured actions
-do not enable working strips automatically. Keep `dig_working_strip_width_m=0`
-for the existing production bank. The manual game's experimental 1 m by 1.3 m
-strip leaves target cells uncovered in a reported optimistic bank audit;
-native success requires complete excavation, so training cannot overcome
-those exclusions. See the paired Terra checkout's
-`docs/PULL_DIRECTION_ALIGNMENT.md` bank compatibility analysis. A saved manual
-bank with this rule enabled is only suitable for diagnosing that rule until
-its finishability is established.
+The runner preserves the bank's pull-length and other native environment
+settings. Native digging has no bucket-width constraint: trenches are widened
+to bucket size during postprocessing. The temporary rectangular strip gate was
+removed; old saved values of `dig_working_strip_width_m` are ignored by Terra.
+See the paired checkout's `docs/PULL_DIRECTION_ALIGNMENT.md`. The manual game
+uses a 1 m minimum pull; full-bank finishability remains a separate evaluation.
 
 ## Action and model contract
 
