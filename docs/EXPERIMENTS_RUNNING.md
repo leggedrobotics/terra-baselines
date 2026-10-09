@@ -1,5 +1,23 @@
 # Experiments — geometry comparison complete; efficiency comparison running (2026-09-21)
 
+## October 9 evening: structured-action scratch run submitted (CSCS)
+
+Scratch PPO on the structured action space (moves 1-5 cells, turns 1-6 steps,
+DO with a cabin heading) under the manual game's rules (1 m pull, +-30 degree
+cone, perpendicular precision edges, turn-keeping moves, native dump
+observation, no bucket-width gate), see
+[STRUCTURED_SCRATCH_20261009](research/STRUCTURED_SCRATCH_20261009.md).
+`train_structured.py` map mode: the 20,480-map bank, half precision lanes,
+campaign encoder, 4 GH200 x 512 lanes, no teacher. Episode time budget
+2 h + 2.15 x the map's dig-only modeled time; decision limit 0.75 per dig unit
+(at least 450). Seed 20261009.
+
+- Smoke **5014326** (normal, 4 GH200, 2 h): 2 updates, resume to 3, then a
+  3-update production-size probe. PENDING (Priority) at 17:40 CEST.
+- Production **5014327** (normal, 24 h, `afterok:5014326`): PENDING (Dependency).
+- Snapshot Terra `252e5e54`, baselines `898e01b`:
+  `/ritom/scratch/cscs/lterenzi/terra-training/snapshots/structured-scratch-s20261009/`.
+
 ## October 8 night: pull-cone scratch run submitted (CSCS)
 
 Branch `pull-cone-trap-dumpobs` (Terra `0eaaccb4`, baselines `e4f5682`), see
