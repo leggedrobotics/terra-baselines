@@ -61,6 +61,13 @@ finishes follows 1.58 h + 1.37 x dig-only time. The training budget,
 (0.75 per dig unit, at least 450) gives at least 1.6x. Only the trench
 finishes fit the game's 14,400 s; every foundation finish needs 6-11 h.
 
+Rerunning the five dump-limited starts with 60 instead of 12 checked cuts
+finishes the straight trench 13824 (seed 2: 2.69 h, 84 decisions), so 9/20
+starts now have a constructive finish. The road-side foundation 513 (both
+seeds) and the 17413 precision rectangle (seed 2) still stop without a legal
+dump: dumps must land on accepted cells 4.0-6.0 m from the base, a machine
+rule shared with the legacy campaign.
+
 A finish is a constructive proof; an oracle failure is not an impossibility
 proof. The greedy planner ignores modeled time, so its plans are not
 time-optimal.
