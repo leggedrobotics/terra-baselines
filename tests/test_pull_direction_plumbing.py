@@ -39,6 +39,9 @@ TREATMENT = {
     "pull_half_angle_rad": 0.5,
     "tracked_move_keeps_turn": True,
     "native_dump_observation": True,
+    "edge_pull_perpendicular_ok": True,
+    "pull_stroke_outer_extension_m": 0.5,
+    "pull_stroke_inner_extension_m": 1.0,
 }
 
 
@@ -121,7 +124,9 @@ class PullDirectionPlumbingTest(unittest.TestCase):
         }), TREATMENT)
 
     def test_old_positional_env_pickle_preserves_all_existing_field_positions(self):
-        legacy_fields = tuple(name for name in EnvConfig._fields if name not in PULL_DIRECTION_RULE_FIELDS)
+        # dig_working_strip_width_m is an ignored field appended after the pull rules.
+        legacy_fields = tuple(name for name in EnvConfig._fields
+                              if name not in PULL_DIRECTION_RULE_FIELDS and name != "dig_working_strip_width_m")
         self.assertEqual(EnvConfig._fields[:len(legacy_fields)], legacy_fields)
         original = EnvConfig()._replace(
             foundation_border_width_tiles=7, terminal_reward_mix=0.42,

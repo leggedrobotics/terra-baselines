@@ -2175,6 +2175,9 @@ class MixedAgentTrainConfig:
     pull_half_angle_rad: float | None = None
     tracked_move_keeps_turn: bool | None = None
     native_dump_observation: bool | None = None
+    edge_pull_perpendicular_ok: bool | None = None
+    pull_stroke_outer_extension_m: float | None = None
+    pull_stroke_inner_extension_m: float | None = None
     # Excavator dump reach in metres (Terra agent.dump_max_radius_m; 0 = the
     # dig reach). Overrides a resumed checkpoint's env config. None leaves the
     # checkpoint's or Terra's value.
@@ -6682,12 +6685,18 @@ if __name__ == "__main__":
         ("trench_pull_tolerance_rad", "Reserved legacy draft setting; unused by the radial cutting-space rule"),
         ("dig_pull_min_length_m", "Minimum connected radial excavation-space length in metres"),
         ("pull_half_angle_rad", "Pull directions within this angle of the cell-to-base line may supply the room; pi/6 = cabin sector"),
+        ("pull_stroke_outer_extension_m", "Pull stroke may extend this far beyond the outer dig reach"),
+        ("pull_stroke_inner_extension_m", "Pull stroke may extend this far inside the inner dig reach"),
     ):
         parser.add_argument(f"--{name}", type=float, default=None,
                             help=f"{description}; omitted preserves checkpoint/preset/runtime value.")
     parser.add_argument(
         "--tracked_move_keeps_turn", action=argparse.BooleanOptionalAction, default=None,
         help="Tracked moves stop where the chassis can still turn when the longest clear stop cannot.",
+    )
+    parser.add_argument(
+        "--edge_pull_perpendicular_ok", action=argparse.BooleanOptionalAction, default=None,
+        help="Precision edges also accept pulls along the edge normal.",
     )
     parser.add_argument(
         "--native_dump_observation", action=argparse.BooleanOptionalAction, default=None,

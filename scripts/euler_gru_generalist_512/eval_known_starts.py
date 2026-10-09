@@ -38,9 +38,10 @@ def main():
     parser.add_argument("--pull-direction-alignment", action=argparse.BooleanOptionalAction,
                         default=None, help="per-cell edge/trench pull alignment; default: the checkpoint's")
     for flag in ("--edge-band-width-m", "--edge-pull-tolerance-rad", "--trench-pull-tolerance-rad",
-                 "--dig-pull-min-length-m", "--pull-half-angle-rad"):
+                 "--dig-pull-min-length-m", "--pull-half-angle-rad",
+                 "--pull-stroke-outer-extension-m", "--pull-stroke-inner-extension-m"):
         parser.add_argument(flag, type=float, default=None)
-    for flag in ("--tracked-move-keeps-turn", "--native-dump-observation"):
+    for flag in ("--tracked-move-keeps-turn", "--native-dump-observation", "--edge-pull-perpendicular-ok"):
         parser.add_argument(flag, action=argparse.BooleanOptionalAction, default=None)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)

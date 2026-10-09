@@ -31,9 +31,15 @@ PULL_DIRECTION_RULE_DEFAULTS = {
     # Tracked moves keep a turn option; native per-heading dump observation.
     "tracked_move_keeps_turn": False,
     "native_dump_observation": False,
+    # Precision edges also accept pulls along the edge normal; the pull
+    # stroke may extend beyond the dig reach (cells still dug within it).
+    "edge_pull_perpendicular_ok": False,
+    "pull_stroke_outer_extension_m": 0.0,
+    "pull_stroke_inner_extension_m": 0.0,
 }
 PULL_DIRECTION_BOOL_FIELDS = (
     "pull_direction_alignment", "tracked_move_keeps_turn", "native_dump_observation",
+    "edge_pull_perpendicular_ok",
 )
 PULL_DIRECTION_RULE_FIELDS = {
     name: type(value) for name, value in PULL_DIRECTION_RULE_DEFAULTS.items()
