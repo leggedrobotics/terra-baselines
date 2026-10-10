@@ -14,9 +14,17 @@ on success 2 x (1 - modeled time / T_ref) + 1 x (1 - decisions / cap), with
 T_ref = 2.2 h + 3 x dig-only time under the simple time model (30 s per
 0.25 m^3 bucket, 278 s setup per dig, 0.5 m/s).
 
-- Smoke **5021368** (normal, 4 GH200, 2 h): 2 updates, resume to 3, then a
-  3-update production-size probe. RUNNING since October 10 11:29 CEST.
-- Production **5021369** (normal, 24 h, `afterok:5021368`): PENDING (Dependency).
+- Smoke **5021368 COMPLETED** (40 min): 2 updates and a resume to update 3 at
+  4 x 8 lanes; the 4 x 512-lane probe ran 3 updates (compile 6 min, then 16.2 s
+  per update = 4,057 decisions/s; 172 MB rolling checkpoint). Its wait fraction
+  rose 0.04% -> 0.9% -> 2.2% (loaded dead ends waiting to the cap).
+- Production **5021369 RUNNING** since October 10 12:10 CEST on nid005310, W&B
+  [x2gy6ryc](https://wandb.ai/aless-weber-eth/mixed-agents/runs/x2gy6ryc). At
+  update 23: 16-18 s per update, finite, explained variance 0.94, approx KL
+  ~0.004, DO fraction ~0.6, first episodes ended at update 13 (completion
+  6-10%). Wait fraction settled at ~5.5% of decisions: loaded dead ends, the
+  target of `terra/docs/ENVIRONMENT_FIXES_20261010.md` item 1a (not adopted by
+  this run). Allocation ends October 11 12:10 CEST.
 - Snapshot Terra `fddedf3e`, baselines `90caf23`:
   `/ritom/scratch/cscs/lterenzi/terra-training/snapshots/structured-s20261010/`;
   run `/ritom/scratch/cscs/lterenzi/terra-training/runs/structured-s20261010/`.
