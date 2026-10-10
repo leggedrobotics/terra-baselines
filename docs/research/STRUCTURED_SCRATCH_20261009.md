@@ -105,11 +105,12 @@ lanes) in the smoke job.
 
 ## Launch
 
-CSCS smoke 5014326 (2 updates, resume to 3, production-size probe) and
-production 5014327 (`afterok`, 24 h, W&B project `mixed-agents`, run name
-`structured_scratch_s20261009`). Snapshot Terra `252e5e54`, baselines
-`898e01b`; run directory
-`/ritom/scratch/cscs/lterenzi/terra-training/runs/structured-scratch-s20261009/`;
+CSCS smoke 5021368 (2 updates, resume to 3, production-size probe) and
+production 5021369 (`afterok`, 24 h, W&B project `mixed-agents`, run name
+`structured_scratch_s20261010`). Snapshot Terra `fddedf3e`, baselines
+`90caf23`; run directory
+`/ritom/scratch/cscs/lterenzi/terra-training/runs/structured-s20261010/`;
 template `inputs/structured_20261009/initial_states_game.pkl` (sha256
-`5f6a142e...`). Launch files:
-`.artifacts/terra_structured_scale_20261009/cscs/`.
+`5f6a142e...`). Launch files: `.artifacts/terra_structured_scale_20261009/cscs/`.
+The October 9 submission (5014326/5014327: time-limited episodes, per-step
+time cost) was cancelled before it started.
