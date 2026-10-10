@@ -252,6 +252,16 @@ def main():
     # and the episode's T_ref.
     clock_finish_s = np.zeros(args.envs, np.float64)
     clock_busy_s = np.zeros(args.envs, np.float64)
+    # T if every round lasted its slowest executed action (lockstep executor).
+    clock_lockstep_s = np.zeros(args.envs, np.float64)
+    # Stalls in the first episode: rounds since and longest run without a load
+    # change of any machine, last round with one, and a load still carried
+    # after the last non-terminal round (the terminal step may read the reset).
+    quiet_run = np.zeros(args.envs, np.int64)
+    longest_quiet = np.zeros(args.envs, np.int64)
+    last_material_round = np.zeros(args.envs, np.int64)
+    carried = np.zeros(args.envs, bool)
+    loaded_at_end = np.zeros(args.envs, bool)
     tile = float(np.ravel(np.asarray(env_cfg.tile_size))[0])
     steps = np.full(args.envs, horizon, np.int32)
     completion = np.zeros(args.envs, np.float32)
@@ -287,6 +297,10 @@ def main():
         setups += new_pose
         scooped_units += work_event * np.clip(load_after - load_before, 0, None)
         last_pose = np.where(work_event[..., None], pose, last_pose)
+        changed = work_event.any(axis=1)
+        quiet_run = np.where(counting, np.where(changed, 0, quiet_run + 1), quiet_run)
+        longest_quiet = np.maximum(longest_quiet, quiet_run)
+        last_material_round = np.where(counting & changed, t + 1, last_material_round)
         live = ~ended & ~done
         moved = np.asarray(moved)
         effective[live] += moved[live]
@@ -298,6 +312,9 @@ def main():
         components = timestep.info["reward_components"]
         clock_finish_s[new] = np.asarray(components["reward_v2_time_finish_s"])[new]
         clock_busy_s[new] = np.asarray(components["reward_v2_time_busy_s"])[new]
+        clock_lockstep_s[new] = np.asarray(components["reward_v2_time_lockstep_s"])[new]
+        loaded_at_end[new] = carried[new]
+        carried = np.where(counting & ~done, (load_after > 0).any(axis=1), carried)
         success[new] = np.asarray(timestep.info["task_done"])[new]
         steps[new] = t + 1
         completion[new] = np.asarray(final)[new]
@@ -326,6 +343,8 @@ def main():
             workspace_blocked.sum(0) / max(int(initial_rounds.sum()), 1)
         ).round(6).tolist(),
         "workspace_conflicts": int(workspace_conflicts.sum()),
+        # v2: setup per dug workspace, relift collect rates, dig-to-dump interval.
+        "clock_version": 2,
         # Fraction of each agent's actions that changed its own pose or load.
         "effective_action_fraction": (
             effective.sum(0) / max(int(acted.sum()), 1)
@@ -358,6 +377,10 @@ def main():
             # the first episode; T_ref is required units at the dig rate.
             "clock_finish_s": clock_finish_s.round(2).tolist(),
             "clock_busy_s": clock_busy_s.round(2).tolist(),
+            "clock_lockstep_s": clock_lockstep_s.round(2).tolist(),
+            "longest_no_material_rounds": longest_quiet.tolist(),
+            "last_material_round": last_material_round.tolist(),
+            "loaded_at_end": loaded_at_end.tolist(),
             "clock_reference_s": (required_units * tile ** 3 * time_dig_s_per_m3).round(2).tolist(),
         },
         "wall_seconds": time.time() - start,

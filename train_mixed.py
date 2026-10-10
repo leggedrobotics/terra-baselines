@@ -1953,6 +1953,9 @@ class MixedAgentTrainConfig:
     # seconds, both over the episode's T_ref.
     elapsed_time_cost: float = 0.0
     busy_time_cost: float = 0.0
+    # Reward-v2 charge per joint round in which no machine executes a timed
+    # action and no material changes (clock-independent deadlock breaker).
+    stall_cost: float = 0.0
     behavior_cost_ramp_updates: int = 0  # new ramp duration; saved ramps restore automatically
     executable_dig_observation: bool = False
     # Preserve Adam and absolute update while explicitly changing only the
@@ -6277,6 +6280,8 @@ if __name__ == "__main__":
         ("elapsed_time_cost", "Reward-v2 cost on the growth of the latest machine clock "
          "(dependency-aware elapsed time) over T_ref."),
         ("busy_time_cost", "Reward-v2 cost on executed action seconds over T_ref."),
+        ("stall_cost", "Reward-v2 charge per joint round with no timed action and no "
+         "material change."),
     ):
         parser.add_argument(f"--{name}", type=float, default=0.0, help=help_text)
     parser.add_argument(
@@ -6791,6 +6796,7 @@ if __name__ == "__main__":
         makespan_setup_s=args.makespan_setup_s,
         elapsed_time_cost=args.elapsed_time_cost,
         busy_time_cost=args.busy_time_cost,
+        stall_cost=args.stall_cost,
         base_travel_cost=args.base_travel_cost,
         base_turn_cost=args.base_turn_cost,
         behavior_cost_ramp_updates=args.behavior_cost_ramp_updates,
