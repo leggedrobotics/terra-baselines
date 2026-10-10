@@ -208,7 +208,8 @@ def map_start_sampler(static_cfg):
 
 
 def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_limit, timing, allow_wait,
-                        time_budget_factor=0., time_budget_offset_s=0., decisions_per_dig_unit=0.):
+                        time_budget_factor=0., time_budget_offset_s=0., decisions_per_dig_unit=0.,
+                        time_limit=True, success_time_bonus=0., success_decision_bonus=0.):
     """Per-lane observation, transition and episode limits, traced under ``static_rules``.
 
     Every lane runs the bank's static rules with its own precision-mode flag.
@@ -216,7 +217,11 @@ def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_lim
     ``time_budget_offset_s`` plus that multiple of its map's dig-only time (dig
     units * tile**3 * dig_s_per_m3), at least ``time_budget_s``; with
     ``decisions_per_dig_unit`` > 0 its decision limit is
-    that many decisions per dig unit, at least ``decision_limit``.
+    that many decisions per dig unit, at least ``decision_limit``. Without
+    ``time_limit`` episodes end only on success or the decision limit, and the
+    time budget only scales the time cost. A success additionally earns
+    ``success_time_bonus * (1 - time/budget)`` and
+    ``success_decision_bonus * (1 - decisions/limit)``, each clipped at 0.
     """
     unit_s = float(static_cfg.tile_size) ** 3 * timing.dig_s_per_m3
 
@@ -251,11 +256,15 @@ def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_lim
                                        timing=timing, time_budget_s=lane_budget)
         next_state = _cast_like(result.state._replace(env_cfg=state.env_cfg), state)
         elapsed = elapsed + result.duration_s
-        terminal = structured_termination(next_state, elapsed, time_budget_s=lane_budget,
-                                           decision_limit=lane_decisions)
+        terminal = structured_termination(
+            next_state, elapsed, time_budget_s=lane_budget if time_limit else jnp.float32(jnp.inf),
+            decision_limit=lane_decisions)
         completion = next_state._get_task_completion(
             next_state.world.action_map.map, next_state.world.target_map.map)["absolute_completion"]
-        return (next_state, result.reward + terminal.reward, result.duration_s,
+        bonus = terminal.task_done.astype(jnp.float32) * (
+            success_time_bonus * jnp.clip(1. - elapsed / lane_budget, 0., 1.)
+            + success_decision_bonus * jnp.clip(1. - next_state.env_steps / lane_decisions, 0., 1.))
+        return (next_state, result.reward + terminal.reward + bonus, result.duration_s,
                 elapsed, StructuredClock(result.info["time_visit_open"], result.info["time_moved"]),
                 terminal.done, terminal.task_done, completion, lane_budget,
                 jnp.stack((result.info["action_had_effect"], result.info["material_or_load_changed"])),
@@ -336,7 +345,10 @@ def make_rollout(model, model_config, observe, advance, sample, *, num_steps):
                 episode_budget_seconds=jnp.sum(jnp.where(done, budget, 0.)),
                 episode_decisions=jnp.sum(jnp.where(done, decisions, 0)),
                 episode_completion=jnp.sum(jnp.where(done, completion, 0.)),
+                episode_completion_precision=jnp.sum(jnp.where(done & precision, completion, 0.)),
                 action_types=jax.nn.one_hot(kind, 8, dtype=jnp.int32).sum(0),
+                action_types_precision=(jax.nn.one_hot(kind, 8, dtype=jnp.int32)
+                                        * precision[:, None]).sum(0),
                 do_effective=jnp.sum((kind == 6) & outcome[:, 1]),
                 move_cells=jnp.sum(jnp.where(kind < 2, action.amount, 0)),
                 turn_steps=jnp.sum(jnp.where((kind >= 2) & (kind < 4), action.amount, 0)),
@@ -471,6 +483,12 @@ def parse_args(argv=None):
                         help="Budget = offset + this multiple of the map's dig-only modeled time (0 = fixed budget)")
     parser.add_argument("--time-budget-offset-s", type=float, default=0.,
                         help="Constant part of a map-scaled budget (setups and travel)")
+    parser.add_argument("--time-limit", action=argparse.BooleanOptionalAction, default=True,
+                        help="End episodes at the time budget; without it the budget only scales the time cost")
+    parser.add_argument("--success-time-bonus", type=float, default=0.,
+                        help="On success add this x (1 - modeled time / budget), clipped at 0")
+    parser.add_argument("--success-decision-bonus", type=float, default=0.,
+                        help="On success add this x (1 - decisions / decision limit), clipped at 0")
     parser.add_argument("--decision-limit", type=int, default=450,
                         help="Episode decision limit; with --decisions-per-dig-unit the minimum limit")
     parser.add_argument("--decisions-per-dig-unit", type=float, default=0.,
@@ -516,7 +534,8 @@ def parse_args(argv=None):
         if not np.isfinite(getattr(args, name)) or getattr(args, name) <= 0:
             parser.error(f"{name} must be positive and finite")
     for name in ("vf_coef", "entropy_type", "entropy_move", "entropy_turn", "entropy_heading",
-                 "time_budget_factor", "time_budget_offset_s", "decisions_per_dig_unit"):
+                 "time_budget_factor", "time_budget_offset_s", "decisions_per_dig_unit",
+                 "success_time_bonus", "success_decision_bonus"):
         if not np.isfinite(getattr(args, name)) or getattr(args, name) < 0:
             parser.error(f"{name} must be nonnegative and finite")
     if args.maps_path is None:
@@ -555,7 +574,17 @@ def episode_log(stats):
     decisions = types.sum()
     moves, turns = types[0] + types[1], types[2] + types[3]
     ratio = lambda numerator, denominator: float(numerator / denominator) if denominator else None
+    by_lane = {}
+    for lane, lane_types, completion, count in (
+            ("precision", np.asarray(stats["action_types_precision"], np.float64),
+             stats["episode_completion_precision"], episodes_precision),
+            ("bulk", types - np.asarray(stats["action_types_precision"], np.float64),
+             stats["episode_completion"] - stats["episode_completion_precision"], episodes_bulk)):
+        by_lane[f"episode/{lane}_completion"] = ratio(completion, count)
+        by_lane[f"action/{lane}_do_fraction"] = ratio(lane_types[6], lane_types.sum())
+        by_lane[f"action/{lane}_move_fraction"] = ratio(lane_types[0] + lane_types[1], lane_types.sum())
     return {
+        **by_lane,
         "episode/count": episodes,
         "episode/bulk_count": episodes_bulk,
         "episode/precision_count": episodes_precision,
@@ -564,7 +593,7 @@ def episode_log(stats):
         "episode/bulk_success_rate": ratio(stats["success_bulk"], episodes_bulk),
         "episode/precision_success_rate": ratio(stats["success_precision"], episodes_precision),
         "episode/modeled_hours": ratio(stats["episode_seconds"] / 3600., episodes),
-        "episode/budget_hours": ratio(stats["episode_budget_seconds"] / 3600., episodes),
+        "episode/time_scale_hours": ratio(stats["episode_budget_seconds"] / 3600., episodes),
         "episode/decisions": ratio(stats["episode_decisions"], episodes),
         "episode/completion": ratio(stats["episode_completion"], episodes),
         "action/move_fraction": ratio(moves, decisions),
@@ -704,7 +733,9 @@ def main(argv=None):
     observe, advance = environment_kernels(static_cfg, model_config,
         time_budget_s=args.time_budget_s, decision_limit=args.decision_limit,
         timing=timing, allow_wait=args.allow_wait, time_budget_factor=args.time_budget_factor,
-        time_budget_offset_s=args.time_budget_offset_s, decisions_per_dig_unit=args.decisions_per_dig_unit)
+        time_budget_offset_s=args.time_budget_offset_s, decisions_per_dig_unit=args.decisions_per_dig_unit,
+        time_limit=args.time_limit, success_time_bonus=args.success_time_bonus,
+        success_decision_bonus=args.success_decision_bonus)
     rollout = make_rollout(model, model_config, observe, advance, sample, num_steps=args.num_steps)
     iteration = jax.pmap(make_iteration(model, model_config, observe, rollout, args),
                          axis_name=AXIS, donate_argnums=(0, 1))

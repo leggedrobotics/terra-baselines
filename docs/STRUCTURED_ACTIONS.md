@@ -65,7 +65,16 @@ digging alone takes 0.9 h for a median trench, 2.4 h for a median foundation
 and 7-9 h for every qualified precision slot. The time reward and remaining-time
 observation are relative to the episode's own budget. Likewise
 `--decisions-per-dig-unit R` sets the decision limit to R per dig unit, at
-least `--decision-limit`; the October 8 oracle needs about 0.5. The observation contains
+least `--decision-limit`; the October 8 oracle needs about 0.5.
+`--no-time-limit` ends episodes only on success or the decision limit; the time
+budget is then only a per-map time reference. `--success-time-bonus B` and
+`--success-decision-bonus C` add `B x (1 - time/reference) + C x (1 -
+decisions/limit)`, each clipped at 0, on success only; with `time_cost_total`
+0 in the timing JSON there is no per-step time cost, so time never makes
+progress worse than idling. `StructuredTimeConfig.setup_per_dig` charges the
+setup on every dig instead of once per visit. The CSCS launcher uses all of
+these (`scripts/structured/run.sh`, `scripts/structured/timing_simple.json`).
+The observation contains
 both remaining budgets because zero-duration actions still consume the guard. `StructuredClock` charges setup once per actual visit;
 movement away and back opens another visit. `--timing-json` accepts fields from
 `terra.structured_actions.StructuredTimeConfig`; timing estimates need physical

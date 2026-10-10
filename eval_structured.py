@@ -2,7 +2,7 @@
 
 Runs every start of a saved bank (greedy starts only when the bank records
 decoders) to termination under the checkpoint's own rules and episode limits
-(time budget, decision limit) and reports success, completion, modeled hours
+(time budget or time-cost scale, decision limit) and reports success, completion, modeled hours
 and decisions per start. Directly comparable with the oracle panel.
 """
 from __future__ import annotations
@@ -57,7 +57,8 @@ def main(argv=None):
         decision_limit=training["decision_limit"], timing=timing, allow_wait=training["allow_wait"],
         time_budget_factor=training.get("time_budget_factor", 0.),
         time_budget_offset_s=training.get("time_budget_offset_s", 0.),
-        decisions_per_dig_unit=training.get("decisions_per_dig_unit", 0.))
+        decisions_per_dig_unit=training.get("decisions_per_dig_unit", 0.),
+        time_limit=training.get("time_limit", True))  # rewards are not reported
 
     @jax.jit
     def step(runner, finished):
@@ -94,7 +95,7 @@ def main(argv=None):
                     reset_seed=meta.get("reset_seed"), condition=meta.get("condition"),
                     success=bool(success[lane]), completion=float(completion[lane]),
                     modeled_hours=float(runner.elapsed_s[lane]) / 3600,
-                    budget_hours=float(budget[lane]) / 3600, decisions=int(runner.state.env_steps[lane]),
+                    time_scale_hours=float(budget[lane]) / 3600, decisions=int(runner.state.env_steps[lane]),
                     decision_limit=int(limit[lane]))
     summary = dict(checkpoint=str(args.checkpoint), update=int(checkpoint["next_update"]),
                    starts=lanes, successes=sum(r["success"] for r in results),
@@ -105,7 +106,7 @@ def main(argv=None):
     print(json.dumps(summary))
     for r in results:
         print(f"{r['source_slot']} {r['mode']} {r['reset_seed']}: success={r['success']} "
-              f"completion={r['completion']:.3f} hours={r['modeled_hours']:.2f}/{r['budget_hours']:.2f} "
+              f"completion={r['completion']:.3f} hours={r['modeled_hours']:.2f} (scale {r['time_scale_hours']:.2f}) "
               f"decisions={r['decisions']}/{r['decision_limit']}")
 
 

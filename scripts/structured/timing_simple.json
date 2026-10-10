@@ -1,0 +1,10 @@
+{
+ "dig_s_per_m3": 120.0,
+ "setup_s": 278.0,
+ "relocation_s": 0.0,
+ "nav_speed_mps": 0.5,
+ "base_turn_s_per_rad": 5.0,
+ "cabin_turn_s_per_rad": 3.5714285714285716,
+ "time_cost_total": 0.0,
+ "setup_per_dig": true
+}

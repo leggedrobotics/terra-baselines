@@ -6,15 +6,17 @@
 # the qualified slots. Campaign encoder and observations; no teacher (no
 # mapping from the eight-way policy to heading-conditioned DO).
 #
-# Each episode's time budget is 2 h plus 2.15 times its map's dig-only modeled
-# time: no fixed budget fits both trenches and the 7-9 h precision slots. The
-# October 8 oracle under these rules takes about 1.35 h + 1.43 x dig-only time,
-# so every oracle finish has 1.33-1.5x slack. The decision limit is 0.75 per
-# dig unit, at least 450 (the oracle needs ~0.5 on foundations; small trenches
-# fit the floor). GAE lambda applies per 300 modeled seconds, about
-# 0.75 across a typical workspace dig and ~1 across moves and turns (the
-# legacy campaign's trace per dig cycle); gamma is 1, so the objective does
-# not depend on it.
+# Episodes end on success or at a per-map macro cap (300 + 1.2 per dig cell:
+# trenches 300, precision slabs ~530-960, about 2x the October 8 oracle);
+# modeled time never ends an episode. Reward: material progress (about 1.15
+# over a whole map), +6 on success, -1 at the cap, and on success only
+# 2 x (1 - modeled time / T_ref) + 1 x (1 - decisions / cap). No per-step time
+# cost, so time can never make progress worse than idling. Modeled time
+# (timing_simple.json): 30 s per 0.25 m^3 bucket (120 s/m^3), 278 s setup per
+# dig (the interruption-filtered field fit; the workspace penalty), 0.5 m/s
+# driving, 5 s/rad chassis turns. T_ref = 2.2 h + 3 x the map's dig-only time
+# is twice the oracle fit, so an oracle-pace finish earns about half the time
+# bonus. GAE lambda applies per 300 modeled seconds; gamma is 1.
 #
 # Phases: smoke (tiny lanes, 2 updates + resume to 3, W&B off), probe
 # (production lanes, 3 updates, W&B off: throughput) and production.
@@ -36,7 +38,7 @@ mkdir -p "$WANDB_DIR" "$JAX_COMPILATION_CACHE_DIR"
 cd "$TERRA_RUN_DIR"
 NUM_DEVICES="${NUM_DEVICES:-4}"
 python -u "$BASELINES_ROOT/cluster/cscs/check_jax_runtime.py" --min-devices "$NUM_DEVICES"
-NAME="structured_scratch_s20261009"
+NAME="structured_scratch_s20261010"
 ARGS=(
     --maps-path train_v3_generalist_512
     --env-template "$TERRA_STRUCTURED_INPUTS/initial_states_game.pkl"
@@ -48,8 +50,10 @@ ARGS=(
     --epochs 2 --minibatches 32 --learning-rate 3e-4 --clip-eps 0.2 --vf-coef 2 --no-value-clip
     --entropy-type 0.02 --entropy-move 0.02 --entropy-turn 0.02 --entropy-heading 0.02
     --gamma 1.0 --gae-lambda 0.95 --discount-reference-s 300
-    --time-budget-s 3600 --time-budget-factor 2.15 --time-budget-offset-s 7200
-    --decision-limit 450 --decisions-per-dig-unit 0.75
+    --no-time-limit --decision-limit 300 --decisions-per-dig-unit 1.2
+    --timing-json "$BASELINES_ROOT/scripts/structured/timing_simple.json"
+    --time-budget-s 3600 --time-budget-factor 3.0 --time-budget-offset-s 7960
+    --success-time-bonus 2 --success-decision-bonus 1
     --finite-check-interval 100 --checkpoint-interval 100 --keep-checkpoint-every 1000
 )
 case "$PHASE" in

@@ -21,26 +21,42 @@ turn-keeping moves, native dump observation, no bucket-width gate?
   episodes on the 95 qualified precision slots; the others sample the bank.
 - Policy: campaign encoder and observations (`scripts/structured/campaign_model.json`,
   2.4 M parameters) with type-conditioned argument heads. Scratch; no teacher.
-- Reward `material_time_v1` (potential difference, time cost
-  -3.6 x duration / budget, +6 success, -1 budget exhaustion).
-- Per-map limits: time budget = F x the map's dig-only modeled time (at least
-  1 h); decision limit = 0.75 per dig unit (at least 450).
+- Episode cap: per map, 300 + 1.2 macro decisions per dig cell (trenches 300,
+  precision slabs 528-960 for their 440-800 cells), about 2x the oracle.
+  Episodes end on success or at the cap; modeled time never ends an episode.
+- Reward: material progress (about 1.15 over a whole map: completion 1 plus a
+  small haul-distance term), +6 on success, -1 at the cap, and on success only
+  2 x (1 - modeled time / T_ref) + 1 x (1 - decisions / cap). No per-step time
+  cost.
+- Modeled time (`scripts/structured/timing_simple.json`): 30 s per 0.25 m^3
+  bucket (120 s/m^3), 278 s setup per dig, 0.5 m/s driving, 5 s/rad chassis
+  turns, 0.28 rad/s cabin. T_ref = 2.2 h + 3 x the map's dig-only time.
 - PPO: 4 GH200 x 512 lanes x 32 decisions per update, 2 epochs x 32
   whole-trajectory minibatches, lr 3e-4, clip 0.2, vf 2, no value clip,
   entropy 0.02 per head, gamma 1, GAE lambda 0.95 per 300 modeled seconds.
   Seed 20261009.
 
-## Why per-map limits
+## Why a macro cap and a success-only time bonus
 
-Under the structured time model (226 s/m^3 loading, 415 s per workspace
-visit), digging alone takes 42 s per dig unit. Across the bank, dig-only time
-is 0.9 h for a median trench, 2.4 h for a median foundation (13% above 4 h)
-and 7-9 h for every precision slot. With the game's fixed 14,400 s budget,
-every precision episode and many foundations would be unwinnable.
+Under the field constants (226 s/m^3 loading, 415 s per workspace visit),
+digging alone takes 42 s per dig unit: 0.9 h for a median trench, 2.4 h for a
+median foundation and 5.2-9.4 h for the precision slots. A fixed time budget
+such as the game's 14,400 s would make every precision episode and many
+foundations unwinnable, so episodes are capped by macro decisions.
+
+Those constants come from one fit over 12 field workspaces (R^2 0.26), and
+interruptions inside sessions inflated it; without them it gives 278 s +
+272 s/m^3. Time therefore enters only through a bounded bonus on success:
+scaling errors cancel in t/T_ref, and an unfinished episode pays the same
+whatever its pace. A per-step time cost was rejected: material progress totals
+only about 1.15 per map, so any cost large enough to matter made unfinished
+progress score worse than idling until the cap. Setup is charged per dig (the
+workspace penalty); charged per visit, one stop could dig all its sectors for
+a single setup.
 
 The October 8 greedy oracle, rerun under the game's rules, gives the scale of a
 competent plan (`.artifacts/terra_structured_scale_20261009/oracle_panel.json`;
-modeled time from a native replay of its action tape):
+modeled time from a native replay of its action tape, field constants):
 
 | Start (map, mode, seed) | Dig units | Finished | Modeled h | Dig-only h | Visits | Decisions |
 | --- | ---: | :---: | ---: | ---: | ---: | ---: |
@@ -56,10 +72,15 @@ The greedy oracle finishes 8 of the 20 unique panel starts (4/12 foundation,
 4/8 trench); replay of every tape matches the planner exactly. The other 12
 stop with stranded cells after an unlucky cut order (`no_reachable_cut`) or
 because none of the 12 best-ranked cuts had a legal dump. Modeled time of the
-finishes follows 1.58 h + 1.37 x dig-only time. The training budget,
-2 h + 2.15 x dig-only, gives every finish 1.32-1.56x slack; the decision limit
-(0.75 per dig unit, at least 450) gives at least 1.6x. Only the trench
-finishes fit the game's 14,400 s; every foundation finish needs 6-11 h.
+finishes follows 1.58 h + 1.37 x dig-only time. The largest finish takes 282
+decisions. Only the trench finishes fit the game's 14,400 s; every foundation
+finish needs 6-11 h.
+
+Retimed with the training model (`retime_oracle.py`, `retime_simple_model.json`),
+the nine finishes take 5.4-5.5 h (17411), 6.55 h (17413), 3.85 h (ring) and
+1.7-2.5 h (trenches, 60-70% of it setups), following 1.11 h + 1.50 x dig-only
+time. T_ref is twice that line: every oracle finish uses 44-53% of its T_ref
+and would earn about half of the time bonus.
 
 Rerunning the five dump-limited starts with 60 instead of 12 checked cuts
 finishes the straight trench 13824 (seed 2: 2.69 h, 84 decisions), so 9/20
