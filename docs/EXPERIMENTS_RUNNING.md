@@ -9,7 +9,7 @@ observation, no bucket-width gate), see
 [STRUCTURED_SCRATCH_20261009](research/STRUCTURED_SCRATCH_20261009.md).
 `train_structured.py` map mode: the 20,480-map bank, half precision lanes,
 campaign encoder, 4 GH200 x 512 lanes, no teacher, seed 20261009. Episodes end
-on success or at 300 + 1.2 macro decisions per dig cell; no per-step time cost;
+on success or at `max(300, ceil(1.2 * dig_units))` macro decisions; no per-step time cost;
 on success 2 x (1 - modeled time / T_ref) + 1 x (1 - decisions / cap), with
 T_ref = 2.2 h + 3 x dig-only time under the simple time model (30 s per
 0.25 m^3 bucket, 278 s setup per dig, 0.5 m/s).
@@ -17,14 +17,29 @@ T_ref = 2.2 h + 3 x dig-only time under the simple time model (30 s per
 - Smoke **5021368 COMPLETED** (40 min): 2 updates and a resume to update 3 at
   4 x 8 lanes; the 4 x 512-lane probe ran 3 updates (compile 6 min, then 16.2 s
   per update = 4,057 decisions/s; 172 MB rolling checkpoint). Its wait fraction
-  rose 0.04% -> 0.9% -> 2.2% (loaded dead ends waiting to the cap).
+  rose 0.04% -> 0.9% -> 2.2%; this snapshot does not separately instrument
+  loaded dead ends, so the WAIT fraction alone cannot establish their cause.
 - Production **5021369 RUNNING** since October 10 12:10 CEST on nid005310, W&B
   [x2gy6ryc](https://wandb.ai/aless-weber-eth/mixed-agents/runs/x2gy6ryc). At
   update 23: 16-18 s per update, finite, explained variance 0.94, approx KL
   ~0.004, DO fraction ~0.6, first episodes ended at update 13 (completion
-  6-10%). Wait fraction settled at ~5.5% of decisions: loaded dead ends, the
-  target of `terra/docs/ENVIRONMENT_FIXES_20261010.md` item 1a (not adopted by
+  6-10%). Wait fraction was ~5.5% of decisions; loaded-dead-end detection is
+  tracked by `terra/docs/ENVIRONMENT_FIXES_20261010.md` item 1a (not adopted by
   this run). Allocation ends October 11 12:10 CEST.
+  October 11 09:04 CEST: update 4,372, 17.5 s per update, all finite. Online
+  bulk success per 500-update window 2.0, 3.0, 4.1, 6.7, 16.8, 22.9, 28.1,
+  32.5, 34.8%; precision 0/all; waits 0.3-0.7%; mean episode 452 -> 390
+  decisions. Parameter checkpoints every 1,000 updates.
+- Continuation **5027493** (24 h, `afterany:5021369`): resumes from the rolling
+  `production/checkpoint.pkl` with the same snapshot when the first allocation
+  ends; logs a new W&B run with the same name.
+- Read-only verification October 10 **10:42 UTC**: smoke/resume completed
+  update 3; production was at update 70 on nid005310, 17.51 s/update
+  (3,743 decisions/s). The latest window ended 138 episodes, with zero
+  successes in either mode and 8.64% WAIT. This is early training evidence,
+  not a finishability verdict. Local correctness/manual-game fixes have not
+  been copied into this snapshot. Next quality/checkpoint review recommended
+  around 11:45 UTC; no new watcher was scheduled by the environment audit.
 - Snapshot Terra `fddedf3e`, baselines `90caf23`:
   `/ritom/scratch/cscs/lterenzi/terra-training/snapshots/structured-s20261010/`;
   run `/ritom/scratch/cscs/lterenzi/terra-training/runs/structured-s20261010/`.
