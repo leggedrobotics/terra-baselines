@@ -92,7 +92,8 @@ def build(checkpoint_path, bank, dataset_size, agents, envs, render_grid=None, t
     return env, env_cfg, env_params, config, state
 
 
-def policy_step(env, config, agents, envs, greedy, idle_teammates=False, reset=True):
+def policy_step(env, config, agents, envs, greedy, idle_teammates=False, reset=True,
+                sample_after_stall=0):
     """Jitted (state, timestep, prev, rng) -> (timestep, prev, rng, moved, completion, action)."""
     import jax
     import jax.numpy as jnp
@@ -113,6 +114,16 @@ def policy_step(env, config, agents, envs, greedy, idle_teammates=False, reset=T
             action, order, _, _, _ = select_joint_action(
                 state, timestep.observation, prev, act_key, config, greedy=greedy
             )
+            if greedy and sample_after_stall > 0:
+                # Greedy decoding, but sample in environments whose team has
+                # moved no material for sample_after_stall rounds.
+                sampled, sampled_order, _, _, _ = select_joint_action(
+                    state, timestep.observation, prev, act_key, config, greedy=False
+                )
+                stalled = jnp.asarray(timestep.state.stall_age_steps) >= sample_after_stall
+                action = jnp.where(stalled[:, None], sampled, action)
+                order = jnp.where(stalled.reshape(stalled.shape + (1,) * (order.ndim - 1)),
+                                  sampled_order, order)
             if idle_teammates:
                 action = action.at[:, 1:].set(7)
             action = jnp.where(frozen[:, None], 7, action)
@@ -158,6 +169,8 @@ def main():
     parser.add_argument("--envs", type=int, default=256)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--greedy", action="store_true")
+    parser.add_argument("--sample-after-stall", type=int, default=0,
+                        help="with --greedy: sample where no material moved for this many rounds")
     parser.add_argument("--idle-teammates", action="store_true",
                         help="diagnostic: agents other than slot 0 always do nothing")
     parser.add_argument("--workspace-guard-enabled", action=argparse.BooleanOptionalAction,
@@ -207,7 +220,8 @@ def main():
         np.asarray(timestep.state.world.action_map.map), 0
     ).reshape(args.envs, -1).sum(axis=1, dtype=np.int64)
 
-    step = policy_step(env, config, agents, args.envs, args.greedy, args.idle_teammates)
+    step = policy_step(env, config, agents, args.envs, args.greedy, args.idle_teammates,
+                       sample_after_stall=args.sample_after_stall)
     frozen = jnp.zeros(args.envs, bool)
 
     # Executed plan per machine: the base poses of work events (own load
@@ -328,6 +342,7 @@ def main():
         "envs": args.envs,
         "seed": args.seed,
         "greedy": bool(args.greedy),
+        "sample_after_stall": int(args.sample_after_stall),
         "horizon": horizon,
         "success_rate": float(success.mean()),
         "mean_steps_success": float(steps[success].mean()) if success.any() else None,
