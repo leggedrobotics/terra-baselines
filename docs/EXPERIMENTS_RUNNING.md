@@ -30,9 +30,12 @@ T_ref = 2.2 h + 3 x dig-only time under the simple time model (30 s per
   bulk success per 500-update window 2.0, 3.0, 4.1, 6.7, 16.8, 22.9, 28.1,
   32.5, 34.8%; precision 0/all; waits 0.3-0.7%; mean episode 452 -> 390
   decisions. Parameter checkpoints every 1,000 updates.
-- Continuation **5027493** (24 h, `afterany:5021369`): resumes from the rolling
-  `production/checkpoint.pkl` with the same snapshot when the first allocation
-  ends; logs a new W&B run with the same name.
+- First segment 5021369 reached its time limit at update 5,017 (W&B marks the
+  killed process "crashed").
+- Continuation **5027493 RUNNING** (24 h, `afterany:5021369`) since October 11
+  12:18 CEST, resumed from the rolling `production/checkpoint.pkl` with the same
+  snapshot; W&B [preec6rd](https://wandb.ai/aless-weber-eth/mixed-agents/runs/preec6rd),
+  update 5,439 at 14:30 CEST.
 - Read-only verification October 10 **10:42 UTC**: smoke/resume completed
   update 3; production was at update 70 on nid005310, 17.51 s/update
   (3,743 decisions/s). The latest window ended 138 episodes, with zero
