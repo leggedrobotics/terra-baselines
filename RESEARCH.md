@@ -20,6 +20,10 @@ evaluation, inference, checkpoints, and cluster execution.
   Separate dig/unload decisions; no fused work or teacher mapping. This is a
   diagnostic training path, not the full-bank production trainer or a qualified
   policy. The legacy `train_mixed.py` action contract is unchanged.
+  October 12 adds precision safety, conservative unloaded-trap termination,
+  edge-weighted excavation, per-mode advantages and corrected local observations.
+  Local GPU update/resume and saved-checkpoint evaluation pass; full precision
+  finishability and learned policy quality remain unqualified.
 
 - [Pull cone, turn-keeping moves, native dump observation](docs/research/PULL_CONE_20261008.md): intended +-30 degree pull rule plus trap and dump-observation fixes (opt-in, preset `gru_generalist_512_pull_cone`); a native oracle finishes 5/7 panel maps (3 within 450 actions), against 2/7 under the radial rule; one-update GPU smoke passes. Not yet trained.
 

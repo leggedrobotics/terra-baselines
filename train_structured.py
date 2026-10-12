@@ -36,7 +36,7 @@ from terra.map import GridWorld
 from terra.state import static_rules
 from terra.structured_actions import (
     StructuredClock, StructuredTimeConfig,
-    structured_action_masks, structured_loaded_dead_end, structured_transition,
+    structured_action_masks, structured_loaded_dead_end, structured_transition, structured_progress,
 )
 from terra.structured_episode import (
     StructuredEpisodeConfig, structured_episode_limits, structured_episode_termination,
@@ -213,7 +213,8 @@ def map_start_sampler(static_cfg):
 def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_limit, timing, allow_wait,
                         time_budget_factor=0., time_budget_offset_s=0., decisions_per_dig_unit=0.,
                         time_limit=True, success_time_bonus=0., success_decision_bonus=0.,
-                        terminate_loaded_dead_ends=True):
+                        terminate_loaded_dead_ends=True, terminate_unloaded_dead_ends=False,
+                        precision_edge_weight=-1.):
     """Per-lane observation, transition and episode limits, traced under ``static_rules``.
 
     Every lane runs the bank's static rules with its own precision-mode flag.
@@ -222,7 +223,7 @@ def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_lim
     units * tile**3 * dig_s_per_m3), at least ``time_budget_s``; with
     ``decisions_per_dig_unit`` > 0 its decision limit is
     that many decisions per dig unit, at least ``decision_limit``. Without
-    ``time_limit`` episodes end on success, the decision limit, or a loaded
+    ``time_limit`` episodes end on success, the decision limit, or a certified
     dead end when enabled; the time budget only scales the time cost. A success additionally earns
     ``success_time_bonus * (1 - time/budget)`` and
     ``success_decision_bonus * (1 - decisions/limit)``, each clipped at 0.
@@ -232,7 +233,9 @@ def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_lim
         time_budget_offset_s=time_budget_offset_s, decision_limit=decision_limit,
         decisions_per_dig_unit=decisions_per_dig_unit, time_limit=time_limit,
         success_time_bonus=success_time_bonus, success_decision_bonus=success_decision_bonus,
-        terminate_loaded_dead_ends=terminate_loaded_dead_ends)
+        terminate_loaded_dead_ends=terminate_loaded_dead_ends,
+        terminate_unloaded_dead_ends=terminate_unloaded_dead_ends,
+        precision_edge_weight=precision_edge_weight)
 
     def limits(state):
         return structured_episode_limits(native(state), timing=timing, config=episode_config)
@@ -247,6 +250,7 @@ def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_lim
             state,
             executable_dig_observation=bool(model_config.get("executable_dig_observation", False)),
             native_dump_observation=bool(model_config.get("native_dump_observation", False)),
+            precision_observation_v2=bool(model_config.get("precision_observation_v2", False)),
         )
         observation = TerraEnv._state_to_obs_dict(state)
         if model_config.get("movement_feasibility_observation", False):
@@ -255,17 +259,26 @@ def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_lim
         # Reuse the exact full-load unload checks already needed by the policy.
         masks["loaded_dead_end"] = (structured_loaded_dead_end(state, masks["do_mask"])
                                     if terminate_loaded_dead_ends else jnp.bool_(False))
-        return observation, policy_masks(masks, allow_wait=allow_wait), limits(state)
+        masks["unloaded_dead_end"] = (
+            (~masks["action_mask"][:4].any() & state._unloaded_dead_end())
+            if terminate_unloaded_dead_ends else jnp.bool_(False))
+        masks = policy_masks(masks, allow_wait=allow_wait)
+        # A certified dead end takes one zero-duration WAIT, preserving the
+        # existing loaded-dead-end rollout/reset boundary and failure penalty.
+        dead_end = masks["loaded_dead_end"] | masks["unloaded_dead_end"]
+        masks["action_mask"] = jnp.where(dead_end, jnp.arange(8) == 7, masks["action_mask"])
+        return observation, masks, limits(state)
 
-    def advance(state, action, clock, elapsed, loaded_dead_end=False):
+    def advance(state, action, clock, elapsed, loaded_dead_end=False, unloaded_dead_end=False):
         lane_budget, _ = limits(state)
         result = structured_transition(native(state), action, clock=clock,
-                                       timing=timing, time_budget_s=lane_budget)
+                                       timing=timing, time_budget_s=lane_budget,
+                                       precision_edge_weight=precision_edge_weight)
         next_state = _cast_like(result.state._replace(env_cfg=state.env_cfg), state)
         elapsed = elapsed + result.duration_s
         terminal = structured_episode_termination(
             native(next_state), elapsed, timing=timing, config=episode_config,
-            dead_end=loaded_dead_end)
+            dead_end=loaded_dead_end, unloaded_dead_end=unloaded_dead_end)
         completion = next_state._get_task_completion(
             next_state.world.action_map.map, next_state.world.target_map.map)["absolute_completion"]
         return (next_state, result.reward + terminal.reward, result.duration_s,
@@ -285,6 +298,7 @@ def policy_observation(raw, runner, time_budget_s, decision_limit):
     decision_remaining = jnp.clip(1. - runner.state.env_steps / decision_limit, 0., 1.)
     return {
         **raw, "remaining_time": remaining,
+        "precision_mode": runner.state.env_cfg.enforce_foundation_border_alignment.astype(bool),
         "previous_action_outcome": runner.previous_outcome,
         "structured_context": jnp.concatenate((
             remaining[:, None], decision_remaining[:, None],
@@ -319,10 +333,19 @@ def make_rollout(model, model_config, observe, advance, sample, *, num_steps):
             action, log_prob = sample_action(logits, masks, act_key)
             (state, reward, duration, elapsed, clock, done, task_done, completion, budget,
              outcome, integrity) = jax.vmap(advance)(runner.state, action, runner.clock, runner.elapsed_s,
-                                                    masks["loaded_dead_end"])
+                                                    masks["loaded_dead_end"], masks["unloaded_dead_end"])
             loaded_dead_end = masks["loaded_dead_end"] & done & ~task_done
+            unloaded_dead_end = masks["unloaded_dead_end"] & done & ~task_done
             precision = runner.state.env_cfg.enforce_foundation_border_alignment.astype(bool)
             decisions = state.env_steps
+            progress = jax.vmap(structured_progress)(state)
+            load_before = jax.vmap(lambda s: s._get_current_agent_state().loaded[0])(runner.state)
+            load_after = jax.vmap(lambda s: s._get_current_agent_state().loaded[0])(state)
+            unchanged_holes = jnp.all(
+                (runner.state.world.action_map.map < 0) == (state.world.action_map.map < 0),
+                axis=tuple(range(1, state.world.action_map.map.ndim)))
+            relift = (action.action == 6) & (load_before == 0) & (load_after > 0) & unchanged_holes
+            immobile = (load_before == 0) & ~masks["action_mask"][:, :4].any(-1)
             keys = jax.random.split(reset_key, done.shape[0])
             fresh = jax.lax.cond(jnp.any(done), lambda: jax.vmap(partial(sample, data))(keys, state),
                                  lambda: state)
@@ -349,6 +372,8 @@ def make_rollout(model, model_config, observe, advance, sample, *, num_steps):
                 success_precision=jnp.sum(task_done & precision),
                 loaded_dead_ends_bulk=jnp.sum(loaded_dead_end & ~precision),
                 loaded_dead_ends_precision=jnp.sum(loaded_dead_end & precision),
+                unloaded_dead_ends_bulk=jnp.sum(unloaded_dead_end & ~precision),
+                unloaded_dead_ends_precision=jnp.sum(unloaded_dead_end & precision),
                 episode_seconds=jnp.sum(jnp.where(done, elapsed, 0.)),
                 episode_budget_seconds=jnp.sum(jnp.where(done, budget, 0.)),
                 episode_decisions=jnp.sum(jnp.where(done, decisions, 0)),
@@ -363,6 +388,13 @@ def make_rollout(model, model_config, observe, advance, sample, *, num_steps):
                 modeled_seconds=jnp.sum(duration), reward=jnp.sum(reward),
                 integrity=integrity.max(0),
             )
+            for name, mode in (("bulk", ~precision), ("precision", precision)):
+                for part, value in progress.items():
+                    stats[f"dug_{part}_{name}"] = jnp.sum(jnp.where(done & mode, value, 0.))
+                stats[f"loaded_at_end_{name}"] = jnp.sum(done & mode & (load_after > 0))
+                stats[f"relifts_{name}"] = jnp.sum(relift & mode)
+                stats[f"immobile_steps_{name}"] = jnp.sum(immobile & mode)
+                stats[f"empty_steps_{name}"] = jnp.sum((load_before == 0) & mode)
             return next_runner, (transition, stats)
 
         runner, (transitions, stats) = jax.lax.scan(step, runner, None, length=num_steps)
@@ -402,9 +434,29 @@ def make_iteration(model, model_config, observe, rollout, args):
                               initial_hidden=initial_hidden[rows])
             return jax.lax.scan(minibatch, train_state, order)
 
-        train_state, metrics = jax.lax.scan(epoch, train_state, jax.random.split(epoch_key, args.epochs))
+        train_state, minibatch_metrics = jax.lax.scan(epoch, train_state, jax.random.split(epoch_key, args.epochs))
         metrics = {key: value.all() if key == "grads_finite" else value.mean()
-                   for key, value in metrics.items()}
+                   for key, value in minibatch_metrics.items()}
+        # Mode occupancy varies between minibatches; absent groups must not
+        # dilute diagnostics. Pool moments by their actual global sample counts.
+        for mode in ("bulk", "precision"):
+            prefix = f"advantage_{mode}_"
+            if prefix + "count" not in minibatch_metrics:
+                continue
+            counts = minibatch_metrics[prefix + "count"]
+            denominator = jnp.maximum(counts.sum(), 1.)
+            weighted = lambda values: (counts * values).sum() / denominator
+            metrics[prefix + "count"] = counts.sum() / args.epochs
+            for kind in ("raw", "normalized"):
+                means = minibatch_metrics[prefix + kind + "_mean"]
+                stds = minibatch_metrics[prefix + kind + "_std"]
+                mean = weighted(means)
+                metrics[prefix + kind + "_mean"] = mean
+                metrics[prefix + kind + "_std"] = jnp.sqrt(jnp.maximum(
+                    weighted(stds ** 2 + means ** 2) - mean ** 2, 0.))
+                metrics[prefix + kind + "_abs_mean"] = weighted(
+                    minibatch_metrics[prefix + kind + "_abs_mean"])
+            metrics[f"clip_fraction_{mode}"] = weighted(minibatch_metrics[f"clip_fraction_{mode}"])
         residual = targets - transitions.value
         metrics["explained_variance"] = 1. - (jax.lax.pmean(jnp.var(residual), AXIS)
                                               / (jax.lax.pmean(jnp.var(targets), AXIS) + 1e-8))
@@ -515,6 +567,15 @@ def parse_args(argv=None):
     parser.add_argument("--allow-wait", action="store_true")
     parser.add_argument("--terminate-loaded-dead-ends", action=argparse.BooleanOptionalAction, default=True,
                         help="Fail loaded states with no native full unload after one fallback wait")
+    parser.add_argument("--terminate-unloaded-dead-ends", action=argparse.BooleanOptionalAction, default=True,
+                        help="End certified immutable-blocker traps, retaining possible soil-recovery states")
+    parser.add_argument("--precision-safety", action=argparse.BooleanOptionalAction, default=True,
+                        help="Protect inner reach during soil settling and chassis clearance during fresh digging")
+    parser.add_argument("--precision-observation-v2", action=argparse.BooleanOptionalAction, default=True,
+                        help="Current executable edge signals, floating edge errors and chassis-frame headings")
+    parser.add_argument("--precision-edge-weight", type=float, default=0.5,
+                        help="Edge share of excavation potential on precision maps; -1 retains volume weighting")
+    parser.add_argument("--advantage-normalization", choices=("global", "per_mode"), default="per_mode")
     parser.add_argument("--timing-json", type=Path, help="JSON overrides for StructuredTimeConfig (modeled seconds)")
     parser.add_argument("--model-config", type=Path, help="JSON architecture/observation options; required for a different scratch trunk")
     parser.add_argument("--warm-start-from", type=Path, help="Reuse compatible legacy backbone/GRU; fresh critic, args and optimizer")
@@ -538,6 +599,8 @@ def parse_args(argv=None):
             parser.error(f"{name} must be >=1")
     if args.num_envs % args.minibatches:
         parser.error("num-envs must divide evenly into whole-trajectory minibatches")
+    if args.precision_edge_weight != -1 and not 0 <= args.precision_edge_weight <= 1:
+        parser.error("precision-edge-weight must be -1 or in [0,1]")
     if not (0 < args.gamma <= 1 and 0 < args.gae_lambda <= 1):
         parser.error("gamma and gae-lambda must be in (0,1]")
     for name in ("time_budget_s", "discount_reference_s", "learning_rate", "clip_eps"):
@@ -583,6 +646,11 @@ def validate_resume_training(saved, training):
     if saved.get("terminate_loaded_dead_ends", False) != training["terminate_loaded_dead_ends"]:
         raise ValueError("native resume protocol mismatch: terminate_loaded_dead_ends; "
                          "old checkpoints require --no-terminate-loaded-dead-ends")
+    for key, legacy in dict(terminate_unloaded_dead_ends=False, precision_safety=False,
+                            precision_observation_v2=False, precision_edge_weight=-1.,
+                            advantage_normalization="global").items():
+        if saved.get(key, legacy) != training.get(key, legacy):
+            raise ValueError(f"native resume protocol mismatch: {key}; preserve the saved protocol")
     for key, value in saved.items():
         if (key not in {"output", "updates", "checkpoint_interval", "keep_checkpoint_every",
                         "finite_check_interval", "resume_from", "warm_start_from"}
@@ -609,6 +677,17 @@ def episode_log(stats):
         by_lane[f"episode/{lane}_completion"] = ratio(completion, count)
         by_lane[f"action/{lane}_do_fraction"] = ratio(lane_types[6], lane_types.sum())
         by_lane[f"action/{lane}_move_fraction"] = ratio(lane_types[0] + lane_types[1], lane_types.sum())
+        by_lane[f"episode/{lane}_unloaded_dead_ends"] = int(stats.get(f"unloaded_dead_ends_{lane}", 0))
+        by_lane[f"episode/{lane}_unloaded_dead_end_rate"] = ratio(
+            stats.get(f"unloaded_dead_ends_{lane}", 0), count)
+        if f"dug_total_{lane}" in stats:
+            for part in ("total", "edge", "inner"):
+                by_lane[f"episode/{lane}_dug_{part}"] = ratio(stats[f"dug_{part}_{lane}"], count)
+            by_lane[f"episode/{lane}_loaded_at_end_rate"] = ratio(stats[f"loaded_at_end_{lane}"], count)
+            by_lane[f"action/{lane}_relifts"] = int(stats[f"relifts_{lane}"])
+            by_lane[f"action/{lane}_relift_fraction"] = ratio(stats[f"relifts_{lane}"], lane_types.sum())
+            by_lane[f"action/{lane}_immobile_empty_fraction"] = ratio(
+                stats[f"immobile_steps_{lane}"], stats[f"empty_steps_{lane}"])
     return {
         **by_lane,
         "episode/count": episodes,
@@ -673,6 +752,8 @@ def main(argv=None):
     if args.model_config:
         model_config.update(json.loads(args.model_config.read_text()))
     model_config.update(structured_actions=True, action_logit_masking=False)
+    model_config.update(precision_observation_v2=args.precision_observation_v2,
+                        advantage_normalization=args.advantage_normalization)
     if model_config.get("actor_residual_head", False):
         raise ValueError("structured-v1 does not support the legacy residual actor variant")
 
@@ -683,6 +764,9 @@ def main(argv=None):
     if args.maps_path is None:
         bank, static_cfg = load_initial_bank(args.initial_states,
             [int(x) for x in args.bank_indices.split(",")] if args.bank_indices else None)
+        static_cfg = static_cfg._replace(precision_safety=args.precision_safety)
+        bank = bank._replace(env_cfg=bank.env_cfg._replace(
+            precision_safety=jnp.full(bank.env_steps.shape, args.precision_safety, dtype=bool)))
         training["initial_bank"] = file_identity(args.initial_states)
         data = bank
         sample = sample_saved_start
@@ -691,6 +775,9 @@ def main(argv=None):
             executable_dig_observation=bool(model_config.get("executable_dig_observation", False)))
     else:
         template_bank, static_cfg = load_initial_bank(args.env_template)
+        static_cfg = static_cfg._replace(precision_safety=args.precision_safety)
+        template_bank = template_bank._replace(env_cfg=template_bank.env_cfg._replace(
+            precision_safety=jnp.full(template_bank.env_steps.shape, args.precision_safety, dtype=bool)))
         template = jax.tree.map(lambda x: np.asarray(x[0]), template_bank)
         precision_slots = read_precision_slots(args.training_slots) if args.training_slots else []
         training["env_template"] = file_identity(args.env_template)
@@ -715,7 +802,10 @@ def main(argv=None):
         if source.get("format") != CHECKPOINT_FORMAT or source.get("action_protocol") != ACTION_PROTOCOL:
             raise ValueError("native resume requires a structured-v1 checkpoint; use warm-start-from for legacy policies")
         validate_resume_training(source["training_config"], training)
-        if dict(model_config) != source["model_config"]:
+        saved_model_config = dict(source["model_config"])
+        saved_model_config.setdefault("precision_observation_v2", False)
+        saved_model_config.setdefault("advantage_normalization", "global")
+        if dict(model_config) != saved_model_config:
             raise ValueError("native resume must preserve model configuration")
 
     rng, model_key, runner_key = jax.random.split(jax.random.PRNGKey(args.seed), 3)
@@ -764,7 +854,9 @@ def main(argv=None):
         time_budget_offset_s=args.time_budget_offset_s, decisions_per_dig_unit=args.decisions_per_dig_unit,
         time_limit=args.time_limit, success_time_bonus=args.success_time_bonus,
         success_decision_bonus=args.success_decision_bonus,
-        terminate_loaded_dead_ends=args.terminate_loaded_dead_ends)
+        terminate_loaded_dead_ends=args.terminate_loaded_dead_ends,
+        terminate_unloaded_dead_ends=args.terminate_unloaded_dead_ends,
+        precision_edge_weight=args.precision_edge_weight)
     rollout = make_rollout(model, model_config, observe, advance, sample, num_steps=args.num_steps)
     iteration = jax.pmap(make_iteration(model, model_config, observe, rollout, args),
                          axis_name=AXIS, donate_argnums=(0, 1))
@@ -817,6 +909,8 @@ def main(argv=None):
                "train/decisions": update_number * decisions_per_update,
                "train/optimizer_step": int(np.asarray(jax.device_get(train_state.step))[0]),
                **{f"loss/{key}": value for key, value in losses.items()},
+               **{f"optimization/{key}": float(value) for key, value in metrics.items()
+                  if key.startswith("advantage_") or key.startswith("clip_fraction_")},
                **episode_log(metrics),
                "perf/update_seconds": seconds,
                "perf/decisions_per_second": decisions_per_update / seconds}

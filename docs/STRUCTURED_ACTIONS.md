@@ -23,6 +23,59 @@ uses a 1 m minimum pull; full-bank finishability remains a separate evaluation.
 
 ## Action and model contract
 
+### October 12 precision corrections
+
+New structured runs enable `--precision-safety`, `--precision-observation-v2`,
+`--terminate-unloaded-dead-ends`, `--precision-edge-weight 0.5`, and
+`--advantage-normalization per_mode`. Each setting is saved and checked on native
+resume. Historical checkpoints require their original values: the three new
+boolean switches off, edge weight `-1`, and normalization `global`. Evaluation
+reads the checkpoint settings; it does not silently apply the new defaults.
+
+Safety protects the acting excavator's inner reach during both dump and relift
+settling, applies chassis clearance to fresh excavation, and excludes oblique
+one-cell candidates before selecting a turnable move endpoint. Soil recovery
+remains legal. These are solo-environment rules, not a guarantee of egress.
+
+The new unloaded termination is conservative: remove all potentially recoverable
+spoil, retain holes and unliftable inner spoil, then test all permitted straight
+endpoints and both first base turns. Any remaining target or misplaced soil in
+the radial workspace keeps the episode alive. A certified dead end takes one
+zero-duration fallback WAIT and the existing `-1` failure penalty. There is no
+additional lost-potential penalty. Some irrecoverable cases remain until the cap
+because this test deliberately overestimates recovery opportunities.
+
+V2 observations retain the fixed target boundary, remove already-dug edge work,
+use native executable edge counts including relift precedence, retain floating
+edge errors, and index every local heading array in the chassis frame of DO.
+The heading head already receives these inputs; the change removes its frame
+conversion burden. Only the transient observation state has float edge-error
+buffers; the rollout keeps native state buffers unchanged.
+
+Precision excavation potential is `0.5 * inner_fraction + 0.5 * edge_fraction`.
+Bulk and tasks missing either group use total volume completion. Differences
+telescope from the episode's actual start, including partially completed starts;
+the separate haul-distance term and exact success conditions stay unchanged.
+The 50% weight applies to excavation Q, not the total material potential.
+
+Advantages are centered and scaled separately by the recorded mode of each
+transition, with global masked moments across devices. Critic targets retain
+their original units. Logs report raw/normalized advantage moments and clipping
+per mode; these are not gradient-share measurements. Moments are pooled by
+sample count across minibatches, and counts represent rollout samples once.
+
+Training and evaluation separately report total/edge/interior dug fractions,
+loaded-at-end, relifts, and unloaded immobility. These diagnostics remain present
+when V2 observations are disabled for a comparison. Exact completion still
+requires legal disposal and an empty bucket.
+
+The original diagnosis's 6% figure was a raw absolute-advantage proxy; centering
+the same saved replay sample changes the proxy to about 11%. Static coverage of
+every edge cell is an upper bound, not an executable complete-plan witness.
+The replay trap dominance applies to sampled policies; greedy precision also
+fails while usually remaining mobile. Behavioral improvement needs a fixed-panel
+evaluation after training, separate from numerical smoke qualification.
+
 The existing type IDs are retained: forward/backward (0/1), clockwise and
 counterclockwise base turns (2/3), DO (6), wait (7). Cabin-only types 4/5 are
 masked out in the policy; the manual game still supports them. Type-conditioned

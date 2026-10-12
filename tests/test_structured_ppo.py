@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
 import pickle
 import subprocess
@@ -16,7 +17,7 @@ from terra.structured_actions import StructuredAction
 from utils.models import get_model_ready
 from utils.structured_ppo import (
     StructuredRollout, duration_gae, entropy_components, forward_step,
-    joint_log_prob, policy_masks, ppo_update, sample_action, warm_start_params,
+    joint_log_prob, normalize_advantages, policy_masks, ppo_update, sample_action, warm_start_params,
 )
 from utils.utils_ppo import obs_to_model_input
 from test_recurrent_actor import _config, _env, _observation
@@ -83,15 +84,79 @@ class StructuredDistributionTests(unittest.TestCase):
         self.assertAlmostEqual(float(adv[0,1]), 5+.9**2*3-2 + .9**2*.8**2*10, places=5)
 
 
+class StructuredAdvantageTests(unittest.TestCase):
+    def test_modes_use_separate_moments_and_global_mode_retains_joint_centering(self):
+        advantages = jnp.array([[1., 3., 100.], [200., 5., 300.]])
+        precision = jnp.array([[False, False, True], [True, False, True]])
+        normalized, metrics = normalize_advantages(advantages, precision, mode="per_mode")
+        for name, mask in (("bulk", ~precision), ("precision", precision)):
+            raw = np.asarray(advantages)[mask]
+            np.testing.assert_allclose(np.asarray(normalized)[mask], (raw-raw.mean())/raw.std(), atol=1e-6)
+            self.assertEqual(float(metrics[f"advantage_{name}_count"]), 3.)
+            self.assertAlmostEqual(float(metrics[f"advantage_{name}_raw_mean"]), float(raw.mean()))
+            self.assertAlmostEqual(float(metrics[f"advantage_{name}_normalized_mean"]), 0., places=6)
+            self.assertAlmostEqual(float(metrics[f"advantage_{name}_normalized_std"]), 1., places=6)
+        joint, _ = normalize_advantages(advantages, precision)
+        np.testing.assert_allclose(joint, (advantages-advantages.mean())/advantages.std(), atol=1e-6)
+        with self.assertRaisesRegex(ValueError, "requires precision_mode"):
+            normalize_advantages(advantages, mode="per_mode")
+        with self.assertRaisesRegex(ValueError, "same.*shape"):
+            normalize_advantages(advantages, precision[..., None], mode="per_mode")
+        with self.assertRaisesRegex(ValueError, "unknown advantage"):
+            normalize_advantages(advantages, precision, mode="wrong")
+
+    def test_single_mode_and_tiny_variance_are_finite(self):
+        for all_precision in (False, True):
+            advantages = jnp.array([[1., 2., 3.]])
+            mode = jnp.full(advantages.shape, all_precision)
+            normalized, metrics = normalize_advantages(advantages, mode, mode="per_mode")
+            expected, _ = normalize_advantages(advantages)
+            np.testing.assert_allclose(normalized, expected, atol=1e-6)
+            absent = "bulk" if all_precision else "precision"
+            for key, value in metrics.items():
+                if key.startswith(f"advantage_{absent}_"):
+                    self.assertEqual(float(value), 0.)
+        # Each mode can be effectively constant even when their means differ.
+        advantages = jnp.array([[2., 2.], [1e-12, 2e-12]])
+        precision = jnp.array([[False, False], [True, True]])
+        normalized, metrics = jax.jit(lambda a, p: normalize_advantages(a, p, mode="per_mode"))(
+            advantages, precision)
+        np.testing.assert_array_equal(normalized, np.zeros((2, 2)))
+        self.assertTrue(all(np.isfinite(x).all() for x in jax.tree.leaves(metrics)))
+
+    def test_two_device_moments_use_global_counts_with_unequal_mode_placement(self):
+        # Device 0 has no precision samples; device 1 has only one bulk sample.
+        # Averaging local group means would therefore give the wrong result.
+        code = '''
+import jax
+import jax.numpy as jnp
+import numpy as np
+from utils.structured_ppo import normalize_advantages
+assert jax.local_device_count() == 2
+a = jnp.array([[[1., 3., 5.], [7., 9., 11.]], [[13., 100., 200.], [300., 400., 500.]]])
+p = jnp.array([[[False]*3]*2, [[False, True, True], [True]*3]])
+distributed, metrics = jax.pmap(lambda x, m: normalize_advantages(x, m, mode="per_mode", axis_name="d"), axis_name="d")(a, p)
+expected, expected_metrics = normalize_advantages(a.reshape(4, 3), p.reshape(4, 3), mode="per_mode")
+np.testing.assert_allclose(distributed.reshape(4, 3), expected, atol=1e-6)
+for key, value in expected_metrics.items():
+    np.testing.assert_allclose(metrics[key], np.repeat(value, 2), atol=1e-6, err_msg=key)
+'''
+        env = dict(os.environ, JAX_PLATFORMS="cpu", XLA_FLAGS="--xla_force_host_platform_device_count=2",
+                   OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1")
+        subprocess.run([sys.executable, "-c", code], env=env, check=True, timeout=60,
+                       capture_output=True, text=True)
+
+
 class StructuredModelTests(unittest.TestCase):
     def test_gru_rollout_replay_and_update(self):
         env = _env()
         cfg = _config()
-        cfg.update(structured_actions=True)
+        cfg.update(structured_actions=True, advantage_normalization="per_mode")
         model, params = get_model_ready(jax.random.PRNGKey(1), cfg, env)
         params = jax.device_put(params, jax.devices()[0])
         obs = _observation((2,3), env)
         obs["structured_context"] = jnp.zeros((2,3,19))
+        obs["precision_mode"] = jnp.array([[False, False, False], [True, True, True]])
         prev = jnp.zeros((2,3,5), jnp.int32)
         done = jnp.array([[False,True,False], [False,False,False]])
         hidden = jnp.zeros((2,64))
@@ -118,6 +183,10 @@ class StructuredModelTests(unittest.TestCase):
         self.assertTrue(bool(metrics["grads_finite"]))
         self.assertTrue(all(np.isfinite(x).all() for x in jax.tree.leaves((state.params,state.opt_state,metrics))))
         self.assertAlmostEqual(float(metrics["approx_kl"]), 0., places=5)
+        # Actor normalization must not rescale the critic's raw .25 residual.
+        self.assertAlmostEqual(float(metrics["value_loss"]), .5 * .25 ** 2, places=5)
+        self.assertEqual(float(metrics["clip_fraction_bulk"]), 0.)
+        self.assertEqual(float(metrics["clip_fraction_precision"]), 0.)
 
     def test_device_axis_update_matches_single_device(self):
         env = _env()

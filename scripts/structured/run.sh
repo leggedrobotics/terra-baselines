@@ -9,7 +9,7 @@
 # Episodes end on success or at a per-map macro cap (max(300, ceil(1.2 * dig units)):
 # trenches 300, precision slabs ~530-960, about 2x the October 8 oracle);
 # modeled time never ends an episode. Reward: material progress (about 1.15
-# over a whole map), +6 on success, -1 at the cap, and on success only
+# over a whole map), +6 on success, -1 at the cap or certified dead end, and on success only
 # 2 x (1 - modeled time / T_ref) + 1 x (1 - decisions / cap). No per-step time
 # cost, so time can never make progress worse than idling. Modeled time
 # (timing_simple.json): 30 s per 0.25 m^3 bucket (120 s/m^3), 278 s setup per
@@ -38,13 +38,16 @@ mkdir -p "$WANDB_DIR" "$JAX_COMPILATION_CACHE_DIR"
 cd "$TERRA_RUN_DIR"
 NUM_DEVICES="${NUM_DEVICES:-4}"
 python -u "$BASELINES_ROOT/cluster/cscs/check_jax_runtime.py" --min-devices "$NUM_DEVICES"
-NAME="structured_scratch_s20261010"
+NAME="structured_precision_fixes_20261012_s20261009"
 ARGS=(
     --maps-path train_v3_generalist_512
     --env-template "$TERRA_STRUCTURED_INPUTS/initial_states_game.pkl"
     --distance-protocol-id obstacle_geodesic_8_physical_global_v1
     --training-slots "${TERRA_TRAINING_SLOTS:-$TERRA_STRUCTURED_INPUTS/training_slots.json}"
     --precision-episode-fraction 0.5
+    --precision-safety --precision-observation-v2 --terminate-unloaded-dead-ends
+    --precision-edge-weight "${PRECISION_EDGE_WEIGHT:-0.5}"
+    --advantage-normalization "${ADVANTAGE_NORMALIZATION:-per_mode}"
     --model-config "$BASELINES_ROOT/scripts/structured/campaign_model.json"
     --seed 20261009 --num-devices "$NUM_DEVICES" --num-envs 512 --num-steps 32
     --epochs 2 --minibatches 32 --learning-rate 3e-4 --clip-eps 0.2 --vf-coef 2 --no-value-clip

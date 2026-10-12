@@ -153,20 +153,69 @@ def forward_step(model, params, observation, previous_actions, hidden, config):
     return value[..., 0], logits, next_hidden
 
 
+def _masked_moments(values, mask, axis_name=None):
+    """Global sample moments; an absent group has count and moments zero."""
+    count = mask.sum(dtype=jnp.float32)
+    total = jnp.where(mask, values, 0.).sum()
+    absolute = jnp.where(mask, jnp.abs(values), 0.).sum()
+    if axis_name is not None:
+        count, total, absolute = jax.lax.psum((count, total, absolute), axis_name)
+    denominator = jnp.maximum(count, 1.)
+    mean = total / denominator
+    squared = jnp.where(mask, (values - mean) ** 2, 0.).sum()
+    if axis_name is not None:
+        squared = jax.lax.psum(squared, axis_name)
+    return count, mean, jnp.sqrt(squared / denominator), absolute / denominator
+
+
+def normalize_advantages(advantages, precision_mode=None, *, mode="global", axis_name=None):
+    """Normalize actor coefficients, preserving raw critic targets at the caller.
+
+    These are advantage statistics, not measurements of policy gradients.
+    Mode masks describe each transition, including across episode resets.
+    """
+    if mode not in ("global", "per_mode"):
+        raise ValueError(f"unknown advantage normalization: {mode}")
+    if precision_mode is None and mode == "per_mode":
+        raise ValueError("per_mode advantage normalization requires precision_mode")
+    if precision_mode is not None and precision_mode.shape != advantages.shape:
+        raise ValueError("precision_mode must have the same [batch, time] shape as advantages")
+    masks = ({} if precision_mode is None else
+             {"bulk": ~precision_mode.astype(bool), "precision": precision_mode.astype(bool)})
+    moments = {name: _masked_moments(advantages, mask, axis_name) for name, mask in masks.items()}
+    if mode == "global":
+        if axis_name is None:
+            mean, std = advantages.mean(), advantages.std()
+        else:
+            mean = jax.lax.pmean(advantages.mean(), axis_name)
+            std = jnp.sqrt(jax.lax.pmean(((advantages - mean) ** 2).mean(), axis_name))
+    else:
+        mean = jnp.where(masks["precision"], moments["precision"][1], moments["bulk"][1])
+        std = jnp.where(masks["precision"], moments["precision"][2], moments["bulk"][2])
+    normalized = jnp.where(std > 1e-8, (advantages - mean) / (std + 1e-8), 0.)
+    metrics = {}
+    for name, mask in masks.items():
+        count, mean, std, absolute = moments[name]
+        _, norm_mean, norm_std, norm_absolute = _masked_moments(normalized, mask, axis_name)
+        metrics.update({f"advantage_{name}_{key}": value for key, value in (
+            ("count", count), ("raw_mean", mean), ("raw_std", std), ("raw_abs_mean", absolute),
+            ("normalized_mean", norm_mean), ("normalized_std", norm_std),
+            ("normalized_abs_mean", norm_absolute))})
+    return normalized, metrics
+
+
 def ppo_update(train_state, model, rollout, advantages, targets, initial_hidden,
                config, *, clip_eps=0.2, vf_coef=2., entropy_coefs=(0.01, 0.01, 0.01, 0.01),
                value_clip=True, axis_name=None):
     """One minibatch; the probability ratio uses the full sampled action.
 
-    Under pmap, ``axis_name`` normalizes advantages over the global minibatch
-    and averages gradients and metrics across devices.
+    Under pmap, normalization uses global minibatch moments, optionally per
+    lane mode. Gradients and metrics are averaged across devices.
     """
-    if axis_name is None:
-        adv_mean, adv_std = advantages.mean(), advantages.std()
-    else:
-        adv_mean = jax.lax.pmean(advantages.mean(), axis_name)
-        adv_std = jnp.sqrt(jax.lax.pmean(((advantages - adv_mean) ** 2).mean(), axis_name))
-    norm_adv = (advantages - adv_mean) / (adv_std + 1e-8)
+    precision_mode = rollout.obs.get("precision_mode")
+    norm_adv, advantage_metrics = normalize_advantages(
+        advantages, precision_mode, mode=config.get("advantage_normalization", "global"),
+        axis_name=axis_name)
 
     def loss(params):
         inputs = obs_to_model_input(rollout.obs, rollout.prev_actions, config)
@@ -196,7 +245,17 @@ def ppo_update(train_state, model, rollout, advantages, targets, initial_hidden,
             "approx_kl": ((ratio - 1.) - (log_prob - rollout.log_prob)).mean(),
             "clip_fraction": (jnp.abs(ratio-1.) > clip_eps).mean(),
             **{f"entropy_{k}": v.mean() for k, v in components.items()},
+            **advantage_metrics,
         }
+        if precision_mode is not None:
+            clipped = jnp.abs(ratio - 1.) > clip_eps
+            for name, mask in (("bulk", ~precision_mode.astype(bool)),
+                               ("precision", precision_mode.astype(bool))):
+                count = advantage_metrics[f"advantage_{name}_count"]
+                clipped_count = (clipped & mask).sum(dtype=jnp.float32)
+                if axis_name is not None:
+                    clipped_count = jax.lax.psum(clipped_count, axis_name)
+                metrics[f"clip_fraction_{name}"] = clipped_count / jnp.maximum(count, 1.)
         return total, metrics
     (_, metrics), grads = jax.value_and_grad(loss, has_aux=True)(train_state.params)
     if axis_name is not None:

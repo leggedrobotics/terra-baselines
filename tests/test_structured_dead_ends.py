@@ -31,6 +31,13 @@ class State(namedtuple("State", "env_cfg agent world env_steps")):
     def _get_task_completion(self, action, target):
         return {"absolute_completion": jnp.mean(action == target)}
 
+    def _get_foundation_border_mask(self):
+        return jnp.zeros_like(self.world.target_map.map, dtype=bool)
+
+    def _unloaded_dead_end(self):
+        # Geometry is covered by native Terra tests; this exercises rollout wiring.
+        return self.agent.loaded[0] == 0
+
 
 def fixture(loaded=1):
     return State(Config(.5, AgentConfig(12, 12), False),
@@ -126,6 +133,25 @@ class LoadedDeadEndTrainerTests(unittest.TestCase):
         self.assertEqual(log["episode/bulk_loaded_dead_end_rate"], 1.)
         self.assertIsNone(log["episode/precision_loaded_dead_end_rate"])
 
+    def test_certified_unloaded_dead_end_masks_relifts_and_uses_same_failure(self):
+        state = fixture(loaded=0)
+        with patch("train_structured.structured_action_masks", side_effect=lambda s: {
+                **blocked_masks(s), "do_mask": jnp.ones(12, bool)}):
+            observe, advance = environment_kernels(
+                state.env_cfg, {}, time_budget_s=100., decision_limit=10,
+                timing=StructuredTimeConfig(), allow_wait=False,
+                terminate_unloaded_dead_ends=True)
+            _, masks, _ = observe(state)
+            self.assertTrue(bool(masks["unloaded_dead_end"]))
+            self.assertFalse(bool(masks["loaded_dead_end"]))
+            np.testing.assert_array_equal(masks["action_mask"], [False] * 7 + [True])
+            from terra.structured_actions import StructuredAction
+            result = jax.jit(advance)(state, StructuredAction(jnp.int32(7)), StructuredClock(),
+                                       jnp.float32(0.), False, masks["unloaded_dead_end"])
+            self.assertEqual(float(result[1]), -1.)
+            self.assertTrue(bool(result[5]))
+            self.assertFalse(bool(result[6]))
+
 
 class LoadedDeadEndProtocolTests(unittest.TestCase):
     def test_flag_defaults_on_and_can_explicitly_preserve_old_behavior(self):
@@ -141,6 +167,11 @@ class LoadedDeadEndProtocolTests(unittest.TestCase):
         validate_resume_training({"terminate_loaded_dead_ends": True}, {"terminate_loaded_dead_ends": True})
         with self.assertRaisesRegex(ValueError, "terminate_loaded_dead_ends"):
             validate_resume_training({"terminate_loaded_dead_ends": True}, {"terminate_loaded_dead_ends": False})
+        for key, value in dict(precision_safety=True, precision_observation_v2=True,
+                               terminate_unloaded_dead_ends=True, precision_edge_weight=.5,
+                               advantage_normalization="per_mode").items():
+            with self.assertRaisesRegex(ValueError, key):
+                validate_resume_training({}, {"terminate_loaded_dead_ends": False, key: value})
 
 
 if __name__ == "__main__":

@@ -19,7 +19,7 @@ import numpy as np
 
 from terra.config import BatchConfig, MapsDimsConfig
 from terra.state import static_rules
-from terra.structured_actions import StructuredClock, StructuredTimeConfig
+from terra.structured_actions import StructuredClock, StructuredTimeConfig, structured_progress
 from train_structured import (
     CHECKPOINT_FORMAT, ModelConfig, environment_kernels, initial_runner, load_checkpoint,
     load_initial_bank, policy_observation, rule_switches,
@@ -46,6 +46,10 @@ def main(argv=None):
         episodes = [e for e in pickle.load(stream).get("episodes", [])
                     if e.get("decoder", "greedy") == "greedy"]
     bank, static_cfg = load_initial_bank(args.initial_states)
+    safety = training.get("precision_safety", False)
+    static_cfg = static_cfg._replace(precision_safety=safety)
+    bank = bank._replace(env_cfg=bank.env_cfg._replace(
+        precision_safety=jnp.full(bank.env_steps.shape, safety, dtype=bool)))
     lanes = int(bank.env_steps.shape[0])
     env_shape = SimpleNamespace(
         batch_cfg=BatchConfig(maps_dims=MapsDimsConfig(maps_edge_length=bank.world.target_map.map.shape[-1])),
@@ -59,7 +63,9 @@ def main(argv=None):
         time_budget_offset_s=training.get("time_budget_offset_s", 0.),
         decisions_per_dig_unit=training.get("decisions_per_dig_unit", 0.),
         time_limit=training.get("time_limit", True),  # rewards are not reported
-        terminate_loaded_dead_ends=training.get("terminate_loaded_dead_ends", False))
+        terminate_loaded_dead_ends=training.get("terminate_loaded_dead_ends", False),
+        terminate_unloaded_dead_ends=training.get("terminate_unloaded_dead_ends", False),
+        precision_edge_weight=training.get("precision_edge_weight", -1.))
 
     @jax.jit
     def step(runner, finished):
@@ -70,8 +76,17 @@ def main(argv=None):
         action, _ = sample_action(logits, masks, key, deterministic=not args.sampled)
         (state, _, duration, elapsed, clock, done, task_done, completion, budget, outcome,
          _) = jax.vmap(advance)(runner.state, action, runner.clock, runner.elapsed_s,
-                               masks["loaded_dead_end"])
+                               masks["loaded_dead_end"], masks["unloaded_dead_end"])
         loaded_dead_end = masks["loaded_dead_end"] & done & ~task_done
+        unloaded_dead_end = masks["unloaded_dead_end"] & done & ~task_done
+        progress = jax.vmap(structured_progress)(state)
+        load_before = jax.vmap(lambda s: s._get_current_agent_state().loaded[0])(runner.state)
+        load_after = jax.vmap(lambda s: s._get_current_agent_state().loaded[0])(state)
+        unchanged_holes = jnp.all(
+            (runner.state.world.action_map.map < 0) == (state.world.action_map.map < 0),
+            axis=tuple(range(1, state.world.action_map.map.ndim)))
+        relift = (action.action == 6) & (load_before == 0) & (load_after > 0) & unchanged_holes
+        immobile = (load_before == 0) & ~masks["action_mask"][:, :4].any(-1)
         keep = lambda new, old: jnp.where(finished.reshape(finished.shape + (1,) * (new.ndim - 1)), old, new)
         arguments = jnp.stack((action.amount.astype(jnp.float32) / 6.,
                                (action.heading.astype(jnp.float32) + 1.) / 12., duration / budget), -1)
@@ -81,16 +96,22 @@ def main(argv=None):
                          outcome.astype(jnp.float32), hidden, rng)
         # Finished lanes stay frozen at their terminal state.
         runner = jax.tree.map(keep, updated._replace(rng=None), runner._replace(rng=None))._replace(rng=rng)
-        return runner, finished | done, task_done, completion, budget, decision_limit, loaded_dead_end
+        return (runner, finished | done, task_done, completion, budget, decision_limit,
+                loaded_dead_end, unloaded_dead_end, progress, load_after > 0, relift, immobile)
 
     runner = jax.tree.map(jnp.asarray, initial_runner(jax.device_get(bank), model_config,
                                                       jax.random.PRNGKey(args.seed)))
     finished = jnp.zeros(lanes, bool)
     results = [None] * lanes
+    relift_counts = np.zeros(lanes, np.int32)
+    immobile_counts = np.zeros(lanes, np.int32)
     with static_rules(**rule_switches(static_cfg)):
         while not bool(finished.all()):
             before = np.asarray(finished)
-            runner, finished, success, completion, budget, limit, loaded_dead_end = step(runner, finished)
+            (runner, finished, success, completion, budget, limit, loaded_dead_end,
+             unloaded_dead_end, progress, loaded, relift, immobile) = step(runner, finished)
+            relift_counts += np.asarray(relift, np.int32) * ~before
+            immobile_counts += np.asarray(immobile, np.int32) * ~before
             for lane in np.flatnonzero(np.asarray(finished) & ~before):
                 meta = episodes[lane] if lane < len(episodes) else {}
                 results[lane] = dict(
@@ -98,12 +119,17 @@ def main(argv=None):
                     reset_seed=meta.get("reset_seed"), condition=meta.get("condition"),
                     success=bool(success[lane]), completion=float(completion[lane]),
                     loaded_dead_end=bool(loaded_dead_end[lane]),
+                    unloaded_dead_end=bool(unloaded_dead_end[lane]),
+                    loaded_at_end=bool(loaded[lane]),
+                    **{f"dug_{part}": float(value[lane]) for part, value in progress.items()},
+                    relifts=int(relift_counts[lane]), immobile_empty_decisions=int(immobile_counts[lane]),
                     modeled_hours=float(runner.elapsed_s[lane]) / 3600,
                     time_scale_hours=float(budget[lane]) / 3600, decisions=int(runner.state.env_steps[lane]),
                     decision_limit=int(limit[lane]))
     summary = dict(checkpoint=str(args.checkpoint), update=int(checkpoint["next_update"]),
                    starts=lanes, successes=sum(r["success"] for r in results),
                    loaded_dead_ends=sum(r["loaded_dead_end"] for r in results),
+                   unloaded_dead_ends=sum(r["unloaded_dead_end"] for r in results),
                    mean_completion=float(np.mean([r["completion"] for r in results])),
                    decoder="sampled" if args.sampled else "greedy")
     args.output.parent.mkdir(parents=True, exist_ok=True)
