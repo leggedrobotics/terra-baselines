@@ -36,7 +36,10 @@ from terra.map import GridWorld
 from terra.state import static_rules
 from terra.structured_actions import (
     StructuredClock, StructuredTimeConfig,
-    structured_action_masks, structured_transition, structured_termination,
+    structured_action_masks, structured_loaded_dead_end, structured_transition,
+)
+from terra.structured_episode import (
+    StructuredEpisodeConfig, structured_episode_limits, structured_episode_termination,
 )
 from terra.wrappers import LocalMapWrapper, TraversabilityMaskWrapper
 from utils.models import get_model_ready, validate_model_params_match
@@ -209,7 +212,8 @@ def map_start_sampler(static_cfg):
 
 def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_limit, timing, allow_wait,
                         time_budget_factor=0., time_budget_offset_s=0., decisions_per_dig_unit=0.,
-                        time_limit=True, success_time_bonus=0., success_decision_bonus=0.):
+                        time_limit=True, success_time_bonus=0., success_decision_bonus=0.,
+                        terminate_loaded_dead_ends=True):
     """Per-lane observation, transition and episode limits, traced under ``static_rules``.
 
     Every lane runs the bank's static rules with its own precision-mode flag.
@@ -218,21 +222,20 @@ def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_lim
     units * tile**3 * dig_s_per_m3), at least ``time_budget_s``; with
     ``decisions_per_dig_unit`` > 0 its decision limit is
     that many decisions per dig unit, at least ``decision_limit``. Without
-    ``time_limit`` episodes end only on success or the decision limit, and the
-    time budget only scales the time cost. A success additionally earns
+    ``time_limit`` episodes end on success, the decision limit, or a loaded
+    dead end when enabled; the time budget only scales the time cost. A success additionally earns
     ``success_time_bonus * (1 - time/budget)`` and
     ``success_decision_bonus * (1 - decisions/limit)``, each clipped at 0.
     """
-    unit_s = float(static_cfg.tile_size) ** 3 * timing.dig_s_per_m3
+    episode_config = StructuredEpisodeConfig(
+        time_budget_s=time_budget_s, time_budget_factor=time_budget_factor,
+        time_budget_offset_s=time_budget_offset_s, decision_limit=decision_limit,
+        decisions_per_dig_unit=decisions_per_dig_unit, time_limit=time_limit,
+        success_time_bonus=success_time_bonus, success_decision_bonus=success_decision_bonus,
+        terminate_loaded_dead_ends=terminate_loaded_dead_ends)
 
     def limits(state):
-        units = jnp.sum(jnp.maximum(-state.world.target_map.map.astype(jnp.float32), 0.))
-        budget = (jnp.maximum(jnp.float32(time_budget_s),
-                              time_budget_offset_s + time_budget_factor * unit_s * units)
-                  if time_budget_factor else jnp.float32(time_budget_s))
-        decisions = (jnp.maximum(decision_limit, jnp.ceil(decisions_per_dig_unit * units).astype(jnp.int32))
-                     if decisions_per_dig_unit else jnp.int32(decision_limit))
-        return budget, decisions
+        return structured_episode_limits(native(state), timing=timing, config=episode_config)
 
     def native(state):
         return state._replace(env_cfg=static_cfg._replace(
@@ -248,23 +251,24 @@ def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_lim
         observation = TerraEnv._state_to_obs_dict(state)
         if model_config.get("movement_feasibility_observation", False):
             observation["movement_feasibility"] = state._movement_feasibility_tracked().astype(jnp.float32)
-        return observation, policy_masks(structured_action_masks(state), allow_wait=allow_wait), limits(state)
+        masks = structured_action_masks(state)
+        # Reuse the exact full-load unload checks already needed by the policy.
+        masks["loaded_dead_end"] = (structured_loaded_dead_end(state, masks["do_mask"])
+                                    if terminate_loaded_dead_ends else jnp.bool_(False))
+        return observation, policy_masks(masks, allow_wait=allow_wait), limits(state)
 
-    def advance(state, action, clock, elapsed):
-        lane_budget, lane_decisions = limits(state)
+    def advance(state, action, clock, elapsed, loaded_dead_end=False):
+        lane_budget, _ = limits(state)
         result = structured_transition(native(state), action, clock=clock,
                                        timing=timing, time_budget_s=lane_budget)
         next_state = _cast_like(result.state._replace(env_cfg=state.env_cfg), state)
         elapsed = elapsed + result.duration_s
-        terminal = structured_termination(
-            next_state, elapsed, time_budget_s=lane_budget if time_limit else jnp.float32(jnp.inf),
-            decision_limit=lane_decisions)
+        terminal = structured_episode_termination(
+            native(next_state), elapsed, timing=timing, config=episode_config,
+            dead_end=loaded_dead_end)
         completion = next_state._get_task_completion(
             next_state.world.action_map.map, next_state.world.target_map.map)["absolute_completion"]
-        bonus = terminal.task_done.astype(jnp.float32) * (
-            success_time_bonus * jnp.clip(1. - elapsed / lane_budget, 0., 1.)
-            + success_decision_bonus * jnp.clip(1. - next_state.env_steps / lane_decisions, 0., 1.))
-        return (next_state, result.reward + terminal.reward + bonus, result.duration_s,
+        return (next_state, result.reward + terminal.reward, result.duration_s,
                 elapsed, StructuredClock(result.info["time_visit_open"], result.info["time_moved"]),
                 terminal.done, terminal.task_done, completion, lane_budget,
                 jnp.stack((result.info["action_had_effect"], result.info["material_or_load_changed"])),
@@ -314,7 +318,9 @@ def make_rollout(model, model_config, observe, advance, sample, *, num_steps):
                 model, params, obs, runner.previous_types, runner.hidden, model_config)
             action, log_prob = sample_action(logits, masks, act_key)
             (state, reward, duration, elapsed, clock, done, task_done, completion, budget,
-             outcome, integrity) = jax.vmap(advance)(runner.state, action, runner.clock, runner.elapsed_s)
+             outcome, integrity) = jax.vmap(advance)(runner.state, action, runner.clock, runner.elapsed_s,
+                                                    masks["loaded_dead_end"])
+            loaded_dead_end = masks["loaded_dead_end"] & done & ~task_done
             precision = runner.state.env_cfg.enforce_foundation_border_alignment.astype(bool)
             decisions = state.env_steps
             keys = jax.random.split(reset_key, done.shape[0])
@@ -341,6 +347,8 @@ def make_rollout(model, model_config, observe, advance, sample, *, num_steps):
                 episodes_bulk=jnp.sum(done & ~precision), episodes_precision=jnp.sum(done & precision),
                 success_bulk=jnp.sum(task_done & ~precision),
                 success_precision=jnp.sum(task_done & precision),
+                loaded_dead_ends_bulk=jnp.sum(loaded_dead_end & ~precision),
+                loaded_dead_ends_precision=jnp.sum(loaded_dead_end & precision),
                 episode_seconds=jnp.sum(jnp.where(done, elapsed, 0.)),
                 episode_budget_seconds=jnp.sum(jnp.where(done, budget, 0.)),
                 episode_decisions=jnp.sum(jnp.where(done, decisions, 0)),
@@ -505,6 +513,8 @@ def parse_args(argv=None):
     parser.add_argument("--entropy-turn", type=float, default=0.01)
     parser.add_argument("--entropy-heading", type=float, default=0.01)
     parser.add_argument("--allow-wait", action="store_true")
+    parser.add_argument("--terminate-loaded-dead-ends", action=argparse.BooleanOptionalAction, default=True,
+                        help="Fail loaded states with no native full unload after one fallback wait")
     parser.add_argument("--timing-json", type=Path, help="JSON overrides for StructuredTimeConfig (modeled seconds)")
     parser.add_argument("--model-config", type=Path, help="JSON architecture/observation options; required for a different scratch trunk")
     parser.add_argument("--warm-start-from", type=Path, help="Reuse compatible legacy backbone/GRU; fresh critic, args and optimizer")
@@ -566,10 +576,26 @@ def read_precision_slots(path):
     return sorted(slots)
 
 
+def validate_resume_training(saved, training):
+    """Require the same episode/PPO protocol, including absent historical flags."""
+    # Older checkpoints waited until the cap. Iterating saved keys alone would
+    # silently enable the new behavior on resume when this key is absent.
+    if saved.get("terminate_loaded_dead_ends", False) != training["terminate_loaded_dead_ends"]:
+        raise ValueError("native resume protocol mismatch: terminate_loaded_dead_ends; "
+                         "old checkpoints require --no-terminate-loaded-dead-ends")
+    for key, value in saved.items():
+        if (key not in {"output", "updates", "checkpoint_interval", "keep_checkpoint_every",
+                        "finite_check_interval", "resume_from", "warm_start_from"}
+                and training.get(key) != value):
+            raise ValueError(f"native resume protocol mismatch: {key}")
+
+
 def episode_log(stats):
     """Host-side means over episodes and decisions completed in this update."""
     episodes_bulk, episodes_precision = int(stats["episodes_bulk"]), int(stats["episodes_precision"])
     episodes = episodes_bulk + episodes_precision
+    dead_ends_bulk = int(stats["loaded_dead_ends_bulk"])
+    dead_ends_precision = int(stats["loaded_dead_ends_precision"])
     types = np.asarray(stats["action_types"], np.float64)
     decisions = types.sum()
     moves, turns = types[0] + types[1], types[2] + types[3]
@@ -588,6 +614,12 @@ def episode_log(stats):
         "episode/count": episodes,
         "episode/bulk_count": episodes_bulk,
         "episode/precision_count": episodes_precision,
+        "episode/loaded_dead_ends": dead_ends_bulk + dead_ends_precision,
+        "episode/bulk_loaded_dead_ends": dead_ends_bulk,
+        "episode/precision_loaded_dead_ends": dead_ends_precision,
+        "episode/loaded_dead_end_rate": ratio(dead_ends_bulk + dead_ends_precision, episodes),
+        "episode/bulk_loaded_dead_end_rate": ratio(dead_ends_bulk, episodes_bulk),
+        "episode/precision_loaded_dead_end_rate": ratio(dead_ends_precision, episodes_precision),
         "episode/bulk_successes": int(stats["success_bulk"]),
         "episode/precision_successes": int(stats["success_precision"]),
         "episode/bulk_success_rate": ratio(stats["success_bulk"], episodes_bulk),
@@ -682,11 +714,7 @@ def main(argv=None):
     if args.resume_from:
         if source.get("format") != CHECKPOINT_FORMAT or source.get("action_protocol") != ACTION_PROTOCOL:
             raise ValueError("native resume requires a structured-v1 checkpoint; use warm-start-from for legacy policies")
-        for key, value in source["training_config"].items():
-            if (key not in {"output", "updates", "checkpoint_interval", "keep_checkpoint_every",
-                            "finite_check_interval", "resume_from", "warm_start_from"}
-                    and training.get(key) != value):
-                raise ValueError(f"native resume protocol mismatch: {key}")
+        validate_resume_training(source["training_config"], training)
         if dict(model_config) != source["model_config"]:
             raise ValueError("native resume must preserve model configuration")
 
@@ -735,7 +763,8 @@ def main(argv=None):
         timing=timing, allow_wait=args.allow_wait, time_budget_factor=args.time_budget_factor,
         time_budget_offset_s=args.time_budget_offset_s, decisions_per_dig_unit=args.decisions_per_dig_unit,
         time_limit=args.time_limit, success_time_bonus=args.success_time_bonus,
-        success_decision_bonus=args.success_decision_bonus)
+        success_decision_bonus=args.success_decision_bonus,
+        terminate_loaded_dead_ends=args.terminate_loaded_dead_ends)
     rollout = make_rollout(model, model_config, observe, advance, sample, num_steps=args.num_steps)
     iteration = jax.pmap(make_iteration(model, model_config, observe, rollout, args),
                          axis_name=AXIS, donate_argnums=(0, 1))

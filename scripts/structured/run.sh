@@ -6,7 +6,7 @@
 # the qualified slots. Campaign encoder and observations; no teacher (no
 # mapping from the eight-way policy to heading-conditioned DO).
 #
-# Episodes end on success or at a per-map macro cap (300 + 1.2 per dig cell:
+# Episodes end on success or at a per-map macro cap (max(300, ceil(1.2 * dig units)):
 # trenches 300, precision slabs ~530-960, about 2x the October 8 oracle);
 # modeled time never ends an episode. Reward: material progress (about 1.15
 # over a whole map), +6 on success, -1 at the cap, and on success only

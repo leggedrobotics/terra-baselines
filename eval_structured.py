@@ -58,7 +58,8 @@ def main(argv=None):
         time_budget_factor=training.get("time_budget_factor", 0.),
         time_budget_offset_s=training.get("time_budget_offset_s", 0.),
         decisions_per_dig_unit=training.get("decisions_per_dig_unit", 0.),
-        time_limit=training.get("time_limit", True))  # rewards are not reported
+        time_limit=training.get("time_limit", True),  # rewards are not reported
+        terminate_loaded_dead_ends=training.get("terminate_loaded_dead_ends", False))
 
     @jax.jit
     def step(runner, finished):
@@ -68,7 +69,9 @@ def main(argv=None):
         _, logits, hidden = forward_step(model, params, obs, runner.previous_types, runner.hidden, model_config)
         action, _ = sample_action(logits, masks, key, deterministic=not args.sampled)
         (state, _, duration, elapsed, clock, done, task_done, completion, budget, outcome,
-         _) = jax.vmap(advance)(runner.state, action, runner.clock, runner.elapsed_s)
+         _) = jax.vmap(advance)(runner.state, action, runner.clock, runner.elapsed_s,
+                               masks["loaded_dead_end"])
+        loaded_dead_end = masks["loaded_dead_end"] & done & ~task_done
         keep = lambda new, old: jnp.where(finished.reshape(finished.shape + (1,) * (new.ndim - 1)), old, new)
         arguments = jnp.stack((action.amount.astype(jnp.float32) / 6.,
                                (action.heading.astype(jnp.float32) + 1.) / 12., duration / budget), -1)
@@ -78,7 +81,7 @@ def main(argv=None):
                          outcome.astype(jnp.float32), hidden, rng)
         # Finished lanes stay frozen at their terminal state.
         runner = jax.tree.map(keep, updated._replace(rng=None), runner._replace(rng=None))._replace(rng=rng)
-        return runner, finished | done, task_done, completion, budget, decision_limit
+        return runner, finished | done, task_done, completion, budget, decision_limit, loaded_dead_end
 
     runner = jax.tree.map(jnp.asarray, initial_runner(jax.device_get(bank), model_config,
                                                       jax.random.PRNGKey(args.seed)))
@@ -87,18 +90,20 @@ def main(argv=None):
     with static_rules(**rule_switches(static_cfg)):
         while not bool(finished.all()):
             before = np.asarray(finished)
-            runner, finished, success, completion, budget, limit = step(runner, finished)
+            runner, finished, success, completion, budget, limit, loaded_dead_end = step(runner, finished)
             for lane in np.flatnonzero(np.asarray(finished) & ~before):
                 meta = episodes[lane] if lane < len(episodes) else {}
                 results[lane] = dict(
                     lane=int(lane), source_slot=meta.get("source_slot"), mode=meta.get("mode"),
                     reset_seed=meta.get("reset_seed"), condition=meta.get("condition"),
                     success=bool(success[lane]), completion=float(completion[lane]),
+                    loaded_dead_end=bool(loaded_dead_end[lane]),
                     modeled_hours=float(runner.elapsed_s[lane]) / 3600,
                     time_scale_hours=float(budget[lane]) / 3600, decisions=int(runner.state.env_steps[lane]),
                     decision_limit=int(limit[lane]))
     summary = dict(checkpoint=str(args.checkpoint), update=int(checkpoint["next_update"]),
                    starts=lanes, successes=sum(r["success"] for r in results),
+                   loaded_dead_ends=sum(r["loaded_dead_end"] for r in results),
                    mean_completion=float(np.mean([r["completion"] for r in results])),
                    decoder="sampled" if args.sampled else "greedy")
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -107,7 +112,7 @@ def main(argv=None):
     for r in results:
         print(f"{r['source_slot']} {r['mode']} {r['reset_seed']}: success={r['success']} "
               f"completion={r['completion']:.3f} hours={r['modeled_hours']:.2f} (scale {r['time_scale_hours']:.2f}) "
-              f"decisions={r['decisions']}/{r['decision_limit']}")
+              f"decisions={r['decisions']}/{r['decision_limit']} loaded_dead_end={r['loaded_dead_end']}")
 
 
 if __name__ == "__main__":

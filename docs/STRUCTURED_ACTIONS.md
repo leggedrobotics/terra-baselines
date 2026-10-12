@@ -42,6 +42,18 @@ soil and full-load unload checks. Wait is only the all-invalid fallback unless
 `--allow-wait` enables it. Infeasible argument rows receive an internal dummy
 categorical to keep unused-row gradients finite, but their type is masked out.
 
+By default, `--terminate-loaded-dead-ends` ends a loaded episode when none of
+the twelve exact native full-load unload checks succeeds. These checks include
+legal off-zone staging; the approximate dump observation is not used. The
+policy takes one zero-duration fallback wait, receives the usual -1 failure
+penalty and resets, instead of waiting until the decision cap. Existing masks
+are reused, so this adds no extra native dump checks. This catches an already
+irrecoverable state; it does not prevent the preceding dig or prove map
+finishability. Empty-machine planning failures are not classified this way.
+`--no-terminate-loaded-dead-ends` retains the previous cap-only behavior.
+Training reports dead-end episode counts and rates separately for bulk and
+precision modes; evaluation records `loaded_dead_end` per start.
+
 `utils/models.py` adds opt-in argument heads to the existing encoder/GRU.
 Zero-initialized context projections feed both actor and critic remaining
 machine time, remaining decision budget, timing visit state, and history of
@@ -66,8 +78,8 @@ and 7-9 h for every qualified precision slot. The time reward and remaining-time
 observation are relative to the episode's own budget. Likewise
 `--decisions-per-dig-unit R` sets the decision limit to R per dig unit, at
 least `--decision-limit`; the October 8 oracle needs about 0.5.
-`--no-time-limit` ends episodes only on success or the decision limit; the time
-budget is then only a per-map time reference. `--success-time-bonus B` and
+`--no-time-limit` ends episodes on success, the decision limit, or a loaded dead
+end when enabled; the time budget is then only a per-map time reference. `--success-time-bonus B` and
 `--success-decision-bonus C` add `B x (1 - time/reference) + C x (1 -
 decisions/limit)`, each clipped at 0, on success only; with `time_cost_total`
 0 in the timing JSON there is no per-step time cost, so time never makes
@@ -94,7 +106,8 @@ objective: the undiscounted shaping deltas no longer telescope. GAE uses
 `lambda ** (executed_seconds / discount_reference_seconds)`; default lambda=.95
 and reference=30 seconds. Lambda, reference duration, episode budget and entropy
 are initial settings, not behaviorally tuned conclusions. Terminal episodes,
-including timeouts and the decision guard, never bootstrap into a reset state.
+including timeouts, the decision guard and loaded dead ends, never bootstrap
+into a reset state.
 
 ## Bounded smoke
 
@@ -155,6 +168,11 @@ Changes to recorded timing, bank identity metadata, model, batch or PPO settings
 reject native resume. Source code must retain the same dynamics and action
 protocol; the loader does not detect arbitrary code edits. Output location and
 checkpoint cadence may change.
+Checkpoints saved before `terminate_loaded_dead_ends` existed retain their
+original behavior: evaluation defaults the missing flag to false, and native
+resume requires `--no-terminate-loaded-dead-ends`. New checkpoints save the flag
+and reject a changed value on resume. A fresh run enables it by default; this
+does not alter any already-pinned running campaign.
 
 `--teacher-checkpoint` rejects explicitly: there is no approved probability
 mapping from an eight-way teacher's cabin actions to heading-conditioned DO.

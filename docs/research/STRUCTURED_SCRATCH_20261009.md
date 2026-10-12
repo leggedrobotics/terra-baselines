@@ -21,7 +21,7 @@ turn-keeping moves, native dump observation, no bucket-width gate?
   episodes on the 95 qualified precision slots; the others sample the bank.
 - Policy: campaign encoder and observations (`scripts/structured/campaign_model.json`,
   2.4 M parameters) with type-conditioned argument heads. Scratch; no teacher.
-- Episode cap: per map, 300 + 1.2 macro decisions per dig cell (trenches 300,
+- Episode cap: per map, max(300, ceil(1.2 × dig units)) macro decisions (trenches 300,
   precision slabs 528-960 for their 440-800 cells), about 2x the oracle.
   Episodes end on success or at the cap; modeled time never ends an episode.
 - Reward: material progress (about 1.15 over a whole map: completion 1 plus a
