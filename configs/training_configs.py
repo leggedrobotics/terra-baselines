@@ -129,6 +129,7 @@ class TrainingConfig:
     edge_pull_perpendicular_ok: Optional[bool] = None
     pull_stroke_outer_extension_m: Optional[float] = None
     pull_stroke_inner_extension_m: Optional[float] = None
+    precision_safety: Optional[bool] = None
     # Excavator dump reach and Terra's machine working rules (agent.<name>),
     # as train_mixed's flags of the same names, which override these. None
     # leaves the checkpoint's or Terra's value.
@@ -267,6 +268,7 @@ def _load_configs_from_yaml() -> Dict[str, TrainingConfig]:
                     "edge_pull_perpendicular_ok",
                     "pull_stroke_outer_extension_m",
                     "pull_stroke_inner_extension_m",
+                    "precision_safety",
                     "dump_max_radius_m",
                     "dig_min_radius_m",
                     "dump_min_radius_m",

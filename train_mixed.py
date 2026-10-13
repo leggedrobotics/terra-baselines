@@ -2178,6 +2178,7 @@ class MixedAgentTrainConfig:
     edge_pull_perpendicular_ok: bool | None = None
     pull_stroke_outer_extension_m: float | None = None
     pull_stroke_inner_extension_m: float | None = None
+    precision_safety: bool | None = None
     # Excavator dump reach in metres (Terra agent.dump_max_radius_m; 0 = the
     # dig reach). Overrides a resumed checkpoint's env config. None leaves the
     # checkpoint's or Terra's value.
@@ -6703,6 +6704,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--native_dump_observation", action=argparse.BooleanOptionalAction, default=None,
         help="local_map_dumpability reports native per-heading dump outcomes (+accepted / -off-zone cells).",
+    )
+    parser.add_argument(
+        "--precision_safety", action=argparse.BooleanOptionalAction, default=None,
+        help="Terra precision_safety: protect fresh-cut chassis clearance, keep soil outside the unreachable inner "
+             "radius, end certified unloaded traps.",
     )
     env_group = parser.add_mutually_exclusive_group()
     env_group.add_argument(

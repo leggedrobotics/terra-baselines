@@ -36,10 +36,13 @@ PULL_DIRECTION_RULE_DEFAULTS = {
     "edge_pull_perpendicular_ok": False,
     "pull_stroke_outer_extension_m": 0.0,
     "pull_stroke_inner_extension_m": 0.0,
+    # Terra f5f680df: no fresh excavation inside the chassis clearance, no soil settling inside the unreachable
+    # inner radius, and certified unloaded traps end the episode.
+    "precision_safety": False,
 }
 PULL_DIRECTION_BOOL_FIELDS = (
     "pull_direction_alignment", "tracked_move_keeps_turn", "native_dump_observation",
-    "edge_pull_perpendicular_ok",
+    "edge_pull_perpendicular_ok", "precision_safety",
 )
 PULL_DIRECTION_RULE_FIELDS = {
     name: type(value) for name, value in PULL_DIRECTION_RULE_DEFAULTS.items()

@@ -35,6 +35,7 @@ assert bool(scalar(env.edge_pull_perpendicular_ok))
 assert abs(float(scalar(env.pull_half_angle_rad)) - np.pi / 6) < 1e-6
 assert bool(scalar(env.tracked_move_keeps_turn))
 assert not bool(scalar(env.native_dump_observation))
+assert bool(scalar(env.precision_safety))
 assert abs(float(scalar(env.dig_pull_min_length_m)) - 2.5) < 1e-6
 _assert_finite_loss_info(checkpoint["loss_info"], 0)
 _assert_finite_tree(checkpoint["model"], "saved smoke model")
@@ -45,7 +46,7 @@ for name, values in checkpoint["loss_info"].items():
         assert np.all(np.asarray(values) == 1), name
 report = dict(next_update=1, optimizer_steps=2, devices=cfg.num_devices, envs_per_device=cfg.num_envs_per_device,
               precision_episode_fraction=1.0, pull_cone_rad=float(scalar(env.pull_half_angle_rad)),
-              edge_pull_perpendicular_ok=True, finite_losses_rollout_model_optimizer=True,
+              edge_pull_perpendicular_ok=True, precision_safety=True, finite_losses_rollout_model_optimizer=True,
               transition_integrity_passed=True, policy_quality_claim=False)
 Path(sys.argv[2]).write_text(json.dumps(report, indent=2) + "\n")
 print(json.dumps(report))
