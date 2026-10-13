@@ -2293,6 +2293,8 @@ class MixedAgentTrainConfig:
     # New cutting-space experiment. Fixed lane strata preserve the requested
     # transition exposure even when the qualified precision pool is small.
     precision_required_band_observation: bool = False
+    # The model and PPO helpers read this field (structured trainer only); this trainer uses primitive actions.
+    structured_actions: bool = False
     precision_episode_fraction: float = 0.0
     pull_direction_training_slots: str | None = None
     precision_slots: list[int] | None = None
