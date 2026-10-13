@@ -1,5 +1,27 @@
 # Experiments — geometry comparison complete; efficiency comparison running (2026-09-21)
 
+## October 13: precision action-interface comparison in qualification
+
+User authorized one 24-hour CSCS scratch run per interface, one seed (20261013):
+`primitive8` versus corrected `structured`, with the same repaired environment,
+model, reward and modeled-time budget. Worktree pair:
+`.worktrees/terra_precision_fixes_20261012/{terra,terra-baselines}`.
+The split has 74 training slots and 48 evaluation starts from 12 disjoint shape
+groups. All evaluation starts passed native admission checks; complete ordered
+finishability is still unproved. See
+[experiment design](research/PRECISION_ACTION_AB_20261013.md).
+
+Twenty-seven focused CPU tests passed. The local primitive CUDA path completed
+update 1 with finite optimization state; the structured path and four-GH200
+smoke/resume/evaluation/probe are pending. Production has not started. Source
+Terra `f5f680df`; trainer revision will be recorded with the submitted jobs.
+Campaign directory on CSCS: `/ritom/scratch/cscs/lterenzi/terra-training/runs/precision-action-ab-20261013/`.
+
+The prior structured run 5027493 is now TIMEOUT, final observed update 9978.
+Its last 200-update online window was about 55.4% bulk success and 0% precision;
+that frozen run did not contain these repairs. The older RUNNING labels below
+are historical observations.
+
 ## October 10: structured-action scratch run submitted (CSCS)
 
 Scratch PPO on the structured action space (moves 1-5 cells, turns 1-6 steps,

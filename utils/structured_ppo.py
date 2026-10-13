@@ -30,13 +30,35 @@ class Runner(NamedTuple):
     rng: jax.Array
 
 
-def policy_masks(masks, allow_wait=False):
-    """Remove explicit cabin turns; retain wait only as all-invalid fallback."""
-    action = jnp.asarray(masks["action_mask"], bool).at[..., 4:6].set(False)
-    # Every type must have at least one executable argument.
-    action = action.at[..., :2].set(action[..., :2] & masks["move_mask"].any(-1))
-    action = action.at[..., 2:4].set(action[..., 2:4] & masks["turn_mask"].any(-1))
-    action = action.at[..., 6].set(action[..., 6] & masks["do_mask"].any(-1))
+def _validate_interface(action_interface):
+    if action_interface not in ("structured", "primitive8"):
+        raise ValueError(f"unknown action interface: {action_interface}")
+
+
+def policy_masks(masks, allow_wait=False, *, action_interface="structured", current_heading=None):
+    """Exact executable types for the selected interface.
+
+    Primitive DO uses the current chassis-relative cabin index. Keep the full
+    native argument masks unchanged: loaded-dead-end detection needs all twelve
+    unload headings, even if the current heading cannot unload.
+    """
+    _validate_interface(action_interface)
+    action = jnp.asarray(masks["action_mask"], bool)
+    if action_interface == "primitive8":
+        if current_heading is None:
+            raise ValueError("primitive8 masks require current_heading")
+        current_heading = jnp.asarray(current_heading, jnp.int32)
+        if current_heading.shape != action.shape[:-1]:
+            raise ValueError("current_heading must match the action mask batch shape")
+        move = masks["move_mask"][..., :, 4]
+        turn = masks["turn_mask"][..., :, 0]
+        work = jnp.take_along_axis(masks["do_mask"], current_heading[..., None], -1)[..., 0]
+    else:
+        action = action.at[..., 4:6].set(False)
+        move, turn, work = (masks[name].any(-1) for name in ("move_mask", "turn_mask", "do_mask"))
+    action = action.at[..., :2].set(action[..., :2] & move)
+    action = action.at[..., 2:4].set(action[..., 2:4] & turn)
+    action = action.at[..., 6].set(action[..., 6] & work)
     action = action.at[..., 7].set(allow_wait | ~action[..., :7].any(-1))
     return {**masks, "action_mask": action}
 
@@ -49,9 +71,12 @@ def _log_probs(logits, mask):
     return jax.nn.log_softmax(jnp.where(mask, logits, -1e9), axis=-1)
 
 
-def distributions(logits, masks):
-    return {
-        "action": _log_probs(logits["action"], masks["action_mask"]),
+def distributions(logits, masks, *, action_interface="structured"):
+    _validate_interface(action_interface)
+    result = {"action": _log_probs(logits["action"], masks["action_mask"])}
+    if action_interface == "primitive8":
+        return result
+    return {**result,
         "move": _log_probs(logits["move"], masks["move_mask"]),
         "turn": _log_probs(logits["turn"], masks["turn_mask"]),
         "do": _log_probs(logits["do"], masks["do_mask"]),
@@ -62,9 +87,11 @@ def _take(log_probs, index):
     return jnp.take_along_axis(log_probs, index[..., None], axis=-1)[..., 0]
 
 
-def joint_log_prob(logits, masks, action):
-    lp = distributions(logits, masks)
+def joint_log_prob(logits, masks, action, *, action_interface="structured"):
+    lp = distributions(logits, masks, action_interface=action_interface)
     typ = jnp.asarray(action.action, jnp.int32)
+    if action_interface == "primitive8":
+        return _take(lp["action"], typ)
     amount = jnp.asarray(action.amount, jnp.int32) - 1
     move_row = jnp.take_along_axis(lp["move"], jnp.clip(typ, 0, 1)[..., None, None], -2)[..., 0, :]
     turn_row = jnp.take_along_axis(lp["turn"], jnp.clip(typ - 2, 0, 1)[..., None, None], -2)[..., 0, :]
@@ -76,10 +103,13 @@ def joint_log_prob(logits, masks, action):
             + jnp.where(typ == 6, do_lp, 0.))
 
 
-def entropy_components(logits, masks):
+def entropy_components(logits, masks, *, action_interface="structured"):
     """Exact joint entropy components, averaged over the chosen type law."""
-    lp = distributions(logits, masks)
+    lp = distributions(logits, masks, action_interface=action_interface)
     entropy = lambda value: -(jnp.exp(value) * value).sum(-1)
+    if action_interface == "primitive8":
+        action = entropy(lp["action"])
+        return {"action": action, **{name: jnp.zeros_like(action) for name in ("move", "turn", "do")}}
     probs = jnp.exp(lp["action"])
     return {
         "action": entropy(lp["action"]),
@@ -89,12 +119,16 @@ def entropy_components(logits, masks):
     }
 
 
-def sample_action(logits, masks, rng, deterministic=False):
-    lp = distributions(logits, masks)
+def sample_action(logits, masks, rng, deterministic=False, *, action_interface="structured"):
+    lp = distributions(logits, masks, action_interface=action_interface)
     keys = jax.random.split(rng, 4)
     choose = lambda values, key: (jnp.argmax(values, -1) if deterministic
                                   else jax.random.categorical(key, values, axis=-1))
     typ = choose(lp["action"], keys[0])
+    if action_interface == "primitive8":
+        action = StructuredAction(typ.astype(jnp.int32), jnp.where(typ < 2, 5, 1).astype(jnp.int32),
+                                  jnp.full_like(typ, -1, dtype=jnp.int32))
+        return action, _take(lp["action"], typ)
     move_row = jnp.take_along_axis(lp["move"], jnp.clip(typ, 0, 1)[..., None, None], -2)[..., 0, :]
     turn_row = jnp.take_along_axis(lp["turn"], jnp.clip(typ - 2, 0, 1)[..., None, None], -2)[..., 0, :]
     amount = jnp.where(typ < 2, choose(move_row, keys[1]) + 1,
@@ -102,6 +136,64 @@ def sample_action(logits, masks, rng, deterministic=False):
     heading = jnp.where(typ == 6, choose(lp["do"], keys[3]), -1)
     action = StructuredAction(typ.astype(jnp.int32), amount.astype(jnp.int32), heading.astype(jnp.int32))
     return action, joint_log_prob(logits, masks, action)
+
+
+def policy_diagnostics(logits, masks, *, action_interface="structured", axis_name=None):
+    """Policy-weighted conditional head statistics, not gradient attribution.
+
+    Argument statistics condition on that head being selected; direction rows
+    are weighted by their action-type probability. Normalized entropy is zero
+    for zero/one valid choice. Primitive argument heads are inactive and zero.
+    Under pmap, pool weighted sums before dividing, including absent heads.
+    """
+    lp = distributions(logits, masks, action_interface=action_interface)
+    type_prob = jnp.exp(lp["action"])
+    samples = jnp.asarray(type_prob[..., 0].size, jnp.float32)
+    heads = (("action", 8, 0), ("move", 5, 1), ("turn", 6, 1), ("do", 12, 0))
+    sums = [samples[None]]
+    for name, width, _ in heads:
+        if action_interface == "primitive8" and name != "action":
+            sums.append(jnp.zeros(4 + width, jnp.float32))
+            continue
+        weight = {"action": jnp.ones_like(type_prob[..., 0]), "move": type_prob[..., :2],
+                  "turn": type_prob[..., 2:4], "do": type_prob[..., 6]}[name]
+        probability = jnp.exp(lp[name])
+        count = masks[f"{name}_mask"].sum(-1)
+        entropy = -(probability * lp[name]).sum(-1)
+        normalized = jnp.where(count > 1, entropy / jnp.log(jnp.maximum(count, 2)), 0.)
+        sums.append(jnp.concatenate((jnp.stack((weight.sum(), (weight * entropy).sum(),
+            (weight * normalized).sum(), (weight * count).sum())),
+            (weight[..., None] * probability).reshape((-1, width)).sum(0))))
+    # One packed collective per minibatch, not a small all-reduce per metric.
+    pooled = jnp.concatenate(sums)
+    if axis_name is not None:
+        pooled = jax.lax.psum(pooled, axis_name)
+    metrics, offset = {}, 1
+    for name, width, first in heads:
+        prefix = f"head_{name}_"
+        mass = pooled[offset]
+        denominator = jnp.maximum(mass, 1e-8)
+        metrics[prefix + "mass"] = mass
+        metrics[prefix + "probability"] = mass / pooled[0]
+        for index, suffix in enumerate(("conditional_entropy", "normalized_entropy", "valid_count"), 1):
+            metrics[prefix + suffix] = pooled[offset + index] / denominator
+        probabilities = pooled[offset + 4:offset + 4 + width] / denominator
+        metrics.update({prefix + f"prob_{i + first}": probabilities[i] for i in range(width)})
+        offset += 4 + width
+    return metrics
+
+
+def head_gradient_norms(grads, actor_core):
+    """Norms of output-head subtrees, after device averaging, before Optax.
+
+    These use the existing total-loss gradient (including entropy), not a
+    second backward pass or a decomposition of shared encoder gradients.
+    """
+    params = grads["params"]
+    type_name = "actor_post_gru" if actor_core == "gru" else "mlp_pi"
+    groups = {"action": params[type_name], **params["structured_heads"]}
+    return {f"head_{name}_grad_norm": jnp.sqrt(sum(jnp.sum(value.astype(jnp.float32) ** 2)
+                for value in jax.tree.leaves(tree))) for name, tree in groups.items()}
 
 
 @struct.dataclass
@@ -213,6 +305,8 @@ def ppo_update(train_state, model, rollout, advantages, targets, initial_hidden,
     lane mode. Gradients and metrics are averaged across devices.
     """
     precision_mode = rollout.obs.get("precision_mode")
+    action_interface = config.get("action_interface", "structured")
+    _validate_interface(action_interface)
     norm_adv, advantage_metrics = normalize_advantages(
         advantages, precision_mode, mode=config.get("advantage_normalization", "global"),
         axis_name=axis_name)
@@ -228,7 +322,7 @@ def ppo_update(train_state, model, rollout, advantages, targets, initial_hidden,
             values = values.reshape(shape + (1,))
             logits = jax.tree.map(lambda x: x.reshape(shape + x.shape[1:]), logits)
         values = values[..., 0]
-        log_prob = joint_log_prob(logits, rollout.masks, rollout.action)
+        log_prob = joint_log_prob(logits, rollout.masks, rollout.action, action_interface=action_interface)
         ratio = jnp.exp(log_prob - rollout.log_prob)
         actor_loss = -jnp.minimum(ratio * norm_adv, jnp.clip(ratio, 1-clip_eps, 1+clip_eps) * norm_adv).mean()
         if value_clip:
@@ -236,7 +330,7 @@ def ppo_update(train_state, model, rollout, advantages, targets, initial_hidden,
             value_loss = 0.5 * jnp.maximum((values-targets)**2, (clipped_value-targets)**2).mean()
         else:
             value_loss = 0.5 * ((values-targets)**2).mean()
-        components = entropy_components(logits, rollout.masks)
+        components = entropy_components(logits, rollout.masks, action_interface=action_interface)
         entropy_bonus = sum(coef * components[name].mean() for coef, name in zip(entropy_coefs, ("action", "move", "turn", "do")))
         total = actor_loss + vf_coef * value_loss - entropy_bonus
         metrics = {
@@ -246,6 +340,7 @@ def ppo_update(train_state, model, rollout, advantages, targets, initial_hidden,
             "clip_fraction": (jnp.abs(ratio-1.) > clip_eps).mean(),
             **{f"entropy_{k}": v.mean() for k, v in components.items()},
             **advantage_metrics,
+            **policy_diagnostics(logits, rollout.masks, action_interface=action_interface, axis_name=axis_name),
         }
         if precision_mode is not None:
             clipped = jnp.abs(ratio - 1.) > clip_eps
@@ -260,7 +355,12 @@ def ppo_update(train_state, model, rollout, advantages, targets, initial_hidden,
     (_, metrics), grads = jax.value_and_grad(loss, has_aux=True)(train_state.params)
     if axis_name is not None:
         grads = jax.lax.pmean(grads, axis_name)
-        metrics = jax.lax.pmean(metrics, axis_name)
+        # Head diagnostics have already pooled their numerators and masses.
+        heads = {key: value for key, value in metrics.items() if key.startswith("head_")}
+        metrics = jax.lax.pmean({key: value for key, value in metrics.items()
+                                if not key.startswith("head_")}, axis_name)
+        metrics.update(heads)
+    metrics.update(head_gradient_norms(grads, config["actor_core"]))
     train_state = train_state.apply_gradients(grads=grads)
     metrics["grads_finite"] = jnp.stack([jnp.all(jnp.isfinite(x)) for x in jax.tree.leaves(grads)]).all()
     return train_state, metrics

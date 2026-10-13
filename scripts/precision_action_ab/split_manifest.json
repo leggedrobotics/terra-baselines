@@ -1,0 +1,1536 @@
+{
+  "seed": 20261013,
+  "dataset_level": "train_v3_generalist_512",
+  "screened_slots_input": "/home/lorenzo/moleworks/.artifacts/terra_pull_scratch_teacher_20261007/inputs/training_slots.json",
+  "qualification": "static per-cell reachability screening; native episode finishability is not established",
+  "grouping": "connected components sharing source_id, dig_sha256, source_scenario_id, or cropped excavation shape under translation, rotation or reflection",
+  "panel": "one representative per held-out geometry group, four fixed reset seeds; no train geometry appears in evaluation",
+  "summary": {
+    "train_slots": 74,
+    "eval_slots": 21,
+    "train_groups": 43,
+    "eval_groups": 12,
+    "eval_starts": 48
+  },
+  "groups": [
+    {
+      "group": "slab_17411",
+      "split": "eval",
+      "slots": [
+        17411,
+        17655
+      ],
+      "representative_slot": 17411,
+      "canonical_shapes": [
+        "(20, 24)"
+      ]
+    },
+    {
+      "group": "slab_17413",
+      "split": "train",
+      "slots": [
+        17413,
+        17648,
+        17781,
+        17858
+      ],
+      "representative_slot": 17413,
+      "canonical_shapes": [
+        "(19, 30)"
+      ]
+    },
+    {
+      "group": "slab_17414",
+      "split": "train",
+      "slots": [
+        17414,
+        17606,
+        17847
+      ],
+      "representative_slot": 17414,
+      "canonical_shapes": [
+        "(23, 31)"
+      ]
+    },
+    {
+      "group": "slab_17424",
+      "split": "train",
+      "slots": [
+        17424
+      ],
+      "representative_slot": 17424,
+      "canonical_shapes": [
+        "(20, 26)"
+      ]
+    },
+    {
+      "group": "slab_17425",
+      "split": "eval",
+      "slots": [
+        17425,
+        17521,
+        17657
+      ],
+      "representative_slot": 17425,
+      "canonical_shapes": [
+        "(21, 24)",
+        "(22, 31)"
+      ]
+    },
+    {
+      "group": "slab_17443",
+      "split": "train",
+      "slots": [
+        17443,
+        17465,
+        17889
+      ],
+      "representative_slot": 17443,
+      "canonical_shapes": [
+        "(22, 23)"
+      ]
+    },
+    {
+      "group": "slab_17460",
+      "split": "train",
+      "slots": [
+        17460,
+        17485
+      ],
+      "representative_slot": 17460,
+      "canonical_shapes": [
+        "(25, 26)"
+      ]
+    },
+    {
+      "group": "slab_17461",
+      "split": "train",
+      "slots": [
+        17461,
+        17488,
+        17557,
+        17566,
+        17656,
+        17668
+      ],
+      "representative_slot": 17461,
+      "canonical_shapes": [
+        "(21, 33)",
+        "(22, 33)"
+      ]
+    },
+    {
+      "group": "slab_17467",
+      "split": "eval",
+      "slots": [
+        17467,
+        17563,
+        17591,
+        17600,
+        17661
+      ],
+      "representative_slot": 17467,
+      "canonical_shapes": [
+        "(19, 31)",
+        "(24, 27)"
+      ]
+    },
+    {
+      "group": "slab_17472",
+      "split": "train",
+      "slots": [
+        17472
+      ],
+      "representative_slot": 17472,
+      "canonical_shapes": [
+        "(21, 28)"
+      ]
+    },
+    {
+      "group": "slab_17484",
+      "split": "eval",
+      "slots": [
+        17484
+      ],
+      "representative_slot": 17484,
+      "canonical_shapes": [
+        "(20, 31)"
+      ]
+    },
+    {
+      "group": "slab_17490",
+      "split": "train",
+      "slots": [
+        17490
+      ],
+      "representative_slot": 17490,
+      "canonical_shapes": [
+        "(21, 26)"
+      ]
+    },
+    {
+      "group": "slab_17491",
+      "split": "train",
+      "slots": [
+        17491
+      ],
+      "representative_slot": 17491,
+      "canonical_shapes": [
+        "(22, 28)"
+      ]
+    },
+    {
+      "group": "slab_17496",
+      "split": "train",
+      "slots": [
+        17496,
+        17523
+      ],
+      "representative_slot": 17496,
+      "canonical_shapes": [
+        "(23, 26)"
+      ]
+    },
+    {
+      "group": "slab_17506",
+      "split": "train",
+      "slots": [
+        17506
+      ],
+      "representative_slot": 17506,
+      "canonical_shapes": [
+        "(23, 24)"
+      ]
+    },
+    {
+      "group": "slab_17516",
+      "split": "train",
+      "slots": [
+        17516
+      ],
+      "representative_slot": 17516,
+      "canonical_shapes": [
+        "(20, 27)"
+      ]
+    },
+    {
+      "group": "slab_17517",
+      "split": "eval",
+      "slots": [
+        17517
+      ],
+      "representative_slot": 17517,
+      "canonical_shapes": [
+        "(21, 23)"
+      ]
+    },
+    {
+      "group": "slab_17519",
+      "split": "train",
+      "slots": [
+        17519,
+        17635
+      ],
+      "representative_slot": 17519,
+      "canonical_shapes": [
+        "(24, 24)"
+      ]
+    },
+    {
+      "group": "slab_17524",
+      "split": "train",
+      "slots": [
+        17524
+      ],
+      "representative_slot": 17524,
+      "canonical_shapes": [
+        "(27, 28)"
+      ]
+    },
+    {
+      "group": "slab_17528",
+      "split": "train",
+      "slots": [
+        17528
+      ],
+      "representative_slot": 17528,
+      "canonical_shapes": [
+        "(21, 30)"
+      ]
+    },
+    {
+      "group": "slab_17531",
+      "split": "eval",
+      "slots": [
+        17531
+      ],
+      "representative_slot": 17531,
+      "canonical_shapes": [
+        "(25, 32)"
+      ]
+    },
+    {
+      "group": "slab_17535",
+      "split": "train",
+      "slots": [
+        17535
+      ],
+      "representative_slot": 17535,
+      "canonical_shapes": [
+        "(20, 28)"
+      ]
+    },
+    {
+      "group": "slab_17544",
+      "split": "train",
+      "slots": [
+        17544,
+        17763
+      ],
+      "representative_slot": 17544,
+      "canonical_shapes": [
+        "(20, 22)"
+      ]
+    },
+    {
+      "group": "slab_17548",
+      "split": "train",
+      "slots": [
+        17548,
+        17611,
+        17825
+      ],
+      "representative_slot": 17548,
+      "canonical_shapes": [
+        "(26, 27)"
+      ]
+    },
+    {
+      "group": "slab_17552",
+      "split": "eval",
+      "slots": [
+        17552,
+        17880
+      ],
+      "representative_slot": 17552,
+      "canonical_shapes": [
+        "(24, 25)"
+      ]
+    },
+    {
+      "group": "slab_17564",
+      "split": "eval",
+      "slots": [
+        17564,
+        17713
+      ],
+      "representative_slot": 17564,
+      "canonical_shapes": [
+        "(18, 34)"
+      ]
+    },
+    {
+      "group": "slab_17589",
+      "split": "train",
+      "slots": [
+        17589,
+        17742
+      ],
+      "representative_slot": 17589,
+      "canonical_shapes": [
+        "(23, 27)"
+      ]
+    },
+    {
+      "group": "slab_17604",
+      "split": "train",
+      "slots": [
+        17604
+      ],
+      "representative_slot": 17604,
+      "canonical_shapes": [
+        "(23, 30)"
+      ]
+    },
+    {
+      "group": "slab_17623",
+      "split": "train",
+      "slots": [
+        17623
+      ],
+      "representative_slot": 17623,
+      "canonical_shapes": [
+        "(21, 27)"
+      ]
+    },
+    {
+      "group": "slab_17624",
+      "split": "train",
+      "slots": [
+        17624
+      ],
+      "representative_slot": 17624,
+      "canonical_shapes": [
+        "(26, 26)"
+      ]
+    },
+    {
+      "group": "slab_17627",
+      "split": "train",
+      "slots": [
+        17627,
+        17748,
+        17876,
+        17884
+      ],
+      "representative_slot": 17627,
+      "canonical_shapes": [
+        "(22, 24)"
+      ]
+    },
+    {
+      "group": "slab_17642",
+      "split": "eval",
+      "slots": [
+        17642
+      ],
+      "representative_slot": 17642,
+      "canonical_shapes": [
+        "(25, 31)"
+      ]
+    },
+    {
+      "group": "slab_17660",
+      "split": "train",
+      "slots": [
+        17660
+      ],
+      "representative_slot": 17660,
+      "canonical_shapes": [
+        "(22, 26)"
+      ]
+    },
+    {
+      "group": "slab_17665",
+      "split": "train",
+      "slots": [
+        17665,
+        17744,
+        17785
+      ],
+      "representative_slot": 17665,
+      "canonical_shapes": [
+        "(26, 29)"
+      ]
+    },
+    {
+      "group": "slab_17683",
+      "split": "train",
+      "slots": [
+        17683
+      ],
+      "representative_slot": 17683,
+      "canonical_shapes": [
+        "(19, 25)"
+      ]
+    },
+    {
+      "group": "slab_17700",
+      "split": "train",
+      "slots": [
+        17700
+      ],
+      "representative_slot": 17700,
+      "canonical_shapes": [
+        "(22, 30)"
+      ]
+    },
+    {
+      "group": "slab_17709",
+      "split": "train",
+      "slots": [
+        17709
+      ],
+      "representative_slot": 17709,
+      "canonical_shapes": [
+        "(19, 34)"
+      ]
+    },
+    {
+      "group": "slab_17722",
+      "split": "train",
+      "slots": [
+        17722,
+        17737
+      ],
+      "representative_slot": 17722,
+      "canonical_shapes": [
+        "(18, 32)"
+      ]
+    },
+    {
+      "group": "slab_17729",
+      "split": "train",
+      "slots": [
+        17729,
+        17747
+      ],
+      "representative_slot": 17729,
+      "canonical_shapes": [
+        "(20, 25)"
+      ]
+    },
+    {
+      "group": "slab_17741",
+      "split": "train",
+      "slots": [
+        17741,
+        17769
+      ],
+      "representative_slot": 17741,
+      "canonical_shapes": [
+        "(22, 25)"
+      ]
+    },
+    {
+      "group": "slab_17762",
+      "split": "train",
+      "slots": [
+        17762,
+        17855
+      ],
+      "representative_slot": 17762,
+      "canonical_shapes": [
+        "(20, 30)"
+      ]
+    },
+    {
+      "group": "slab_17767",
+      "split": "eval",
+      "slots": [
+        17767
+      ],
+      "representative_slot": 17767,
+      "canonical_shapes": [
+        "(20, 29)"
+      ]
+    },
+    {
+      "group": "slab_17775",
+      "split": "train",
+      "slots": [
+        17775
+      ],
+      "representative_slot": 17775,
+      "canonical_shapes": [
+        "(23, 25)"
+      ]
+    },
+    {
+      "group": "slab_17777",
+      "split": "train",
+      "slots": [
+        17777,
+        17782
+      ],
+      "representative_slot": 17777,
+      "canonical_shapes": [
+        "(22, 32)"
+      ]
+    },
+    {
+      "group": "slab_17787",
+      "split": "train",
+      "slots": [
+        17787
+      ],
+      "representative_slot": 17787,
+      "canonical_shapes": [
+        "(19, 27)"
+      ]
+    },
+    {
+      "group": "slab_17796",
+      "split": "eval",
+      "slots": [
+        17796
+      ],
+      "representative_slot": 17796,
+      "canonical_shapes": [
+        "(19, 24)"
+      ]
+    },
+    {
+      "group": "slab_17798",
+      "split": "train",
+      "slots": [
+        17798,
+        17849
+      ],
+      "representative_slot": 17798,
+      "canonical_shapes": [
+        "(25, 27)"
+      ]
+    },
+    {
+      "group": "slab_17850",
+      "split": "train",
+      "slots": [
+        17850,
+        17919
+      ],
+      "representative_slot": 17850,
+      "canonical_shapes": [
+        "(24, 28)"
+      ]
+    },
+    {
+      "group": "slab_17862",
+      "split": "train",
+      "slots": [
+        17862
+      ],
+      "representative_slot": 17862,
+      "canonical_shapes": [
+        "(20, 34)"
+      ]
+    },
+    {
+      "group": "slab_17870",
+      "split": "train",
+      "slots": [
+        17870
+      ],
+      "representative_slot": 17870,
+      "canonical_shapes": [
+        "(24, 31)"
+      ]
+    },
+    {
+      "group": "slab_17883",
+      "split": "train",
+      "slots": [
+        17883
+      ],
+      "representative_slot": 17883,
+      "canonical_shapes": [
+        "(25, 28)"
+      ]
+    },
+    {
+      "group": "slab_17892",
+      "split": "train",
+      "slots": [
+        17892
+      ],
+      "representative_slot": 17892,
+      "canonical_shapes": [
+        "(27, 29)"
+      ]
+    },
+    {
+      "group": "slab_17902",
+      "split": "eval",
+      "slots": [
+        17902
+      ],
+      "representative_slot": 17902,
+      "canonical_shapes": [
+        "(25, 29)"
+      ]
+    },
+    {
+      "group": "slab_17914",
+      "split": "train",
+      "slots": [
+        17914
+      ],
+      "representative_slot": 17914,
+      "canonical_shapes": [
+        "(21, 29)"
+      ]
+    },
+    {
+      "group": "slab_17916",
+      "split": "train",
+      "slots": [
+        17916
+      ],
+      "representative_slot": 17916,
+      "canonical_shapes": [
+        "(24, 33)"
+      ]
+    }
+  ],
+  "eval_representative_slots": [
+    17411,
+    17425,
+    17467,
+    17484,
+    17517,
+    17531,
+    17552,
+    17564,
+    17642,
+    17767,
+    17796,
+    17902
+  ],
+  "slots": [
+    {
+      "slot": 17411,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0003",
+      "source_id": "v7-dig:ccc4a42ce9ca7c010ebc12b00decd4b8a21124e85b1ec0700314ac87103afc88",
+      "dig_sha256": "ccc4a42ce9ca7c010ebc12b00decd4b8a21124e85b1ec0700314ac87103afc88",
+      "source_scenario_id": "v7-foundation-slab-003",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 480
+    },
+    {
+      "slot": 17413,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0005",
+      "source_id": "v7-dig:1fe925fe55b65a2093957d5efcf2ddcd10d1f99a317808d017d01b1403c9253b",
+      "dig_sha256": "1fe925fe55b65a2093957d5efcf2ddcd10d1f99a317808d017d01b1403c9253b",
+      "source_scenario_id": "v7-foundation-slab-005",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 570
+    },
+    {
+      "slot": 17414,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0006",
+      "source_id": "v7-dig:4b7587e43fe181c4184ad934a6f21fc2ae496f1340272c52f254e2035055048b",
+      "dig_sha256": "4b7587e43fe181c4184ad934a6f21fc2ae496f1340272c52f254e2035055048b",
+      "source_scenario_id": "v7-foundation-slab-006",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 713
+    },
+    {
+      "slot": 17424,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0016",
+      "source_id": "v7-dig:fdc1d461cc52983f325f180222ca28357d6d855efc25007517fab3e073080e54",
+      "dig_sha256": "fdc1d461cc52983f325f180222ca28357d6d855efc25007517fab3e073080e54",
+      "source_scenario_id": "v7-foundation-slab-016",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 520
+    },
+    {
+      "slot": 17425,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0017",
+      "source_id": "v7-dig:4e2da9cfe248144dff13a4c43fbda3066ff25fd4910d71c17ad7ab1d32b15206",
+      "dig_sha256": "4e2da9cfe248144dff13a4c43fbda3066ff25fd4910d71c17ad7ab1d32b15206",
+      "source_scenario_id": "v7-foundation-slab-017",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 504
+    },
+    {
+      "slot": 17443,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0035",
+      "source_id": "v7-dig:9e1044d8731786216fbdf2a856c8365bfdbbe1b00b682a0d09c88f91a9910db5",
+      "dig_sha256": "9e1044d8731786216fbdf2a856c8365bfdbbe1b00b682a0d09c88f91a9910db5",
+      "source_scenario_id": "v7-foundation-slab-035",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 506
+    },
+    {
+      "slot": 17460,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0052",
+      "source_id": "v7-dig:c71e05aaa17d5066ec379d30e928d35fcef4ba700817c6da9b0aa2ce93359346",
+      "dig_sha256": "c71e05aaa17d5066ec379d30e928d35fcef4ba700817c6da9b0aa2ce93359346",
+      "source_scenario_id": "v7-foundation-slab-052",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 650
+    },
+    {
+      "slot": 17461,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0053",
+      "source_id": "v7-dig:60a2b24fc3a85ef063b2f250e64694fab3d546793e4ff60ae9619d1d96159a5a",
+      "dig_sha256": "60a2b24fc3a85ef063b2f250e64694fab3d546793e4ff60ae9619d1d96159a5a",
+      "source_scenario_id": "v7-foundation-slab-053",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 726
+    },
+    {
+      "slot": 17465,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0057",
+      "source_id": "v7-dig:38c2c8f3393eab86bbbf31817d36d63dfb79f82d1712c026d381817d624a92a8",
+      "dig_sha256": "38c2c8f3393eab86bbbf31817d36d63dfb79f82d1712c026d381817d624a92a8",
+      "source_scenario_id": "v7-foundation-slab-057",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 506
+    },
+    {
+      "slot": 17467,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0059",
+      "source_id": "v7-dig:b80259077669ef80519f17133c578ba41ad6f2a046e468ed89fd10fd526d3199",
+      "dig_sha256": "b80259077669ef80519f17133c578ba41ad6f2a046e468ed89fd10fd526d3199",
+      "source_scenario_id": "v7-foundation-slab-059",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 589
+    },
+    {
+      "slot": 17472,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0064",
+      "source_id": "v7-dig:a707f099a8e818362181c3162e4930ee4e4295930657968c8bddb18fb2a4c3b7",
+      "dig_sha256": "a707f099a8e818362181c3162e4930ee4e4295930657968c8bddb18fb2a4c3b7",
+      "source_scenario_id": "v7-foundation-slab-064",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 588
+    },
+    {
+      "slot": 17484,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0076",
+      "source_id": "v7-dig:eaec4264fa3a092f606545d9ad9a1f2f9ba1c90af53e3d94762a0dcacac874c1",
+      "dig_sha256": "eaec4264fa3a092f606545d9ad9a1f2f9ba1c90af53e3d94762a0dcacac874c1",
+      "source_scenario_id": "v7-foundation-slab-076",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 620
+    },
+    {
+      "slot": 17485,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0077",
+      "source_id": "v7-dig:52ae87318cf1273376dbdf51f0c62d649b685efda76c3e35e2686255124fd4a5",
+      "dig_sha256": "52ae87318cf1273376dbdf51f0c62d649b685efda76c3e35e2686255124fd4a5",
+      "source_scenario_id": "v7-foundation-slab-077",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 650
+    },
+    {
+      "slot": 17488,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0080",
+      "source_id": "v7-dig:47f4c0008bd83a50ebd780e806bdec44aa32524e0210651f32ff9ef11b1492f8",
+      "dig_sha256": "47f4c0008bd83a50ebd780e806bdec44aa32524e0210651f32ff9ef11b1492f8",
+      "source_scenario_id": "v7-foundation-slab-080",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 693
+    },
+    {
+      "slot": 17490,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0082",
+      "source_id": "v7-dig:2e916176180aa22255b769dd76e5a10d3187139c4a55def67f98bfb96d306c66",
+      "dig_sha256": "2e916176180aa22255b769dd76e5a10d3187139c4a55def67f98bfb96d306c66",
+      "source_scenario_id": "v7-foundation-slab-082",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 546
+    },
+    {
+      "slot": 17491,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0083",
+      "source_id": "v7-dig:dad95fd420d2b34845a1c328d786b5c5b6c24cffabb9bc87f38b5890374858e0",
+      "dig_sha256": "dad95fd420d2b34845a1c328d786b5c5b6c24cffabb9bc87f38b5890374858e0",
+      "source_scenario_id": "v7-foundation-slab-083",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 616
+    },
+    {
+      "slot": 17496,
+      "map_id": "v8:train:v7-fnd-slab-adjacent:0088",
+      "source_id": "v7-dig:544d952aaeb97d0972f8b01fc910efbb12615297fa9cb3993aae982a3ab9381a",
+      "dig_sha256": "544d952aaeb97d0972f8b01fc910efbb12615297fa9cb3993aae982a3ab9381a",
+      "source_scenario_id": "v7-foundation-slab-088",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 598
+    },
+    {
+      "slot": 17506,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0002",
+      "source_id": "v7-dig:1e3b22ef212934a271dd2fdd25866fc8797f36c595407f28e72968c3491046c9",
+      "dig_sha256": "1e3b22ef212934a271dd2fdd25866fc8797f36c595407f28e72968c3491046c9",
+      "source_scenario_id": "v7-foundation-slab-002",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 552
+    },
+    {
+      "slot": 17516,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0012",
+      "source_id": "v7-dig:66d437441641b3e2d9862d50d9965c01518221aaeee0016717c143491dc6c42b",
+      "dig_sha256": "66d437441641b3e2d9862d50d9965c01518221aaeee0016717c143491dc6c42b",
+      "source_scenario_id": "v7-foundation-slab-012",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 540
+    },
+    {
+      "slot": 17517,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0013",
+      "source_id": "v7-dig:9a557f26c85db392430176ff43aa93de21ee991ade551f1e3b95d2c6a1ca5a7d",
+      "dig_sha256": "9a557f26c85db392430176ff43aa93de21ee991ade551f1e3b95d2c6a1ca5a7d",
+      "source_scenario_id": "v7-foundation-slab-013",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 483
+    },
+    {
+      "slot": 17519,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0015",
+      "source_id": "v7-dig:58ee450de6d43581641625d5bf8105968c63486017e097ddd981230e5cab008c",
+      "dig_sha256": "58ee450de6d43581641625d5bf8105968c63486017e097ddd981230e5cab008c",
+      "source_scenario_id": "v7-foundation-slab-015",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 576
+    },
+    {
+      "slot": 17521,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0017",
+      "source_id": "v7-dig:666ab512f3520ed93aaa17d8e33d620e56290756b2414a41d19f1c802d6b737f",
+      "dig_sha256": "666ab512f3520ed93aaa17d8e33d620e56290756b2414a41d19f1c802d6b737f",
+      "source_scenario_id": "v7-foundation-slab-017",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 682
+    },
+    {
+      "slot": 17523,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0019",
+      "source_id": "v7-dig:94b416a8a597750af1f5f549328c76ec86565379cc221f5e9b1a9425bf709627",
+      "dig_sha256": "94b416a8a597750af1f5f549328c76ec86565379cc221f5e9b1a9425bf709627",
+      "source_scenario_id": "v7-foundation-slab-019",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 598
+    },
+    {
+      "slot": 17524,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0020",
+      "source_id": "v7-dig:1fff5ff6aae3ad982bf97adf40e924407f4d27b46bcd3c891d1fc82316d6011c",
+      "dig_sha256": "1fff5ff6aae3ad982bf97adf40e924407f4d27b46bcd3c891d1fc82316d6011c",
+      "source_scenario_id": "v7-foundation-slab-020",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 756
+    },
+    {
+      "slot": 17528,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0024",
+      "source_id": "v7-dig:5bb040b2d1613438775226cb597bf1bb96a3b2a40708c8bf6a360a8548de137e",
+      "dig_sha256": "5bb040b2d1613438775226cb597bf1bb96a3b2a40708c8bf6a360a8548de137e",
+      "source_scenario_id": "v7-foundation-slab-024",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 630
+    },
+    {
+      "slot": 17531,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0027",
+      "source_id": "v7-dig:d157e32f3c47069e6c9a823fbbd5c4abdee21c831b994caaddb33d64a2b5837d",
+      "dig_sha256": "d157e32f3c47069e6c9a823fbbd5c4abdee21c831b994caaddb33d64a2b5837d",
+      "source_scenario_id": "v7-foundation-slab-027",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 800
+    },
+    {
+      "slot": 17535,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0031",
+      "source_id": "v7-dig:609f7fb5a84b546053b8e85c2f78ab54c1f1d80a04ab31665bbb7b8f29b6c2fc",
+      "dig_sha256": "609f7fb5a84b546053b8e85c2f78ab54c1f1d80a04ab31665bbb7b8f29b6c2fc",
+      "source_scenario_id": "v7-foundation-slab-031",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 560
+    },
+    {
+      "slot": 17544,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0040",
+      "source_id": "v7-dig:1dfea452198d02fafbe5eb7f330511b719ddd2f37b99bfd6d93c258cf7b639a5",
+      "dig_sha256": "1dfea452198d02fafbe5eb7f330511b719ddd2f37b99bfd6d93c258cf7b639a5",
+      "source_scenario_id": "v7-foundation-slab-040",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 440
+    },
+    {
+      "slot": 17548,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0044",
+      "source_id": "v7-dig:29bbcd8f6f48da3fb63ae4221d91fb3c4f96b7bdb91ddd2161a2c5211696ce65",
+      "dig_sha256": "29bbcd8f6f48da3fb63ae4221d91fb3c4f96b7bdb91ddd2161a2c5211696ce65",
+      "source_scenario_id": "v7-foundation-slab-044",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 702
+    },
+    {
+      "slot": 17552,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0048",
+      "source_id": "v7-dig:be84f23384108cdaee55fdf691cf1c2507e9f2bead59bda0cc2b411057f43e42",
+      "dig_sha256": "be84f23384108cdaee55fdf691cf1c2507e9f2bead59bda0cc2b411057f43e42",
+      "source_scenario_id": "v7-foundation-slab-048",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 600
+    },
+    {
+      "slot": 17557,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0053",
+      "source_id": "v7-dig:c302c851a86f817c22fc3c8a0c93e73e578443392832ceef6bc3dcb44d4d539e",
+      "dig_sha256": "c302c851a86f817c22fc3c8a0c93e73e578443392832ceef6bc3dcb44d4d539e",
+      "source_scenario_id": "v7-foundation-slab-053",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 693
+    },
+    {
+      "slot": 17563,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0059",
+      "source_id": "v7-dig:5b5b5fce3d7a75beddfcdb310e0b633cd33277e52d59fb0dc32c6e954e40559a",
+      "dig_sha256": "5b5b5fce3d7a75beddfcdb310e0b633cd33277e52d59fb0dc32c6e954e40559a",
+      "source_scenario_id": "v7-foundation-slab-059",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 648
+    },
+    {
+      "slot": 17564,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0060",
+      "source_id": "v7-dig:dd07522246c609db16541f6843ef3364d371211c86cb2b43f290ef0c9bafad76",
+      "dig_sha256": "dd07522246c609db16541f6843ef3364d371211c86cb2b43f290ef0c9bafad76",
+      "source_scenario_id": "v7-foundation-slab-060",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 612
+    },
+    {
+      "slot": 17566,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0062",
+      "source_id": "v7-dig:2c7834e7766f8f19e5729fe90b858cbea5ec9abc7c614be0d840bc381a9bbcbc",
+      "dig_sha256": "2c7834e7766f8f19e5729fe90b858cbea5ec9abc7c614be0d840bc381a9bbcbc",
+      "source_scenario_id": "v7-foundation-slab-062",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 693
+    },
+    {
+      "slot": 17589,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0085",
+      "source_id": "v7-dig:a517667a5a65c545a4b53ce7ccf318550a7df241f1ace010a024e8c433373129",
+      "dig_sha256": "a517667a5a65c545a4b53ce7ccf318550a7df241f1ace010a024e8c433373129",
+      "source_scenario_id": "v7-foundation-slab-085",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 621
+    },
+    {
+      "slot": 17591,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0087",
+      "source_id": "v7-dig:65c03803fdfcc147054c64ba2ac605384f59f4288b20fcf8c9c6b878d801d55f",
+      "dig_sha256": "65c03803fdfcc147054c64ba2ac605384f59f4288b20fcf8c9c6b878d801d55f",
+      "source_scenario_id": "v7-foundation-slab-087",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 589
+    },
+    {
+      "slot": 17600,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0096",
+      "source_id": "v7-dig:422f412b6a55df84a17063a47a22a766ac57217571100b4e06f1ad198452d236",
+      "dig_sha256": "422f412b6a55df84a17063a47a22a766ac57217571100b4e06f1ad198452d236",
+      "source_scenario_id": "v7-foundation-slab-096",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 648
+    },
+    {
+      "slot": 17604,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0100",
+      "source_id": "v7-dig:4801617dba5b4fa0780203577222d5fa1a64831f527f7ce82978826a80c38955",
+      "dig_sha256": "4801617dba5b4fa0780203577222d5fa1a64831f527f7ce82978826a80c38955",
+      "source_scenario_id": "v7-foundation-slab-100",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 690
+    },
+    {
+      "slot": 17606,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0102",
+      "source_id": "v7-dig:de890bbf0d9e3922ffe50fd0ae245f7d7fbaf3a317038a1ba814a553394ea0c0",
+      "dig_sha256": "de890bbf0d9e3922ffe50fd0ae245f7d7fbaf3a317038a1ba814a553394ea0c0",
+      "source_scenario_id": "v7-foundation-slab-102",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 713
+    },
+    {
+      "slot": 17611,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0107",
+      "source_id": "v7-dig:58d854833b56465da4bb0f591bbb86b04e3270fc51e32c7620a1053f2384af9f",
+      "dig_sha256": "58d854833b56465da4bb0f591bbb86b04e3270fc51e32c7620a1053f2384af9f",
+      "source_scenario_id": "v7-foundation-slab-107",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 702
+    },
+    {
+      "slot": 17623,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0119",
+      "source_id": "v7-dig:8f60284fcbe401162bd3270bb5ec2ecf8b870ef45582c30ddb71037b30810b82",
+      "dig_sha256": "8f60284fcbe401162bd3270bb5ec2ecf8b870ef45582c30ddb71037b30810b82",
+      "source_scenario_id": "v7-foundation-slab-119",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 567
+    },
+    {
+      "slot": 17624,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0120",
+      "source_id": "v7-dig:c24251d02793278a0b49054cb03ac23201167efa498e50780b7d325cec50ee11",
+      "dig_sha256": "c24251d02793278a0b49054cb03ac23201167efa498e50780b7d325cec50ee11",
+      "source_scenario_id": "v7-foundation-slab-120",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 676
+    },
+    {
+      "slot": 17627,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0123",
+      "source_id": "v7-dig:f2913ee4078a5766680b8702424894297167d598bfcc460ef7e762ecfa37480b",
+      "dig_sha256": "f2913ee4078a5766680b8702424894297167d598bfcc460ef7e762ecfa37480b",
+      "source_scenario_id": "v7-foundation-slab-123",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 528
+    },
+    {
+      "slot": 17635,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0131",
+      "source_id": "v7-dig:4b7b49b985801334f39b579a75dae4bdb906c85ea5b80c27d5619619f93729d0",
+      "dig_sha256": "4b7b49b985801334f39b579a75dae4bdb906c85ea5b80c27d5619619f93729d0",
+      "source_scenario_id": "v7-foundation-slab-131",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 576
+    },
+    {
+      "slot": 17642,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0138",
+      "source_id": "v7-dig:6a7520d0f9b4d6a5bebf2e0870e675a948de55e31d00037dee5ac133a96c382f",
+      "dig_sha256": "6a7520d0f9b4d6a5bebf2e0870e675a948de55e31d00037dee5ac133a96c382f",
+      "source_scenario_id": "v7-foundation-slab-138",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 775
+    },
+    {
+      "slot": 17648,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0144",
+      "source_id": "v7-dig:d527ba600441d2a04cb7b768e6148200af7b4b5b2141ea87ea8d12b2602de059",
+      "dig_sha256": "d527ba600441d2a04cb7b768e6148200af7b4b5b2141ea87ea8d12b2602de059",
+      "source_scenario_id": "v7-foundation-slab-144",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 570
+    },
+    {
+      "slot": 17655,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0151",
+      "source_id": "v7-dig:7303e7b5909e0241159650fa591c49a06c6be458fc22d960c5c9a7edd07c73c0",
+      "dig_sha256": "7303e7b5909e0241159650fa591c49a06c6be458fc22d960c5c9a7edd07c73c0",
+      "source_scenario_id": "v7-foundation-slab-151",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 480
+    },
+    {
+      "slot": 17656,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0152",
+      "source_id": "v7-dig:8c7e0a196ec48c202336c1a864f48c4b958be23f577377ac9332fb91cf2ab647",
+      "dig_sha256": "8c7e0a196ec48c202336c1a864f48c4b958be23f577377ac9332fb91cf2ab647",
+      "source_scenario_id": "v7-foundation-slab-152",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 726
+    },
+    {
+      "slot": 17657,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0153",
+      "source_id": "v7-dig:0e8e048df515fae926b7b8e9d83bb26da77f8f8e0fbce4e4edf882df8e281d0d",
+      "dig_sha256": "0e8e048df515fae926b7b8e9d83bb26da77f8f8e0fbce4e4edf882df8e281d0d",
+      "source_scenario_id": "v7-foundation-slab-153",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 504
+    },
+    {
+      "slot": 17660,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0156",
+      "source_id": "v7-dig:b4bd2c496a66082f9d2fc9479b9967d461ec6c641ebc48bd03befddaee33f7d2",
+      "dig_sha256": "b4bd2c496a66082f9d2fc9479b9967d461ec6c641ebc48bd03befddaee33f7d2",
+      "source_scenario_id": "v7-foundation-slab-156",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 572
+    },
+    {
+      "slot": 17661,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0157",
+      "source_id": "v7-dig:10f9543bcda0f26cd78afb6e565ffbd532d6c0158eec04a794fc4962cb7535e7",
+      "dig_sha256": "10f9543bcda0f26cd78afb6e565ffbd532d6c0158eec04a794fc4962cb7535e7",
+      "source_scenario_id": "v7-foundation-slab-157",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 648
+    },
+    {
+      "slot": 17665,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0161",
+      "source_id": "v7-dig:9fd22bee7840b08aa44258e8671ae763e41754f738267304b8f6af71c93c0bbd",
+      "dig_sha256": "9fd22bee7840b08aa44258e8671ae763e41754f738267304b8f6af71c93c0bbd",
+      "source_scenario_id": "v7-foundation-slab-161",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 754
+    },
+    {
+      "slot": 17668,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0164",
+      "source_id": "v7-dig:6a59476684f88e564a1d72e354208094d29679a610df71bdae2c9fff6b549933",
+      "dig_sha256": "6a59476684f88e564a1d72e354208094d29679a610df71bdae2c9fff6b549933",
+      "source_scenario_id": "v7-foundation-slab-164",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 726
+    },
+    {
+      "slot": 17683,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0179",
+      "source_id": "v7-dig:779548865e0d92e4adf66887f1de5f76ff1bd1cb3f9c6ddbc33d69aee3ab6dd1",
+      "dig_sha256": "779548865e0d92e4adf66887f1de5f76ff1bd1cb3f9c6ddbc33d69aee3ab6dd1",
+      "source_scenario_id": "v7-foundation-slab-179",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 475
+    },
+    {
+      "slot": 17700,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0196",
+      "source_id": "v7-dig:587153ee2fe20b53ed0cb78740762bad7b3d949d8175b64b37acb7f32061bd26",
+      "dig_sha256": "587153ee2fe20b53ed0cb78740762bad7b3d949d8175b64b37acb7f32061bd26",
+      "source_scenario_id": "v7-foundation-slab-196",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 660
+    },
+    {
+      "slot": 17709,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0205",
+      "source_id": "v7-dig:e02c7dcb575faa3b28273c8903a85f0c98b8c40a4458a8a2edf7a51607f0da46",
+      "dig_sha256": "e02c7dcb575faa3b28273c8903a85f0c98b8c40a4458a8a2edf7a51607f0da46",
+      "source_scenario_id": "v7-foundation-slab-205",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 646
+    },
+    {
+      "slot": 17713,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0209",
+      "source_id": "v7-dig:60b190d367cba3d3fe0a991cc6c2961baebed687f6ceb16b3f91a4d1609d001a",
+      "dig_sha256": "60b190d367cba3d3fe0a991cc6c2961baebed687f6ceb16b3f91a4d1609d001a",
+      "source_scenario_id": "v7-foundation-slab-209",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 612
+    },
+    {
+      "slot": 17722,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0218",
+      "source_id": "v7-dig:2452ebc681786987ef34a431aae6aeb80d595eb0133347cd2b9a68c5015f8096",
+      "dig_sha256": "2452ebc681786987ef34a431aae6aeb80d595eb0133347cd2b9a68c5015f8096",
+      "source_scenario_id": "v7-foundation-slab-218",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 576
+    },
+    {
+      "slot": 17729,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0225",
+      "source_id": "v7-dig:e7a018ea9ff3717a98f00ed4c91de44c407fb17dad945cad5be8d333bc351eaa",
+      "dig_sha256": "e7a018ea9ff3717a98f00ed4c91de44c407fb17dad945cad5be8d333bc351eaa",
+      "source_scenario_id": "v7-foundation-slab-225",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 500
+    },
+    {
+      "slot": 17737,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0234",
+      "source_id": "v7-dig:318cd65e6146114c48cd2c642189a98186ec9162c0082d87b88050d6644bb0b1",
+      "dig_sha256": "318cd65e6146114c48cd2c642189a98186ec9162c0082d87b88050d6644bb0b1",
+      "source_scenario_id": "v7-foundation-slab-234",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 576
+    },
+    {
+      "slot": 17741,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0238",
+      "source_id": "v7-dig:0ae0587215848942ed8fa1747f06155a710f254392c768c4fd6e04d67a80ffea",
+      "dig_sha256": "0ae0587215848942ed8fa1747f06155a710f254392c768c4fd6e04d67a80ffea",
+      "source_scenario_id": "v7-foundation-slab-238",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 550
+    },
+    {
+      "slot": 17742,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0239",
+      "source_id": "v7-dig:0a4f5074b6910ea7f9895319fe6e4fdc7cee045e6825b684d5e0cbfd17548501",
+      "dig_sha256": "0a4f5074b6910ea7f9895319fe6e4fdc7cee045e6825b684d5e0cbfd17548501",
+      "source_scenario_id": "v7-foundation-slab-239",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 621
+    },
+    {
+      "slot": 17744,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0241",
+      "source_id": "v7-dig:a04cc653d57c43554dd6822dbfd9b137bf2a542c3944dde49e244c9ea8ba1b2e",
+      "dig_sha256": "a04cc653d57c43554dd6822dbfd9b137bf2a542c3944dde49e244c9ea8ba1b2e",
+      "source_scenario_id": "v7-foundation-slab-241",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 754
+    },
+    {
+      "slot": 17747,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0244",
+      "source_id": "v7-dig:dabef34717687699d39aaae6238e7bbf67bb7612f9b0b80fa442b799e4746f05",
+      "dig_sha256": "dabef34717687699d39aaae6238e7bbf67bb7612f9b0b80fa442b799e4746f05",
+      "source_scenario_id": "v7-foundation-slab-244",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 500
+    },
+    {
+      "slot": 17748,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0245",
+      "source_id": "v7-dig:090aa16e23f50ee9defc2966fb49cac26b0bdc103650c2fd6ed0ea68b181f6db",
+      "dig_sha256": "090aa16e23f50ee9defc2966fb49cac26b0bdc103650c2fd6ed0ea68b181f6db",
+      "source_scenario_id": "v7-foundation-slab-245",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 528
+    },
+    {
+      "slot": 17762,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0259",
+      "source_id": "v7-dig:9b5dd3c485754eafd4de7d1059ebe2ce995f6b86b908eaf5f32dca32332d1afb",
+      "dig_sha256": "9b5dd3c485754eafd4de7d1059ebe2ce995f6b86b908eaf5f32dca32332d1afb",
+      "source_scenario_id": "v7-foundation-slab-259",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 600
+    },
+    {
+      "slot": 17763,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0260",
+      "source_id": "v7-dig:55486c92e0f6868f0e08612c35aedc2d579536b837fc7d9e4fc78a032c4a61d2",
+      "dig_sha256": "55486c92e0f6868f0e08612c35aedc2d579536b837fc7d9e4fc78a032c4a61d2",
+      "source_scenario_id": "v7-foundation-slab-260",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 440
+    },
+    {
+      "slot": 17767,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0264",
+      "source_id": "v7-dig:6b135231bf5567838edb2e518a415ddc9af077b069a8c4c60a040d459090714b",
+      "dig_sha256": "6b135231bf5567838edb2e518a415ddc9af077b069a8c4c60a040d459090714b",
+      "source_scenario_id": "v7-foundation-slab-264",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 580
+    },
+    {
+      "slot": 17769,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0266",
+      "source_id": "v7-dig:eaa12532db1e446266df431862bf2b91309eb1ee3e9776234662249bf71c00c5",
+      "dig_sha256": "eaa12532db1e446266df431862bf2b91309eb1ee3e9776234662249bf71c00c5",
+      "source_scenario_id": "v7-foundation-slab-266",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 550
+    },
+    {
+      "slot": 17775,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0272",
+      "source_id": "v7-dig:adef7aa9b7c6a67eb3c283be3b8f9cb5727d2a1b592acc1e557327c3e77dc2c5",
+      "dig_sha256": "adef7aa9b7c6a67eb3c283be3b8f9cb5727d2a1b592acc1e557327c3e77dc2c5",
+      "source_scenario_id": "v7-foundation-slab-272",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 575
+    },
+    {
+      "slot": 17777,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0274",
+      "source_id": "v7-dig:cb3bedb0ab7684ad38d7b249e85227e3a0e0588587157a31f28c7222ad3736a1",
+      "dig_sha256": "cb3bedb0ab7684ad38d7b249e85227e3a0e0588587157a31f28c7222ad3736a1",
+      "source_scenario_id": "v7-foundation-slab-274",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 704
+    },
+    {
+      "slot": 17781,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0278",
+      "source_id": "v7-dig:28e1aae0f9e0715a3e4588c2dbade4491a8317a31d7677391ceb1f00cea9ed31",
+      "dig_sha256": "28e1aae0f9e0715a3e4588c2dbade4491a8317a31d7677391ceb1f00cea9ed31",
+      "source_scenario_id": "v7-foundation-slab-278",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 570
+    },
+    {
+      "slot": 17782,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0279",
+      "source_id": "v7-dig:4f9714bb3d715960e0a82fde5e799b5938f19d25fa48de86ad5f522d61eb7ce2",
+      "dig_sha256": "4f9714bb3d715960e0a82fde5e799b5938f19d25fa48de86ad5f522d61eb7ce2",
+      "source_scenario_id": "v7-foundation-slab-279",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 704
+    },
+    {
+      "slot": 17785,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0282",
+      "source_id": "v7-dig:bde20770e5fe5ccf2db1e9b421765d7999e153dcaa0ce5570e7f21e6d33fe333",
+      "dig_sha256": "bde20770e5fe5ccf2db1e9b421765d7999e153dcaa0ce5570e7f21e6d33fe333",
+      "source_scenario_id": "v7-foundation-slab-282",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 754
+    },
+    {
+      "slot": 17787,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0284",
+      "source_id": "v7-dig:7552c545689e239ca3337538369cb4f985d37df5e9005e071a06ad04132c4a95",
+      "dig_sha256": "7552c545689e239ca3337538369cb4f985d37df5e9005e071a06ad04132c4a95",
+      "source_scenario_id": "v7-foundation-slab-284",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 513
+    },
+    {
+      "slot": 17796,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0293",
+      "source_id": "v7-dig:6fde332a24e797f3dd9fae640e70d52e70825fe2be463eb0820604d581d45288",
+      "dig_sha256": "6fde332a24e797f3dd9fae640e70d52e70825fe2be463eb0820604d581d45288",
+      "source_scenario_id": "v7-foundation-slab-293",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 456
+    },
+    {
+      "slot": 17798,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0295",
+      "source_id": "v7-dig:ce922f7e0325a8bf3f385a3a13192f93a9295217dd5877b6ed978d180b71bf24",
+      "dig_sha256": "ce922f7e0325a8bf3f385a3a13192f93a9295217dd5877b6ed978d180b71bf24",
+      "source_scenario_id": "v7-foundation-slab-295",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 675
+    },
+    {
+      "slot": 17825,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0322",
+      "source_id": "v7-dig:ebabdb86b7769ca62294436d69aebda0cc8587ed73124aa015ace804d8744fee",
+      "dig_sha256": "ebabdb86b7769ca62294436d69aebda0cc8587ed73124aa015ace804d8744fee",
+      "source_scenario_id": "v7-foundation-slab-322",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 702
+    },
+    {
+      "slot": 17847,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0344",
+      "source_id": "v7-dig:70103d22037163ba5c8ae560be0a96f98d3dffbd6b751d5376040ddaa1bb5288",
+      "dig_sha256": "70103d22037163ba5c8ae560be0a96f98d3dffbd6b751d5376040ddaa1bb5288",
+      "source_scenario_id": "v7-foundation-slab-344",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 713
+    },
+    {
+      "slot": 17849,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0346",
+      "source_id": "v7-dig:5fa783d18b5a9ccca5c5d8c8827b541659162c5c9eeed6bf65fb1611f99018cf",
+      "dig_sha256": "5fa783d18b5a9ccca5c5d8c8827b541659162c5c9eeed6bf65fb1611f99018cf",
+      "source_scenario_id": "v7-foundation-slab-346",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 675
+    },
+    {
+      "slot": 17850,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0347",
+      "source_id": "v7-dig:b80f65e4325da9eb3b8565c3d4b5a4b307e92f8aecf0704dbe192446ed3557fc",
+      "dig_sha256": "b80f65e4325da9eb3b8565c3d4b5a4b307e92f8aecf0704dbe192446ed3557fc",
+      "source_scenario_id": "v7-foundation-slab-347",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 672
+    },
+    {
+      "slot": 17855,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0352",
+      "source_id": "v7-dig:f32b253b33871329e296a3902a30ebf9e7b40dc5e0eb5acaacf142eee6057668",
+      "dig_sha256": "f32b253b33871329e296a3902a30ebf9e7b40dc5e0eb5acaacf142eee6057668",
+      "source_scenario_id": "v7-foundation-slab-352",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 600
+    },
+    {
+      "slot": 17858,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0355",
+      "source_id": "v7-dig:32b52d1f7aa2e1f4ad9833ded067ca8f680890764e3d66a47a03445e835beb93",
+      "dig_sha256": "32b52d1f7aa2e1f4ad9833ded067ca8f680890764e3d66a47a03445e835beb93",
+      "source_scenario_id": "v7-foundation-slab-355",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 570
+    },
+    {
+      "slot": 17862,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0359",
+      "source_id": "v7-dig:44d646873aced1fb3dfb6ad552bd63b35494fa9386912262c55646ba4fdd4448",
+      "dig_sha256": "44d646873aced1fb3dfb6ad552bd63b35494fa9386912262c55646ba4fdd4448",
+      "source_scenario_id": "v7-foundation-slab-359",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 680
+    },
+    {
+      "slot": 17870,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0367",
+      "source_id": "v7-dig:e1fe02081406309f20f11af609272eb298e336cb3a9d806a1c73f35577902432",
+      "dig_sha256": "e1fe02081406309f20f11af609272eb298e336cb3a9d806a1c73f35577902432",
+      "source_scenario_id": "v7-foundation-slab-367",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 744
+    },
+    {
+      "slot": 17876,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0373",
+      "source_id": "v7-dig:dcc08c06f989255d73a3036c52898a05ccb689d2151b8f022250a8e490e1a2ed",
+      "dig_sha256": "dcc08c06f989255d73a3036c52898a05ccb689d2151b8f022250a8e490e1a2ed",
+      "source_scenario_id": "v7-foundation-slab-373",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 528
+    },
+    {
+      "slot": 17880,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0377",
+      "source_id": "v7-dig:2f7252afd43f187de3a50c662af4e35e54255a6517291605cd86cf6bc08706d1",
+      "dig_sha256": "2f7252afd43f187de3a50c662af4e35e54255a6517291605cd86cf6bc08706d1",
+      "source_scenario_id": "v7-foundation-slab-377",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 600
+    },
+    {
+      "slot": 17883,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0380",
+      "source_id": "v7-dig:4b3d9075851ae70f47b4b5cd3a38538ec397ca47802900cc91ba320807dc5289",
+      "dig_sha256": "4b3d9075851ae70f47b4b5cd3a38538ec397ca47802900cc91ba320807dc5289",
+      "source_scenario_id": "v7-foundation-slab-380",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 700
+    },
+    {
+      "slot": 17884,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0381",
+      "source_id": "v7-dig:6cda3a4941ecf369c088947ad3180f992e150a480ff78bae34eca70b45c8b4a7",
+      "dig_sha256": "6cda3a4941ecf369c088947ad3180f992e150a480ff78bae34eca70b45c8b4a7",
+      "source_scenario_id": "v7-foundation-slab-381",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 528
+    },
+    {
+      "slot": 17889,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0386",
+      "source_id": "v7-dig:14e1d9eb688777f94622f420bdb382b4c8df437ff3fecfbbeef9c7a5f7769293",
+      "dig_sha256": "14e1d9eb688777f94622f420bdb382b4c8df437ff3fecfbbeef9c7a5f7769293",
+      "source_scenario_id": "v7-foundation-slab-386",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 506
+    },
+    {
+      "slot": 17892,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0389",
+      "source_id": "v7-dig:98430de6cf4c9145996ff82ec5e9115b31eb772fae8b28ceab451dc15e67c61a",
+      "dig_sha256": "98430de6cf4c9145996ff82ec5e9115b31eb772fae8b28ceab451dc15e67c61a",
+      "source_scenario_id": "v7-foundation-slab-389",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 783
+    },
+    {
+      "slot": 17902,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0399",
+      "source_id": "v7-dig:3e58eb2f2fdff8e4aeb396b1ef91d149e0a71ae9480e1b25aff93f0c1bb5bc46",
+      "dig_sha256": "3e58eb2f2fdff8e4aeb396b1ef91d149e0a71ae9480e1b25aff93f0c1bb5bc46",
+      "source_scenario_id": "v7-foundation-slab-399",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 725
+    },
+    {
+      "slot": 17914,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0411",
+      "source_id": "v7-dig:64f00fabf9dc05806de04d9a4baf6edcd73e0f9bb5357faef484ce53c0df682d",
+      "dig_sha256": "64f00fabf9dc05806de04d9a4baf6edcd73e0f9bb5357faef484ce53c0df682d",
+      "source_scenario_id": "v7-foundation-slab-411",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 609
+    },
+    {
+      "slot": 17916,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0413",
+      "source_id": "v7-dig:47ccdbc9c97b161c967841e406411f02bae79cd2db0382ac94c648b0fd207f41",
+      "dig_sha256": "47ccdbc9c97b161c967841e406411f02bae79cd2db0382ac94c648b0fd207f41",
+      "source_scenario_id": "v7-foundation-slab-413",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 792
+    },
+    {
+      "slot": 17919,
+      "map_id": "v8x:train:v7-fnd-slab-adjacent:s2026092302:0416",
+      "source_id": "v7-dig:1ed55202efa46b59f97f143923c06118f718ea0a3409fb7085c340a77deb8f40",
+      "dig_sha256": "1ed55202efa46b59f97f143923c06118f718ea0a3409fb7085c340a77deb8f40",
+      "source_scenario_id": "v7-foundation-slab-416",
+      "primary_cell": "v7-fnd-slab-adjacent",
+      "required_dig_volume": 672
+    }
+  ]
+}

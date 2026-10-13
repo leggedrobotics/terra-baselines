@@ -119,6 +119,28 @@ is the exact type entropy plus conditional entropy weighted by the probability
 of each type. Four coefficients can be tuned independently. Unused argument
 heads never contribute to a selected action's log probability.
 
+### Matched primitive interface
+
+`--action-interface primitive8` retains the same structured environment, reward,
+clock, observations, exact feasibility and dead-end handling, but samples only
+the eight native type logits. Moves request five cells, base/cabin rotations
+request one step, and DO operates at the current cabin heading. Unused argument
+heads remain in the parameter tree for identical scratch initialization; they
+contribute neither policy likelihood nor entropy. Loaded-dead-end checks still
+consider all twelve possible unload headings before current-heading masking.
+The default is `structured`, including for historical checkpoints that omit the
+field. Resume and evaluation reject an incompatible saved interface.
+
+Both paths log conditional head entropy, valid-choice-normalized entropy,
+selection probabilities and output-head gradient norms. The norms are from the
+existing total-loss gradient after device averaging, not an attribution of
+shared encoder learning. Optional policy snapshots retain full distributions,
+masks, selected arguments and load/progress labels. Primitive argument outputs
+in these snapshots are explicitly inactive. `--save-initial-checkpoint` enables
+exact comparison of the two initial model trees. See the
+[precision comparison](research/PRECISION_ACTION_AB_20261013.md) for the matched
+budget, source-grouped split and runtime qualification.
+
 ## Time and return objective
 
 The provisional defaults are 14,400 modeled seconds and a 450-decision guard.

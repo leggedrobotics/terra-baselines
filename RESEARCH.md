@@ -14,6 +14,12 @@ evaluation, inference, checkpoints, and cluster execution.
 
 ## Canonical entry points
 
+- [Precision action-interface comparison](docs/research/PRECISION_ACTION_AB_20261013.md):
+  matched scratch primitive-eight versus structured actions inside the corrected
+  trainer, precision-only, one seed. Shape-grouped split: 74 training slots and
+  48 evaluation starts from 12 held-out groups. CPU contracts and native action
+  parity pass; GPU and CSCS qualification are underway. No learned result yet.
+
 - [Structured move/turn/work actions](docs/STRUCTURED_ACTIONS.md): opt-in
   `train_structured.py` pilot using saved native initial states, exact argument
   masks, recurrent joint-action PPO, modeled-time budgets and native resume.

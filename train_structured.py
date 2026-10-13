@@ -44,7 +44,7 @@ from terra.structured_episode import (
 from terra.wrappers import LocalMapWrapper, TraversabilityMaskWrapper
 from utils.models import get_model_ready, validate_model_params_match
 from utils.structured_ppo import (
-    ACTION_PROTOCOL, Runner, StructuredRollout, duration_gae, forward_step, policy_masks,
+    ACTION_PROTOCOL, Runner, StructuredRollout, distributions, duration_gae, forward_step, policy_masks,
     ppo_update, sample_action, warm_start_params,
 )
 from utils.utils_ppo import obs_to_model_input
@@ -71,7 +71,7 @@ def default_model_config():
         local_map_normalization_bounds=(-16, 16), maps_net_normalization_bounds=(-10, 10),
         local_map_area_scale=1., model_core="mlp", actor_core="gru", actor_gru_hidden_dim=64,
         model_size="medium", map_encoder="atari", num_prev_actions=5,
-        structured_actions=True, action_logit_masking=False, time_observation_mode="none",
+        structured_actions=True, action_interface="structured", action_logit_masking=False, time_observation_mode="none",
         admissible_dig_observation=True, executable_dig_observation=True,
         native_dump_observation=True,
     )
@@ -82,6 +82,19 @@ def load_checkpoint(path):
     register_checkpoint_config_classes()
     with Path(path).open("rb") as stream:
         return pickle.load(stream)
+
+
+def checkpoint_action_interface(checkpoint, requested=None):
+    """Historical checkpoints use structured arguments; never infer an interface from weights."""
+    interface = checkpoint["model_config"].get("action_interface", "structured")
+    if interface not in ("structured", "primitive8"):
+        raise ValueError(f"unknown saved action_interface: {interface}")
+    for config in (checkpoint, checkpoint["training_config"]):
+        if config.get("action_interface", "structured") != interface:
+            raise ValueError("checkpoint action_interface disagrees between saved configurations")
+    if requested is not None and requested != interface:
+        raise ValueError(f"checkpoint action_interface={interface}; requested {requested}")
+    return interface
 
 
 def load_initial_bank(path, indices=None):
@@ -228,6 +241,7 @@ def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_lim
     ``success_time_bonus * (1 - time/budget)`` and
     ``success_decision_bonus * (1 - decisions/limit)``, each clipped at 0.
     """
+    action_interface = model_config.get("action_interface", "structured")
     episode_config = StructuredEpisodeConfig(
         time_budget_s=time_budget_s, time_budget_factor=time_budget_factor,
         time_budget_offset_s=time_budget_offset_s, decision_limit=decision_limit,
@@ -262,7 +276,10 @@ def environment_kernels(static_cfg, model_config, *, time_budget_s, decision_lim
         masks["unloaded_dead_end"] = (
             (~masks["action_mask"][:4].any() & state._unloaded_dead_end())
             if terminate_unloaded_dead_ends else jnp.bool_(False))
-        masks = policy_masks(masks, allow_wait=allow_wait)
+        current_heading = (jnp.ravel(state._get_current_agent_state().angle_cabin)[0]
+                           if action_interface == "primitive8" else None)
+        masks = policy_masks(masks, allow_wait=allow_wait, action_interface=action_interface,
+                             current_heading=current_heading)
         # A certified dead end takes one zero-duration WAIT, preserving the
         # existing loaded-dead-end rollout/reset boundary and failure penalty.
         dead_end = masks["loaded_dead_end"] | masks["unloaded_dead_end"]
@@ -320,7 +337,65 @@ def initial_runner(states, config, rng):
                   np.zeros(shape + (hidden,), np.float32), rng)
 
 
-def make_rollout(model, model_config, observe, advance, sample, *, num_steps):
+def policy_snapshot(logits, masks, action, states, loaded, precision, lanes):
+    """Last-rollout-step sample, before execution, retaining every argument probability.
+
+    Argument probabilities are raw network outputs. They are explicitly unused
+    by primitive8; selected amount/heading record the policy request (native
+    movement may execute a shorter distance).
+    """
+    snapshot = {f"{name}_probs": jnp.exp(value)[:lanes]
+                for name, value in distributions(logits, masks).items()}
+    snapshot.update({name: masks[name][:lanes]
+                     for name in ("action_mask", "move_mask", "turn_mask", "do_mask")})
+    target = states.world.target_map.map < 0
+    dug = target & (states.world.action_map.map < 0)
+    axes = tuple(range(1, target.ndim))
+    snapshot.update(
+        action=action.action[:lanes], amount=action.amount[:lanes], heading=action.heading[:lanes],
+        precision=precision[:lanes], loaded=loaded[:lanes] > 0, decision=states.env_steps[:lanes],
+        dug_fraction=(dug.sum(axes) / jnp.maximum(target.sum(axes), 1))[:lanes],
+        cabin=jax.vmap(lambda s: jnp.ravel(s._get_current_agent_state().angle_cabin)[0])(states)[:lanes],
+    )
+    return {"snapshot_" + name: value for name, value in snapshot.items()}
+
+
+def snapshot_log(snapshot, action_interface):
+    """Conditional summaries of the saved sample; empty groups have no invented means."""
+    probs = np.asarray(snapshot["action_probs"]).reshape(-1, 8)
+    masks = np.asarray(snapshot["action_mask"]).reshape(-1, 8)
+    precision, loaded, fraction = (np.asarray(snapshot[name]).reshape(-1)
+                                   for name in ("precision", "loaded", "dug_fraction"))
+    log = {}
+    for mode_name, mode in (("bulk", ~precision), ("precision", precision)):
+        for load_name, load in (("empty", ~loaded), ("loaded", loaded)):
+            for phase_name, phase in (("excavating", fraction < .8), ("finishing", fraction >= .8)):
+                rows = mode & load & phase
+                prefix = f"policy_sample/{mode_name}/{load_name}/{phase_name}"
+                log[prefix + "/count"] = int(rows.sum())
+                if not rows.any():
+                    continue
+                for kind, name in enumerate(("forward", "backward", "clock", "anticlock",
+                                              "cabin_clock", "cabin_anticlock", "do", "wait")):
+                    log[prefix + "/p_" + name] = float(probs[rows, kind].mean())
+                    log[prefix + "/valid_" + name] = float(masks[rows, kind].mean())
+                if action_interface == "structured":
+                    for name, shape, kinds in (("move", (2, 5), slice(0, 2)),
+                                                ("turn", (2, 6), slice(2, 4)),
+                                                ("do", (12,), 6)):
+                        values = np.asarray(snapshot[name + "_probs"]).reshape((-1,) + shape)[rows]
+                        entropy = -(values * np.log(np.maximum(values, 1e-30))).sum(-1)
+                        weights = probs[rows, kinds]
+                        mass = weights.sum()
+                        log[prefix + "/" + name + "_mass"] = float(mass)
+                        log[prefix + "/" + name + "_entropy_sum"] = float((entropy * weights).sum())
+                        if mass:
+                            log[prefix + "/entropy_" + name] = float((entropy * weights).sum() / mass)
+    return log
+
+
+def make_rollout(model, model_config, observe, advance, sample, *, num_steps, diagnostic_lanes=0):
+    action_interface = model_config.get("action_interface", "structured")
     def rollout(params, runner, data):
         initial_hidden = runner.hidden
 
@@ -330,7 +405,7 @@ def make_rollout(model, model_config, observe, advance, sample, *, num_steps):
             rng, act_key, reset_key = jax.random.split(runner.rng, 3)
             value, logits, next_hidden = forward_step(
                 model, params, obs, runner.previous_types, runner.hidden, model_config)
-            action, log_prob = sample_action(logits, masks, act_key)
+            action, log_prob = sample_action(logits, masks, act_key, action_interface=action_interface)
             (state, reward, duration, elapsed, clock, done, task_done, completion, budget,
              outcome, integrity) = jax.vmap(advance)(runner.state, action, runner.clock, runner.elapsed_s,
                                                     masks["loaded_dead_end"], masks["unloaded_dead_end"])
@@ -395,11 +470,16 @@ def make_rollout(model, model_config, observe, advance, sample, *, num_steps):
                 stats[f"relifts_{name}"] = jnp.sum(relift & mode)
                 stats[f"immobile_steps_{name}"] = jnp.sum(immobile & mode)
                 stats[f"empty_steps_{name}"] = jnp.sum((load_before == 0) & mode)
+            if diagnostic_lanes:
+                stats.update(policy_snapshot(logits, masks, action, runner.state, load_before,
+                                             precision, diagnostic_lanes))
             return next_runner, (transition, stats)
 
         runner, (transitions, stats) = jax.lax.scan(step, runner, None, length=num_steps)
         transitions = jax.tree.map(lambda x: jnp.swapaxes(x, 0, 1), transitions)
-        stats = {key: value.max(0) if key == "integrity" else value.sum(0) for key, value in stats.items()}
+        stats = {key: (value[-1] if key.startswith("snapshot_") else
+                       value.max(0) if key == "integrity" else value.sum(0))
+                 for key, value in stats.items()}
         return runner, transitions, initial_hidden, stats
     return rollout
 
@@ -437,6 +517,19 @@ def make_iteration(model, model_config, observe, rollout, args):
         train_state, minibatch_metrics = jax.lax.scan(epoch, train_state, jax.random.split(epoch_key, args.epochs))
         metrics = {key: value.all() if key == "grads_finite" else value.mean()
                    for key, value in minibatch_metrics.items()}
+        # A rare action family must not give each minibatch equal diagnostic
+        # weight. Pool its expected selection count, including across devices.
+        action_mass = minibatch_metrics.get("head_action_mass")
+        if action_mass is not None:
+            for head in ("action", "move", "turn", "do"):
+                prefix = f"head_{head}_"
+                mass = minibatch_metrics[prefix + "mass"]
+                metrics[prefix + "mass"] = mass.sum() / args.epochs
+                for key, values in minibatch_metrics.items():
+                    if not key.startswith(prefix) or key.endswith(("_mass", "_grad_norm")):
+                        continue
+                    weight = action_mass if key == prefix + "probability" else mass
+                    metrics[key] = (weight * values).sum() / jnp.maximum(weight.sum(), 1e-8)
         # Mode occupancy varies between minibatches; absent groups must not
         # dilute diagnostics. Pool moments by their actual global sample counts.
         for mode in ("bulk", "precision"):
@@ -460,7 +553,8 @@ def make_iteration(model, model_config, observe, rollout, args):
         residual = targets - transitions.value
         metrics["explained_variance"] = 1. - (jax.lax.pmean(jnp.var(residual), AXIS)
                                               / (jax.lax.pmean(jnp.var(targets), AXIS) + 1e-8))
-        stats = {key: jax.lax.pmax(value, AXIS) if key == "integrity" else jax.lax.psum(value, AXIS)
+        stats = {key: (jax.lax.all_gather(value, AXIS) if key.startswith("snapshot_") else
+                       jax.lax.pmax(value, AXIS) if key == "integrity" else jax.lax.psum(value, AXIS))
                  for key, value in stats.items()}
         stats["returns_finite"] = jax.lax.pmin(
             (jnp.isfinite(advantages).all() & jnp.isfinite(targets).all()).astype(jnp.int32), AXIS)
@@ -496,6 +590,7 @@ def restore_runner(saved, template):
 def save_checkpoint(path, train_state, runner, model_config, training_config, next_update):
     """``train_state`` is one device's copy; ``runner`` keeps its [device, lane] layout."""
     payload = dict(format=CHECKPOINT_FORMAT, action_protocol=ACTION_PROTOCOL,
+                   action_interface=model_config.get("action_interface", "structured"),
                    model=jax.device_get(train_state.params),
                    optimizer_state=jax.device_get(train_state.opt_state),
                    train_state_step=int(train_state.step),
@@ -565,6 +660,8 @@ def parse_args(argv=None):
     parser.add_argument("--entropy-turn", type=float, default=0.01)
     parser.add_argument("--entropy-heading", type=float, default=0.01)
     parser.add_argument("--allow-wait", action="store_true")
+    parser.add_argument("--action-interface", choices=("structured", "primitive8"), default="structured",
+                        help="Same native transition/reward path; primitive8 uses fixed moves, cabin turns and current-heading DO")
     parser.add_argument("--terminate-loaded-dead-ends", action=argparse.BooleanOptionalAction, default=True,
                         help="Fail loaded states with no native full unload after one fallback wait")
     parser.add_argument("--terminate-unloaded-dead-ends", action=argparse.BooleanOptionalAction, default=True,
@@ -583,7 +680,13 @@ def parse_args(argv=None):
     parser.add_argument("--teacher-checkpoint", type=Path, help="Reserved: currently rejected because no 8-way teacher mapping is defined")
     parser.add_argument("--checkpoint-interval", type=int, default=10, help="Rolling checkpoint.pkl, with live environments")
     parser.add_argument("--keep-checkpoint-every", type=int, default=0, help="Also keep checkpoint_update_NNNNNN.pkl (no environments); 0 = never")
+    parser.add_argument("--save-initial-checkpoint", action="store_true",
+                        help="On fresh starts save checkpoint_update_000000.pkl for paired initialization checks")
     parser.add_argument("--finite-check-interval", type=int, default=1, help="Full parameter/optimizer finiteness check cadence")
+    parser.add_argument("--policy-snapshot-interval", type=int, default=10,
+                        help="Save full masked head distributions at update 1, this cadence, and the final update; 0 disables")
+    parser.add_argument("--policy-snapshot-lanes", type=int, default=32,
+                        help="First lanes per device from the final rollout decision in each saved policy sample")
     parser.add_argument("--wandb-project", help="Log to W&B unless WANDB_MODE=disabled")
     parser.add_argument("--wandb-entity")
     parser.add_argument("--wandb-name")
@@ -601,6 +704,8 @@ def parse_args(argv=None):
         parser.error("num-envs must divide evenly into whole-trajectory minibatches")
     if args.precision_edge_weight != -1 and not 0 <= args.precision_edge_weight <= 1:
         parser.error("precision-edge-weight must be -1 or in [0,1]")
+    if args.policy_snapshot_interval < 0 or args.policy_snapshot_lanes < 1:
+        parser.error("policy-snapshot-interval must be >=0 and policy-snapshot-lanes must be >=1")
     if not (0 < args.gamma <= 1 and 0 < args.gae_lambda <= 1):
         parser.error("gamma and gae-lambda must be in (0,1]")
     for name in ("time_budget_s", "discount_reference_s", "learning_rate", "clip_eps"):
@@ -648,12 +753,13 @@ def validate_resume_training(saved, training):
                          "old checkpoints require --no-terminate-loaded-dead-ends")
     for key, legacy in dict(terminate_unloaded_dead_ends=False, precision_safety=False,
                             precision_observation_v2=False, precision_edge_weight=-1.,
-                            advantage_normalization="global").items():
+                            advantage_normalization="global", action_interface="structured").items():
         if saved.get(key, legacy) != training.get(key, legacy):
             raise ValueError(f"native resume protocol mismatch: {key}; preserve the saved protocol")
     for key, value in saved.items():
         if (key not in {"output", "updates", "checkpoint_interval", "keep_checkpoint_every",
-                        "finite_check_interval", "resume_from", "warm_start_from"}
+                        "finite_check_interval", "resume_from", "warm_start_from",
+                        "policy_snapshot_interval", "policy_snapshot_lanes", "save_initial_checkpoint"}
                 and training.get(key) != value):
             raise ValueError(f"native resume protocol mismatch: {key}")
 
@@ -751,7 +857,8 @@ def main(argv=None):
             model_config[name] = saved_config.get(name, default)
     if args.model_config:
         model_config.update(json.loads(args.model_config.read_text()))
-    model_config.update(structured_actions=True, action_logit_masking=False)
+    model_config.update(structured_actions=True, action_logit_masking=False,
+                        action_interface=args.action_interface)
     model_config.update(precision_observation_v2=args.precision_observation_v2,
                         advantage_normalization=args.advantage_normalization)
     if model_config.get("actor_residual_head", False):
@@ -802,9 +909,11 @@ def main(argv=None):
         if source.get("format") != CHECKPOINT_FORMAT or source.get("action_protocol") != ACTION_PROTOCOL:
             raise ValueError("native resume requires a structured-v1 checkpoint; use warm-start-from for legacy policies")
         validate_resume_training(source["training_config"], training)
+        checkpoint_action_interface(source, args.action_interface)
         saved_model_config = dict(source["model_config"])
         saved_model_config.setdefault("precision_observation_v2", False)
         saved_model_config.setdefault("advantage_normalization", "global")
+        saved_model_config.setdefault("action_interface", "structured")
         if dict(model_config) != saved_model_config:
             raise ValueError("native resume must preserve model configuration")
 
@@ -840,6 +949,7 @@ def main(argv=None):
     runner = initial_runner(states, model_config, np.asarray(jax.random.split(runner_key, args.num_devices)))
     if args.resume_from and source.get("runner") is not None:
         runner = restore_runner(source["runner"], runner)
+    assert_finite(runner, "initial/restored runner")
 
     def shard(tree):
         return jax.device_put_sharded([jax.tree.map(lambda x: np.asarray(x)[i], tree)
@@ -857,7 +967,8 @@ def main(argv=None):
         terminate_loaded_dead_ends=args.terminate_loaded_dead_ends,
         terminate_unloaded_dead_ends=args.terminate_unloaded_dead_ends,
         precision_edge_weight=args.precision_edge_weight)
-    rollout = make_rollout(model, model_config, observe, advance, sample, num_steps=args.num_steps)
+    rollout = make_rollout(model, model_config, observe, advance, sample, num_steps=args.num_steps,
+                           diagnostic_lanes=args.policy_snapshot_lanes if args.policy_snapshot_interval else 0)
     iteration = jax.pmap(make_iteration(model, model_config, observe, rollout, args),
                          axis_name=AXIS, donate_argnums=(0, 1))
     switches = rule_switches(static_cfg)
@@ -870,8 +981,13 @@ def main(argv=None):
             runner = jax.pmap(reset_all, donate_argnums=(0,))(runner, data)
 
     args.output.mkdir(parents=True, exist_ok=True)
+    if args.save_initial_checkpoint and not args.resume_from:
+        host_state = jax.tree.map(lambda x: x[0], jax.device_get(train_state))
+        save_checkpoint(args.output / "checkpoint_update_000000.pkl", host_state,
+                        None, model_config, training, 0)
     (args.output / "config.json").write_text(json.dumps(
         dict(training=training, model=dict(model_config), action_protocol=ACTION_PROTOCOL,
+             action_interface=args.action_interface,
              rules=rule_switches(static_cfg)), indent=2, default=str) + "\n")
     wandb_run = None
     if args.wandb_project and os.environ.get("WANDB_MODE", "online") != "disabled":
@@ -883,7 +999,8 @@ def main(argv=None):
     print(json.dumps(dict(phase="native_rollout", devices=[str(d) for d in devices],
                          lanes_per_device=lanes, start_update=start_update,
                          wandb=None if wandb_run is None else wandb_run.id,
-                         reward_protocol="material_time_v1", action_protocol=ACTION_PROTOCOL)), flush=True)
+                         reward_protocol="material_time_v1", action_protocol=ACTION_PROTOCOL,
+                         action_interface=args.action_interface)), flush=True)
 
     decisions_per_update = args.num_devices * lanes * args.num_steps
     for index in range(start_update, args.updates):
@@ -902,7 +1019,22 @@ def main(argv=None):
             "entropy_turn", "entropy_do", "approx_kl", "clip_fraction", "explained_variance")}
         if not all(np.isfinite(value) for value in losses.values()):
             raise FloatingPointError(f"nonfinite PPO metrics: {losses}")
+        assert_finite({key: value for key, value in metrics.items() if key.startswith("head_")},
+                      "policy head diagnostics")
         update_number = index + 1
+        snapshot = {key.removeprefix("snapshot_"): metrics.pop(key)
+                    for key in list(metrics) if key.startswith("snapshot_")}
+        sampled_log = {}
+        if args.policy_snapshot_interval and (update_number == 1
+                or update_number % args.policy_snapshot_interval == 0 or update_number == args.updates):
+            assert_finite(snapshot, "policy snapshot")
+            folder = args.output / "policy_samples"
+            folder.mkdir(exist_ok=True)
+            np.savez_compressed(folder / f"update_{update_number:06d}.npz", **snapshot,
+                                action_interface=args.action_interface,
+                                argument_heads_active=args.action_interface == "structured",
+                                policy_update=index, rollout_end_update=update_number)
+            sampled_log = snapshot_log(snapshot, args.action_interface)
         if update_number % args.finite_check_interval == 0:
             assert_finite((train_state.params, train_state.opt_state), "PPO parameters")
         log = {"train/update": update_number,
@@ -910,7 +1042,8 @@ def main(argv=None):
                "train/optimizer_step": int(np.asarray(jax.device_get(train_state.step))[0]),
                **{f"loss/{key}": value for key, value in losses.items()},
                **{f"optimization/{key}": float(value) for key, value in metrics.items()
-                  if key.startswith("advantage_") or key.startswith("clip_fraction_")},
+                  if key.startswith(("advantage_", "clip_fraction_", "head_"))},
+               **sampled_log,
                **episode_log(metrics),
                "perf/update_seconds": seconds,
                "perf/decisions_per_second": decisions_per_update / seconds}
@@ -922,7 +1055,7 @@ def main(argv=None):
         rolling = update_number % args.checkpoint_interval == 0 or update_number == args.updates
         history = args.keep_checkpoint_every and update_number % args.keep_checkpoint_every == 0
         if rolling or history:
-            assert_finite((train_state.params, train_state.opt_state), "checkpoint parameters")
+            assert_finite((train_state.params, train_state.opt_state, runner), "checkpoint state")
             host_state = jax.tree.map(lambda x: x[0], jax.device_get(train_state))
             if history:
                 save_checkpoint(args.output / f"checkpoint_update_{update_number:06d}.pkl", host_state,
