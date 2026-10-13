@@ -1,5 +1,22 @@
 # Experiments — completed log
 
+## October 13: matched precision interface implementation and local qualification
+
+Trainer `3c40338` adds `primitive8` to the corrected structured trainer, matched
+initial parameter trees, conditional head statistics, gradient norms, and
+sampled full policy distributions. Both arms retain Terra `f5f680df` repairs.
+Twenty-seven focused CPU tests passed. Both local CUDA paths completed one
+finite update, optimizer step 8, and saved finite model/optimizer/runner state;
+all 64 lanes reset, initial weights match, and unused primitive argument heads
+remain unchanged. This proves execution and integration, not learning quality.
+
+A source/shape-group split yields 74 training slots and 48 held-out starts
+(12 groups by four poses); all starts passed native placement and mobility
+checks. CSCS qualification 5044880 is queued at 14:10 UTC, with no production
+job yet. The authorized continuation is two scratch 24-hour arms, one seed,
+followed by fixed-panel evaluation. See
+[design and operational status](research/PRECISION_ACTION_AB_20261013.md).
+
 ## October 8: native finishing failure diagnosis
 
 Matched frozen GRU110000 control confirms a substantial bulk-rule regression:

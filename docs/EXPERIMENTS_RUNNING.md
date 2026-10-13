@@ -11,10 +11,14 @@ groups. All evaluation starts passed native admission checks; complete ordered
 finishability is still unproved. See
 [experiment design](research/PRECISION_ACTION_AB_20261013.md).
 
-Twenty-seven focused CPU tests passed. The local primitive CUDA path completed
-update 1 with finite optimization state; the structured path and four-GH200
-smoke/resume/evaluation/probe are pending. Production has not started. Source
-Terra `f5f680df`; trainer revision will be recorded with the submitted jobs.
+Twenty-seven focused CPU tests and both local CUDA update-1 smokes passed.
+Each saved finite state with optimizer step 8; complete initial model trees
+match and episode resets clear all lanes. CSCS qualification **5044880 PENDING**
+at October 13 14:10 UTC. Production has not started. Frozen source: Terra
+`f5f680df`, trainer `3c40338`. A task-local tmux continuation submits the two
+24-hour arms only after CSCS smoke/resume/evaluation/full-batch checks pass,
+then checks startup and the first trained checkpoint. Live artifact:
+`.artifacts/terra_precision_action_ab_20261013/STATUS.json`.
 Campaign directory on CSCS: `/ritom/scratch/cscs/lterenzi/terra-training/runs/precision-action-ab-20261013/`.
 
 The prior structured run 5027493 is now TIMEOUT, final observed update 9978.

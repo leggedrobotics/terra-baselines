@@ -144,11 +144,24 @@ is not exhaustive native-action equivalence. Independent code reviews found no
 remaining blocker.
 
 All 48 evaluation starts passed native footprint, initial mobility, unloaded
-bucket, step-zero and unfinished-task checks. The local CUDA primitive smoke
-completed one finite update and saved its checkpoint; structured CUDA and CSCS
-update/resume/evaluation/full-batch qualification are still pending at this
-source snapshot. No production job has been submitted at this point.
+bucket, step-zero and unfinished-task checks. Both local CUDA arms completed one finite update (eight optimizer steps),
+saved finite model/optimizer/runner checkpoints and cleared all 64 lanes at
+the smoke cap. Their complete initial model trees were identical, and the
+primitive arm left unused argument parameters unchanged. CSCS qualification
+job **5044880** is PENDING at 14:10 UTC; it will check update/resume/evaluation
+and the full production batch size before production submission. The remote
+source snapshot is Terra `f5f680df` and trainer `3c40338`.
 
 Artifacts: `.artifacts/terra_precision_action_ab_20261013/`. Local reduced
 GPU smokes use a historical replay bank that includes a held-out slot; their
 weights are discarded. Production starts fresh from the new training split.
+
+A task-local continuation runs in tmux `terra-precision-ab-cscs-20261013`.
+It waits for local qualification and successful CSCS qualification, verifies
+the matched probe settings, submits the two 24-hour arms and a four-hour
+`afterany` paired evaluation, then checks finite updates and the first trained
+checkpoint. It stops on failed qualification or an ambiguous submission
+response; it does not retry a potentially successful submission. Status and job
+IDs are recorded in `.artifacts/terra_precision_action_ab_20261013/STATUS.json`
+and in the remote campaign's `*_job_id.txt` files. No production job was
+submitted at this documentation update.
