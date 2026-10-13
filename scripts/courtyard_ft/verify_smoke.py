@@ -27,7 +27,7 @@ assert cfg.actor_core == "gru" and cfg.actor_gru_hidden_dim == 64
 assert cfg.precision_required_band_observation
 assert cfg.precision_episode_fraction == 1.0
 assert not cfg.recurrent_teacher
-assert cfg.warm_start_from.endswith("gru_rules_ft_c057_s20260930_update_110000.pkl")
+assert cfg.warm_start_from.endswith(".pkl")
 assert cfg.resume_from is None
 assert bool(scalar(env.pull_direction_alignment))
 assert bool(np.all(np.asarray(env.enforce_foundation_border_alignment))), "every lane must be a precision lane"
@@ -46,7 +46,10 @@ for name, values in checkpoint["loss_info"].items():
         assert np.all(np.asarray(values) == 1), name
 report = dict(next_update=1, optimizer_steps=2, devices=cfg.num_devices, envs_per_device=cfg.num_envs_per_device,
               precision_episode_fraction=1.0, pull_cone_rad=float(scalar(env.pull_half_angle_rad)),
-              edge_pull_perpendicular_ok=True, precision_safety=True, finite_losses_rollout_model_optimizer=True,
+              edge_pull_perpendicular_ok=True, precision_safety=True,
+              pull_trench_gate=bool(scalar(getattr(env, "pull_trench_gate", False))),
+              trench_dig_max_offset_m=float(scalar(env.trench_dig_max_offset_m)),
+              warm_start_from=cfg.warm_start_from, finite_losses_rollout_model_optimizer=True,
               transition_integrity_passed=True, policy_quality_claim=False)
 Path(sys.argv[2]).write_text(json.dumps(report, indent=2) + "\n")
 print(json.dumps(report))

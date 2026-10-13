@@ -39,10 +39,12 @@ PULL_DIRECTION_RULE_DEFAULTS = {
     # Terra f5f680df: no fresh excavation inside the chassis clearance, no soil settling inside the unreachable
     # inner radius, and certified unloaded traps end the episode.
     "precision_safety": False,
+    # Terra courtyard-ft: pull mode also keeps the legacy fresh-trench pose gate on trench-section cells.
+    "pull_trench_gate": False,
 }
 PULL_DIRECTION_BOOL_FIELDS = (
     "pull_direction_alignment", "tracked_move_keeps_turn", "native_dump_observation",
-    "edge_pull_perpendicular_ok", "precision_safety",
+    "edge_pull_perpendicular_ok", "precision_safety", "pull_trench_gate",
 )
 PULL_DIRECTION_RULE_FIELDS = {
     name: type(value) for name, value in PULL_DIRECTION_RULE_DEFAULTS.items()

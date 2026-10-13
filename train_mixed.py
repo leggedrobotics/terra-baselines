@@ -2179,6 +2179,7 @@ class MixedAgentTrainConfig:
     pull_stroke_outer_extension_m: float | None = None
     pull_stroke_inner_extension_m: float | None = None
     precision_safety: bool | None = None
+    pull_trench_gate: bool | None = None
     # Excavator dump reach in metres (Terra agent.dump_max_radius_m; 0 = the
     # dig reach). Overrides a resumed checkpoint's env config. None leaves the
     # checkpoint's or Terra's value.
@@ -6709,6 +6710,11 @@ if __name__ == "__main__":
         "--precision_safety", action=argparse.BooleanOptionalAction, default=None,
         help="Terra precision_safety: protect fresh-cut chassis clearance, keep soil outside the unreachable inner "
              "radius, end certified unloaded traps.",
+    )
+    parser.add_argument(
+        "--pull_trench_gate", action=argparse.BooleanOptionalAction, default=None,
+        help="Terra pull_trench_gate: in pull mode, trench-section cells also need the legacy pose gate (chassis "
+             "parallel to the section, base within trench_dig_max_offset_m of its line).",
     )
     env_group = parser.add_mutually_exclusive_group()
     env_group.add_argument(

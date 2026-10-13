@@ -23,10 +23,10 @@ mkdir -p "$TERRA_RUN_DIR/checkpoints" "$WANDB_DIR" "$JAX_COMPILATION_CACHE_DIR"
 cd "$TERRA_RUN_DIR"
 NUM_DEVICES="${NUM_DEVICES:-4}"
 python -u "$BASELINES_ROOT/cluster/cscs/check_jax_runtime.py" --min-devices "$NUM_DEVICES"
-PARENT="$TERRA_EXPERIMENT_INPUTS/gru_rules_ft_c057_s20260930_update_110000.pkl"
+PARENT="${PARENT:-$TERRA_EXPERIMENT_INPUTS/gru_rules_ft_c057_s20260930_update_110000.pkl}"
 ARGS=(
-    --config gru_courtyard_precision_ft
-    --name "courtyard_ft_s20261013_${PHASE}" --exact_run_name --seed 20261013
+    --config "${PRESET:-gru_courtyard_precision_ft}"
+    --name "${RUN_NAME:-courtyard_ft_s20261013}_${PHASE}" --exact_run_name --seed 20261013
     --machine "${TERRA_MACHINE:-daint}" --num_devices "$NUM_DEVICES" --num_envs_per_device 512
     --num_steps 32 --update_epochs 2 --num_minibatches 32 --total_timesteps 50000000000
     --lr 3e-4 --model_size medium --model_core mlp --actor-core gru --actor-gru-hidden-dim 64
@@ -61,6 +61,6 @@ printf '%s\n' "${ARGS[@]}" > "$TERRA_RUN_DIR/arguments.txt"
 python -u "$BASELINES_ROOT/train_mixed.py" "${ARGS[@]}"
 if [[ "$PHASE" == smoke ]]; then
     JAX_PLATFORMS=cpu python "$BASELINES_ROOT/scripts/courtyard_ft/verify_smoke.py" \
-        "$TERRA_RUN_DIR/checkpoints/courtyard_ft_s20261013_smoke_FINAL.pkl" \
+        "$TERRA_RUN_DIR/checkpoints/${RUN_NAME:-courtyard_ft_s20261013}_smoke_FINAL.pkl" \
         "$TERRA_RUN_DIR/verification.json"
 fi
